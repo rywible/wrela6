@@ -17,11 +17,12 @@ The design is paired with a small executable reference sketch:
 ```text
 tests/support/proof-core-reference.ts
 tests/unit/proof-core-reference.test.ts
+tests/unit/proof-core-composition.test.ts
 ```
 
 The sketch is intentionally tiny, but it verifies the thirty-nine worked rejection
-examples in this document. It is a pressure test for the rules, not the
-production checker.
+examples in this document plus composition and permutation properties over the
+core judgments. It is a pressure test for the rules, not the production checker.
 
 ## Goals
 
@@ -265,6 +266,28 @@ Gamma; S |- loopBackedge => ok
 
 Failure of any judgment produces a proof diagnostic with a source origin and a
 counterexample path through Proof MIR.
+
+## Composition And Permutation Laws
+
+The proof checker should satisfy metamorphic laws for independent proof steps.
+These laws are not examples of specific source programs; they are sanity checks
+on the algebra of the proof state.
+
+The first executable sketch checks these properties with generated inputs:
+
+- adding independent facts is permutation invariant
+- consuming disjoint resources commutes
+- opening disjoint loans commutes
+- branch joins are commutative for compatible resource states
+- branch joins are associative for compatible resource states
+- terminal graph validation is invariant under edge list order
+- facts about consumed resources cannot be revived by reordering proof steps
+- stale private-state facts cannot be revived after generation advance
+
+These laws define where order should and should not matter. Operations over
+disjoint places should produce the same proof state in either order. Operations
+over overlapping places may reject in different local ways, but they must not
+create a usable duplicated owner, a stale fact, or a hidden live obligation.
 
 ## Core Judgments
 

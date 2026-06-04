@@ -89,6 +89,10 @@ export function expectRejected(result: ProofResult, code: string): void {
 }
 
 export function addFact(state: ProofState, fact: string): ProofState {
+  if (!factIsStableForState(state, fact)) {
+    return cloneState(state);
+  }
+
   const facts = new Set(state.facts);
   facts.add(fact);
   return {
@@ -694,6 +698,35 @@ function removeFactsMentioningPlaces(
 function factMentionsPlace(fact: string, place: string): boolean {
   const escapedPlace = place.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[^A-Za-z0-9_])${escapedPlace}(?=$|[^A-Za-z0-9_])`).test(fact);
+}
+
+function factIsStableForState(state: ProofState, fact: string): boolean {
+  for (const [place, record] of state.places) {
+    if (!factMentionsPlace(fact, place)) {
+      continue;
+    }
+
+    if (record.status !== "live") {
+      return false;
+    }
+
+    if (record.kind === "privateState") {
+      const generation = privateGenerationMentionedByFact(fact, place);
+      if (generation !== undefined && generation !== (record.generation ?? 0)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+function privateGenerationMentionedByFact(fact: string, place: string): number | undefined {
+  const escapedPlace = place.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`(^|[^A-Za-z0-9_])${escapedPlace}@([0-9]+)(?=$|[^A-Za-z0-9_])`).exec(
+    fact,
+  );
+  return match === null ? undefined : Number(match[2]);
 }
 
 function accepted(state: ProofState): ProofResult {
