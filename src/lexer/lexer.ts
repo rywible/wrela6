@@ -167,17 +167,7 @@ export class Lexer {
   }
 
   private collectPreambleTrivia(preamble: LinePreamble): Trivia[] {
-    const result: Trivia[] = [];
-
-    if (preamble.indentation !== null) {
-      result.push(preamble.indentation);
-    }
-
-    for (const item of preamble.trivia) {
-      result.push(item);
-    }
-
-    return result;
+    return this.collectLeadingFromPreamble(preamble);
   }
 
   private measureIndentation(text: string): number {
@@ -217,20 +207,24 @@ export class Lexer {
       return false;
     }
 
-    const width = this.measureIndentation(indentationTrivia.lexeme);
+    const indentText = indentationTrivia.lexeme;
+    const width = this.measureIndentation(indentText);
+    const containsTab = indentText.includes("\t");
 
-    const effectiveWidth =
-      width % 4 === 0 ? width : this.canonicalizeIndent(width, indentationStack);
-
-    if (width > 0 && width % 4 !== 0) {
+    if (width > 0 && (containsTab || width % 4 !== 0)) {
       this.dependencies.diagnostics.report({
         code: "LEX_INCONSISTENT_INDENT",
         severity: "error",
-        message: `Inconsistent indentation: ${width} spaces is not a multiple of 4.`,
+        message: containsTab
+          ? "Inconsistent indentation: tab character in indentation."
+          : `Inconsistent indentation: ${width} spaces is not a multiple of 4.`,
         source,
         span: indentationTrivia.span,
       });
     }
+
+    const effectiveWidth =
+      width % 4 === 0 ? width : this.canonicalizeIndent(width, indentationStack);
 
     const stackTop = indentationStack[indentationStack.length - 1]!;
 
@@ -262,6 +256,16 @@ export class Lexer {
           }),
         );
         isFirstDedent = false;
+      }
+
+      if (!indentationStack.includes(effectiveWidth)) {
+        this.dependencies.diagnostics.report({
+          code: "LEX_INCONSISTENT_INDENT",
+          severity: "error",
+          message: `Inconsistent indentation: width ${effectiveWidth} does not match any existing indentation level.`,
+          source,
+          span: indentationTrivia.span,
+        });
       }
 
       return true;

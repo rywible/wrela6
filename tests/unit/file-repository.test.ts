@@ -4,38 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { BunFileRepository } from "../../src/lexer/bun-file-repository";
-import type { FileReadResult, FileRepository } from "../../src/lexer/file-repository";
-import type { ModulePath } from "../../src/lexer/module-path";
-import { SourceText } from "../../src/lexer/source-text";
-
-// ---------------------------------------------------------------------------
-// FakeFileRepository – contract verification without disk I/O
-// ---------------------------------------------------------------------------
-
-class FakeFileRepository implements FileRepository {
-  constructor(private readonly files: Map<string, string>) {}
-
-  async read(path: ModulePath): Promise<FileReadResult> {
-    const text = this.files.get(path.key);
-
-    if (text === undefined) {
-      return { kind: "missing", path };
-    }
-
-    return { kind: "found", path, source: SourceText.from(path.display, text) };
-  }
-}
+import { ModulePath } from "../../src/lexer/module-path";
+import { FakeFileRepository } from "../support/lexer-fakes";
 
 describe("FakeFileRepository", () => {
-  function createFixture(): FakeFileRepository {
-    const files = new Map<string, string>();
-    files.set("main.wr", "uefi image Main:");
-    return new FakeFileRepository(files);
-  }
-
   test("reading an existing file returns found with correct source", async () => {
-    const repository = createFixture();
-    const { ModulePath } = await import("../../src/lexer/module-path");
+    const repository = new FakeFileRepository(new Map([["main.wr", "uefi image Main:"]]));
     const path = ModulePath.from("main.wr");
     const result = await repository.read(path);
 
@@ -49,8 +23,7 @@ describe("FakeFileRepository", () => {
   });
 
   test("reading a missing file returns missing", async () => {
-    const repository = createFixture();
-    const { ModulePath } = await import("../../src/lexer/module-path");
+    const repository = new FakeFileRepository(new Map());
     const path = ModulePath.from("missing.wr");
     const result = await repository.read(path);
 

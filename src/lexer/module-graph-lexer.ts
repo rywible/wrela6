@@ -34,8 +34,9 @@ export class ModuleGraphLexer {
   async lexImage(context: { entry: ModulePath }): Promise<ModuleGraphLexResult> {
     const modules: LexedModule[] = [];
     const visited = new Set<string>();
+    const inProgress = new Set<string>();
 
-    await this.traverse(context.entry, modules, visited);
+    await this.traverse(context.entry, modules, visited, inProgress);
 
     return { entry: context.entry, modules };
   }
@@ -44,6 +45,7 @@ export class ModuleGraphLexer {
     path: ModulePath,
     modules: LexedModule[],
     visited: Set<string>,
+    inProgress: Set<string>,
     importRequest?: ModuleImportRequest,
   ): Promise<void> {
     if (visited.has(path.key)) {
@@ -51,6 +53,7 @@ export class ModuleGraphLexer {
     }
 
     visited.add(path.key);
+    inProgress.add(path.key);
 
     const readResult = await this.dependencies.files.read(path);
 
@@ -114,7 +117,7 @@ export class ModuleGraphLexer {
 
       const resolvedPath = resolveResult.path;
 
-      if (visited.has(resolvedPath.key)) {
+      if (inProgress.has(resolvedPath.key)) {
         this.dependencies.diagnostics.report({
           code: "LEX_IMPORT_CYCLE",
           severity: "warning",
@@ -125,7 +128,9 @@ export class ModuleGraphLexer {
         continue;
       }
 
-      await this.traverse(resolvedPath, modules, visited, nextImport);
+      await this.traverse(resolvedPath, modules, visited, inProgress, nextImport);
     }
+
+    inProgress.delete(path.key);
   }
 }
