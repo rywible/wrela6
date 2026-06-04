@@ -2,21 +2,29 @@ import { test } from "bun:test";
 import {
   addFact,
   advancePrivateState,
+  bindPlace,
   callFallibleConsume,
+  callOrdinaryFunctionDischarge,
+  checkLoopBackedge,
   checkTerminalGraph,
   cloneState,
   consumePlace,
   dischargeObligation,
+  dropPlace,
   emptyState,
   enterLinearObligation,
   exitFunction,
   expectRejected,
+  joinStates,
   markValidationMatched,
+  matchValidationOk,
   openLoan,
   readDynamicLayoutField,
   requireFact,
+  transferToCore,
   usePlace,
   withPlace,
+  wrapPlace,
 } from "../support/proof-core-reference";
 
 test("proof core rejects use after consume", () => {
@@ -98,4 +106,76 @@ test("proof core rejects reading dynamic layout fields before fixed fit facts", 
   const initialState = cloneState(emptyState());
 
   expectRejected(readDynamicLayoutField(initialState, "Packet.payload"), "LAYOUT_FIT_NOT_PROVEN");
+});
+
+test("proof core rejects use after branch join with maybe-consumed resource", () => {
+  const initialState = withPlace(emptyState(), "buffer", { kind: "linear" });
+  const consumedBranch = consumePlace(initialState, "buffer").state;
+  const liveBranch = cloneState(initialState);
+  const joinedState = joinStates(consumedBranch, liveBranch).state;
+
+  expectRejected(usePlace(joinedState, "buffer"), "RESOURCE_MAYBE_CONSUMED");
+});
+
+test("proof core rejects loop backedge with live obligation", () => {
+  const initialState = withPlace(emptyState(), "buffer", { kind: "linear" });
+  const obligatedState = enterLinearObligation(initialState, "loop-buffer", "buffer").state;
+
+  expectRejected(checkLoopBackedge(obligatedState), "LIVE_OBLIGATION_ON_LOOP_BACKEDGE");
+});
+
+test("proof core rejects dropping wrapper that may contain a linear resource", () => {
+  const initialState = withPlace(emptyState(), "buffer", { kind: "linear" });
+  const wrappedState = wrapPlace(initialState, "maybeBuffer", "buffer").state;
+
+  expectRejected(dropPlace(wrappedState, "maybeBuffer"), "RESOURCE_MUST_BE_HANDLED");
+});
+
+test("proof core rejects ordinary function hiding terminal discharge", () => {
+  const initialState = withPlace(emptyState(), "packet", {
+    kind: "linear",
+    brand: "batch-a",
+  });
+
+  expectRejected(callOrdinaryFunctionDischarge(initialState, "packet"), "ORDINARY_DISCHARGE");
+});
+
+test("proof core rejects using aggregate after field move", () => {
+  const initialState = withPlace(withPlace(emptyState(), "self", { kind: "affine" }), "self.tx", {
+    kind: "affine",
+  });
+  const fieldMovedState = consumePlace(initialState, "self.tx").state;
+
+  expectRejected(usePlace(fieldMovedState, "self"), "RESOURCE_PARTIALLY_MOVED");
+});
+
+test("proof core transfers validation Ok obligation from source to packet", () => {
+  const initialState = withPlace(
+    withPlace(emptyState(), "buffer", { kind: "linear", brand: "batch-a" }),
+    "validation",
+    { kind: "singleUse", brand: "batch-a" },
+  );
+  const obligatedState = enterLinearObligation(initialState, "rx-buffer", "buffer").state;
+  const okState = matchValidationOk(obligatedState, "validation", "buffer", "packet").state;
+
+  expectRejected(usePlace(okState, "buffer"), "RESOURCE_ALREADY_CONSUMED");
+  expectRejected(dischargeObligation(okState, "rx-buffer", "packet", "batch-b"), "BRAND_MISMATCH");
+});
+
+test("proof core rejects cross-core transfer of session-bound token", () => {
+  const initialState = withPlace(emptyState(), "packet", {
+    kind: "linear",
+    brand: "batch-a",
+  });
+
+  expectRejected(transferToCore(initialState, "packet", "core1"), "RESOURCE_NOT_CORE_MOVABLE");
+});
+
+test("proof core rejects shadowing a live affine resource", () => {
+  const initialState = withPlace(emptyState(), "buffer", { kind: "linear" });
+
+  expectRejected(
+    bindPlace(initialState, "buffer", { kind: "copy" }),
+    "PLACE_SHADOWS_LIVE_RESOURCE",
+  );
 });

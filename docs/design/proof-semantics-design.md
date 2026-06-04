@@ -19,7 +19,7 @@ tests/support/proof-core-reference.ts
 tests/unit/proof-core-reference.test.ts
 ```
 
-The sketch is intentionally tiny, but it verifies the ten worked rejection
+The sketch is intentionally tiny, but it verifies the eighteen worked rejection
 examples in this document. It is a pressure test for the rules, not the
 production checker.
 
@@ -36,7 +36,8 @@ production checker.
 - Explain how streams, validation results, private state, terminal functions,
   layout facts, `Attempt`, and multicore transfer map into the core.
 - Provide diagnostic shapes with counterexample-path evidence.
-- Work through ten representative invalid examples from `docs/language/invalid.md`.
+- Work through eighteen representative invalid examples from
+  `docs/language/invalid.md`.
 
 ## Non-Goals
 
@@ -143,6 +144,11 @@ Invalid
 `Linear` obligations must be discharged exactly once. `Affine` values may move
 at most once, but Wrela treats many affine capability values as non-droppable
 unless their type declares a checked close/drop rule.
+
+At control-flow joins, a non-copy place that is live on one incoming edge and
+consumed on another becomes `MaybeConsumed`. A `MaybeConsumed` place is not
+usable after the join. The checker should report the join path that consumed the
+place and the path that left it live.
 
 ### Brands
 
@@ -251,6 +257,8 @@ Gamma; S |- discharge o by p => S'
 Gamma; S |= fact
 Gamma; S |- call f(args) => S'
 Gamma; S |- exit kind => ok
+Gamma; S1 join S2 => S'
+Gamma; S |- loopBackedge => ok
 ```
 
 Failure of any judgment produces a proof diagnostic with a source origin and a
@@ -289,6 +297,22 @@ Moving a field makes the containing aggregate partially unavailable. A later use
 of the whole aggregate is legal only if every moved field has been restored or
 the aggregate itself is consumed.
 
+Shadowing a live non-copy place is rejected. This keeps source names stable
+while obligations are live and prevents accidental hiding of resource state.
+
+### Drop
+
+```text
+Gamma; S |- drop p => S'
+```
+
+Dropping is legal only for `Copy` values or for types that declare an explicit
+checked drop rule. A wrapper containing an affine or linear value inherits that
+value's resource obligations. Dropping `Option[WritableBuffer]`,
+`Result[_, WritableBuffer]`, `List[ReadableBuffer]`, or any ordinary wrapper
+that may contain a live obligation is rejected unless the wrapper type is a
+checked linear owner with its own discharge semantics.
+
 ### Open And Discharge Obligation
 
 ```text
@@ -321,6 +345,36 @@ Closing a loan requires no live obligations whose brand depends on that loan.
 
 Leaving a loan live at `return`, `break`, `continue`, `yield`, `?`, or `panic`
 reports `PROOF_LIVE_LOAN_ON_EXIT`.
+
+### Joins
+
+```text
+Gamma; S1 join S2 => S'
+```
+
+A join merges incoming block states. The first checker should use conservative
+rules:
+
+- a place live on all incoming edges remains live
+- a place consumed on all incoming edges remains consumed
+- a non-copy place live on some edges and consumed on others becomes
+  `MaybeConsumed`
+- facts survive only if all incoming edges prove the same fact
+- obligations and loans must agree across incoming edges unless the join is an
+  explicit control-flow construct that carries them
+
+Using a `MaybeConsumed` place reports `PROOF_MAYBE_CONSUMED_AFTER_JOIN`.
+
+### Loop Backedges
+
+```text
+Gamma; S |- loopBackedge => ok
+```
+
+A loop backedge is legal only when no linear obligation, stream loan, private
+builder obligation, or non-invariant affine wrapper is live across the edge.
+Loop facts survive only when they are loop invariants or facts about unchanged
+copy values. This makes `continue` equivalent to an explicit backedge check.
 
 ### Entailment
 
@@ -358,6 +412,10 @@ Calls check:
 Every call site must prove `requires` before ownership changes are committed.
 If a fallible call may consume an affine or linear input, the callee must return
 an `Attempt`-like shape describing what happens on success and error.
+
+Ordinary functions cannot hide terminal discharge of session-bound or linear
+tokens. A session-bound token must be discharged by a statically known terminal
+function or private platform function in the active proof context.
 
 ### Exits
 
@@ -471,6 +529,7 @@ On `Ok(packet)`:
 
 - the source buffer is consumed into `packet`
 - `packet` receives the source stream/session brand
+- the live source-buffer obligation transfers to `packet`
 - only terminal functions accepting that brand may close it
 
 On `Err(rejected)`:
@@ -541,6 +600,16 @@ Core transfer changes `ownerCore` metadata. A value can move between cores only
 through a checked transfer type such as a bounded move ring. Transfer requires
 `CoreMovableOwned`. Live stream items, validated buffers, edge-internal tokens,
 platform tokens, and validation results do not satisfy that bound.
+
+### Wrappers And Ordinary Storage
+
+Resource kind lifts through ordinary wrappers. If a wrapper may contain an
+affine or linear value, the wrapper is itself non-copy and non-droppable unless
+the wrapper type is a checked owner with explicit discharge rules.
+
+Ordinary storage such as dataclass fields, ordinary class fields, lists, maps,
+and unbounded containers cannot hide live obligations. Static collections are
+allowed only when their type declares bounded ownership and discharge behavior.
 
 ## Diagnostics
 
@@ -841,11 +910,199 @@ Gamma; S |- read Packet.payload
 Rejected because fixed-field fit has not been proven before dynamic field
 access. Diagnostic: `PROOF_LAYOUT_FIT_NOT_PROVEN`.
 
+## Second-Pass Pressure Tests
+
+These examples cover the holes most likely to make the language unsound after
+the first proof-core pass.
+
+### 11. Branch Join With Maybe-Consumed Resource
+
+Source shape:
+
+```wr
+if condition:
+    self.tx.send(buffer=buffer, len=0)
+
+buffer.write_u8(offset=0, value=1)
+```
+
+Incoming states:
+
+```text
+then: buffer Consumed
+else: buffer Live
+```
+
+Join:
+
+```text
+Gamma; S_then join S_else => buffer MaybeConsumed
+Gamma; S_join |- use buffer
+```
+
+Rejected because the post-join path cannot prove `buffer` is live. Diagnostic:
+`PROOF_MAYBE_CONSUMED_AFTER_JOIN`.
+
+### 12. Loop Backedge With Live Obligation
+
+Source shape:
+
+```wr
+loop:
+    take buffer:
+        continue
+```
+
+State at backedge:
+
+```text
+obligations: buffer must be discharged
+```
+
+Judgment:
+
+```text
+Gamma; S |- loopBackedge
+```
+
+Rejected because the next loop iteration would start while the previous
+iteration still owns a live obligation. Diagnostic:
+`PROOF_LIVE_OBLIGATION_ON_LOOP_BACKEDGE`.
+
+### 13. Dropping Wrapper That May Contain Linear Resource
+
+Source shape:
+
+```wr
+let maybe = self.tx.acquire_tx()
+return
+```
+
+State:
+
+```text
+maybe: Option[WritableBuffer], non-copy, may contain live TX obligation
+```
+
+Judgment:
+
+```text
+Gamma; S |- drop maybe
+```
+
+Rejected because ordinary wrapper scope end cannot discharge the hidden
+obligation. Diagnostic: `PROOF_RESOURCE_MUST_BE_HANDLED`.
+
+### 14. Ordinary Helper Hiding Terminal Discharge
+
+Source shape:
+
+```wr
+fn close_packet(self, batch: RxBatch, packet: Packet):
+    batch.return_rx(packet=packet)
+```
+
+Judgment:
+
+```text
+Gamma; S |- call ordinary close_packet(packet)
+```
+
+Rejected because ordinary functions cannot terminally discharge session-bound
+tokens. Diagnostic: `PROOF_ORDINARY_FUNCTION_CANNOT_DISCHARGE`.
+
+### 15. Aggregate Use After Field Move
+
+Source shape:
+
+```wr
+let moved_tx = self.tx
+self.tick()
+```
+
+State:
+
+```text
+self: Live
+self.tx: Consumed
+```
+
+Judgment:
+
+```text
+Gamma; S |- use self
+```
+
+Rejected because `self` is partially moved. Diagnostic:
+`PROOF_PARTIAL_MOVE`.
+
+### 16. Validation Ok Transfers Obligation
+
+Source shape:
+
+```wr
+match Packet.validate(source=buffer, limits=limits):
+    case Ok(packet):
+        batch.return_rx(packet=packet)
+```
+
+Ok branch state:
+
+```text
+buffer: Consumed
+packet: Linear, brand StreamSession(batch)
+obligation: transferred from buffer to packet
+```
+
+The original `buffer` cannot be used after validation success. The packet can be
+closed only by a terminal receiver with the same stream brand. A mismatched
+receiver reports `PROOF_BRAND_MISMATCH`.
+
+### 17. Cross-Core Transfer Of Session Token
+
+Source shape:
+
+```wr
+let pushed = self.outbox.push(item=packet)
+```
+
+State:
+
+```text
+packet: ValidatedBuffer, brand StreamSession(batch)
+```
+
+Judgment:
+
+```text
+Gamma; S |- transferToCore packet core1
+```
+
+Rejected because session-bound validated buffers do not satisfy
+`CoreMovableOwned`. Diagnostic: `PROOF_NOT_CORE_MOVABLE`.
+
+### 18. Shadowing A Live Resource
+
+Source shape:
+
+```wr
+take buffer:
+    let buffer = 1
+```
+
+Judgment:
+
+```text
+Gamma; S |- bind buffer
+```
+
+Rejected because the source name already denotes a live non-copy resource.
+Diagnostic: `PROOF_SHADOWS_LIVE_RESOURCE`.
+
 ## Open Risks
 
 The first production checker should explicitly test these risk areas:
 
-- join semantics for branches with partially moved aggregates
 - exact rules for affine-but-droppable versus affine-and-must-close values
 - how much arithmetic entailment is needed before the first backend milestone
 - diagnostic minimization for long counterexample paths
