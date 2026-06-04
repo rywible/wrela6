@@ -1,10 +1,10 @@
 import { TokenKind } from "./token-kind";
 
 export class KeywordTable {
-  readonly #table: ReadonlyMap<string, TokenKind>;
+  private readonly table: ReadonlyMap<string, TokenKind>;
 
   private constructor(table: ReadonlyMap<string, TokenKind>) {
-    this.#table = table;
+    this.table = table;
   }
 
   static default(): KeywordTable {
@@ -16,7 +16,7 @@ export class KeywordTable {
   }
 
   lookup(lexeme: string): TokenKind {
-    return this.#table.get(lexeme) ?? TokenKind.Identifier;
+    return this.table.get(lexeme) ?? TokenKind.Identifier;
   }
 }
 

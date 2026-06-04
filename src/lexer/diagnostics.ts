@@ -1,7 +1,9 @@
-import type { SourceSpan } from "./source-span";
-import type { SourceText } from "./source-text";
-
-export type DiagnosticSeverity = "error" | "warning";
+import {
+  CollectingDiagnosticSink as SharedCollectingDiagnosticSink,
+  type Diagnostic,
+  type DiagnosticSeverity,
+  type DiagnosticSink as SharedDiagnosticSink,
+} from "../shared/diagnostics";
 
 export type LexDiagnosticCode =
   | "LEX_INVALID_CHARACTER"
@@ -13,26 +15,10 @@ export type LexDiagnosticCode =
   | "LEX_MODULE_UNRESOLVED"
   | "LEX_IMPORT_CYCLE";
 
-export interface LexDiagnostic {
-  readonly code: LexDiagnosticCode;
-  readonly severity: DiagnosticSeverity;
-  readonly message: string;
-  readonly source: SourceText;
-  readonly span: SourceSpan;
-}
+export type LexDiagnostic = Diagnostic<LexDiagnosticCode>;
 
-export interface DiagnosticSink {
-  report(diagnostic: LexDiagnostic): void;
-}
+export type DiagnosticSink = SharedDiagnosticSink<LexDiagnostic>;
 
-export class CollectingDiagnosticSink implements DiagnosticSink {
-  readonly #collected: LexDiagnostic[] = [];
+export class CollectingDiagnosticSink extends SharedCollectingDiagnosticSink<LexDiagnostic> {}
 
-  report(diagnostic: LexDiagnostic): void {
-    this.#collected.push(diagnostic);
-  }
-
-  get diagnostics(): readonly LexDiagnostic[] {
-    return [...this.#collected];
-  }
-}
+export type { DiagnosticSeverity };

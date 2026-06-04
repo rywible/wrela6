@@ -136,6 +136,15 @@ function checkTextPolicies(filePath: string, sourceText: string): PolicyViolatio
     });
   }
 
+  if (normalizedPath.startsWith("src/") && /#[A-Za-z_][A-Za-z0-9_]*/.test(sourceText)) {
+    violations.push({
+      filePath,
+      line: 1,
+      column: 1,
+      message: "Use TypeScript private fields instead of # private fields in runtime source.",
+    });
+  }
+
   return violations;
 }
 

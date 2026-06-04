@@ -184,7 +184,7 @@ export class ImportDiscovery {
     return { index, trailingDot: false };
   }
 
-  static readonly #nonModuleTokens: ReadonlySet<TokenKind> = new Set([
+  private static readonly nonModuleTokens: ReadonlySet<TokenKind> = new Set([
     TokenKind.Eof,
     TokenKind.Newline,
     TokenKind.Indent,
@@ -219,7 +219,7 @@ export class ImportDiscovery {
   ]);
 
   private isModuleNameToken(token: Token): boolean {
-    return !ImportDiscovery.#nonModuleTokens.has(token.kind);
+    return !ImportDiscovery.nonModuleTokens.has(token.kind);
   }
 
   private advancePastStatement(items: readonly Token[], startIndex: number): number {

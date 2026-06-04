@@ -2,31 +2,31 @@ import type { SourceText } from "./source-text";
 import { SourceSpan } from "./source-span";
 
 export class Cursor {
-  readonly #source: SourceText;
-  #currentOffset: number;
+  private readonly source: SourceText;
+  private currentOffset: number;
 
   constructor(source: SourceText) {
-    this.#source = source;
-    this.#currentOffset = 0;
+    this.source = source;
+    this.currentOffset = 0;
   }
 
   get offset(): number {
-    return this.#currentOffset;
+    return this.currentOffset;
   }
 
   isAtEnd(): boolean {
-    return this.#currentOffset >= this.#source.length;
+    return this.currentOffset >= this.source.length;
   }
 
   peek(ahead: number = 0): string | undefined {
-    return this.#source.charAt(this.#currentOffset + ahead);
+    return this.source.charAt(this.currentOffset + ahead);
   }
 
   advance(): string | undefined {
-    const consumed = this.#source.charAt(this.#currentOffset);
+    const consumed = this.source.charAt(this.currentOffset);
 
     if (consumed !== undefined) {
-      this.#currentOffset++;
+      this.currentOffset++;
     }
 
     return consumed;
@@ -37,10 +37,10 @@ export class Cursor {
       throw new RangeError(`advanceBy count must be non-negative, got ${count}.`);
     }
 
-    this.#currentOffset = Math.min(this.#currentOffset + count, this.#source.length);
+    this.currentOffset = Math.min(this.currentOffset + count, this.source.length);
   }
 
   spanFrom(start: number): SourceSpan {
-    return this.#source.span(start, this.#currentOffset);
+    return this.source.span(start, this.currentOffset);
   }
 }
