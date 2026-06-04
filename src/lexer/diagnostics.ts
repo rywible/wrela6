@@ -33,6 +33,6 @@ export class CollectingDiagnosticSink implements DiagnosticSink {
   }
 
   get diagnostics(): readonly LexDiagnostic[] {
-    return this.#collected;
+    return [...this.#collected];
   }
 }

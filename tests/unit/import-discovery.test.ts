@@ -271,4 +271,130 @@ describe("ImportDiscovery", () => {
     expect(imports[0]!.moduleName).toBe("bar.baz");
     expect(diagnostics.diagnostics).toEqual([]);
   });
+
+  test("discovers keyword tokens as module name parts", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const source = SourceText.from("app/main.wr", "use UefiFirmware from core.uefi\n");
+    const tokens = TokenStream.from([
+      token(TokenKind.Use, "use", 0, 3),
+      token(TokenKind.Identifier, "UefiFirmware", 4, 16),
+      token(TokenKind.From, "from", 17, 21),
+      token(TokenKind.Identifier, "core", 22, 26),
+      token(TokenKind.Dot, ".", 26, 27),
+      token(TokenKind.Uefi, "uefi", 27, 31),
+      token(TokenKind.Newline, "\n", 31, 32),
+      token(TokenKind.Eof, "", 32, 32),
+    ]);
+
+    const imports = new ImportDiscovery({ diagnostics }).discover({
+      importer: ModulePath.from("app/main.wr"),
+      source,
+      tokens,
+    });
+
+    expect(imports.map((request) => request.moduleName)).toEqual(["core.uefi"]);
+    expect(diagnostics.diagnostics).toEqual([]);
+  });
+
+  test("module specifier span covers only module name", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const source = SourceText.from("app/main.wr", "use Foo from bar.baz\n");
+    const tokens = TokenStream.from([
+      token(TokenKind.Use, "use", 0, 3),
+      token(TokenKind.Identifier, "Foo", 4, 7),
+      token(TokenKind.From, "from", 8, 12),
+      token(TokenKind.Identifier, "bar", 13, 16),
+      token(TokenKind.Dot, ".", 16, 17),
+      token(TokenKind.Identifier, "baz", 17, 20),
+      token(TokenKind.Newline, "\n", 20, 21),
+      token(TokenKind.Eof, "", 21, 21),
+    ]);
+
+    const imports = new ImportDiscovery({ diagnostics }).discover({
+      importer: ModulePath.from("app/main.wr"),
+      source,
+      tokens,
+    });
+
+    expect(imports).toHaveLength(1);
+    expect(source.slice(imports[0]!.span)).toBe("bar.baz");
+    expect(diagnostics.diagnostics).toEqual([]);
+  });
+
+  test("malformed: trailing comma before from reports diagnostic", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const source = SourceText.from("app/main.wr", "use A, from core.good\n");
+    const tokens = TokenStream.from([
+      token(TokenKind.Use, "use", 0, 3),
+      token(TokenKind.Identifier, "A", 4, 5),
+      token(TokenKind.Comma, ",", 5, 6),
+      token(TokenKind.From, "from", 7, 11),
+      token(TokenKind.Identifier, "core", 12, 16),
+      token(TokenKind.Dot, ".", 16, 17),
+      token(TokenKind.Identifier, "good", 17, 21),
+      token(TokenKind.Newline, "\n", 21, 22),
+      token(TokenKind.Eof, "", 22, 22),
+    ]);
+
+    const imports = new ImportDiscovery({ diagnostics }).discover({
+      importer: ModulePath.from("app/main.wr"),
+      source,
+      tokens,
+    });
+
+    expect(imports).toHaveLength(0);
+    expect(diagnostics.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "LEX_IMPORT_MALFORMED",
+    );
+  });
+
+  test("malformed: trailing dot in module name", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const source = SourceText.from("app/main.wr", "use Foo from core.\n");
+    const tokens = TokenStream.from([
+      token(TokenKind.Use, "use", 0, 3),
+      token(TokenKind.Identifier, "Foo", 4, 7),
+      token(TokenKind.From, "from", 8, 12),
+      token(TokenKind.Identifier, "core", 13, 17),
+      token(TokenKind.Dot, ".", 17, 18),
+      token(TokenKind.Newline, "\n", 18, 19),
+      token(TokenKind.Eof, "", 19, 19),
+    ]);
+
+    const imports = new ImportDiscovery({ diagnostics }).discover({
+      importer: ModulePath.from("app/main.wr"),
+      source,
+      tokens,
+    });
+
+    expect(imports).toHaveLength(0);
+    expect(diagnostics.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "LEX_IMPORT_MALFORMED",
+    );
+  });
+
+  test("malformed: extra tokens after module name", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const source = SourceText.from("app/main.wr", "use Foo from core extra\n");
+    const tokens = TokenStream.from([
+      token(TokenKind.Use, "use", 0, 3),
+      token(TokenKind.Identifier, "Foo", 4, 7),
+      token(TokenKind.From, "from", 8, 12),
+      token(TokenKind.Identifier, "core", 13, 17),
+      token(TokenKind.Identifier, "extra", 18, 23),
+      token(TokenKind.Newline, "\n", 23, 24),
+      token(TokenKind.Eof, "", 24, 24),
+    ]);
+
+    const imports = new ImportDiscovery({ diagnostics }).discover({
+      importer: ModulePath.from("app/main.wr"),
+      source,
+      tokens,
+    });
+
+    expect(imports).toHaveLength(0);
+    expect(diagnostics.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "LEX_IMPORT_MALFORMED",
+    );
+  });
 });

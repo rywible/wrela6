@@ -199,15 +199,11 @@ export class Lexer {
     indentationTrivia: Trivia | null,
     indentationStack: number[],
   ): boolean {
-    if (indentationTrivia === null) {
-      return false;
-    }
-
-    const indentText = indentationTrivia.lexeme;
-    const width = this.measureIndentation(indentText);
+    const indentText = indentationTrivia !== null ? indentationTrivia.lexeme : "";
+    const width = indentationTrivia !== null ? this.measureIndentation(indentText) : 0;
     const containsTab = indentText.includes("\t");
 
-    if (width > 0 && (containsTab || width % 4 !== 0)) {
+    if (indentationTrivia !== null && width > 0 && (containsTab || width % 4 !== 0)) {
       this.dependencies.diagnostics.report({
         code: "LEX_INCONSISTENT_INDENT",
         severity: "error",
@@ -226,12 +222,13 @@ export class Lexer {
 
     if (effectiveWidth > stackTop) {
       indentationStack.push(effectiveWidth);
+      const leadingTrivia = indentationTrivia !== null ? [indentationTrivia] : [];
       tokens.push(
         new Token({
           kind: TokenKind.Indent,
           lexeme: "",
           span: source.span(cursor.offset, cursor.offset),
-          leadingTrivia: [indentationTrivia],
+          leadingTrivia,
           trailingTrivia: [],
         }),
       );
@@ -242,19 +239,21 @@ export class Lexer {
 
       while (indentationStack[indentationStack.length - 1]! > effectiveWidth) {
         indentationStack.pop();
+        const leadingTrivia =
+          isFirstDedent && indentationTrivia !== null ? [indentationTrivia] : [];
         tokens.push(
           new Token({
             kind: TokenKind.Dedent,
             lexeme: "",
             span: source.span(cursor.offset, cursor.offset),
-            leadingTrivia: isFirstDedent ? [indentationTrivia] : [],
+            leadingTrivia,
             trailingTrivia: [],
           }),
         );
         isFirstDedent = false;
       }
 
-      if (!indentationStack.includes(effectiveWidth)) {
+      if (indentationTrivia !== null && !indentationStack.includes(effectiveWidth)) {
         this.dependencies.diagnostics.report({
           code: "LEX_INCONSISTENT_INDENT",
           severity: "error",

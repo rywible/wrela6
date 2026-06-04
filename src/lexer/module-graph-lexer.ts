@@ -55,82 +55,84 @@ export class ModuleGraphLexer {
     visited.add(path.key);
     inProgress.add(path.key);
 
-    const readResult = await this.dependencies.files.read(path);
+    try {
+      const readResult = await this.dependencies.files.read(path);
 
-    if (readResult.kind === "missing") {
-      if (importRequest) {
-        this.dependencies.diagnostics.report({
-          code: "LEX_MODULE_MISSING",
-          severity: "error",
-          message: `Module not found: ${path.key}`,
-          source: importRequest.source,
-          span: importRequest.span,
-        });
+      if (readResult.kind === "missing") {
+        if (importRequest) {
+          this.dependencies.diagnostics.report({
+            code: "LEX_MODULE_MISSING",
+            severity: "error",
+            message: `Module not found: ${path.key}`,
+            source: importRequest.source,
+            span: importRequest.span,
+          });
+        }
+
+        return;
       }
 
-      return;
+      if (readResult.kind === "unreadable") {
+        if (importRequest) {
+          this.dependencies.diagnostics.report({
+            code: "LEX_MODULE_UNREADABLE",
+            severity: "error",
+            message: `Could not read module: ${readResult.message}`,
+            source: importRequest.source,
+            span: importRequest.span,
+          });
+        }
+
+        return;
+      }
+
+      const { source } = readResult;
+      const lexResult = this.dependencies.lexer.lex(source);
+      const { tokens } = lexResult;
+      const imports = this.dependencies.imports.discover({
+        importer: path,
+        source,
+        tokens,
+      });
+
+      modules.push({
+        path,
+        source,
+        tokens,
+        imports,
+      });
+
+      for (const nextImport of imports) {
+        const resolveResult = this.dependencies.resolver.resolve(nextImport);
+
+        if (resolveResult.kind === "unresolved") {
+          this.dependencies.diagnostics.report({
+            code: "LEX_MODULE_UNRESOLVED",
+            severity: "error",
+            message: `Could not resolve module: ${nextImport.moduleName}`,
+            source: nextImport.source,
+            span: nextImport.span,
+          });
+          continue;
+        }
+
+        const resolvedPath = resolveResult.path;
+
+        if (inProgress.has(resolvedPath.key)) {
+          this.dependencies.diagnostics.report({
+            code: "LEX_IMPORT_CYCLE",
+            severity: "warning",
+            message: `Import cycle detected: ${resolvedPath.key}`,
+            source: nextImport.source,
+            span: nextImport.span,
+          });
+          continue;
+        }
+
+        await this.traverse(resolvedPath, modules, visited, inProgress, nextImport);
+      }
+    } finally {
+      inProgress.delete(path.key);
     }
-
-    if (readResult.kind === "unreadable") {
-      if (importRequest) {
-        this.dependencies.diagnostics.report({
-          code: "LEX_MODULE_UNREADABLE",
-          severity: "error",
-          message: `Could not read module: ${readResult.message}`,
-          source: importRequest.source,
-          span: importRequest.span,
-        });
-      }
-
-      return;
-    }
-
-    const { source } = readResult;
-    const lexResult = this.dependencies.lexer.lex(source);
-    const { tokens } = lexResult;
-    const imports = this.dependencies.imports.discover({
-      importer: path,
-      source,
-      tokens,
-    });
-
-    modules.push({
-      path,
-      source,
-      tokens,
-      imports,
-    });
-
-    for (const nextImport of imports) {
-      const resolveResult = this.dependencies.resolver.resolve(nextImport);
-
-      if (resolveResult.kind === "unresolved") {
-        this.dependencies.diagnostics.report({
-          code: "LEX_MODULE_UNRESOLVED",
-          severity: "error",
-          message: `Could not resolve module: ${nextImport.moduleName}`,
-          source: nextImport.source,
-          span: nextImport.span,
-        });
-        continue;
-      }
-
-      const resolvedPath = resolveResult.path;
-
-      if (inProgress.has(resolvedPath.key)) {
-        this.dependencies.diagnostics.report({
-          code: "LEX_IMPORT_CYCLE",
-          severity: "warning",
-          message: `Import cycle detected: ${resolvedPath.key}`,
-          source: nextImport.source,
-          span: nextImport.span,
-        });
-        continue;
-      }
-
-      await this.traverse(resolvedPath, modules, visited, inProgress, nextImport);
-    }
-
-    inProgress.delete(path.key);
   }
 }

@@ -37,15 +37,21 @@ export class ImportDiscovery {
       }
 
       const useToken = token;
-
       index++;
 
       const importNames: Token[] = [];
-      index = this.collectImportNames(items, index, importNames);
+      const hasTrailingComma = this.collectImportNames(items, index, importNames);
+      index = hasTrailingComma.index;
 
       if (importNames.length === 0) {
         this.reportMalformed(source, useToken.span);
-        index = this.advancePastStatement(items, index);
+        index = this.advancePastStatement(items, hasTrailingComma.index);
+        continue;
+      }
+
+      if (hasTrailingComma.trailingComma) {
+        this.reportMalformed(source, items[hasTrailingComma.index - 1]!.span);
+        index = this.advancePastStatement(items, hasTrailingComma.index);
         continue;
       }
 
@@ -57,23 +63,39 @@ export class ImportDiscovery {
 
       index++;
 
-      const moduleParts: string[] = [];
-      index = this.collectModuleName(items, index, moduleParts);
+      const moduleParts: { text: string; token: Token }[] = [];
+      const moduleResult = this.collectModuleName(items, index, moduleParts);
+      index = moduleResult.index;
 
       if (moduleParts.length === 0) {
         this.reportMalformed(source, useToken.span);
+        index = this.advancePastStatement(items, moduleResult.index);
+        continue;
+      }
+
+      if (moduleResult.trailingDot) {
+        this.reportMalformed(source, items[moduleResult.index - 1]!.span);
+        index = this.advancePastStatement(items, moduleResult.index);
+        continue;
+      }
+
+      const hasExtraTokens = this.checkExtraTokens(items, index);
+      if (hasExtraTokens) {
+        this.reportMalformed(source, items[index]!.span);
         index = this.advancePastStatement(items, index);
         continue;
       }
 
-      const lastConsumed = index - 1;
-      const span = SourceSpan.from(useToken.span.start, items[lastConsumed]!.span.end);
+      const moduleSpan = SourceSpan.from(
+        moduleParts[0]!.token.span.start,
+        moduleParts[moduleParts.length - 1]!.token.span.end,
+      );
 
       result.push({
         importer,
         source,
-        moduleName: moduleParts.join("."),
-        span,
+        moduleName: moduleParts.map((part) => part.text).join("."),
+        span: moduleSpan,
       });
 
       index = this.advancePastStatement(items, index);
@@ -82,15 +104,19 @@ export class ImportDiscovery {
     return result;
   }
 
-  private collectImportNames(items: readonly Token[], startIndex: number, names: Token[]): number {
+  private collectImportNames(
+    items: readonly Token[],
+    startIndex: number,
+    names: Token[],
+  ): { index: number; trailingComma: boolean } {
     let index = startIndex;
 
     if (index >= items.length) {
-      return index;
+      return { index, trailingComma: false };
     }
 
     if (items[index]!.kind !== TokenKind.Identifier) {
-      return index;
+      return { index, trailingComma: false };
     }
 
     names.push(items[index]!);
@@ -107,25 +133,37 @@ export class ImportDiscovery {
         names.push(items[index]!);
         index++;
       } else {
-        break;
+        return { index, trailingComma: true };
       }
     }
 
-    return index;
+    return { index, trailingComma: false };
   }
 
-  private collectModuleName(items: readonly Token[], startIndex: number, parts: string[]): number {
+  private checkExtraTokens(items: readonly Token[], index: number): boolean {
+    return (
+      index < items.length &&
+      items[index]!.kind !== TokenKind.Newline &&
+      items[index]!.kind !== TokenKind.Eof
+    );
+  }
+
+  private collectModuleName(
+    items: readonly Token[],
+    startIndex: number,
+    parts: { text: string; token: Token }[],
+  ): { index: number; trailingDot: boolean } {
     let index = startIndex;
 
     if (index >= items.length) {
-      return index;
+      return { index, trailingDot: false };
     }
 
-    if (items[index]!.kind !== TokenKind.Identifier) {
-      return index;
+    if (!this.isModuleNameToken(items[index]!)) {
+      return { index, trailingDot: false };
     }
 
-    parts.push(items[index]!.lexeme);
+    parts.push({ text: items[index]!.lexeme, token: items[index]! });
     index++;
 
     while (index < items.length) {
@@ -135,15 +173,83 @@ export class ImportDiscovery {
 
       index++;
 
-      if (index < items.length && items[index]!.kind === TokenKind.Identifier) {
-        parts.push(items[index]!.lexeme);
+      if (index < items.length && this.isModuleNameToken(items[index]!)) {
+        parts.push({ text: items[index]!.lexeme, token: items[index]! });
         index++;
       } else {
-        break;
+        return { index, trailingDot: true };
       }
     }
 
-    return index;
+    return { index, trailingDot: false };
+  }
+
+  private isModuleNameToken(token: Token): boolean {
+    if (token.kind === TokenKind.Identifier) {
+      return true;
+    }
+
+    if (token.kind === TokenKind.Newline || token.kind === TokenKind.Eof) {
+      return false;
+    }
+
+    if (token.kind === TokenKind.Indent || token.kind === TokenKind.Dedent) {
+      return false;
+    }
+
+    if (
+      token.kind === TokenKind.IntegerLiteral ||
+      token.kind === TokenKind.StringLiteral ||
+      token.kind === TokenKind.Invalid
+    ) {
+      return false;
+    }
+
+    if (
+      token.kind === TokenKind.LeftParen ||
+      token.kind === TokenKind.RightParen ||
+      token.kind === TokenKind.LeftBrace ||
+      token.kind === TokenKind.RightBrace ||
+      token.kind === TokenKind.LeftBracket ||
+      token.kind === TokenKind.RightBracket
+    ) {
+      return false;
+    }
+
+    if (
+      token.kind === TokenKind.Colon ||
+      token.kind === TokenKind.Comma ||
+      token.kind === TokenKind.Dot
+    ) {
+      return false;
+    }
+
+    if (
+      token.kind === TokenKind.Equals ||
+      token.kind === TokenKind.Plus ||
+      token.kind === TokenKind.Minus ||
+      token.kind === TokenKind.Star ||
+      token.kind === TokenKind.Slash ||
+      token.kind === TokenKind.Percent ||
+      token.kind === TokenKind.Less ||
+      token.kind === TokenKind.Greater ||
+      token.kind === TokenKind.Question
+    ) {
+      return false;
+    }
+
+    if (
+      token.kind === TokenKind.Arrow ||
+      token.kind === TokenKind.FatArrow ||
+      token.kind === TokenKind.EqualsEquals ||
+      token.kind === TokenKind.BangEquals ||
+      token.kind === TokenKind.LessEquals ||
+      token.kind === TokenKind.GreaterEquals
+    ) {
+      return false;
+    }
+
+    return true;
   }
 
   private advancePastStatement(items: readonly Token[], startIndex: number): number {

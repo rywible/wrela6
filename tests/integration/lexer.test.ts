@@ -342,4 +342,28 @@ describe("Lexer", () => {
       "LEX_INCONSISTENT_INDENT",
     );
   });
+
+  test("emits dedent when unindenting to zero", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+    const source = SourceText.from("dedent-zero.wr", "image Main:\n    a\nb\n");
+
+    const result = lexer.lex(source);
+
+    expect(result.tokens.kinds()).toEqual([
+      TokenKind.Image,
+      TokenKind.Identifier,
+      TokenKind.Colon,
+      TokenKind.Newline,
+      TokenKind.Indent,
+      TokenKind.Identifier,
+      TokenKind.Newline,
+      TokenKind.Dedent,
+      TokenKind.Identifier,
+      TokenKind.Newline,
+      TokenKind.Eof,
+    ]);
+    expect(result.tokens.reconstruct()).toBe(source.text);
+    expect(diagnostics.diagnostics).toEqual([]);
+  });
 });
