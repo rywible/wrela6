@@ -108,7 +108,16 @@ export function consumePlace(state: ProofState, place: string): ProofResult {
 
   const places = new Map(state.places);
   places.set(place, { ...record, status: "consumed" });
-  return accepted({ ...cloneState(state), places });
+
+  for (const [candidatePlace, candidateRecord] of places) {
+    if (candidatePlace.startsWith(`${place}.`)) {
+      places.set(candidatePlace, { ...candidateRecord, status: "consumed" });
+    }
+  }
+
+  const affectedPlaces = affectedPlacesForMove(state, place);
+  const facts = removeFactsMentioningPlaces(state.facts, affectedPlaces);
+  return accepted({ ...cloneState(state), places, facts });
 }
 
 export function usePlace(state: ProofState, place: string): ProofResult {
@@ -116,6 +125,14 @@ export function usePlace(state: ProofState, place: string): ProofResult {
 }
 
 export function joinStates(leftState: ProofState, rightState: ProofState): ProofResult {
+  if (!sameObligations(leftState.obligations, rightState.obligations)) {
+    return rejected(leftState, "BRANCH_OBLIGATION_MISMATCH");
+  }
+
+  if (!sameLoans(leftState.loans, rightState.loans)) {
+    return rejected(leftState, "BRANCH_LOAN_MISMATCH");
+  }
+
   const places = new Map<string, ResourceRecord>();
   const placeNames = new Set([...leftState.places.keys(), ...rightState.places.keys()]);
 
@@ -134,8 +151,19 @@ export function joinStates(leftState: ProofState, rightState: ProofState): Proof
     }
 
     if (leftRecord !== undefined && rightRecord !== undefined) {
+      if (!sameResourceShape(leftRecord, rightRecord)) {
+        return rejected(leftState, "BRANCH_RESOURCE_MISMATCH");
+      }
+
       const status = leftRecord.status === rightRecord.status ? leftRecord.status : "maybeConsumed";
       places.set(place, { ...leftRecord, status });
+    }
+  }
+
+  for (const obligation of leftState.obligations.values()) {
+    const record = places.get(obligation.place);
+    if (record === undefined || record.status !== "live") {
+      return rejected(leftState, "BRANCH_OBLIGATION_RESOURCE_MISMATCH");
     }
   }
 
@@ -149,8 +177,8 @@ export function joinStates(leftState: ProofState, rightState: ProofState): Proof
   return accepted({
     places,
     facts,
-    obligations: new Map([...leftState.obligations, ...rightState.obligations]),
-    loans: new Map([...leftState.loans, ...rightState.loans]),
+    obligations: new Map(leftState.obligations),
+    loans: new Map(leftState.loans),
   });
 }
 
@@ -161,6 +189,19 @@ export function enterLinearObligation(
 ): ProofResult {
   const useResult = checkPlaceAvailable(state, place);
   if (!useResult.succeeded) return useResult;
+
+  if (state.obligations.has(obligationId)) {
+    return rejected(state, "OBLIGATION_ALREADY_OPEN");
+  }
+
+  const record = state.places.get(place)!;
+  if (record.kind === "copy") {
+    return rejected(state, "OBLIGATION_REQUIRES_NON_COPY");
+  }
+
+  if (hasOverlappingObligation(state, place)) {
+    return rejected(state, "PLACE_ALREADY_OBLIGATED");
+  }
 
   const obligations = new Map(state.obligations);
   obligations.set(obligationId, { obligationId, place });
@@ -204,6 +245,12 @@ export function dropPlace(state: ProofState, place: string): ProofResult {
   if (!useResult.succeeded) return useResult;
 
   const record = state.places.get(place)!;
+  if (hasOverlappingObligation(state, place)) {
+    return rejected(state, "RESOURCE_HAS_LIVE_OBLIGATION");
+  }
+  if (hasMustHandleChild(state, place)) {
+    return rejected(state, "RESOURCE_CHILD_MUST_BE_HANDLED");
+  }
   if (!record.droppable) {
     return rejected(state, "RESOURCE_MUST_BE_HANDLED");
   }
@@ -238,6 +285,10 @@ export function openLoan(state: ProofState, loanId: string, place: string): Proo
   const useResult = checkPlaceAvailable(state, place);
   if (!useResult.succeeded) return useResult;
 
+  if (state.loans.has(loanId)) {
+    return rejected(state, "LOAN_ALREADY_OPEN");
+  }
+
   const loans = new Map(state.loans);
   loans.set(loanId, { loanId, place });
   return accepted({ ...cloneState(state), loans });
@@ -267,6 +318,14 @@ export function checkLoopBackedge(state: ProofState): ProofResult {
 }
 
 export function markValidationMatched(state: ProofState, place: string): ProofResult {
+  const useResult = checkPlaceAvailable(state, place);
+  if (!useResult.succeeded) return useResult;
+
+  const record = state.places.get(place)!;
+  if (record.kind !== "singleUse") {
+    return rejected(state, "RESOURCE_KIND_MISMATCH");
+  }
+
   return consumePlace(state, place);
 }
 
@@ -276,13 +335,26 @@ export function matchValidationOk(
   sourcePlace: string,
   packetPlace: string,
 ): ProofResult {
-  const validationResult = consumePlace(state, validationPlace);
-  if (!validationResult.succeeded) return validationResult;
-
-  const sourceRecord = validationResult.state.places.get(sourcePlace);
-  if (sourceRecord === undefined) {
-    return rejected(validationResult.state, "RESOURCE_UNKNOWN_PLACE");
+  const validationRecord = state.places.get(validationPlace);
+  if (validationRecord === undefined) {
+    return rejected(state, "RESOURCE_UNKNOWN_PLACE");
   }
+
+  const sourceRecord = state.places.get(sourcePlace);
+  if (sourceRecord === undefined) {
+    return rejected(state, "RESOURCE_UNKNOWN_PLACE");
+  }
+
+  if (
+    validationRecord.brand !== undefined &&
+    sourceRecord.brand !== undefined &&
+    validationRecord.brand !== sourceRecord.brand
+  ) {
+    return rejected(state, "BRAND_MISMATCH");
+  }
+
+  const validationResult = markValidationMatched(state, validationPlace);
+  if (!validationResult.succeeded) return validationResult;
 
   const sourceResult = consumePlace(validationResult.state, sourcePlace);
   if (!sourceResult.succeeded) return sourceResult;
@@ -325,7 +397,8 @@ export function advancePrivateState(state: ProofState, place: string): ProofResu
     ...record,
     generation: (record.generation ?? 0) + 1,
   });
-  return accepted({ ...cloneState(state), places });
+  const facts = removeFactsMentioningPlaces(state.facts, [place]);
+  return accepted({ ...cloneState(state), places, facts });
 }
 
 export function callFallibleConsume(
@@ -339,6 +412,10 @@ export function callFallibleConsume(
   const record = state.places.get(place)!;
   if (contract !== "attempt" && record.kind !== "copy") {
     return rejected(state, "ATTEMPT_REQUIRED");
+  }
+
+  if (hasOverlappingObligation(state, place)) {
+    return rejected(state, "RESOURCE_HAS_LIVE_OBLIGATION");
   }
 
   return consumePlace(state, place);
@@ -365,12 +442,19 @@ export function transferToCore(state: ProofState, place: string, targetCore: str
     return rejected(state, "RESOURCE_NOT_CORE_MOVABLE");
   }
 
+  if (hasOverlappingObligation(state, place)) {
+    return rejected(state, "RESOURCE_HAS_LIVE_OBLIGATION");
+  }
+
   const places = new Map(state.places);
   places.set(place, { ...record, ownerCore: targetCore });
   return accepted({ ...cloneState(state), places });
 }
 
-export function checkTerminalGraph(edges: readonly (readonly [string, string])[]): ProofResult {
+export function checkTerminalGraph(
+  edges: readonly (readonly [string, string])[],
+  platformDischarges?: ReadonlySet<string>,
+): ProofResult {
   const graph = new Map<string, string[]>();
   for (const [caller, callee] of edges) {
     const callees = graph.get(caller) ?? [];
@@ -400,6 +484,14 @@ export function checkTerminalGraph(edges: readonly (readonly [string, string])[]
     }
   }
 
+  if (platformDischarges !== undefined) {
+    for (const functionName of graph.keys()) {
+      if (!hasPathToPlatformDischarge(graph, platformDischarges, functionName)) {
+        return rejected(emptyState(), "TERMINAL_NO_PLATFORM_DISCHARGE");
+      }
+    }
+  }
+
   return accepted(emptyState());
 }
 
@@ -407,6 +499,9 @@ export function readDynamicLayoutField(state: ProofState, field: string): ProofR
   const owner = field.split(".")[0] ?? field;
   if (!state.facts.has(`layout.fixedFits(${owner})`)) {
     return rejected(state, "LAYOUT_FIT_NOT_PROVEN");
+  }
+  if (!state.facts.has(`layout.dynamicRange(${field})`)) {
+    return rejected(state, "LAYOUT_DYNAMIC_RANGE_NOT_PROVEN");
   }
   return accepted(state);
 }
@@ -422,8 +517,14 @@ function checkPlaceAvailable(state: ProofState, place: string): ProofResult {
   if (record.status === "maybeConsumed") {
     return rejected(state, "RESOURCE_MAYBE_CONSUMED");
   }
+  if (hasConsumedParent(state, place)) {
+    return rejected(state, "RESOURCE_ALREADY_CONSUMED");
+  }
   if (isLoaned(state, place)) {
     return rejected(state, "PLACE_LOANED");
+  }
+  if (hasLoanedChild(state, place)) {
+    return rejected(state, "RESOURCE_PARTIALLY_LOANED");
   }
   if (hasConsumedChild(state, place)) {
     return rejected(state, "RESOURCE_PARTIALLY_MOVED");
@@ -440,6 +541,25 @@ function isLoaned(state: ProofState, place: string): boolean {
   return false;
 }
 
+function hasLoanedChild(state: ProofState, place: string): boolean {
+  for (const loan of state.loans.values()) {
+    if (loan.place.startsWith(`${place}.`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasConsumedParent(state: ProofState, place: string): boolean {
+  for (const parentPlace of parentPlaces(place)) {
+    const record = state.places.get(parentPlace);
+    if (record?.status === "consumed" || record?.status === "maybeConsumed") {
+      return true;
+    }
+  }
+  return false;
+}
+
 function hasConsumedChild(state: ProofState, place: string): boolean {
   for (const [candidatePlace, record] of state.places) {
     if (
@@ -450,6 +570,130 @@ function hasConsumedChild(state: ProofState, place: string): boolean {
     }
   }
   return false;
+}
+
+function sameObligations(
+  leftObligations: ReadonlyMap<string, ObligationRecord>,
+  rightObligations: ReadonlyMap<string, ObligationRecord>,
+): boolean {
+  if (leftObligations.size !== rightObligations.size) return false;
+
+  for (const [obligationId, leftObligation] of leftObligations) {
+    const rightObligation = rightObligations.get(obligationId);
+    if (rightObligation?.place !== leftObligation.place) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sameLoans(
+  leftLoans: ReadonlyMap<string, LoanRecord>,
+  rightLoans: ReadonlyMap<string, LoanRecord>,
+): boolean {
+  if (leftLoans.size !== rightLoans.size) return false;
+
+  for (const [loanId, leftLoan] of leftLoans) {
+    const rightLoan = rightLoans.get(loanId);
+    if (rightLoan?.place !== leftLoan.place) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sameResourceShape(leftRecord: ResourceRecord, rightRecord: ResourceRecord): boolean {
+  return (
+    leftRecord.kind === rightRecord.kind &&
+    leftRecord.brand === rightRecord.brand &&
+    leftRecord.generation === rightRecord.generation &&
+    leftRecord.droppable === rightRecord.droppable &&
+    leftRecord.coreMovable === rightRecord.coreMovable &&
+    leftRecord.ownerCore === rightRecord.ownerCore
+  );
+}
+
+function hasOverlappingObligation(state: ProofState, place: string): boolean {
+  for (const obligation of state.obligations.values()) {
+    if (placesOverlap(obligation.place, place)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasMustHandleChild(state: ProofState, place: string): boolean {
+  for (const [candidatePlace, record] of state.places) {
+    if (candidatePlace.startsWith(`${place}.`) && record.status === "live" && !record.droppable) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function placesOverlap(leftPlace: string, rightPlace: string): boolean {
+  return (
+    leftPlace === rightPlace ||
+    leftPlace.startsWith(`${rightPlace}.`) ||
+    rightPlace.startsWith(`${leftPlace}.`)
+  );
+}
+
+function hasPathToPlatformDischarge(
+  graph: ReadonlyMap<string, readonly string[]>,
+  platformDischarges: ReadonlySet<string>,
+  functionName: string,
+  seen: ReadonlySet<string> = new Set(),
+): boolean {
+  if (platformDischarges.has(functionName)) return true;
+  if (seen.has(functionName)) return false;
+
+  const nextSeen = new Set(seen);
+  nextSeen.add(functionName);
+
+  for (const callee of graph.get(functionName) ?? []) {
+    if (hasPathToPlatformDischarge(graph, platformDischarges, callee, nextSeen)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function affectedPlacesForMove(state: ProofState, place: string): readonly string[] {
+  const affectedPlaces = new Set<string>([place, ...parentPlaces(place)]);
+  for (const candidatePlace of state.places.keys()) {
+    if (candidatePlace.startsWith(`${place}.`)) {
+      affectedPlaces.add(candidatePlace);
+    }
+  }
+  return [...affectedPlaces];
+}
+
+function parentPlaces(place: string): readonly string[] {
+  const parts = place.split(".");
+  const parents: string[] = [];
+  for (let length = parts.length - 1; length > 0; length -= 1) {
+    parents.push(parts.slice(0, length).join("."));
+  }
+  return parents;
+}
+
+function removeFactsMentioningPlaces(
+  facts: ReadonlySet<string>,
+  places: readonly string[],
+): ReadonlySet<string> {
+  const remainingFacts = new Set<string>();
+  for (const fact of facts) {
+    if (!places.some((place) => factMentionsPlace(fact, place))) {
+      remainingFacts.add(fact);
+    }
+  }
+  return remainingFacts;
+}
+
+function factMentionsPlace(fact: string, place: string): boolean {
+  const escapedPlace = place.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^A-Za-z0-9_])${escapedPlace}(?=$|[^A-Za-z0-9_])`).test(fact);
 }
 
 function accepted(state: ProofState): ProofResult {

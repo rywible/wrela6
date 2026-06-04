@@ -179,3 +179,205 @@ test("proof core rejects shadowing a live affine resource", () => {
     "PLACE_SHADOWS_LIVE_RESOURCE",
   );
 });
+
+test("proof core rejects using an aggregate while one of its fields is loaned", () => {
+  const initialState = withPlace(withPlace(emptyState(), "self", { kind: "affine" }), "self.rx", {
+    kind: "affine",
+  });
+  const loanedState = openLoan(initialState, "receive-session", "self.rx").state;
+
+  expectRejected(usePlace(loanedState, "self"), "RESOURCE_PARTIALLY_LOANED");
+});
+
+test("proof core rejects joining branches with different live obligations", () => {
+  const initialState = withPlace(emptyState(), "buffer", { kind: "linear" });
+  const obligatedBranch = enterLinearObligation(initialState, "rx-buffer", "buffer").state;
+  const cleanBranch = cloneState(initialState);
+
+  expectRejected(joinStates(obligatedBranch, cleanBranch), "BRANCH_OBLIGATION_MISMATCH");
+});
+
+test("proof core rejects joining branches with different active loans", () => {
+  const initialState = withPlace(emptyState(), "self.rx", { kind: "affine" });
+  const loanedBranch = openLoan(initialState, "receive-session", "self.rx").state;
+  const cleanBranch = cloneState(initialState);
+
+  expectRejected(joinStates(loanedBranch, cleanBranch), "BRANCH_LOAN_MISMATCH");
+});
+
+test("proof core rejects old private-state facts after generation advance", () => {
+  const initialState = withPlace(emptyState(), "builder", {
+    kind: "privateState",
+    generation: 0,
+  });
+  const provenState = addFact(initialState, "builder@0.can_insert(desc)");
+  const advancedState = advancePrivateState(provenState, "builder").state;
+
+  expectRejected(requireFact(advancedState, "builder@0.can_insert(desc)"), "FACT_NOT_PROVEN");
+});
+
+test("proof core rejects facts about consumed resources", () => {
+  const initialState = withPlace(emptyState(), "buffer", { kind: "linear" });
+  const initializedState = addFact(initialState, "len <= buffer.initialized_prefix");
+  const consumedState = consumePlace(initializedState, "buffer").state;
+
+  expectRejected(requireFact(consumedState, "len <= buffer.initialized_prefix"), "FACT_NOT_PROVEN");
+});
+
+test("proof core rejects dynamic layout reads without the dynamic range fact", () => {
+  const initialState = addFact(emptyState(), "layout.fixedFits(Packet)");
+
+  expectRejected(
+    readDynamicLayoutField(initialState, "Packet.payload"),
+    "LAYOUT_DYNAMIC_RANGE_NOT_PROVEN",
+  );
+});
+
+test("proof core rejects using a field after its aggregate is consumed", () => {
+  const initialState = withPlace(withPlace(emptyState(), "self", { kind: "affine" }), "self.tx", {
+    kind: "affine",
+  });
+  const consumedState = consumePlace(initialState, "self").state;
+
+  expectRejected(usePlace(consumedState, "self.tx"), "RESOURCE_ALREADY_CONSUMED");
+});
+
+test("proof core rejects opening a linear obligation on a copy value", () => {
+  const initialState = withPlace(emptyState(), "count", { kind: "copy" });
+
+  expectRejected(
+    enterLinearObligation(initialState, "count-close", "count"),
+    "OBLIGATION_REQUIRES_NON_COPY",
+  );
+});
+
+test("proof core rejects duplicate obligation identifiers", () => {
+  const initialState = withPlace(withPlace(emptyState(), "left", { kind: "linear" }), "right", {
+    kind: "linear",
+  });
+  const obligatedState = enterLinearObligation(initialState, "rx-buffer", "left").state;
+
+  expectRejected(
+    enterLinearObligation(obligatedState, "rx-buffer", "right"),
+    "OBLIGATION_ALREADY_OPEN",
+  );
+});
+
+test("proof core rejects duplicate loan identifiers", () => {
+  const initialState = withPlace(
+    withPlace(emptyState(), "self.rx", { kind: "affine" }),
+    "self.tx",
+    { kind: "affine" },
+  );
+  const loanedState = openLoan(initialState, "edge-session", "self.rx").state;
+
+  expectRejected(openLoan(loanedState, "edge-session", "self.tx"), "LOAN_ALREADY_OPEN");
+});
+
+test("proof core rejects terminal graphs that never reach platform discharge", () => {
+  expectRejected(
+    checkTerminalGraph([["closePacket", "sanitizeOnly"]], new Set(["platformDischarge"])),
+    "TERMINAL_NO_PLATFORM_DISCHARGE",
+  );
+});
+
+test("proof core rejects validation Ok when validation and source brands differ", () => {
+  const initialState = withPlace(
+    withPlace(emptyState(), "buffer", { kind: "linear", brand: "batch-a" }),
+    "validation",
+    { kind: "singleUse", brand: "batch-b" },
+  );
+
+  expectRejected(
+    matchValidationOk(initialState, "validation", "buffer", "packet"),
+    "BRAND_MISMATCH",
+  );
+});
+
+test("proof core rejects matching a non-validation resource as validation", () => {
+  const initialState = withPlace(emptyState(), "buffer", { kind: "linear" });
+
+  expectRejected(markValidationMatched(initialState, "buffer"), "RESOURCE_KIND_MISMATCH");
+});
+
+test("proof core rejects dropping a droppable resource with a live obligation", () => {
+  const initialState = withPlace(emptyState(), "slot", {
+    kind: "affine",
+    droppable: true,
+  });
+  const obligatedState = enterLinearObligation(initialState, "slot-close", "slot").state;
+
+  expectRejected(dropPlace(obligatedState, "slot"), "RESOURCE_HAS_LIVE_OBLIGATION");
+});
+
+test("proof core rejects core transfer with a live obligation", () => {
+  const initialState = withPlace(emptyState(), "packet", {
+    kind: "linear",
+    coreMovable: true,
+  });
+  const obligatedState = enterLinearObligation(initialState, "packet-close", "packet").state;
+
+  expectRejected(transferToCore(obligatedState, "packet", "core1"), "RESOURCE_HAS_LIVE_OBLIGATION");
+});
+
+test("proof core rejects joining branches with different resource metadata", () => {
+  const leftBranch = withPlace(emptyState(), "packet", {
+    kind: "linear",
+    brand: "batch-a",
+  });
+  const rightBranch = withPlace(emptyState(), "packet", {
+    kind: "linear",
+    brand: "batch-b",
+  });
+
+  expectRejected(joinStates(leftBranch, rightBranch), "BRANCH_RESOURCE_MISMATCH");
+});
+
+test("proof core rejects joining an obligation over a maybe-consumed place", () => {
+  const initialState = withPlace(emptyState(), "buffer", { kind: "linear" });
+  const obligatedState = enterLinearObligation(initialState, "rx-buffer", "buffer").state;
+  const consumedBranch = consumePlace(obligatedState, "buffer").state;
+  const liveBranch = cloneState(obligatedState);
+
+  expectRejected(joinStates(consumedBranch, liveBranch), "BRANCH_OBLIGATION_RESOURCE_MISMATCH");
+});
+
+test("proof core rejects opening two obligations on the same place", () => {
+  const initialState = withPlace(emptyState(), "buffer", { kind: "linear" });
+  const obligatedState = enterLinearObligation(initialState, "rx-buffer", "buffer").state;
+
+  expectRejected(
+    enterLinearObligation(obligatedState, "tx-buffer", "buffer"),
+    "PLACE_ALREADY_OBLIGATED",
+  );
+});
+
+test("proof core rejects nested obligations on overlapping places", () => {
+  const initialState = withPlace(withPlace(emptyState(), "self", { kind: "affine" }), "self.tx", {
+    kind: "linear",
+  });
+  const obligatedState = enterLinearObligation(initialState, "self-close", "self").state;
+
+  expectRejected(
+    enterLinearObligation(obligatedState, "tx-close", "self.tx"),
+    "PLACE_ALREADY_OBLIGATED",
+  );
+});
+
+test("proof core rejects dropping a copy aggregate with a live linear child", () => {
+  const initialState = withPlace(withPlace(emptyState(), "box", { kind: "copy" }), "box.item", {
+    kind: "linear",
+  });
+
+  expectRejected(dropPlace(initialState, "box"), "RESOURCE_CHILD_MUST_BE_HANDLED");
+});
+
+test("proof core rejects Attempt consume of a resource with a live obligation", () => {
+  const initialState = withPlace(emptyState(), "buffer", { kind: "linear" });
+  const obligatedState = enterLinearObligation(initialState, "rx-buffer", "buffer").state;
+
+  expectRejected(
+    callFallibleConsume(obligatedState, "buffer", "attempt"),
+    "RESOURCE_HAS_LIVE_OBLIGATION",
+  );
+});

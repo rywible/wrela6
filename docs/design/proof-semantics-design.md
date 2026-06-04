@@ -19,7 +19,7 @@ tests/support/proof-core-reference.ts
 tests/unit/proof-core-reference.test.ts
 ```
 
-The sketch is intentionally tiny, but it verifies the eighteen worked rejection
+The sketch is intentionally tiny, but it verifies the thirty-nine worked rejection
 examples in this document. It is a pressure test for the rules, not the
 production checker.
 
@@ -36,7 +36,7 @@ production checker.
 - Explain how streams, validation results, private state, terminal functions,
   layout facts, `Attempt`, and multicore transfer map into the core.
 - Provide diagnostic shapes with counterexample-path evidence.
-- Work through eighteen representative invalid examples from
+- Work through thirty-nine representative invalid examples from
   `docs/language/invalid.md`.
 
 ## Non-Goals
@@ -97,7 +97,8 @@ result.Ok.packet
 
 Places are field-sensitive. Moving `self.tx` makes the whole `self` value
 partially unavailable until that field is restored or the owner is consumed.
-Borrowing or loaning `self.rx` does not block disjoint fields such as `self.tx`.
+Borrowing or loaning `self.rx` does not block disjoint fields such as `self.tx`,
+but it does make the whole aggregate `self` unavailable while the loan is live.
 
 ### Resources
 
@@ -228,7 +229,8 @@ result is Some(slot)
 
 Facts are stable only while the values and generations they mention remain live.
 If a private state token advances, facts about the old generation do not apply
-to the new generation.
+to the new generation. Moving or consuming a place invalidates facts that mention
+that place, its descendants, or aggregate ancestors.
 
 Hidden facts are tracked by the compiler but not expressible in source
 `requires`:
@@ -277,6 +279,7 @@ Valid when:
 - `p` exists.
 - `p` is live.
 - no active loan covers `p`.
+- no active loan covers a child required by whole-aggregate use.
 - no ancestor place needed for access is partially moved.
 
 Using a consumed or moved place reports `PROOF_USE_AFTER_MOVE`.
@@ -312,6 +315,9 @@ value's resource obligations. Dropping `Option[WritableBuffer]`,
 `Result[_, WritableBuffer]`, `List[ReadableBuffer]`, or any ordinary wrapper
 that may contain a live obligation is rejected unless the wrapper type is a
 checked linear owner with its own discharge semantics.
+
+Even a droppable outer value cannot be dropped while an overlapping obligation
+is live, or while a live non-droppable child is still owned by the aggregate.
 
 ### Open And Discharge Obligation
 
@@ -359,9 +365,11 @@ rules:
 - a place consumed on all incoming edges remains consumed
 - a non-copy place live on some edges and consumed on others becomes
   `MaybeConsumed`
+- the resource shape for a shared place must agree across incoming edges
 - facts survive only if all incoming edges prove the same fact
 - obligations and loans must agree across incoming edges unless the join is an
   explicit control-flow construct that carries them
+- every surviving obligation or loan must still refer to a live resource
 
 Using a `MaybeConsumed` place reports `PROOF_MAYBE_CONSUMED_AFTER_JOIN`.
 
@@ -532,6 +540,9 @@ On `Ok(packet)`:
 - the live source-buffer obligation transfers to `packet`
 - only terminal functions accepting that brand may close it
 
+The validation result's source brand must match the source buffer brand. A
+non-validation resource cannot be matched as a validation result.
+
 On `Err(rejected)`:
 
 - the source buffer remains live
@@ -543,7 +554,8 @@ On `Err(rejected)`:
 Terminal functions are checked locally and globally. Locally, every path through
 the body must discharge required linear/session inputs. Globally, the graph of
 terminal-to-terminal calls must be acyclic and must eventually reach private
-platform discharge or another known terminal discharge.
+platform discharge. A closed graph of terminal helpers that only call each other
+is rejected even when it is acyclic.
 
 Ordinary functions cannot hide terminal discharge. Interfaces cannot provide
 dynamic terminal dispatch. Destructors cannot discharge obligations implicitly.
@@ -593,6 +605,9 @@ On error:
   shape
 
 A plain `Result` cannot hide a fallible consume of affine or linear values.
+The first checker rejects `Attempt` consumes over places with live terminal
+obligations unless the callee contract explicitly carries or discharges that
+obligation shape.
 
 ### Multicore Transfer
 
@@ -600,6 +615,10 @@ Core transfer changes `ownerCore` metadata. A value can move between cores only
 through a checked transfer type such as a bounded move ring. Transfer requires
 `CoreMovableOwned`. Live stream items, validated buffers, edge-internal tokens,
 platform tokens, and validation results do not satisfy that bound.
+
+A value with an overlapping live obligation cannot be transferred to another
+core by an ordinary move. Such a transfer would need a checked owner type whose
+contract carries the obligation state.
 
 ### Wrappers And Ordinary Storage
 
@@ -1098,6 +1117,562 @@ Gamma; S |- bind buffer
 
 Rejected because the source name already denotes a live non-copy resource.
 Diagnostic: `PROOF_SHADOWS_LIVE_RESOURCE`.
+
+## Third-Pass Break Tests
+
+These examples were added after trying to break the proof rules through aliasing,
+branch merging, stale fact retention, and terminal-helper escape hatches.
+
+### 19. Whole Aggregate Use While A Field Is Loaned
+
+Source shape:
+
+```wr
+take self.rx.receive() as batch:
+    self.reset()
+```
+
+State:
+
+```text
+self: Affine, Live
+self.rx: Affine, Live
+loans: self.rx loaned by batch
+```
+
+Judgment:
+
+```text
+Gamma; S |- use self
+```
+
+Rejected because whole-aggregate use might observe, move, or overwrite the
+loaned field. Disjoint sibling field use, such as `self.tx`, remains legal.
+Diagnostic: `PROOF_PARTIAL_LOAN`.
+
+### 20. Branch Join With Different Obligations
+
+Source shape:
+
+```wr
+if condition:
+    take buffer:
+        mark_open(buffer)
+
+return 0
+```
+
+Incoming states:
+
+```text
+then: obligation rx-buffer is live
+else: no obligation
+```
+
+Join:
+
+```text
+Gamma; S_then join S_else
+```
+
+Rejected because implicit joins cannot invent a single obligation state from
+different incoming obligation sets. Diagnostic:
+`PROOF_BRANCH_OBLIGATION_MISMATCH`.
+
+### 21. Branch Join With Different Loans
+
+Source shape:
+
+```wr
+if condition:
+    take self.rx.receive() as batch:
+        maybe_continue()
+
+self.rx.poll()
+```
+
+Incoming states:
+
+```text
+then: self.rx loaned
+else: no loan
+```
+
+Join:
+
+```text
+Gamma; S_then join S_else
+```
+
+Rejected because implicit joins cannot merge different active loan sets.
+Diagnostic: `PROOF_BRANCH_LOAN_MISMATCH`.
+
+### 22. Old Private-State Fact Still Present After Advance
+
+Source shape:
+
+```wr
+if builder.can_insert(descriptor=desc):
+    builder.note_progress()
+    trusted_insert(builder=builder, descriptor=desc)
+```
+
+State before mutation:
+
+```text
+builder@generation0
+facts: builder@generation0.can_insert(desc)
+```
+
+After mutation:
+
+```text
+builder@generation1
+```
+
+Judgment:
+
+```text
+Gamma; S |= builder@generation0.can_insert(desc)
+```
+
+Rejected because generation advance prunes old private facts instead of leaving
+stale facts available to later requires clauses. Diagnostic:
+`PROOF_STALE_PRIVATE_FACT`.
+
+### 23. Fact About Consumed Resource
+
+Source shape:
+
+```wr
+if len <= buffer.initialized_prefix:
+    self.tx.send(buffer=buffer, len=len)
+    trusted_use_len(buffer=buffer, len=len)
+```
+
+State after send:
+
+```text
+buffer: Consumed
+facts before send: len <= buffer.initialized_prefix
+```
+
+Judgment:
+
+```text
+Gamma; S |= len <= buffer.initialized_prefix
+```
+
+Rejected because facts mentioning a consumed place are invalidated with the
+place. Diagnostic: `PROOF_REQUIREMENT_NOT_PROVEN`.
+
+### 24. Dynamic Layout Read Without Dynamic Range
+
+Source shape:
+
+```wr
+if layout.fixedFits(Packet):
+    require:
+        Packet.payload[0] == 1 else PacketReject(...)
+```
+
+State:
+
+```text
+facts: layout.fixedFits(Packet)
+missing: layout.dynamicRange(Packet.payload)
+```
+
+Judgment:
+
+```text
+Gamma; S |- read Packet.payload
+```
+
+Rejected because fixed-field fit does not prove the dynamic payload range.
+Diagnostic: `PROOF_LAYOUT_DYNAMIC_RANGE_NOT_PROVEN`.
+
+### 25. Field Use After Aggregate Consume
+
+Source shape:
+
+```wr
+let moved_self = self
+self.tx.flush()
+```
+
+State:
+
+```text
+self: Consumed
+self.tx: was a child of self
+```
+
+Judgment:
+
+```text
+Gamma; S |- use self.tx
+```
+
+Rejected because consuming an aggregate consumes all owned subplaces.
+Diagnostic: `PROOF_USE_AFTER_MOVE`.
+
+### 26. Linear Obligation On Copy Value
+
+Source shape:
+
+```wr
+take count:
+    terminal_close(count)
+```
+
+State:
+
+```text
+count: Copy, Live
+```
+
+Judgment:
+
+```text
+Gamma; S |- openObligation count as count-close
+```
+
+Rejected because linear obligations only attach to non-copy resources.
+Diagnostic: `PROOF_OBLIGATION_KIND_MISMATCH`.
+
+### 27. Duplicate Obligation Identifier
+
+Source shape:
+
+```wr
+take left:
+    take right:
+        ...
+```
+
+Lowering bug:
+
+```text
+openObligation left as rx-buffer
+openObligation right as rx-buffer
+```
+
+Rejected because obligation IDs are stable proof identities and cannot be
+silently overwritten. Diagnostic: `PROOF_DUPLICATE_OBLIGATION_ID`.
+
+### 28. Duplicate Loan Identifier
+
+Source shape:
+
+```wr
+take self.rx.receive() as first:
+    take self.tx.acquire() as second:
+        ...
+```
+
+Lowering bug:
+
+```text
+openLoan self.rx as edge-session
+openLoan self.tx as edge-session
+```
+
+Rejected because loan IDs are stable proof identities and cannot be silently
+overwritten. Diagnostic: `PROOF_DUPLICATE_LOAN_ID`.
+
+### 29. Terminal Graph Without Platform Discharge
+
+Source shape:
+
+```wr
+terminal fn closePacket(packet: Packet):
+    sanitizeOnly(packet=packet)
+
+terminal fn sanitizeOnly(packet: Packet):
+    return
+```
+
+Graph:
+
+```text
+closePacket -> sanitizeOnly
+platform discharge set: platformDischarge
+```
+
+Judgment:
+
+```text
+Gamma |- terminalGraph reachesPlatformDischarge
+```
+
+Rejected because an acyclic terminal helper graph still must reach a private
+platform discharge that actually closes the obligation. Diagnostic:
+`PROOF_TERMINAL_NO_PLATFORM_DISCHARGE`.
+
+## Fourth-Pass Break Tests
+
+These examples attack validation provenance, obligation overlap, branch resource
+identity, and ordinary ownership operations that might otherwise hide terminal
+state.
+
+### 30. Validation Ok With Mismatched Source Brand
+
+Source shape:
+
+```wr
+let validation = Packet.validate(source=buffer_b, limits=limits)
+match validation:
+    case Ok(packet):
+        return_rx_a(packet=packet)
+```
+
+State:
+
+```text
+buffer: Linear, brand StreamSession(a)
+validation: Validation, brand StreamSession(b)
+```
+
+Judgment:
+
+```text
+Gamma; S |- matchValidationOk validation buffer packet
+```
+
+Rejected because validation success can only consume the exact branded source it
+validated. Diagnostic: `PROOF_BRAND_MISMATCH`.
+
+### 31. Matching A Non-Validation Resource
+
+Source shape:
+
+```wr
+match buffer:
+    case Ok(packet): ...
+```
+
+State:
+
+```text
+buffer: Linear, Live
+```
+
+Judgment:
+
+```text
+Gamma; S |- matchValidation buffer
+```
+
+Rejected because only single-use validation results may be matched through the
+validation judgment. Diagnostic: `PROOF_RESOURCE_KIND_MISMATCH`.
+
+### 32. Droppable Resource With Live Obligation
+
+Source shape:
+
+```wr
+let slot = acquire_slot()
+mark_must_close(slot)
+drop slot
+```
+
+State:
+
+```text
+slot: Affine, droppable by type
+obligation: slot-close is live
+```
+
+Judgment:
+
+```text
+Gamma; S |- drop slot
+```
+
+Rejected because explicit droppability does not override a live terminal
+obligation. Diagnostic: `PROOF_RESOURCE_HAS_LIVE_OBLIGATION`.
+
+### 33. Core Transfer With Live Obligation
+
+Source shape:
+
+```wr
+take packet:
+    outbox.push_to_core1(packet=packet)
+```
+
+State:
+
+```text
+packet: Linear, CoreMovableOwned
+obligation: packet-close is live
+```
+
+Judgment:
+
+```text
+Gamma; S |- transferToCore packet core1
+```
+
+Rejected because ordinary core transfer cannot move an unclosed obligation to a
+different proof context. Diagnostic: `PROOF_RESOURCE_HAS_LIVE_OBLIGATION`.
+
+### 34. Branch Join With Different Resource Metadata
+
+Source shape:
+
+```wr
+if condition:
+    packet = packet_from_rx_a()
+else:
+    packet = packet_from_rx_b()
+
+return_rx_a(packet=packet)
+```
+
+Incoming states:
+
+```text
+then: packet brand StreamSession(a)
+else: packet brand StreamSession(b)
+```
+
+Join:
+
+```text
+Gamma; S_then join S_else
+```
+
+Rejected because a stable place cannot silently change brand, kind, generation,
+drop rule, or core ownership across a join. Diagnostic:
+`PROOF_BRANCH_RESOURCE_MISMATCH`.
+
+### 35. Obligation Over Maybe-Consumed Place
+
+Source shape:
+
+```wr
+take buffer:
+    if condition:
+        hidden_consume(buffer)
+    return_rx(buffer=buffer)
+```
+
+Incoming states:
+
+```text
+then: buffer Consumed, obligation rx-buffer still live
+else: buffer Live, obligation rx-buffer live
+```
+
+Join:
+
+```text
+Gamma; S_then join S_else
+```
+
+Rejected because an obligation cannot survive a join if its place is
+`MaybeConsumed`. Diagnostic: `PROOF_BRANCH_OBLIGATION_RESOURCE_MISMATCH`.
+
+### 36. Two Obligations On The Same Place
+
+Source shape:
+
+```wr
+take buffer as rx_buffer:
+    take buffer as tx_buffer:
+        ...
+```
+
+Lowering bug:
+
+```text
+openObligation buffer as rx-buffer
+openObligation buffer as tx-buffer
+```
+
+Rejected because a single owned resource cannot carry two independent terminal
+obligations. Diagnostic: `PROOF_PLACE_ALREADY_OBLIGATED`.
+
+### 37. Nested Obligations On Overlapping Places
+
+Source shape:
+
+```wr
+take self:
+    take self.tx:
+        ...
+```
+
+State:
+
+```text
+self: Affine, Live
+self.tx: Linear, Live
+```
+
+Judgment:
+
+```text
+Gamma; S |- openObligation self.tx as tx-close
+```
+
+Rejected when `self` already has a live obligation, because parent and child
+obligations would permit double-close or partial-close ambiguity. Diagnostic:
+`PROOF_PLACE_ALREADY_OBLIGATED`.
+
+### 38. Copy Aggregate With Live Linear Child
+
+Source shape:
+
+```wr
+let box = Box(item=linear_item)
+drop box
+```
+
+State:
+
+```text
+box: Copy, Live
+box.item: Linear, Live
+```
+
+Judgment:
+
+```text
+Gamma; S |- drop box
+```
+
+Rejected because the outer copy marker cannot erase the live non-droppable child
+resource. Diagnostic: `PROOF_RESOURCE_CHILD_MUST_BE_HANDLED`.
+
+### 39. Attempt Consume With Live Obligation
+
+Source shape:
+
+```wr
+take buffer:
+    fallible_send(buffer=buffer)?
+```
+
+State:
+
+```text
+buffer: Linear, Live
+obligation: rx-buffer is live
+callee return: Attempt[Ok, Err, buffer]
+```
+
+Judgment:
+
+```text
+Gamma; S |- call fallible_send(consumes buffer)
+```
+
+Rejected unless the `Attempt` contract explicitly carries or discharges the
+obligation shape. The first checker rejects the generic consume. Diagnostic:
+`PROOF_RESOURCE_HAS_LIVE_OBLIGATION`.
 
 ## Open Risks
 
