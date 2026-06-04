@@ -18,8 +18,8 @@ test runner and `fast-check` as a dev-only property/fuzz testing dependency.
 
 ## Goals
 
-- Keep the lexer as its own compiler module under `src/lexer`.
-- Expose a small public API from `src/lexer/index.ts`.
+- Keep the lexer as its own compiler module under `src/frontend/lexer`.
+- Expose a small public API from `src/frontend/lexer/index.ts`.
 - Use class-based TypeScript and constructor dependency injection.
 - Keep technical concerns at the edge: file reads, module lookup, process
   paths, logging, and global diagnostics stay behind injected interfaces.
@@ -45,24 +45,30 @@ test runner and `fast-check` as a dev-only property/fuzz testing dependency.
 
 ```text
 src/
-  lexer/
-    index.ts
-    lexer.ts
-    cursor.ts
-    source-text.ts
-    source-span.ts
-    token.ts
-    token-kind.ts
-    token-stream.ts
-    trivia.ts
-    trivia-kind.ts
+  shared/
     diagnostics.ts
-    keyword-table.ts
-    file-repository.ts
-    module-graph-lexer.ts
-    module-resolver.ts
-    module-path.ts
-    import-discovery.ts
+    source-span.ts
+    source-text.ts
+
+  frontend/
+    lexer/
+      index.ts
+      lexer.ts
+      cursor.ts
+      source-text.ts
+      source-span.ts
+      token.ts
+      token-kind.ts
+      token-stream.ts
+      trivia.ts
+      trivia-kind.ts
+      diagnostics.ts
+      keyword-table.ts
+      file-repository.ts
+      module-graph-lexer.ts
+      module-resolver.ts
+      module-path.ts
+      import-discovery.ts
 
 tests/
   unit/
@@ -91,10 +97,12 @@ future composed compiler workflows such as lexing plus parsing.
 ## Public API
 
 Each compiler module should expose its public API through its own `index.ts`.
-The lexer module root is `Lexer`.
+The lexer module root is `Lexer`. The target module path is
+`src/frontend/lexer`; temporary compatibility exports from `src/lexer` are
+acceptable during migration only.
 
 ```ts
-// src/lexer/index.ts
+// src/frontend/lexer/index.ts
 export { Lexer } from "./lexer";
 export { SourceText } from "./source-text";
 export { SourceSpan } from "./source-span";
@@ -216,7 +224,11 @@ internals.
 
 ```ts
 const lexResult = lexer.lex(source);
-const parseResult = parser.parse(lexResult.tokens);
+const parseResult = parser.parse({
+  source: lexResult.source,
+  tokens: lexResult.tokens,
+  lexerDiagnostics: diagnostics.diagnostics,
+});
 ```
 
 The parser should not know about `Cursor`, indentation stack internals, or lexer
@@ -463,8 +475,9 @@ Responsibilities:
 - Provide read-only token access.
 - Guarantee exactly one `Eof` token.
 
-The parser can later consume `TokenStream` directly or through a parser-owned
-reader abstraction.
+The parser consumes `TokenStream` together with its `SourceText`, either through
+`LexResult` or through an explicit `{ source, tokens }` parse input. Tokens-only
+input is not enough for parser diagnostics or syntax-tree reconstruction.
 
 ### `KeywordTable`
 
@@ -929,7 +942,11 @@ The parser should consume lexer output through public values:
 
 ```ts
 const lexResult = lexer.lex(source);
-const parseResult = parser.parse(lexResult.tokens);
+const parseResult = parser.parse({
+  source: lexResult.source,
+  tokens: lexResult.tokens,
+  lexerDiagnostics: diagnostics.diagnostics,
+});
 ```
 
 The parser layer should have its own root class, dependency object, tests, and

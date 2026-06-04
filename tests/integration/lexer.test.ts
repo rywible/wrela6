@@ -343,6 +343,18 @@ describe("Lexer", () => {
     );
   });
 
+  test("lexes continue as a control-flow keyword", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+    const source = SourceText.from("continue.wr", "continue\n");
+
+    const result = lexer.lex(source);
+
+    expect(result.tokens.kinds()).toEqual([TokenKind.Continue, TokenKind.Newline, TokenKind.Eof]);
+    expect(result.tokens.reconstruct()).toBe(source.text);
+    expect(diagnostics.diagnostics).toEqual([]);
+  });
+
   test("emits dedent when unindenting to zero", () => {
     const diagnostics = new CollectingDiagnosticSink();
     const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });

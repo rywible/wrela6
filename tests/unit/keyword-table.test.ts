@@ -68,6 +68,7 @@ describe("KeywordTable", () => {
       expect(keywords.lookup("case")).toBe(TokenKind.Case);
       expect(keywords.lookup("return")).toBe(TokenKind.Return);
       expect(keywords.lookup("yield")).toBe(TokenKind.Yield);
+      expect(keywords.lookup("continue")).toBe(TokenKind.Continue);
       expect(keywords.lookup("take")).toBe(TokenKind.Take);
       expect(keywords.lookup("as")).toBe(TokenKind.As);
       expect(keywords.lookup("with")).toBe(TokenKind.With);
