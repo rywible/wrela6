@@ -312,72 +312,76 @@ export class Lexer {
 
   private scanIndentation(source: SourceText, cursor: Cursor): Trivia | null {
     const start = cursor.offset;
+    const text = source.text;
+    const length = text.length;
+    let offset = start;
 
-    while (!cursor.isAtEnd()) {
-      const next = cursor.peek();
-
-      if (next === " " || next === "\t") {
-        cursor.advance();
-      } else {
-        break;
-      }
+    while (offset < length && (text[offset] === " " || text[offset] === "\t")) {
+      offset++;
     }
 
-    if (cursor.offset === start) {
+    if (offset === start) {
       return null;
     }
 
+    cursor.advanceBy(offset - start);
+
     return new Trivia({
       kind: TriviaKind.IndentationWhitespace,
-      lexeme: source.text.slice(start, cursor.offset),
-      span: cursor.spanFrom(start),
+      lexeme: text.slice(start, offset),
+      span: source.span(start, offset),
     });
   }
 
   private scanTrivia(source: SourceText, cursor: Cursor): Trivia[] {
     const trivia: Trivia[] = [];
+    const text = source.text;
+    const length = text.length;
 
     while (!cursor.isAtEnd()) {
-      const current = cursor.peek();
+      const current = text[cursor.offset]!;
 
       if (current === " " || current === "\t") {
         const start = cursor.offset;
-        cursor.advance();
+        let offset = start;
 
-        while (!cursor.isAtEnd()) {
-          const next = cursor.peek();
-          if (next === " " || next === "\t") {
-            cursor.advance();
-          } else {
-            break;
-          }
+        while (offset < length && (text[offset] === " " || text[offset] === "\t")) {
+          offset++;
         }
+
+        cursor.advanceBy(offset - start);
 
         trivia.push(
           new Trivia({
             kind: TriviaKind.Whitespace,
-            lexeme: source.text.slice(start, cursor.offset),
-            span: cursor.spanFrom(start),
+            lexeme: text.slice(start, offset),
+            span: source.span(start, offset),
           }),
         );
       } else if (current === "/" && cursor.peek(1) === "/") {
         const start = cursor.offset;
         cursor.advanceBy(2);
 
-        while (!cursor.isAtEnd()) {
-          const next = cursor.peek();
-          if (next !== "\r" && next !== "\n") {
-            cursor.advance();
-          } else {
-            break;
-          }
+        const currentOffset = cursor.offset;
+        const newlinePos = text.indexOf("\n", currentOffset);
+        const crPos = text.indexOf("\r", currentOffset);
+        let stopPos = text.length;
+
+        if (newlinePos !== -1 && crPos !== -1) {
+          stopPos = newlinePos < crPos ? newlinePos : crPos;
+        } else if (newlinePos !== -1) {
+          stopPos = newlinePos;
+        } else if (crPos !== -1) {
+          stopPos = crPos;
         }
+
+        cursor.advanceBy(stopPos - currentOffset);
 
         trivia.push(
           new Trivia({
             kind: TriviaKind.LineComment,
-            lexeme: source.text.slice(start, cursor.offset),
-            span: cursor.spanFrom(start),
+            lexeme: text.slice(start, cursor.offset),
+            span: source.span(start, cursor.offset),
           }),
         );
       } else {
@@ -424,19 +428,25 @@ export class Lexer {
     leadingTrivia: Trivia[],
   ): Token {
     const start = cursor.offset;
-    cursor.advance();
+    const text = source.text;
+    const length = text.length;
+    let offset = start;
 
-    while (!cursor.isAtEnd() && isIdentifierPart(cursor.peek()!)) {
-      cursor.advance();
+    cursor.advance();
+    offset++;
+
+    while (offset < length && isIdentifierPart(text[offset]!)) {
+      offset++;
     }
 
-    const lexeme = source.text.slice(start, cursor.offset);
+    cursor.advanceBy(offset - cursor.offset);
+    const lexeme = text.slice(start, offset);
     const kind = this.dependencies.keywords.lookup(lexeme);
 
     return new Token({
       kind,
       lexeme,
-      span: cursor.spanFrom(start),
+      span: source.span(start, offset),
       leadingTrivia,
       trailingTrivia: [],
     });
@@ -444,16 +454,23 @@ export class Lexer {
 
   private scanInteger(source: SourceText, cursor: Cursor, leadingTrivia: Trivia[]): Token {
     const start = cursor.offset;
-    cursor.advance();
+    const text = source.text;
+    const length = text.length;
+    let offset = start;
 
-    while (!cursor.isAtEnd() && isDigit(cursor.peek()!)) {
-      cursor.advance();
+    cursor.advance();
+    offset++;
+
+    while (offset < length && isDigit(text[offset]!)) {
+      offset++;
     }
+
+    cursor.advanceBy(offset - cursor.offset);
 
     return new Token({
       kind: TokenKind.IntegerLiteral,
-      lexeme: source.text.slice(start, cursor.offset),
-      span: cursor.spanFrom(start),
+      lexeme: text.slice(start, offset),
+      span: source.span(start, offset),
       leadingTrivia,
       trailingTrivia: [],
     });
@@ -462,22 +479,28 @@ export class Lexer {
   private scanString(source: SourceText, cursor: Cursor, leadingTrivia: Trivia[]): Token {
     const start = cursor.offset;
     cursor.advance();
+    const text = source.text;
+    const length = text.length;
+    let offset = cursor.offset;
 
-    while (!cursor.isAtEnd()) {
-      const next = cursor.peek();
+    while (offset < length) {
+      const char = text[offset]!;
 
-      if (next === '"') {
-        cursor.advance();
+      if (char === '"') {
+        cursor.advanceBy(offset + 1 - cursor.offset);
+
         return new Token({
           kind: TokenKind.StringLiteral,
-          lexeme: source.text.slice(start, cursor.offset),
-          span: cursor.spanFrom(start),
+          lexeme: text.slice(start, offset + 1),
+          span: source.span(start, offset + 1),
           leadingTrivia,
           trailingTrivia: [],
         });
       }
 
-      if (next === "\r" || next === "\n") {
+      if (char === "\r" || char === "\n") {
+        cursor.advanceBy(offset - cursor.offset);
+
         this.dependencies.diagnostics.report({
           code: "LEX_UNTERMINATED_STRING",
           severity: "error",
@@ -488,26 +511,29 @@ export class Lexer {
 
         return new Token({
           kind: TokenKind.StringLiteral,
-          lexeme: source.text.slice(start, cursor.offset),
+          lexeme: text.slice(start, cursor.offset),
           span: cursor.spanFrom(start),
           leadingTrivia,
           trailingTrivia: [],
         });
       }
 
-      if (next === "\\") {
-        const after = cursor.peek(1);
+      if (char === "\\") {
+        const after = text[offset + 1];
 
         if (after === "\r" || after === "\n" || after === undefined) {
+          cursor.advanceBy(offset - cursor.offset);
           break;
         }
 
-        cursor.advanceBy(2);
+        offset += 2;
         continue;
       }
 
-      cursor.advance();
+      offset++;
     }
+
+    cursor.advanceBy(offset - cursor.offset);
 
     this.dependencies.diagnostics.report({
       code: "LEX_UNTERMINATED_STRING",
@@ -519,7 +545,7 @@ export class Lexer {
 
     return new Token({
       kind: TokenKind.StringLiteral,
-      lexeme: source.text.slice(start, cursor.offset),
+      lexeme: text.slice(start, cursor.offset),
       span: cursor.spanFrom(start),
       leadingTrivia,
       trailingTrivia: [],
