@@ -25,21 +25,21 @@
 
 Use this table as a topological dispatch map. Tasks in the same wave may run in parallel because all listed dependencies are already satisfied and the wave avoids shared-file edits.
 
-| Wave | Tasks | Notes |
-| --- | --- | --- |
-| Bootstrap | 1 | Adds initial scripts and `fast-check`; run first so every worker has the same base commands. |
-| Tooling Gate | 1A | Adds `oxlint`, `oxfmt`, and the repository policy checker; run before dispatching implementation tasks. |
-| Source Foundation | 2 | `SourceSpan` and `SourceText` are prerequisites for most other files. Depends on Task 1A. |
-| Independent Core | 3, 4, 6 | Diagnostics, token/trivia values, and cursor can run in parallel after Task 2. |
-| Derived Core And Module Contracts | 5, 7, 14 | Token stream, keyword table, and module path/resolution contracts can run in parallel after their dependencies. |
-| Parallel Implementation | 8, 13, 15 | Lexer skeleton, import discovery, and file repository touch different files and can run in parallel. |
-| Source Lexer Completion | 9, 10, 11, 12 | These all modify `src/lexer/lexer.ts`; execute sequentially or assign one subagent to the whole source lexer chain. |
-| Test Support | 17 | Run after Task 15 and the lexer skeleton. Shared fakes and invariants support graph, fuzz, and system tests. |
-| Graph Traversal And Source Fuzz | 16, 18 | Task 16 depends on the completed lexer and fakes. Source fuzz can run in parallel with graph traversal. |
-| Graph Fuzz | 19 | Run after Task 16 and Task 17. |
-| Public API Assembly | 20 | Single writer for `src/lexer/index.ts` and `src/index.ts`; prevents parallel barrel merge conflicts. |
-| System Smoke | 21 | Run after the public API barrel exists. |
-| Final Hardening | 22 | Run after Task 1A and all implementation tasks. |
+| Wave                              | Tasks         | Notes                                                                                                               |
+| --------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Bootstrap                         | 1             | Adds initial scripts and `fast-check`; run first so every worker has the same base commands.                        |
+| Tooling Gate                      | 1A            | Adds `oxlint`, `oxfmt`, and the repository policy checker; run before dispatching implementation tasks.             |
+| Source Foundation                 | 2             | `SourceSpan` and `SourceText` are prerequisites for most other files. Depends on Task 1A.                           |
+| Independent Core                  | 3, 4, 6       | Diagnostics, token/trivia values, and cursor can run in parallel after Task 2.                                      |
+| Derived Core And Module Contracts | 5, 7, 14      | Token stream, keyword table, and module path/resolution contracts can run in parallel after their dependencies.     |
+| Parallel Implementation           | 8, 13, 15     | Lexer skeleton, import discovery, and file repository touch different files and can run in parallel.                |
+| Source Lexer Completion           | 9, 10, 11, 12 | These all modify `src/lexer/lexer.ts`; execute sequentially or assign one subagent to the whole source lexer chain. |
+| Test Support                      | 17            | Run after Task 15 and the lexer skeleton. Shared fakes and invariants support graph, fuzz, and system tests.        |
+| Graph Traversal And Source Fuzz   | 16, 18        | Task 16 depends on the completed lexer and fakes. Source fuzz can run in parallel with graph traversal.             |
+| Graph Fuzz                        | 19            | Run after Task 16 and Task 17.                                                                                      |
+| Public API Assembly               | 20            | Single writer for `src/lexer/index.ts` and `src/index.ts`; prevents parallel barrel merge conflicts.                |
+| System Smoke                      | 21            | Run after the public API barrel exists.                                                                             |
+| Final Hardening                   | 22            | Run after Task 1A and all implementation tasks.                                                                     |
 
 ## File Responsibility Map
 
@@ -140,7 +140,7 @@ Every task must use these names and shapes so independently implemented pieces c
 ```ts
 interface SourcePosition {
   offset: number;
-  line: number;   // 1-based
+  line: number; // 1-based
   column: number; // 1-based UTF-16 code-unit column
 }
 ```
@@ -288,10 +288,11 @@ Newline trivia is reserved vocabulary in the first implementation. Physical line
 ```ts
 function reconstruct(tokens: readonly Token[]): string {
   return tokens
-    .map((token) =>
-      token.leadingTrivia.map((trivia) => trivia.lexeme).join("") +
-      token.lexeme +
-      token.trailingTrivia.map((trivia) => trivia.lexeme).join(""),
+    .map(
+      (token) =>
+        token.leadingTrivia.map((trivia) => trivia.lexeme).join("") +
+        token.lexeme +
+        token.trailingTrivia.map((trivia) => trivia.lexeme).join(""),
     )
     .join("");
 }
@@ -553,10 +554,7 @@ interface PolicyViolation {
 
 const policyScriptPath = "scripts/check-policy.ts";
 const checkedRoots = ["src", "tests", "scripts"] as const;
-const allowedBunFilePaths = new Set([
-  "src/lexer/bun-file-repository.ts",
-  policyScriptPath,
-]);
+const allowedBunFilePaths = new Set(["src/lexer/bun-file-repository.ts", policyScriptPath]);
 
 const bannedIdentifierSuggestions = new Map<string, string>([
   ["src", "source"],
@@ -609,20 +607,14 @@ function isPropertyNameIdentifier(identifier: typescript.Identifier): boolean {
   const parent = identifier.parent;
 
   return (
-    typescript.isPropertyAccessExpression(parent) && parent.name === identifier
-  ) || (
-    typescript.isPropertyAssignment(parent) && parent.name === identifier
-  ) || (
-    typescript.isMethodDeclaration(parent) && parent.name === identifier
-  ) || (
-    typescript.isPropertyDeclaration(parent) && parent.name === identifier
+    (typescript.isPropertyAccessExpression(parent) && parent.name === identifier) ||
+    (typescript.isPropertyAssignment(parent) && parent.name === identifier) ||
+    (typescript.isMethodDeclaration(parent) && parent.name === identifier) ||
+    (typescript.isPropertyDeclaration(parent) && parent.name === identifier)
   );
 }
 
-function checkIdentifiers(
-  filePath: string,
-  sourceText: string,
-): PolicyViolation[] {
+function checkIdentifiers(filePath: string, sourceText: string): PolicyViolation[] {
   const sourceFile = typescript.createSourceFile(
     filePath,
     sourceText,
@@ -633,10 +625,7 @@ function checkIdentifiers(
   const violations: PolicyViolation[] = [];
 
   function visit(syntaxNode: typescript.Node): void {
-    if (
-      typescript.isIdentifier(syntaxNode) &&
-      !isPropertyNameIdentifier(syntaxNode)
-    ) {
+    if (typescript.isIdentifier(syntaxNode) && !isPropertyNameIdentifier(syntaxNode)) {
       const suggestion = bannedIdentifierSuggestions.get(syntaxNode.text);
 
       if (suggestion !== undefined) {
@@ -657,17 +646,11 @@ function checkIdentifiers(
   return violations;
 }
 
-function checkTextPolicies(
-  filePath: string,
-  sourceText: string,
-): PolicyViolation[] {
+function checkTextPolicies(filePath: string, sourceText: string): PolicyViolation[] {
   const violations: PolicyViolation[] = [];
   const normalizedPath = normalizePath(filePath);
 
-  if (
-    !normalizedPath.startsWith("tests/") &&
-    /from\s+["']fast-check["']/.test(sourceText)
-  ) {
+  if (!normalizedPath.startsWith("tests/") && /from\s+["']fast-check["']/.test(sourceText)) {
     violations.push({
       filePath,
       line: 1,
@@ -676,10 +659,7 @@ function checkTextPolicies(
     });
   }
 
-  if (
-    normalizedPath.startsWith("tests/") &&
-    /\b(mock|spyOn|jest\.fn)\b/.test(sourceText)
-  ) {
+  if (normalizedPath.startsWith("tests/") && /\b(mock|spyOn|jest\.fn)\b/.test(sourceText)) {
     violations.push({
       filePath,
       line: 1,
@@ -688,10 +668,7 @@ function checkTextPolicies(
     });
   }
 
-  if (
-    /\bBun\.file\s*\(/.test(sourceText) &&
-    !allowedBunFilePaths.has(normalizedPath)
-  ) {
+  if (/\bBun\.file\s*\(/.test(sourceText) && !allowedBunFilePaths.has(normalizedPath)) {
     violations.push({
       filePath,
       line: 1,
@@ -1242,11 +1219,7 @@ describe("Lexer", () => {
 
     const result = lexer.lex(source);
 
-    expect(result.tokens.kinds()).toEqual([
-      TokenKind.Newline,
-      TokenKind.Newline,
-      TokenKind.Eof,
-    ]);
+    expect(result.tokens.kinds()).toEqual([TokenKind.Newline, TokenKind.Newline, TokenKind.Eof]);
     expect(result.tokens.reconstruct()).toBe(source.text);
   });
 });
@@ -1425,7 +1398,7 @@ Integration test examples:
 test("lexes integer and string literals", () => {
   const diagnostics = new CollectingDiagnosticSink();
   const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
-  const source = SourceText.from("literals.wr", "name=\"nic0\" max=9000\n");
+  const source = SourceText.from("literals.wr", 'name="nic0" max=9000\n');
 
   const result = lexer.lex(source);
 
@@ -1633,10 +1606,7 @@ function token(kind: TokenKind, lexeme: string, start: number, end: number): Tok
 describe("ImportDiscovery", () => {
   test("discovers use-from module names from public tokens", () => {
     const diagnostics = new CollectingDiagnosticSink();
-    const source = SourceText.from(
-      "app/main.wr",
-      "use BootError, Machine from core.boot\n",
-    );
+    const source = SourceText.from("app/main.wr", "use BootError, Machine from core.boot\n");
     const tokens = TokenStream.from([
       token(TokenKind.Use, "use", 0, 3),
       token(TokenKind.Identifier, "BootError", 4, 13),
@@ -1959,10 +1929,7 @@ test("lexes an image entry and reachable imports", async () => {
 
   const result = await graph.lexImage({ entry: ModulePath.from("app/main.wr") });
 
-  expect(result.modules.map((module) => module.path.key)).toEqual([
-    "app/main.wr",
-    "core/boot.wr",
-  ]);
+  expect(result.modules.map((module) => module.path.key)).toEqual(["app/main.wr", "core/boot.wr"]);
   expect(diagnostics.diagnostics).toEqual([]);
 });
 
@@ -1986,10 +1953,7 @@ test("reports missing modules and continues", async () => {
 
   const result = await graph.lexImage({ entry: ModulePath.from("app/main.wr") });
 
-  expect(result.modules.map((module) => module.path.key)).toEqual([
-    "app/main.wr",
-    "core/ok.wr",
-  ]);
+  expect(result.modules.map((module) => module.path.key)).toEqual(["app/main.wr", "core/ok.wr"]);
   expect(diagnostics.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
     "LEX_MODULE_MISSING",
   );
@@ -2044,10 +2008,7 @@ Expected fake use:
 import { FakeFileRepository, makeLexerHarness } from "../support/lexer-fakes";
 
 test("uses a lexer harness", () => {
-  const { lexer, diagnostics, source } = makeLexerHarness(
-    "main.wr",
-    "uefi image Main:\n",
-  );
+  const { lexer, diagnostics, source } = makeLexerHarness("main.wr", "uefi image Main:\n");
 
   const result = lexer.lex(source);
 
@@ -2295,55 +2256,50 @@ const graphCase = fastCheck.record({
 describe("module graph lexer fuzz invariants", () => {
   test("terminates and lexes each canonical module at most once", async () => {
     await fastCheck.assert(
-      fastCheck.asyncProperty(
-        graphCase,
-        async (shape) => {
-          const filesByPath: Record<string, string> = {
-            "app/main.wr": [
-              shape.mainImportsA ? "use A from app.a" : "",
-              shape.mainImportsMissing ? "use Missing from app.missing" : "",
-              "uefi image Main:",
-              "",
-            ].filter(Boolean).join("\n"),
-          };
+      fastCheck.asyncProperty(graphCase, async (shape) => {
+        const filesByPath: Record<string, string> = {
+          "app/main.wr": [
+            shape.mainImportsA ? "use A from app.a" : "",
+            shape.mainImportsMissing ? "use Missing from app.missing" : "",
+            "uefi image Main:",
+            "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        };
 
-          if (shape.includeA) {
-            filesByPath["app/a.wr"] = [
-              shape.aImportsB ? "use B from app.b" : "",
-              "class A:",
-              "",
-            ].filter(Boolean).join("\n");
-          }
+        if (shape.includeA) {
+          filesByPath["app/a.wr"] = [shape.aImportsB ? "use B from app.b" : "", "class A:", ""]
+            .filter(Boolean)
+            .join("\n");
+        }
 
-          if (shape.includeB) {
-            filesByPath["app/b.wr"] = [
-              shape.bImportsA ? "use A from app.a" : "",
-              "class B:",
-              "",
-            ].filter(Boolean).join("\n");
-          }
+        if (shape.includeB) {
+          filesByPath["app/b.wr"] = [shape.bImportsA ? "use A from app.a" : "", "class B:", ""]
+            .filter(Boolean)
+            .join("\n");
+        }
 
-          const diagnostics = new CollectingDiagnosticSink();
-          const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
-          const graph = new ModuleGraphLexer({
-            lexer,
-            files: new FakeFileRepository(new Map(Object.entries(filesByPath))),
-            resolver: new DottedModuleResolver(),
-            imports: new ImportDiscovery({ diagnostics }),
-            diagnostics,
-          });
+        const diagnostics = new CollectingDiagnosticSink();
+        const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+        const graph = new ModuleGraphLexer({
+          lexer,
+          files: new FakeFileRepository(new Map(Object.entries(filesByPath))),
+          resolver: new DottedModuleResolver(),
+          imports: new ImportDiscovery({ diagnostics }),
+          diagnostics,
+        });
 
-          const result = await graph.lexImage({ entry: ModulePath.from("app/main.wr") });
-          const keys = result.modules.map((module) => module.path.key);
+        const result = await graph.lexImage({ entry: ModulePath.from("app/main.wr") });
+        const keys = result.modules.map((module) => module.path.key);
 
-          expect(new Set(keys).size).toBe(keys.length);
-          for (const module of result.modules) {
-            expect(module.tokens.eofCount()).toBe(1);
-            expectLosslessTokenStream(module.source, module.tokens);
-            expectValidTokenSpans(module.source, module.tokens);
-          }
-        },
-      ),
+        expect(new Set(keys).size).toBe(keys.length);
+        for (const module of result.modules) {
+          expect(module.tokens.eofCount()).toBe(1);
+          expectLosslessTokenStream(module.source, module.tokens);
+          expectValidTokenSpans(module.source, module.tokens);
+        }
+      }),
       { numRuns: 1_000 },
     );
   });
@@ -2403,7 +2359,12 @@ export { ImportDiscovery } from "./import-discovery";
 export { CollectingDiagnosticSink } from "./diagnostics";
 export { DottedModuleResolver } from "./module-resolver";
 export { BunFileRepository } from "./bun-file-repository";
-export type { DiagnosticSink, LexDiagnostic, LexDiagnosticCode, DiagnosticSeverity } from "./diagnostics";
+export type {
+  DiagnosticSink,
+  LexDiagnostic,
+  LexDiagnosticCode,
+  DiagnosticSeverity,
+} from "./diagnostics";
 export type { FileReadResult, FileRepository } from "./file-repository";
 export type { ModuleImportRequest } from "./module-import-request";
 export type { ModuleResolveResult, ModuleResolver } from "./module-resolver";
