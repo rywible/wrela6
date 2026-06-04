@@ -7,7 +7,7 @@ import { Lexer } from "../../src/lexer/lexer";
 import { ModuleGraphLexer } from "../../src/lexer/module-graph-lexer";
 import { ModulePath } from "../../src/lexer/module-path";
 import { DottedModuleResolver } from "../../src/lexer/module-resolver";
-import { FakeFileRepository } from "../support/lexer-fakes";
+import { FakeFileRepository, FakeModuleResolver } from "../support/lexer-fakes";
 import { expectLosslessTokenStream, expectValidTokenSpans } from "../support/lexer-invariants";
 
 const graphCase = fastCheck.record({
@@ -68,5 +68,71 @@ describe("module graph lexer fuzz invariants", () => {
       }),
       { numRuns: 1_000 },
     );
+  });
+
+  test("handles deep import chains without stack overflow", async () => {
+    await fastCheck.assert(
+      fastCheck.asyncProperty(fastCheck.integer({ min: 1, max: 20 }), async (chainLength) => {
+        const filesByPath: Record<string, string> = {};
+
+        for (let index = 0; index < chainLength; index++) {
+          const next = index + 1 < chainLength ? index + 1 : -1;
+          const body =
+            next >= 0
+              ? `use Next${next} from app.level${next}\nclass Level${index}:\n`
+              : `class Level${index}:\n`;
+          filesByPath[`app/level${index}.wr`] = body;
+        }
+
+        filesByPath["app/main.wr"] = `use Next0 from app.level0\nuefi image Main:\n`;
+
+        const diagnostics = new CollectingDiagnosticSink();
+        const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+        const graph = new ModuleGraphLexer({
+          lexer,
+          files: new FakeFileRepository(new Map(Object.entries(filesByPath))),
+          resolver: new DottedModuleResolver(),
+          imports: new ImportDiscovery({ diagnostics }),
+          diagnostics,
+        });
+
+        const result = await graph.lexImage({ entry: ModulePath.from("app/main.wr") });
+        const keys = result.modules.map((module) => module.path.key);
+
+        expect(new Set(keys).size).toBe(keys.length);
+        expect(keys.length).toBe(chainLength + 1);
+
+        for (const module of result.modules) {
+          expectLosslessTokenStream(module.source, module.tokens);
+        }
+      }),
+      { numRuns: 50, seed: 0x6eaf },
+    );
+  });
+
+  test("handles two imports resolving to the same file", async () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+    const files = new FakeFileRepository(
+      new Map([
+        ["app/main.wr", "use A from utils.common\nuse B from utils.common\nuefi image Main:\n"],
+        ["utils/common.wr", "class Common:\n"],
+      ]),
+    );
+    const resolver = new FakeModuleResolver(new Map([["utils.common", "utils/common.wr"]]));
+
+    const graph = new ModuleGraphLexer({
+      lexer,
+      files,
+      resolver,
+      imports: new ImportDiscovery({ diagnostics }),
+      diagnostics,
+    });
+
+    const result = await graph.lexImage({ entry: ModulePath.from("app/main.wr") });
+    const keys = result.modules.map((module) => module.path.key);
+
+    expect(keys).toEqual(["app/main.wr", "utils/common.wr"]);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });
