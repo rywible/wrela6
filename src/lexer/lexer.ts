@@ -135,7 +135,7 @@ export class Lexer {
       );
     }
 
-    const eofTrivia = this.collectPreambleTrivia(linePreamble);
+    const eofTrivia = this.collectLeadingFromPreamble(linePreamble);
     tokens.push(
       new Token({
         kind: TokenKind.Eof,
@@ -164,10 +164,6 @@ export class Lexer {
     }
 
     return result;
-  }
-
-  private collectPreambleTrivia(preamble: LinePreamble): Trivia[] {
-    return this.collectLeadingFromPreamble(preamble);
   }
 
   private measureIndentation(text: string): number {

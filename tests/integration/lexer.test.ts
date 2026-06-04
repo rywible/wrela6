@@ -328,4 +328,18 @@ describe("Lexer", () => {
     expect(result.tokens.reconstruct()).toBe(source.text);
     expect(diagnostics.diagnostics).toEqual([]);
   });
+
+  test("tabs in indentation report LEX_INCONSISTENT_INDENT", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+    const source = SourceText.from("tab-indent.wr", "\ta\n");
+
+    const result = lexer.lex(source);
+
+    expect(result.tokens.eofCount()).toBe(1);
+    expect(result.tokens.reconstruct()).toBe(source.text);
+    expect(diagnostics.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "LEX_INCONSISTENT_INDENT",
+    );
+  });
 });
