@@ -1,4 +1,5 @@
 import { resolve, relative } from "node:path";
+import { realpath } from "node:fs/promises";
 
 import type { FileReadResult, FileRepository } from "./file-repository";
 import type { ModulePath } from "./module-path";
@@ -19,7 +20,25 @@ export class BunFileRepository implements FileRepository {
       };
     }
 
-    const file = Bun.file(resolved);
+    let realResolved: string;
+
+    try {
+      realResolved = await realpath(resolved);
+    } catch {
+      return { kind: "missing", path };
+    }
+
+    const realRoot = await realpath(root);
+
+    if (!realResolved.startsWith(realRoot)) {
+      return {
+        kind: "unreadable",
+        path,
+        message: `Path '${path.key}' resolves outside the repository root via symlink.`,
+      };
+    }
+
+    const file = Bun.file(realResolved);
     const exists = await file.exists();
 
     if (!exists) {

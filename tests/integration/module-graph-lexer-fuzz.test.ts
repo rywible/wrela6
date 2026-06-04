@@ -135,4 +135,40 @@ describe("module graph lexer fuzz invariants", () => {
     expect(keys).toEqual(["app/main.wr", "utils/common.wr"]);
     expect(new Set(keys).size).toBe(keys.length);
   });
+
+  test("graph traversal is deterministic for the same repository", async () => {
+    const files = new FakeFileRepository(
+      new Map([
+        ["app/main.wr", "use A from app.a\nuse B from app.b\nuefi image Main:\n"],
+        ["app/a.wr", "class A:\n"],
+        ["app/b.wr", "class B:\n"],
+      ]),
+    );
+
+    const run = () => {
+      const diagnostics = new CollectingDiagnosticSink();
+      const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+      const graph = new ModuleGraphLexer({
+        lexer,
+        files,
+        resolver: new DottedModuleResolver(),
+        imports: new ImportDiscovery({ diagnostics }),
+        diagnostics,
+      });
+      return graph.lexImage({ entry: ModulePath.from("app/main.wr") });
+    };
+
+    const firstResult = await run();
+    const secondResult = await run();
+
+    expect(firstResult.modules.map((module) => module.path.key)).toEqual(
+      secondResult.modules.map((module) => module.path.key),
+    );
+
+    for (let index = 0; index < firstResult.modules.length; index++) {
+      expect(firstResult.modules[index]!.tokens.reconstruct()).toBe(
+        secondResult.modules[index]!.tokens.reconstruct(),
+      );
+    }
+  });
 });

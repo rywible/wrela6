@@ -105,7 +105,11 @@ function checkTextPolicies(filePath: string, sourceText: string): PolicyViolatio
   const violations: PolicyViolation[] = [];
   const normalizedPath = normalizePath(filePath);
 
-  if (!normalizedPath.startsWith("tests/") && /from\s+["']fast-check["']/.test(sourceText)) {
+  if (
+    !normalizedPath.startsWith("tests/") &&
+    normalizedPath !== policyScriptPath &&
+    /fast-check/.test(sourceText)
+  ) {
     violations.push({
       filePath,
       line: 1,

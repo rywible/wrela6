@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -71,5 +71,19 @@ describe("BunFileRepository", () => {
     const result = await repository.read(ModulePath.from("absent.wr"));
 
     expect(result.kind).toBe("missing");
+  });
+
+  test("symlink pointing outside root returns unreadable", async () => {
+    root = await mkdtemp(join(tmpdir(), "wrela-lexer-"));
+    const outsideFile = join(tmpdir(), "wrela-lexer-outside-target");
+    const symlinkPath = join(root, "link.wr");
+
+    await writeFile(outsideFile, "SECRET OUTSIDE ROOT\n");
+    await symlink(outsideFile, symlinkPath);
+
+    const repository = new BunFileRepository({ root });
+    const result = await repository.read(ModulePath.from("link.wr"));
+
+    expect(result.kind).toBe("unreadable");
   });
 });

@@ -501,6 +501,12 @@ export class Lexer {
       }
 
       if (next === "\\") {
+        const after = cursor.peek(1);
+
+        if (after === "\r" || after === "\n" || after === undefined) {
+          break;
+        }
+
         cursor.advanceBy(2);
         continue;
       }

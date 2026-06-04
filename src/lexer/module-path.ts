@@ -25,12 +25,11 @@ export class ModulePath {
     }
 
     const normalized = normalize(path);
+    const segments = normalized.split("/");
 
-    if (normalized.includes("..")) {
+    if (segments.includes("..")) {
       throw new Error(`ModulePath must not contain '..' segments: ${path}`);
     }
-
-    const segments = normalized.split("/");
 
     for (const segment of segments) {
       if (segment.length === 0) {
@@ -50,7 +49,7 @@ function normalize(path: string): string {
   let result = path.replace(/\\/g, "/");
   result = result.replace(/\/{2,}/g, "/");
 
-  if (result.startsWith("./")) {
+  while (result.startsWith("./")) {
     result = result.slice(2);
   }
 
