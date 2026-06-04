@@ -23,11 +23,11 @@ export class TokenStream {
       throw new Error("TokenStream required Eof to be the last token.");
     }
 
-    return new TokenStream(tokens);
+    return new TokenStream(Object.freeze([...tokens]));
   }
 
   get items(): readonly Token[] {
-    return [...this.tokens];
+    return this.tokens;
   }
 
   // oxlint-disable-next-line id-length

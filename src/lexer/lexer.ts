@@ -495,11 +495,6 @@ export class Lexer {
         });
       }
 
-      if (next === "\\" && (cursor.peek(1) === '"' || cursor.peek(1) === "\\")) {
-        cursor.advanceBy(2);
-        continue;
-      }
-
       if (next === "\\") {
         const after = cursor.peek(1);
 

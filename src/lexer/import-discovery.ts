@@ -184,72 +184,42 @@ export class ImportDiscovery {
     return { index, trailingDot: false };
   }
 
+  static readonly #nonModuleTokens: ReadonlySet<TokenKind> = new Set([
+    TokenKind.Eof,
+    TokenKind.Newline,
+    TokenKind.Indent,
+    TokenKind.Dedent,
+    TokenKind.IntegerLiteral,
+    TokenKind.StringLiteral,
+    TokenKind.Invalid,
+    TokenKind.LeftParen,
+    TokenKind.RightParen,
+    TokenKind.LeftBrace,
+    TokenKind.RightBrace,
+    TokenKind.LeftBracket,
+    TokenKind.RightBracket,
+    TokenKind.Colon,
+    TokenKind.Comma,
+    TokenKind.Dot,
+    TokenKind.Equals,
+    TokenKind.Plus,
+    TokenKind.Minus,
+    TokenKind.Star,
+    TokenKind.Slash,
+    TokenKind.Percent,
+    TokenKind.Less,
+    TokenKind.Greater,
+    TokenKind.Question,
+    TokenKind.Arrow,
+    TokenKind.FatArrow,
+    TokenKind.EqualsEquals,
+    TokenKind.BangEquals,
+    TokenKind.LessEquals,
+    TokenKind.GreaterEquals,
+  ]);
+
   private isModuleNameToken(token: Token): boolean {
-    if (token.kind === TokenKind.Identifier) {
-      return true;
-    }
-
-    if (token.kind === TokenKind.Newline || token.kind === TokenKind.Eof) {
-      return false;
-    }
-
-    if (token.kind === TokenKind.Indent || token.kind === TokenKind.Dedent) {
-      return false;
-    }
-
-    if (
-      token.kind === TokenKind.IntegerLiteral ||
-      token.kind === TokenKind.StringLiteral ||
-      token.kind === TokenKind.Invalid
-    ) {
-      return false;
-    }
-
-    if (
-      token.kind === TokenKind.LeftParen ||
-      token.kind === TokenKind.RightParen ||
-      token.kind === TokenKind.LeftBrace ||
-      token.kind === TokenKind.RightBrace ||
-      token.kind === TokenKind.LeftBracket ||
-      token.kind === TokenKind.RightBracket
-    ) {
-      return false;
-    }
-
-    if (
-      token.kind === TokenKind.Colon ||
-      token.kind === TokenKind.Comma ||
-      token.kind === TokenKind.Dot
-    ) {
-      return false;
-    }
-
-    if (
-      token.kind === TokenKind.Equals ||
-      token.kind === TokenKind.Plus ||
-      token.kind === TokenKind.Minus ||
-      token.kind === TokenKind.Star ||
-      token.kind === TokenKind.Slash ||
-      token.kind === TokenKind.Percent ||
-      token.kind === TokenKind.Less ||
-      token.kind === TokenKind.Greater ||
-      token.kind === TokenKind.Question
-    ) {
-      return false;
-    }
-
-    if (
-      token.kind === TokenKind.Arrow ||
-      token.kind === TokenKind.FatArrow ||
-      token.kind === TokenKind.EqualsEquals ||
-      token.kind === TokenKind.BangEquals ||
-      token.kind === TokenKind.LessEquals ||
-      token.kind === TokenKind.GreaterEquals
-    ) {
-      return false;
-    }
-
-    return true;
+    return !ImportDiscovery.#nonModuleTokens.has(token.kind);
   }
 
   private advancePastStatement(items: readonly Token[], startIndex: number): number {
