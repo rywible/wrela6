@@ -29,13 +29,6 @@ describe("Lexer", () => {
     expect(result.tokens.reconstruct()).toBe("\n\n");
   });
 
-  test("single character content emits Invalid token", () => {
-    const result = lex(SourceText.from("single.wr", "a"));
-
-    expect(result.tokens.kinds()).toEqual([TokenKind.Invalid, TokenKind.Eof]);
-    expect(result.tokens.reconstruct()).toBe("a");
-  });
-
   test("line comments are preserved as trivia and reconstruction matches", () => {
     const result = lex(SourceText.from("comments.wr", "// top\n// next\r\n"));
 
@@ -59,11 +52,11 @@ describe("Lexer", () => {
     const result = lex(SourceText.from("mixed.wr", "a\nb\r\nc"));
 
     expect(result.tokens.kinds()).toEqual([
-      TokenKind.Invalid,
+      TokenKind.Identifier,
       TokenKind.Newline,
-      TokenKind.Invalid,
+      TokenKind.Identifier,
       TokenKind.Newline,
-      TokenKind.Invalid,
+      TokenKind.Identifier,
       TokenKind.Eof,
     ]);
     expect(result.tokens.reconstruct()).toBe("a\nb\r\nc");
@@ -75,7 +68,6 @@ describe("Lexer", () => {
     const tokens = result.tokens.items;
     expect(tokens[0]!.kind).toBe(TokenKind.Newline);
     expect(tokens[0]!.leadingTrivia.length).toBe(1);
-    expect(result.tokens.kinds()).toEqual([TokenKind.Newline, TokenKind.Invalid, TokenKind.Eof]);
     expect(result.tokens.reconstruct()).toBe("// header\na");
   });
 
@@ -83,7 +75,7 @@ describe("Lexer", () => {
     const result = lex(SourceText.from("trailing-comment.wr", "a// comment\n"));
 
     const tokens = result.tokens.items;
-    expect(tokens[0]!.kind).toBe(TokenKind.Invalid);
+    expect(tokens[0]!.kind).toBe(TokenKind.Identifier);
     expect(tokens[0]!.trailingTrivia.length).toBe(1);
     expect(result.tokens.reconstruct()).toBe("a// comment\n");
   });
@@ -102,5 +94,202 @@ describe("Lexer", () => {
     const result = lex(SourceText.from("complex.wr", text));
 
     expect(result.tokens.reconstruct()).toBe(text);
+  });
+
+  test("lexes identifiers and injected keywords", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+    const source = SourceText.from("main.wr", "uefi image HelloWorld:\n");
+
+    const result = lexer.lex(source);
+
+    expect(result.tokens.kinds()).toEqual([
+      TokenKind.Uefi,
+      TokenKind.Image,
+      TokenKind.Identifier,
+      TokenKind.Colon,
+      TokenKind.Newline,
+      TokenKind.Eof,
+    ]);
+    expect(result.tokens.reconstruct()).toBe(source.text);
+    expect(diagnostics.diagnostics).toEqual([]);
+  });
+
+  test("lexes punctuation and compound operators", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+    const source = SourceText.from("operators.wr", "(a) -> b => c == d != e <= f >= g ?\n");
+
+    const result = lexer.lex(source);
+
+    expect(result.tokens.kinds()).toEqual([
+      TokenKind.LeftParen,
+      TokenKind.Identifier,
+      TokenKind.RightParen,
+      TokenKind.Arrow,
+      TokenKind.Identifier,
+      TokenKind.FatArrow,
+      TokenKind.Identifier,
+      TokenKind.EqualsEquals,
+      TokenKind.Identifier,
+      TokenKind.BangEquals,
+      TokenKind.Identifier,
+      TokenKind.LessEquals,
+      TokenKind.Identifier,
+      TokenKind.GreaterEquals,
+      TokenKind.Identifier,
+      TokenKind.Question,
+      TokenKind.Newline,
+      TokenKind.Eof,
+    ]);
+    expect(result.tokens.reconstruct()).toBe(source.text);
+  });
+
+  test("lexes integer and string literals", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+    const source = SourceText.from("literals.wr", 'name="nic0" max=9000\n');
+
+    const result = lexer.lex(source);
+
+    expect(result.tokens.kinds()).toEqual([
+      TokenKind.Identifier,
+      TokenKind.Equals,
+      TokenKind.StringLiteral,
+      TokenKind.Identifier,
+      TokenKind.Equals,
+      TokenKind.IntegerLiteral,
+      TokenKind.Newline,
+      TokenKind.Eof,
+    ]);
+    expect(result.tokens.reconstruct()).toBe(source.text);
+    expect(diagnostics.diagnostics).toEqual([]);
+  });
+
+  test("recovers from invalid characters", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+    const source = SourceText.from("bad.wr", "image @ Main\n");
+
+    const result = lexer.lex(source);
+
+    expect(result.tokens.kinds()).toContain(TokenKind.Invalid);
+    expect(result.tokens.reconstruct()).toBe(source.text);
+    expect(diagnostics.diagnostics.map((d) => d.code)).toContain("LEX_INVALID_CHARACTER");
+  });
+
+  test("emits indentation layout tokens", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+    const source = SourceText.from(
+      "layout.wr",
+      "image Main:\n    fn boot():\n        loop:\n    fn stop():\n",
+    );
+
+    const result = lexer.lex(source);
+
+    expect(result.tokens.kinds()).toEqual([
+      TokenKind.Image,
+      TokenKind.Identifier,
+      TokenKind.Colon,
+      TokenKind.Newline,
+      TokenKind.Indent,
+      TokenKind.Fn,
+      TokenKind.Identifier,
+      TokenKind.LeftParen,
+      TokenKind.RightParen,
+      TokenKind.Colon,
+      TokenKind.Newline,
+      TokenKind.Indent,
+      TokenKind.Loop,
+      TokenKind.Colon,
+      TokenKind.Newline,
+      TokenKind.Dedent,
+      TokenKind.Fn,
+      TokenKind.Identifier,
+      TokenKind.LeftParen,
+      TokenKind.RightParen,
+      TokenKind.Colon,
+      TokenKind.Newline,
+      TokenKind.Dedent,
+      TokenKind.Eof,
+    ]);
+    expect(result.tokens.reconstruct()).toBe(source.text);
+    expect(diagnostics.diagnostics).toEqual([]);
+  });
+
+  test("reports inconsistent indentation", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+    const source = SourceText.from("bad-indent.wr", "image Main:\n    a\n  b\n");
+
+    const result = lexer.lex(source);
+
+    expect(result.tokens.eofCount()).toBe(1);
+    expect(result.tokens.kinds()).toEqual([
+      TokenKind.Image,
+      TokenKind.Identifier,
+      TokenKind.Colon,
+      TokenKind.Newline,
+      TokenKind.Indent,
+      TokenKind.Identifier,
+      TokenKind.Newline,
+      TokenKind.Dedent,
+      TokenKind.Identifier,
+      TokenKind.Newline,
+      TokenKind.Eof,
+    ]);
+    expect(result.tokens.reconstruct()).toBe(source.text);
+    expect(diagnostics.diagnostics.map((d) => d.code)).toContain("LEX_INCONSISTENT_INDENT");
+  });
+
+  test("lexes all punctuation in isolation", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+    const source = SourceText.from("punct.wr", "(){}[]:,.=+-*/%<>\n");
+
+    const result = lexer.lex(source);
+
+    expect(result.tokens.kinds()).toEqual([
+      TokenKind.LeftParen,
+      TokenKind.RightParen,
+      TokenKind.LeftBrace,
+      TokenKind.RightBrace,
+      TokenKind.LeftBracket,
+      TokenKind.RightBracket,
+      TokenKind.Colon,
+      TokenKind.Comma,
+      TokenKind.Dot,
+      TokenKind.Equals,
+      TokenKind.Plus,
+      TokenKind.Minus,
+      TokenKind.Star,
+      TokenKind.Slash,
+      TokenKind.Percent,
+      TokenKind.Less,
+      TokenKind.Greater,
+      TokenKind.Newline,
+      TokenKind.Eof,
+    ]);
+    expect(result.tokens.reconstruct()).toBe(source.text);
+  });
+
+  test("handles unterminated string at newline", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+    const source = SourceText.from("unterm.wr", '"hello\nworld"\n');
+
+    const result = lexer.lex(source);
+
+    expect(result.tokens.kinds()).toEqual([
+      TokenKind.StringLiteral,
+      TokenKind.Newline,
+      TokenKind.Identifier,
+      TokenKind.StringLiteral,
+      TokenKind.Newline,
+      TokenKind.Eof,
+    ]);
+    expect(result.tokens.reconstruct()).toBe(source.text);
+    expect(diagnostics.diagnostics.map((d) => d.code)).toContain("LEX_UNTERMINATED_STRING");
   });
 });
