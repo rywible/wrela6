@@ -1,0 +1,1 @@
+Review this plan: <plan-path>. What's good? What's bad? What's underspeced? The plan must be written for parallelism and well specified such that a junior engineer can pick up any task and complete it. Also here is the design for reference: <design-path>. The plan can deviate from the original design if the plan is better

@@ -1,0 +1,15 @@
+{
+  "rules": {
+    "id-length": [
+      "error",
+      {
+        "min": 3,
+        "properties": "never",
+        "exceptions": [],
+        "exceptionPatterns": []
+      }
+    ],
+    "prefer-const": "error",
+    "eqeqeq": "error"
+  }
+}
