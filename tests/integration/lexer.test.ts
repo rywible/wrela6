@@ -175,7 +175,9 @@ describe("Lexer", () => {
 
     expect(result.tokens.kinds()).toContain(TokenKind.Invalid);
     expect(result.tokens.reconstruct()).toBe(source.text);
-    expect(diagnostics.diagnostics.map((d) => d.code)).toContain("LEX_INVALID_CHARACTER");
+    expect(diagnostics.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "LEX_INVALID_CHARACTER",
+    );
   });
 
   test("emits indentation layout tokens", () => {
@@ -240,7 +242,9 @@ describe("Lexer", () => {
       TokenKind.Eof,
     ]);
     expect(result.tokens.reconstruct()).toBe(source.text);
-    expect(diagnostics.diagnostics.map((d) => d.code)).toContain("LEX_INCONSISTENT_INDENT");
+    expect(diagnostics.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "LEX_INCONSISTENT_INDENT",
+    );
   });
 
   test("lexes all punctuation in isolation", () => {
@@ -290,6 +294,38 @@ describe("Lexer", () => {
       TokenKind.Eof,
     ]);
     expect(result.tokens.reconstruct()).toBe(source.text);
-    expect(diagnostics.diagnostics.map((d) => d.code)).toContain("LEX_UNTERMINATED_STRING");
+    expect(diagnostics.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "LEX_UNTERMINATED_STRING",
+    );
+  });
+
+  test("lexes a snippet from docs/language/happy.md", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+    const source = SourceText.from(
+      "happy-snippet.wr",
+      "use UefiFirmware from core.uefi\n\nuefi image HelloWorld:\n",
+    );
+
+    const result = lexer.lex(source);
+
+    expect(result.tokens.kinds()).toEqual([
+      TokenKind.Use,
+      TokenKind.Identifier,
+      TokenKind.From,
+      TokenKind.Identifier,
+      TokenKind.Dot,
+      TokenKind.Uefi,
+      TokenKind.Newline,
+      TokenKind.Newline,
+      TokenKind.Uefi,
+      TokenKind.Image,
+      TokenKind.Identifier,
+      TokenKind.Colon,
+      TokenKind.Newline,
+      TokenKind.Eof,
+    ]);
+    expect(result.tokens.reconstruct()).toBe(source.text);
+    expect(diagnostics.diagnostics).toEqual([]);
   });
 });
