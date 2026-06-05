@@ -272,8 +272,17 @@ export function checkedFunctionSignatureFingerprint(signature: CheckedFunctionSi
   if (signature.modifiers.isPrivate) mods.push("private");
   mods.sort((left, right) => compareCodeUnitStrings(left, right));
   parts.push(`mods:${mods.join(",")}`);
-  parts.push("forbiddenMods:");
   return parts.join("|");
+}
+
+function sourceModifierList(signature: CheckedFunctionSignature): readonly string[] {
+  const mods: string[] = [];
+  if (signature.modifiers.isPlatform) mods.push("platform");
+  if (signature.modifiers.isTerminal) mods.push("terminal");
+  if (signature.modifiers.isPredicate) mods.push("predicate");
+  if (signature.modifiers.isConstructor) mods.push("constructor");
+  if (signature.modifiers.isPrivate) mods.push("private");
+  return mods;
 }
 
 export function targetSignatureExactlyMatches(
@@ -281,7 +290,13 @@ export function targetSignatureExactlyMatches(
   target: TargetFunctionSignature,
 ): boolean {
   if (source === undefined) return false;
-  return checkedFunctionSignatureFingerprint(source) === targetFunctionSignatureFingerprint(target);
+  if (checkedFunctionSignatureFingerprint(source) !== targetFunctionSignatureFingerprint(target))
+    return false;
+  const sourceMods = sourceModifierList(source);
+  for (const forbidden of target.forbiddenModifiers) {
+    if (sourceMods.includes(forbidden)) return false;
+  }
+  return true;
 }
 
 function targetFunctionSignatureFingerprint(target: TargetFunctionSignature): string {
@@ -303,10 +318,6 @@ function targetFunctionSignatureFingerprint(target: TargetFunctionSignature): st
     compareCodeUnitStrings(left, right),
   );
   parts.push(`mods:${requiredMods.join(",")}`);
-  const forbiddenMods = [...target.forbiddenModifiers].sort((left, right) =>
-    compareCodeUnitStrings(left, right),
-  );
-  parts.push(`forbiddenMods:${forbiddenMods.join(",")}`);
   return parts.join("|");
 }
 
