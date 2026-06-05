@@ -87,7 +87,7 @@ Source files and package roots
   -> name resolution
   -> type and kind checking
   -> image graph checking
-  -> typed HIR
+  -> typed HIR and proof-relevant surface
   -> monomorphized whole-image program
   -> representation and layout facts
   -> proof MIR / SSA
@@ -428,11 +428,19 @@ The default stdlib should mostly wrap these families in safer, domain-shaped
 APIs. Replacement stdlibs can choose very different wrappers or expose the
 intrinsics more directly.
 
-## HIR Responsibilities
+## Typed HIR And Proof-Relevant Surface
 
 HIR is the source-shaped, typed representation. It should still know language
 constructs such as `take`, `requires`, `validated buffer`, `terminal fn`, and
 `uefi image`, but it should be simpler and more regular than CST/AST views.
+
+For Wrela, HIR is also the last source-shaped layer that fully understands the
+language's proof-relevant surface. It does not prove path-sensitive resource
+properties, but it must retain the semantic evidence that later whole-image
+monomorphization and Proof MIR need. If HIR erases a `take` session, a
+validated-buffer source relationship, a private-state transition, a consumed
+receiver, or an intrinsic contract edge, no later phase should have to recover
+that meaning from ordinary calls and blocks.
 
 HIR should own checks that depend on declaration context, source intent, or
 language grammar shape:
@@ -449,6 +457,24 @@ language grammar shape:
 
 HIR should not try to solve every path-sensitive property. It should instead
 label the program with stable IDs and obligations that MIR can prove.
+
+HIR should make these proof-relevant concepts explicit:
+
+- resource-bearing places, including field-sensitive receiver places such as
+  `self.rx` and `self.tx`
+- resource kinds on values and types
+- consume/observe/terminal parameter modes and receiver modes
+- obligation IDs for opened `take` sessions, live buffers, validation/attempt
+  inputs, terminal discharge obligations, and private-state transitions
+- session and brand IDs for stream membership, edge/path provenance, validated
+  buffers, and tokens minted from platform or intrinsic operations
+- call-site requirement IDs for `requires` clauses and intrinsic preconditions
+- predicate and `ensure` fact origins, without attempting full dominance checks
+- source spans and HIR origin IDs for every proof-relevant node
+
+This makes HIR a proof-aware semantic surface, not a proof checker. Whole-image
+monomorphization instantiates this metadata, layout adds representation facts,
+and Proof MIR performs the path-sensitive checks on explicit control flow.
 
 ```text
 HirFunction
@@ -516,9 +542,9 @@ image program has been monomorphized and representation/layout facts are
 available, but before destructive lowering.
 
 ```text
-Typed HIR
+Typed HIR and proof-relevant surface
   -> image reachability
-  -> monomorphized HIR
+  -> monomorphized whole-image HIR
   -> representation and layout facts
   -> Proof MIR / SSA
   -> proof and resource checks
@@ -613,7 +639,8 @@ better origin or obligation label.
 ## Proof Semantics Companion
 
 This roadmap intentionally does not pretend the proof system is already solved.
-The production checker should be preceded by a companion design that specifies:
+The HIR, monomorphization, Proof MIR, and production checker should share a
+companion design that specifies:
 
 - the core resource state
 - place and field-sensitivity rules
@@ -624,9 +651,15 @@ The production checker should be preceded by a companion design that specifies:
 - small-step operational semantics for the proof-relevant core
 - proof-failure diagnostics, including counterexample path reporting
 
-That companion design does not need to be mechanized before implementation, but
-it should be precise enough that a reference checker and a production checker
-can disagree meaningfully in tests.
+That companion design is not a pipeline phase with its own compiler artifact.
+It does not need to be mechanized before implementation, but HIR and Proof MIR
+should not be treated as settled until it is precise enough that a reference
+checker and a production checker can disagree meaningfully in tests.
+
+The current Lean-derived compiler invariants are captured in
+`docs/design/proof-derived-compiler-invariants.md`. Treat that document as the
+minimum proof-relevant contract for future HIR, layout, Proof MIR, checker, and
+diagnostic work.
 
 ## Semantic Modules
 
@@ -970,9 +1003,9 @@ Build the compiler in dependency order, following the same direction as the
 pipeline. Each subsystem should leave behind a public contract and tests that
 the next subsystem can consume.
 
-The proof-semantics design can be drafted in parallel with earlier subsystems,
-but the production Proof MIR checker should not be treated as settled until
-that design exists.
+The proof-semantics companion can be drafted in parallel with earlier
+subsystems. It is supporting design for HIR, monomorphization, Proof MIR, and
+the checker rather than a standalone implementation phase.
 
 ### 1. Source Frontend And Package Roots
 
@@ -1035,21 +1068,30 @@ Output: typed declarations and signatures with resource kinds.
 
 Output: typed image root and image reachability seed.
 
-### 6. Typed HIR
+### 6. Typed HIR And Proof-Relevant Surface
 
 - lower AST views to typed, source-origin-preserving HIR
 - preserve proof-relevant constructs such as `take`, `requires`, validation,
   attempt, terminal calls, private state transitions, and image/device origins
+- assign stable obligation, session, brand, resource-place, and call-site
+  requirement IDs
+- retain resource kinds, parameter modes, receiver modes, intrinsic contract
+  edges, predicate fact origins, and `ensure` fact origins
+- make field-sensitive receiver access explicit enough for later place and loan
+  tracking
 - keep diagnostics source-level
 
-Output: typed HIR for the reachable source program.
+Output: typed HIR for the reachable source program with proof-relevant metadata
+that later phases instantiate and check.
 
-### 7. Monomorphization
+### 7. Whole-Image Monomorphization
 
 - start from the image root
 - collect reachable functions and types
 - include reachable project, vendored, replacement stdlib, and package modules
 - instantiate generics
+- instantiate proof-relevant HIR metadata such as resource kinds, obligation
+  IDs, session/brand IDs, call-site requirements, and intrinsic contract edges
 - retain reachable compiler-owned intrinsic declarations by intrinsic ID
 - reject unresolved polymorphism at the whole-image boundary
 
@@ -1066,19 +1108,7 @@ Output: closed monomorphized HIR plus reachable intrinsic IDs.
 
 Output: concrete layout and ABI facts for the closed program.
 
-### 9. Proof Semantics Design
-
-- define resource state and place model
-- define move, consume, loan, transfer, and discharge judgments
-- define fact language and entailment rules
-- define trusted axiom boundary for intrinsics without granting stdlib
-  privilege
-- define counterexample-path diagnostics
-
-Output: checker contract for Proof MIR. This is a design dependency for the
-production proof checker, not a separate compiler artifact.
-
-### 10. Proof MIR Builder
+### 9. Proof MIR Builder
 
 - lower monomorphized HIR to CFG blocks
 - represent scalar values in SSA where useful
@@ -1088,7 +1118,7 @@ production proof checker, not a separate compiler artifact.
 
 Output: Proof MIR for each monomorphized function.
 
-### 11. Proof And Resource Checking
+### 10. Proof And Resource Checking
 
 - fact propagation
 - requirement entailment
@@ -1102,7 +1132,7 @@ Output: Proof MIR for each monomorphized function.
 
 Output: checked MIR or proof diagnostics.
 
-### 12. Codegen MIR And LIR Lowering
+### 11. Codegen MIR And LIR Lowering
 
 - erase proof-only facts
 - lower resource operations to executable effects or no-ops
@@ -1112,7 +1142,7 @@ Output: checked MIR or proof diagnostics.
 
 Output: LIR with symbols, sections, and relocations.
 
-### 13. AArch64 Backend
+### 12. AArch64 Backend
 
 - ABI classification
 - instruction selection
@@ -1123,7 +1153,7 @@ Output: LIR with symbols, sections, and relocations.
 
 Output: internal object code for AArch64.
 
-### 14. Internal Object Model And Linker
+### 13. Internal Object Model And Linker
 
 - sections
 - symbols
@@ -1135,7 +1165,7 @@ Output: internal object code for AArch64.
 
 Output: linked image layout.
 
-### 15. PE/COFF EFI Writer
+### 14. PE/COFF EFI Writer
 
 - PE32+ headers
 - AArch64 COFF machine type
@@ -1147,7 +1177,7 @@ Output: linked image layout.
 
 Output: one `.efi` file.
 
-### 16. UEFI AArch64 Target Driver
+### 15. UEFI AArch64 Target Driver
 
 - compiler-owned UEFI entry thunk
 - firmware ABI lowering
@@ -1157,7 +1187,7 @@ Output: one `.efi` file.
 
 Output: a UEFI AArch64 image that can be run under firmware.
 
-### 17. Full Image Validation
+### 16. Full Image Validation
 
 - compile representative `uefi image` programs
 - compile with the default vendored stdlib

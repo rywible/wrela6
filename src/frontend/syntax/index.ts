@@ -1,7 +1,13 @@
 export { GreenTrivia } from "./green-trivia";
 export { GreenToken } from "./green-token";
 export { SyntaxKind } from "./syntax-kind";
-export { syntaxKindFromTokenKind, isTokenSyntaxKind, isNodeSyntaxKind } from "./syntax-kind-map";
+export {
+  syntaxKindFromTokenKind,
+  isTokenSyntaxKind,
+  isNodeSyntaxKind,
+  isNameTokenSyntaxKind,
+  NAME_TOKEN_SYNTAX_KINDS,
+} from "./syntax-kind-map";
 export { GreenNode } from "./green-node";
 export type { GreenElement } from "./green-node";
 export type { GreenDiagnostic } from "./green-diagnostic";

@@ -96,3 +96,58 @@ export function isTokenSyntaxKind(kind: SyntaxKind): boolean {
 export function isNodeSyntaxKind(kind: SyntaxKind): boolean {
   return !isTokenSyntaxKind(kind);
 }
+
+export const NAME_TOKEN_SYNTAX_KINDS: ReadonlySet<SyntaxKind> = new Set([
+  SyntaxKind.IdentifierToken,
+  SyntaxKind.UseKeyword,
+  SyntaxKind.FromKeyword,
+  SyntaxKind.UefiKeyword,
+  SyntaxKind.ImageKeyword,
+  SyntaxKind.DevicesKeyword,
+  SyntaxKind.UniqueKeyword,
+  SyntaxKind.EdgeKeyword,
+  SyntaxKind.ClassKeyword,
+  SyntaxKind.DataclassKeyword,
+  SyntaxKind.ValidatedKeyword,
+  SyntaxKind.BufferKeyword,
+  SyntaxKind.StreamKeyword,
+  SyntaxKind.ContainsKeyword,
+  SyntaxKind.BoundKeyword,
+  SyntaxKind.EnumKeyword,
+  SyntaxKind.InterfaceKeyword,
+  SyntaxKind.ConstructorKeyword,
+  SyntaxKind.FnKeyword,
+  SyntaxKind.PrivateKeyword,
+  SyntaxKind.PlatformKeyword,
+  SyntaxKind.TerminalKeyword,
+  SyntaxKind.PredicateKeyword,
+  SyntaxKind.RequiresKeyword,
+  SyntaxKind.ConsumeKeyword,
+  SyntaxKind.ParamsKeyword,
+  SyntaxKind.LayoutKeyword,
+  SyntaxKind.DeriveKeyword,
+  SyntaxKind.RequireKeyword,
+  SyntaxKind.AtKeyword,
+  SyntaxKind.LenKeyword,
+  SyntaxKind.ElseKeyword,
+  SyntaxKind.OtherwiseKeyword,
+  SyntaxKind.LetKeyword,
+  SyntaxKind.IfKeyword,
+  SyntaxKind.NotKeyword,
+  SyntaxKind.WhileKeyword,
+  SyntaxKind.ForKeyword,
+  SyntaxKind.InKeyword,
+  SyntaxKind.LoopKeyword,
+  SyntaxKind.MatchKeyword,
+  SyntaxKind.CaseKeyword,
+  SyntaxKind.ReturnKeyword,
+  SyntaxKind.YieldKeyword,
+  SyntaxKind.ContinueKeyword,
+  SyntaxKind.TakeKeyword,
+  SyntaxKind.AsKeyword,
+  SyntaxKind.WithKeyword,
+]);
+
+export function isNameTokenSyntaxKind(kind: SyntaxKind): boolean {
+  return NAME_TOKEN_SYNTAX_KINDS.has(kind);
+}

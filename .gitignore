@@ -91,6 +91,10 @@ typings/
 .nuxt
 dist
 
+# Lean / Lake proof-model build output
+proof-model/.lake/
+proof-model/lake-manifest.json
+
 # Gatsby files
 .cache/
 # Comment in the public line in if your project uses Gatsby and *not* Next.js

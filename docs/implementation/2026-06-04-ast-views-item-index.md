@@ -839,7 +839,10 @@ import { describe, expect, test } from "bun:test";
 import { SyntaxKind } from "../../../../src/frontend";
 import { childNode, descendants } from "../../../../src/frontend/ast/syntax-query";
 import { BlockView } from "../../../../src/frontend/ast/statement-views";
-import { RequireSectionView, RequiresSectionView } from "../../../../src/frontend/ast/requirement-views";
+import {
+  RequireSectionView,
+  RequiresSectionView,
+} from "../../../../src/frontend/ast/requirement-views";
 import { parseSourceRoot } from "../../../support/frontend/ast-test-support";
 
 describe("statement and requirement views", () => {
@@ -1576,9 +1579,7 @@ Use this test shape:
 import { describe, expect, test } from "bun:test";
 import { intrinsicId } from "../../../../src/semantic/ids";
 import { stableSerializeIntrinsicDeclaration } from "../../../../src/semantic/item-index/stable-serialization";
-import {
-  type IntrinsicCatalog,
-} from "../../../../src/semantic/item-index/intrinsic-catalog";
+import { type IntrinsicCatalog } from "../../../../src/semantic/item-index/intrinsic-catalog";
 
 describe("intrinsic catalog contracts", () => {
   test("stable serialization sorts object keys recursively", () => {
@@ -2185,7 +2186,10 @@ function collectNestedFunctionsInFunctionBody(owner: FunctionRecord, body: Block
 Collect source type parameters with this owner split:
 
 ```ts
-function collectItemTypeParameters(item: SourceItemRecord, parameters: readonly TypeParameterView[]): void {
+function collectItemTypeParameters(
+  item: SourceItemRecord,
+  parameters: readonly TypeParameterView[],
+): void {
   parameters.forEach((parameter, index) => {
     const name = parameter.nameText();
     const nameSpan = parameter.nameSpan();

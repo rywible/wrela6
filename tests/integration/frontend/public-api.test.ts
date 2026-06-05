@@ -14,6 +14,9 @@ import {
   TokenStream,
   Trivia,
   TriviaKind,
+  FunctionDeclarationView,
+  SourceFileView,
+  TypeReferenceView,
 } from "../../../src/frontend";
 import { GreenNode, GreenToken, RedNode, RedToken } from "../../../src/frontend/syntax";
 
@@ -85,4 +88,13 @@ test("full lexer to parser pipeline through public API", () => {
 test("compatibility imports from src/lexer still work", async () => {
   const { Lexer: CompatLexer } = await import("../../../src/lexer");
   expect(CompatLexer).toBeDefined();
+});
+
+test("frontend namespace exports AST views", () => {
+  expect(frontend.SourceFileView).toBeDefined();
+  expect(frontend.FunctionDeclarationView).toBeDefined();
+  expect(frontend.TypeReferenceView).toBeDefined();
+  expect(SourceFileView).toBeDefined();
+  expect(FunctionDeclarationView).toBeDefined();
+  expect(TypeReferenceView).toBeDefined();
 });
