@@ -11,7 +11,11 @@ import { resourceKindForType } from "./resource-kind-checker";
 import type { CheckedType } from "./type-model";
 import type { CheckedResourceKind } from "./resource-kind";
 import type { SemanticSurfaceDiagnostic } from "./diagnostics";
-import { duplicateUniqueEdgeRoot, targetUnavailableImageDevice } from "./diagnostics";
+import {
+  duplicateUniqueEdgeRoot,
+  targetUnavailableImageDevice,
+  invalidImageDeviceType,
+} from "./diagnostics";
 import type { SourceSpan } from "../../frontend";
 
 export interface CheckedImageDevice {
@@ -37,13 +41,22 @@ export interface CheckImageDevicesResult {
   readonly diagnostics: readonly SemanticSurfaceDiagnostic[];
 }
 
-function findDeviceSurfaceForFieldName(
+function findDeviceSurfaceForCheckedType(
   targetSurface: SemanticTargetSurface,
-  field: FieldRecord,
+  checkedType: CheckedType,
+  fieldTypeView: any,
 ): DeviceSurfaceSpec | undefined {
-  const typeName = field.type?.qualifiedNameText();
-  if (typeName === undefined) return undefined;
-  return targetSurface.deviceSurfaces.find((device) => device.name === typeName);
+  if (checkedType.kind === "target") {
+    const targetIdStr = String(checkedType.targetTypeId);
+    return targetSurface.deviceSurfaces.find(
+      (device) => String(device.deviceSurfaceId) === targetIdStr,
+    );
+  }
+  if (checkedType.kind === "source") {
+    const typeName = fieldTypeView?.qualifiedNameText?.() ?? String(checkedType.typeId);
+    return targetSurface.deviceSurfaces.find((device) => device.name === typeName);
+  }
+  return undefined;
 }
 
 export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevicesResult {
@@ -66,7 +79,11 @@ export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevi
     });
     diagnostics.push(...checkedType.diagnostics);
 
-    const deviceSurface = findDeviceSurfaceForFieldName(input.targetSurface, field);
+    const deviceSurface = findDeviceSurfaceForCheckedType(
+      input.targetSurface,
+      checkedType.type,
+      field.type,
+    );
 
     if (deviceSurface === undefined) {
       diagnostics.push(
@@ -81,10 +98,39 @@ export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevi
       continue;
     }
 
+    const profileDeviceNames = (input.selection as any).profile?.availableDeviceSurfaces ?? [];
+    if (
+      profileDeviceNames.length > 0 &&
+      !profileDeviceNames.includes(deviceSurface.deviceSurfaceId)
+    ) {
+      diagnostics.push(
+        targetUnavailableImageDevice(
+          field.name,
+          "Device surface not available for selected image profile",
+          field.span,
+          undefined as any,
+          { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
+        ),
+      );
+      continue;
+    }
+
     const resourceKind = resourceKindForType({
       type: checkedType.type,
       context: input.kindContext,
     });
+
+    if (resourceKind.kind !== "error" && resourceKind.kind !== "concrete") {
+      diagnostics.push(
+        invalidImageDeviceType(
+          field.name,
+          "Device field resource kind must be concrete",
+          field.span,
+          undefined as any,
+          { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
+        ),
+      );
+    }
 
     const checkedDevice: CheckedImageDevice = {
       fieldId: field.id,

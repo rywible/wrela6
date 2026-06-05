@@ -115,20 +115,30 @@ export function semanticTargetSurface(input: {
 }): SemanticTargetSurface {
   const profiles = sortedImageProfiles(input.imageProfiles);
   const profileNames = new Set<string>();
+  const profileIds = new Set<string>();
   for (const profile of profiles) {
     if (profileNames.has(profile.name)) {
       throw new RangeError(`Duplicate image profile name '${profile.name}'.`);
     }
+    if (profileIds.has(profile.profileId)) {
+      throw new RangeError(`Duplicate image profile id '${profile.profileId}'.`);
+    }
     profileNames.add(profile.name);
+    profileIds.add(profile.profileId);
   }
 
   const devices = sortedDeviceSurfaces(input.deviceSurfaces);
   const deviceNames = new Set<string>();
+  const deviceIds = new Set<string>();
   for (const device of devices) {
     if (deviceNames.has(device.name)) {
       throw new RangeError(`Duplicate device surface name '${device.name}'.`);
     }
+    if (deviceIds.has(device.deviceSurfaceId)) {
+      throw new RangeError(`Duplicate device surface id '${device.deviceSurfaceId}'.`);
+    }
     deviceNames.add(device.name);
+    deviceIds.add(device.deviceSurfaceId);
   }
 
   return {

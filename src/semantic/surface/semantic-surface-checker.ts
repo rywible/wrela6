@@ -6,12 +6,14 @@ import { buildMemberNamespace } from "../names/member-namespace";
 import type { CoreTypeCatalog } from "../names/core-types";
 import type { SemanticTargetSurface } from "./platform-surface";
 import { buildSurfaceReferenceLookup } from "./reference-lookup";
+import { checkTypeReference } from "./type-reference-checker";
 import { CheckedProgramBuilder } from "./checked-program";
 import type { CheckedSemanticProgram } from "./checked-program";
 import type { SemanticSurfaceDiagnostic } from "./diagnostics";
 import { sortSemanticSurfaceDiagnostics } from "./diagnostics";
 import { checkAllFunctionSignatures } from "./signature-checker";
-import { emptyKindContext } from "./resource-kind-checker";
+import { checkGenericSignature } from "./generic-checker";
+import { emptyKindContext, resourceKindForType } from "./resource-kind-checker";
 import {
   completeDeferredMembers,
   deriveTypedOwnersFromSignatures,
@@ -66,6 +68,71 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
 
   for (const signature of signaturesResult.signatures.entries()) {
     builder.addFunctionSignature(signature);
+  }
+
+  for (const typeRecord of input.index.types()) {
+    builder.addType({
+      typeId: typeRecord.id,
+      itemId: typeRecord.itemId,
+      type: { kind: "source", itemId: typeRecord.itemId, typeId: typeRecord.id },
+    });
+    const genericResult = checkGenericSignature({
+      owner: { kind: "item", itemId: typeRecord.itemId },
+      index: input.index,
+      referenceLookup,
+      coreTypes: input.coreTypes,
+    });
+    diagnostics.push(...genericResult.diagnostics);
+    for (const param of genericResult.signature.parameters) {
+      builder.addGenericParameter({
+        key: param.key,
+        name: param.name,
+        owner: genericResult.signature.owner,
+        span: { start: 0, end: 0 } as any,
+      });
+    }
+  }
+
+  for (const item of input.index.items()) {
+    const fields = input.index.fieldsForItem(item.id);
+    for (const fieldRecord of fields) {
+      const fieldTypeResult = fieldRecord.type
+        ? checkTypeReference({
+            moduleId: item.moduleId,
+            view: fieldRecord.type,
+            index: input.index,
+            referenceLookup,
+            coreTypes: input.coreTypes,
+          })
+        : { type: { kind: "error" } as any, diagnostics: [] as readonly any[] };
+      diagnostics.push(...fieldTypeResult.diagnostics);
+      builder.addField({
+        fieldId: fieldRecord.id,
+        itemId: item.id,
+        name: fieldRecord.name,
+        type: fieldTypeResult.type,
+        resourceKind: resourceKindForType({ type: fieldTypeResult.type, context: kindContext }),
+        sourceSpan: fieldRecord.span,
+      });
+    }
+  }
+
+  for (const functionRecord of input.index.functions()) {
+    const funcGenericResult = checkGenericSignature({
+      owner: { kind: "function", functionId: functionRecord.id, itemId: functionRecord.itemId },
+      index: input.index,
+      referenceLookup,
+      coreTypes: input.coreTypes,
+    });
+    diagnostics.push(...funcGenericResult.diagnostics);
+    for (const param of funcGenericResult.signature.parameters) {
+      builder.addGenericParameter({
+        key: param.key,
+        name: param.name,
+        owner: funcGenericResult.signature.owner,
+        span: { start: 0, end: 0 } as any,
+      });
+    }
   }
 
   const typedOwners = deriveTypedOwnersFromSignatures({
@@ -128,22 +195,20 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
   builder.setProofSurfaceSeeds({ requirements, terminalSurfaces });
   const proofSurface = checkedProofSurface({ requirements, terminalSurfaces });
 
-  const certResult = certifyPlatformBindings({
-    index: input.index,
-    platformBindings: input.platformBindings,
-    signatures: signaturesResult.signatures,
-    proofSurface,
-    targetSurface: input.targetSurface,
-    availability: imageRootResult.selection?.availability ?? {
-      targetId: input.targetSurface.targetId,
-      profileId: "" as ImageProfileId,
-      features: [],
-    },
-  });
-  diagnostics.push(...certResult.diagnostics);
+  if (imageRootResult.selection !== undefined) {
+    const certResult = certifyPlatformBindings({
+      index: input.index,
+      platformBindings: input.platformBindings,
+      signatures: signaturesResult.signatures,
+      proofSurface,
+      targetSurface: input.targetSurface,
+      availability: imageRootResult.selection.availability,
+    });
+    diagnostics.push(...certResult.diagnostics);
 
-  for (const binding of certResult.bindings.entries()) {
-    builder.addCertifiedPlatformBinding(binding);
+    for (const binding of certResult.bindings.entries()) {
+      builder.addCertifiedPlatformBinding(binding);
+    }
   }
 
   let devices: readonly CheckedImageDevice[] = [];

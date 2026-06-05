@@ -27,6 +27,7 @@ import {
   illegalPlatformShape,
   targetUnavailablePlatformPrimitive,
 } from "./diagnostics";
+import { platformContractNotExact } from "./diagnostics";
 import { sortSemanticSurfaceDiagnostics } from "./diagnostics";
 
 export interface CertifyPlatformBindingsInput {
@@ -188,8 +189,22 @@ export function certifyPlatformBindings(
       continue;
     }
 
+    const sourceRequires = input.proofSurface.requirementSurfaces.get(signature.functionId) ?? [];
+    if (sourceRequires.length !== primitive.proofContract.requiredFacts.length) {
+      diagnostics.push(
+        platformContractNotExact(
+          functionName,
+          `expected ${primitive.proofContract.requiredFacts.length} requires, got ${sourceRequires.length}`,
+          signature.sourceSpan,
+          source as any,
+          diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
+        ),
+      );
+      continue;
+    }
+
     const sigFingerprint = checkedFunctionSignatureFingerprint(signature);
-    const proofContractFingerprint = `required:${primitive.proofContract.requiredFacts.length}|ensured:${primitive.proofContract.ensuredFacts.length}`;
+    const proofContractFingerprint = `sourceRequires:${sourceRequires.length}|targetRequired:${primitive.proofContract.requiredFacts.length}|targetEnsured:${primitive.proofContract.ensuredFacts.length}`;
 
     bindings.push(
       certifiedBindingFor(

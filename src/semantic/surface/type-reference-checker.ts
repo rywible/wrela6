@@ -1,4 +1,4 @@
-import type { ModuleId } from "../ids";
+import type { CoreTypeId, ModuleId, TargetTypeId, TypeId } from "../ids";
 import type { ItemIndex } from "../item-index";
 import type { CoreTypeCatalog } from "../names/core-types";
 import type { CheckedType } from "./type-model";
@@ -58,15 +58,23 @@ function checkedTypeFromLookupResult(
 
   if (lookup.kind === "ambiguous") {
     const name = input.view?.qualifiedNameText() ?? "<unknown>";
+    const relatedInformation = lookup.entries.map((entry) => ({
+      message: `Candidate ordinal ${entry.key.ordinal}: ${name}`,
+      span: entry.key.span,
+      source: input.source,
+    }));
     return {
       type: errorCheckedType(),
       diagnostics: [
-        invalidTypeReference({
+        {
+          code: "SURFACE_INVALID_TYPE_REFERENCE" as const,
+          message: `Ambiguous type reference '${name}'.`,
+          severity: "error" as const,
           source: input.source,
           span: input.span,
           order: { moduleId: input.moduleId, span: input.span, codeTieBreaker: "type" },
-          typeName: name,
-        }),
+          relatedInformation,
+        },
       ],
     };
   }
@@ -128,9 +136,14 @@ function checkTypeArguments(
     return { type: constructorType, diagnostics };
   }
 
+  const constructorId = typeConstructorIdFromCheckedType(constructorType);
+  if (constructorId === undefined) {
+    return { type: errorCheckedType(), diagnostics };
+  }
+
   return {
     type: appliedType({
-      constructor: typeConstructorIdFromCheckedType(constructorType),
+      constructor: constructorId,
       arguments: resolvedTypeArgs,
       resourceKind: { kind: "error" },
     }),
@@ -138,7 +151,12 @@ function checkTypeArguments(
   };
 }
 
-function typeConstructorIdFromCheckedType(type: CheckedType): any {
+export type TypeConstructorId =
+  | { readonly kind: "source"; readonly typeId: TypeId }
+  | { readonly kind: "core"; readonly coreTypeId: CoreTypeId }
+  | { readonly kind: "target"; readonly targetTypeId: TargetTypeId };
+
+function typeConstructorIdFromCheckedType(type: CheckedType): TypeConstructorId | undefined {
   switch (type.kind) {
     case "core":
       return { kind: "core", coreTypeId: type.coreTypeId };
@@ -147,7 +165,7 @@ function typeConstructorIdFromCheckedType(type: CheckedType): any {
     case "target":
       return { kind: "target", targetTypeId: type.targetTypeId };
     default:
-      return { kind: "source", typeId: 0 as any };
+      return undefined;
   }
 }
 

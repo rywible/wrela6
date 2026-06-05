@@ -200,7 +200,7 @@ function completedMemberReferenceTable(
     const rightKey = completedMemberKeyString(right.key);
     return compareCodeUnitStrings(leftKey, rightKey);
   });
-  const byKey = new Map<string, any>();
+  const byKey = new Map<string, ResolvedReference>();
   for (const entry of sorted) {
     byKey.set(completedMemberKeyString(entry.key), entry.reference);
   }

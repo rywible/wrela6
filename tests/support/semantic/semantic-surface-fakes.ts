@@ -17,9 +17,9 @@ import {
   platformPrimitiveCatalog,
   semanticTargetSurface,
 } from "../../../src/semantic/surface/platform-surface";
-import type { CheckedResourceKind } from "../../../src/semantic/surface/resource-kind";
 import { concreteKind, resourceKindFingerprint } from "../../../src/semantic/surface/resource-kind";
 
+import type { ResourceKindContext } from "../../../src/semantic/surface/resource-kind-checker";
 import { checkedTypeFingerprint, coreCheckedType } from "../../../src/semantic/surface/type-model";
 import {
   checkSemanticSurface,
@@ -130,13 +130,6 @@ export function semanticTargetSurfaceFake(input?: {
 }
 
 // ── Resource kind context ───────────────────────────────────
-
-export interface ResourceKindContext {
-  readonly coreTypes: CoreTypeCatalog;
-  readonly sourceTypeKinds: ReadonlyMap<number, CheckedResourceKind>;
-  readonly targetTypeKinds: ReadonlyMap<string, CheckedResourceKind>;
-  readonly constructorRules: ReadonlyMap<string, string>;
-}
 
 export function emptyKindContext(coreTypes?: CoreTypeCatalog): ResourceKindContext {
   return {
@@ -271,6 +264,16 @@ export function semanticSurfaceSummary(result: CheckSemanticSurfaceResult): stri
   });
 }
 
-export function shuffledSemanticTargetSurfaceFake(_seed: number): SemanticTargetSurface {
-  return semanticTargetSurfaceFake();
+export function shuffledSemanticTargetSurfaceFake(seed: number): SemanticTargetSurface {
+  const base = semanticTargetSurfaceFake();
+  const profiles = [...base.imageProfiles].sort(() => (seed % 2 === 0 ? -1 : 1));
+  const devices = [...base.deviceSurfaces].sort(() => (seed % 3 === 0 ? -1 : 1));
+  return semanticTargetSurface({
+    targetId: base.targetId,
+    platformPrimitives: platformPrimitiveCatalog(
+      [...base.platformPrimitives.entries()].sort(() => (seed % 5 < 2 ? -1 : 1)),
+    ),
+    imageProfiles: profiles,
+    deviceSurfaces: devices,
+  });
 }

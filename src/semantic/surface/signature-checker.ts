@@ -16,7 +16,7 @@ import type {
   CheckedFunctionSignatureTable,
 } from "./checked-program";
 import type { SemanticSurfaceDiagnostic } from "./diagnostics";
-import { illegalFunctionModifiers } from "./diagnostics";
+import { illegalFunctionModifiers, invalidReturnType } from "./diagnostics";
 import type { TargetFunctionSignature } from "./platform-surface";
 import { compareCodeUnitStrings } from "./deterministic-sort";
 import { SourceSpan } from "../../frontend";
@@ -107,11 +107,27 @@ function validateModifiers(
       }),
     );
   }
+
+  if (modifiers.isPredicate && modifiers.isConstructor) {
+    diagnostics.push(
+      illegalFunctionModifiers(
+        "predicate and constructor cannot be combined",
+        span,
+        source as any,
+        {
+          moduleId: input.functionRecord.moduleId,
+          span,
+          codeTieBreaker: "mod",
+        },
+      ),
+    );
+  }
 }
 
 function checkedParameterFromRecord(
   input: CheckFunctionSignatureInput,
   paramRecord: ParameterRecord,
+  diagnostics: SemanticSurfaceDiagnostic[],
 ): CheckedParameter {
   const typeResult = checkTypeReference({
     moduleId: input.functionRecord.moduleId,
@@ -120,6 +136,7 @@ function checkedParameterFromRecord(
     referenceLookup: input.referenceLookup,
     coreTypes: input.coreTypes,
   });
+  diagnostics.push(...typeResult.diagnostics);
 
   const resourceKind = resourceKindForType({
     type: typeResult.type,
@@ -181,7 +198,7 @@ export function checkFunctionSignature(
 
   const parameters = input.index
     .parametersForFunction(input.functionRecord.id)
-    .map((paramRecord) => checkedParameterFromRecord(input, paramRecord));
+    .map((paramRecord) => checkedParameterFromRecord(input, paramRecord, diagnostics));
 
   const { returnType, diagnostics: returnDiagnostics } = determineReturnType(
     input,
@@ -189,6 +206,29 @@ export function checkFunctionSignature(
     span,
   );
   diagnostics.push(...returnDiagnostics);
+
+  if (modifiers.isPredicate) {
+    const boolId = coreTypeId("bool");
+    if (returnType.kind !== "core" || returnType.coreTypeId !== boolId) {
+      diagnostics.push(
+        invalidReturnType("predicate functions must return bool", span, source as any, {
+          moduleId: input.functionRecord.moduleId,
+          span,
+          codeTieBreaker: "return",
+        }),
+      );
+    }
+  }
+
+  if (!modifiers.isTerminal && !modifiers.isPredicate && returnType.kind === "error") {
+    diagnostics.push(
+      invalidReturnType("function has no valid return type", span, source as any, {
+        moduleId: input.functionRecord.moduleId,
+        span,
+        codeTieBreaker: "return",
+      }),
+    );
+  }
 
   const returnKind = resourceKindForType({
     type: returnType,
@@ -211,6 +251,11 @@ export function checkFunctionSignature(
 
 export function checkedFunctionSignatureFingerprint(signature: CheckedFunctionSignature): string {
   const parts: string[] = [];
+  parts.push(`genericArity:${signature.genericSignature?.parameters.length ?? 0}`);
+  parts.push(`hasReceiver:${signature.receiver !== undefined ? "1" : "0"}`);
+  if (signature.receiver !== undefined) {
+    parts.push(`receiverMode:${signature.receiver.mode}`);
+  }
   parts.push(`params:${signature.parameters.length}`);
   for (const param of signature.parameters) {
     parts.push(`mode:${param.mode}`);
@@ -227,6 +272,7 @@ export function checkedFunctionSignatureFingerprint(signature: CheckedFunctionSi
   if (signature.modifiers.isPrivate) mods.push("private");
   mods.sort((left, right) => compareCodeUnitStrings(left, right));
   parts.push(`mods:${mods.join(",")}`);
+  parts.push("forbiddenMods:");
   return parts.join("|");
 }
 
@@ -240,6 +286,11 @@ export function targetSignatureExactlyMatches(
 
 function targetFunctionSignatureFingerprint(target: TargetFunctionSignature): string {
   const parts: string[] = [];
+  parts.push(`genericArity:${target.genericArity}`);
+  parts.push(`hasReceiver:${target.receiver !== undefined ? "1" : "0"}`);
+  if (target.receiver !== undefined) {
+    parts.push(`receiverMode:${target.receiver.mode}`);
+  }
   parts.push(`params:${target.parameters.length}`);
   for (const param of target.parameters) {
     parts.push(`mode:${param.mode}`);
@@ -252,6 +303,10 @@ function targetFunctionSignatureFingerprint(target: TargetFunctionSignature): st
     compareCodeUnitStrings(left, right),
   );
   parts.push(`mods:${requiredMods.join(",")}`);
+  const forbiddenMods = [...target.forbiddenModifiers].sort((left, right) =>
+    compareCodeUnitStrings(left, right),
+  );
+  parts.push(`forbiddenMods:${forbiddenMods.join(",")}`);
   return parts.join("|");
 }
 
