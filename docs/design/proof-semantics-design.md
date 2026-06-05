@@ -18,11 +18,13 @@ The design is paired with a small executable reference sketch:
 tests/support/proof-core-reference.ts
 tests/unit/proof-core-reference.test.ts
 tests/unit/proof-core-composition.test.ts
+tests/unit/proof-core-trace.test.ts
 ```
 
 The sketch is intentionally tiny, but it verifies the thirty-nine worked rejection
 examples in this document plus composition and permutation properties over the
-core judgments. It is a pressure test for the rules, not the production checker.
+core judgments and generated small-trace differential checks. It is a pressure
+test for the rules, not the production checker.
 
 ## Goals
 
@@ -48,6 +50,27 @@ core judgments. It is a pressure test for the rules, not the production checker.
 - This design does not mechanize the semantics in Lean.
 - This design does not let standard-library source bypass proof checks.
 - This design does not define target ABI or code generation.
+- This design does not assign proof obligations to language mechanisms that are
+  not in the current Wrela language/design surface.
+
+## Current Language Scope
+
+The confidence claims in this document are scoped to the language mechanisms
+currently described in `docs/language` and the compiler design docs:
+
+- resource use, move, consume, drop, and wrapper lifting
+- `take` streams and session-bound obligations
+- `requires` clauses, predicate facts, and private-state generations
+- validation results and validated-buffer layout facts
+- terminal functions and private platform functions
+- intrinsic contracts
+- `Attempt`-style fallible ownership transfer
+- static interface/generic constraints only where they lower to explicit
+  resource contracts
+- multicore ownership transfer through checked move capabilities
+
+Future language features need their own lowering rules and proof obligations
+before they are covered by this proof core.
 
 ## Pipeline Position
 
@@ -289,6 +312,40 @@ disjoint places should produce the same proof state in either order. Operations
 over overlapping places may reject in different local ways, but they must not
 create a usable duplicated owner, a stale fact, or a hidden live obligation.
 
+## Generated Trace Differential Checks
+
+The executable sketch also generates small Proof MIR-like traces over a compact
+instruction subset:
+
+```text
+use
+consume
+drop
+openObligation
+discharge
+openLoan
+addFact
+requireFact
+advancePrivate
+```
+
+Each accepted operational step is checked against whole-state invariants:
+
+- obligations point only to live places
+- loans point only to live places
+- facts mention only stable live places and current private-state generations
+- consumed aggregate parents do not have live children
+
+The same trace is then run through a smaller declarative checker in
+`tests/unit/proof-core-trace.test.ts`. The two checkers must agree on acceptance,
+rejection code, and final state snapshot. This is not a proof of soundness, but
+it catches order-sensitive bugs that are easy to miss in one-off examples.
+
+The first generated-trace pass found a real hole: direct `consume` could consume
+a resource with a live obligation, leaving the obligation dangling. The core rule
+now rejects that; only explicit discharge or validation transfer may consume an
+obligated place.
+
 ## Core Judgments
 
 ### Use
@@ -325,6 +382,10 @@ the aggregate itself is consumed.
 
 Shadowing a live non-copy place is rejected. This keeps source names stable
 while obligations are live and prevents accidental hiding of resource state.
+
+A plain `consume` is rejected when an overlapping live obligation exists.
+Discharge and validation success use explicit obligation-aware rules that either
+remove the obligation or transfer it to the produced value.
 
 ### Drop
 

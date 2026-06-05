@@ -22,6 +22,8 @@ import {
   readDynamicLayoutField,
   requireFact,
   transferToCore,
+  type ProofState,
+  type ResourceStatus,
   usePlace,
   withPlace,
   wrapPlace,
@@ -336,7 +338,7 @@ test("proof core rejects joining branches with different resource metadata", () 
 test("proof core rejects joining an obligation over a maybe-consumed place", () => {
   const initialState = withPlace(emptyState(), "buffer", { kind: "linear" });
   const obligatedState = enterLinearObligation(initialState, "rx-buffer", "buffer").state;
-  const consumedBranch = consumePlace(obligatedState, "buffer").state;
+  const consumedBranch = forcePlaceStatus(obligatedState, "buffer", "consumed");
   const liveBranch = cloneState(obligatedState);
 
   expectRejected(joinStates(consumedBranch, liveBranch), "BRANCH_OBLIGATION_RESOURCE_MISMATCH");
@@ -381,3 +383,14 @@ test("proof core rejects Attempt consume of a resource with a live obligation", 
     "RESOURCE_HAS_LIVE_OBLIGATION",
   );
 });
+
+function forcePlaceStatus(state: ProofState, place: string, status: ResourceStatus): ProofState {
+  const record = state.places.get(place);
+  if (record === undefined) {
+    throw new Error(`Cannot force status for unknown place ${place}.`);
+  }
+
+  const places = new Map(state.places);
+  places.set(place, { ...record, status });
+  return { ...cloneState(state), places };
+}

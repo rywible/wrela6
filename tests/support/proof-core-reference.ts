@@ -102,10 +102,22 @@ export function addFact(state: ProofState, fact: string): ProofState {
 }
 
 export function consumePlace(state: ProofState, place: string): ProofResult {
+  return consumePlaceWithObligationMode(state, place, false);
+}
+
+function consumePlaceWithObligationMode(
+  state: ProofState,
+  place: string,
+  allowOverlappingObligation: boolean,
+): ProofResult {
   const useResult = checkPlaceAvailable(state, place);
   if (!useResult.succeeded) return useResult;
 
   const record = state.places.get(place)!;
+  if (!allowOverlappingObligation && hasOverlappingObligation(state, place)) {
+    return rejected(state, "RESOURCE_HAS_LIVE_OBLIGATION");
+  }
+
   if (record.kind === "copy") {
     return accepted(state);
   }
@@ -236,7 +248,7 @@ export function dischargeObligation(
     return rejected(state, "BRAND_MISMATCH");
   }
 
-  const consumeResult = consumePlace(state, place);
+  const consumeResult = consumePlaceWithObligationMode(state, place, true);
   if (!consumeResult.succeeded) return consumeResult;
 
   const obligations = new Map(consumeResult.state.obligations);
@@ -360,7 +372,7 @@ export function matchValidationOk(
   const validationResult = markValidationMatched(state, validationPlace);
   if (!validationResult.succeeded) return validationResult;
 
-  const sourceResult = consumePlace(validationResult.state, sourcePlace);
+  const sourceResult = consumePlaceWithObligationMode(validationResult.state, sourcePlace, true);
   if (!sourceResult.succeeded) return sourceResult;
 
   const packetState = withPlace(sourceResult.state, packetPlace, {
