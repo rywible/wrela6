@@ -127,6 +127,16 @@ export class AttemptExpressionView extends AstView {
       this.node.children().find((child): child is RedNode => child instanceof RedNode),
     );
   }
+
+  alternative(): ExpressionView | undefined {
+    const children = this.node
+      .children()
+      .filter((child): child is RedNode => child instanceof RedNode);
+    if (children.length >= 2) {
+      return expressionViewFrom(children[1]);
+    }
+    return undefined;
+  }
 }
 
 export class UnaryExpressionView extends AstView {

@@ -78,7 +78,9 @@ export class ImportDeclarationView extends AstView {
   }
 
   importedNames(): RedToken[] {
-    return childNameTokens(this.node);
+    const nameListNode = childNode(this.node, SyntaxKind.ImportNameList);
+    if (nameListNode === undefined) return [];
+    return childNameTokens(nameListNode);
   }
 }
 

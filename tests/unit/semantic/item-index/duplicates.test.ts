@@ -1,19 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { SourceSpan, SourceText } from "../../../../src/frontend";
-import {
-  functionId,
-  intrinsicId,
-  itemId,
-  moduleId,
-  parameterId,
-} from "../../../../src/semantic/ids";
+import { functionId, itemId, moduleId, parameterId } from "../../../../src/semantic/ids";
 import { checkItemIndexDuplicates } from "../../../../src/semantic/item-index/duplicate-checker";
 import type {
-  IntrinsicItemRecord,
   ItemIndexRecords,
   SourceItemRecord,
 } from "../../../../src/semantic/item-index/item-records";
-import { intrinsicFunctionFake } from "../../../support/semantic/intrinsic-fakes";
 
 const source = SourceText.from("main.wr", "class Box:\nclass Box:\n");
 const declaration = { source } as SourceItemRecord["declaration"];
@@ -21,7 +13,6 @@ const declaration = { source } as SourceItemRecord["declaration"];
 function sourceItem(id: number, name: string, start: number): SourceItemRecord {
   return {
     id: itemId(id),
-    origin: "source",
     kind: "class",
     moduleId: moduleId(0),
     name,
@@ -35,9 +26,7 @@ function sourceItem(id: number, name: string, start: number): SourceItemRecord {
 describe("item-index duplicate diagnostics", () => {
   test("reports duplicate source declarations and parameters from records", () => {
     const records: ItemIndexRecords = {
-      modules: [
-        { id: moduleId(0), origin: "source", pathKey: "main.wr", display: "main.wr", source },
-      ],
+      modules: [{ id: moduleId(0), pathKey: "main.wr", display: "main.wr", source }],
       items: [sourceItem(0, "Box", 6), sourceItem(1, "Box", 17)],
       types: [],
       functions: [
@@ -71,7 +60,6 @@ describe("item-index duplicate diagnostics", () => {
         {
           id: parameterId(0),
           functionId: functionId(0),
-          origin: "source",
           index: 0,
           name: "x",
           isConsumed: false,
@@ -81,7 +69,6 @@ describe("item-index duplicate diagnostics", () => {
         {
           id: parameterId(1),
           functionId: functionId(0),
-          origin: "source",
           index: 1,
           name: "x",
           isConsumed: false,
@@ -107,59 +94,18 @@ describe("item-index duplicate diagnostics", () => {
     expect(typeParameterDiagnostic.span).toEqual(SourceSpan.from(50, 51));
   });
 
-  test("reports intrinsic duplicates on synthetic source", () => {
-    const first = intrinsicFunctionFake("first", intrinsicId("intrinsics.dup"));
-    const second = intrinsicFunctionFake("second", intrinsicId("intrinsics.dup"));
-    const intrinsicItem = (id: number, spec: typeof first): IntrinsicItemRecord => ({
-      id: itemId(id),
-      origin: "intrinsic",
-      kind: "intrinsicFunction",
-      moduleId: moduleId(0),
-      name: spec.name,
-      intrinsicId: spec.intrinsicId,
-      signature: spec.signature,
-      targetAvailability: spec.targetAvailability,
-      proofContract: spec.proofContract,
-      lowering: spec.lowering,
-      functionId: functionId(id),
-    });
-    const records: ItemIndexRecords = {
-      modules: [
-        {
-          id: moduleId(0),
-          origin: "intrinsic",
-          pathKey: "intrinsics/test.wr",
-          display: "intrinsics/test.wr",
-        },
-      ],
-      items: [intrinsicItem(0, first), intrinsicItem(1, second)],
-      types: [],
-      functions: [],
-      images: [],
-      fields: [],
-      typeParameters: [],
-      parameters: [],
-    };
-
-    const diagnostics = checkItemIndexDuplicates(records);
-    expect(diagnostics[0]!.code).toBe("ITEM_DUPLICATE_INTRINSIC_ID");
-    expect(diagnostics[0]!.source.name).toBe("<intrinsics>");
-  });
-
   test("reports duplicate source modules", () => {
     const source1 = SourceText.from("main.wr", "");
     const records: ItemIndexRecords = {
       modules: [
         {
           id: moduleId(0),
-          origin: "source",
           pathKey: "main.wr",
           display: "main.wr",
           source: source1,
         },
         {
           id: moduleId(1),
-          origin: "source",
           pathKey: "main.wr",
           display: "main.wr",
           source: source1,

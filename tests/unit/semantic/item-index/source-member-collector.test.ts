@@ -54,7 +54,6 @@ describe("source member collector", () => {
       "validatedParam",
       "layoutField",
     ]);
-    expect(index.parameters()[0]!.origin).toBe("source");
     expect(index.parameters()[0]!.isConsumed).toBe(true);
   });
 

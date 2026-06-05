@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
+  coreTypeId,
+  fieldId,
   functionId,
   imageId,
-  intrinsicId,
   itemId,
   moduleId,
   parameterId,
+  platformPrimitiveId,
   typeId,
-  fieldId,
 } from "../../../src/semantic/ids";
 
 describe("semantic IDs", () => {
@@ -28,10 +29,33 @@ describe("semantic IDs", () => {
     expect(() => functionId(Infinity)).toThrow("non-negative integer");
   });
 
-  test("IntrinsicId rejects empty or padded strings", () => {
-    expect(intrinsicId("intrinsics.memory.load")).toBe(intrinsicId("intrinsics.memory.load"));
-    expect(() => intrinsicId("")).toThrow("must not be empty");
-    expect(() => intrinsicId(" intrinsics.memory.load")).toThrow("whitespace");
-    expect(() => intrinsicId("intrinsics.memory.load ")).toThrow("whitespace");
+  test("CoreTypeId preserves valid IDs", () => {
+    expect(coreTypeId("u32")).toBe(coreTypeId("u32"));
+    expect(coreTypeId("bool")).toBe(coreTypeId("bool"));
+  });
+
+  test("CoreTypeId rejects empty or padded strings", () => {
+    expect(() => coreTypeId("")).toThrow("CoreTypeId must not be empty.");
+    expect(() => coreTypeId(" foo")).toThrow(
+      "CoreTypeId must not have leading or trailing whitespace.",
+    );
+    expect(() => coreTypeId("foo ")).toThrow(
+      "CoreTypeId must not have leading or trailing whitespace.",
+    );
+  });
+
+  test("PlatformPrimitiveId preserves valid IDs", () => {
+    expect(platformPrimitiveId("volatile_load_u32")).toBe(platformPrimitiveId("volatile_load_u32"));
+    expect(platformPrimitiveId("aarch64_dmb_ish")).toBe(platformPrimitiveId("aarch64_dmb_ish"));
+  });
+
+  test("PlatformPrimitiveId rejects empty or padded strings", () => {
+    expect(() => platformPrimitiveId("")).toThrow("PlatformPrimitiveId must not be empty.");
+    expect(() => platformPrimitiveId(" foo")).toThrow(
+      "PlatformPrimitiveId must not have leading or trailing whitespace.",
+    );
+    expect(() => platformPrimitiveId("foo ")).toThrow(
+      "PlatformPrimitiveId must not have leading or trailing whitespace.",
+    );
   });
 });

@@ -417,16 +417,6 @@ export interface ResolvedPlatformBindings {
   get(functionId: FunctionId): PlatformPrimitiveBinding | undefined;
   entries(): readonly PlatformPrimitiveBinding[];
 }
-
-export interface CertifiedPlatformPrimitiveBinding extends PlatformPrimitiveBinding {
-  readonly certificate: PlatformPrimitiveBindingCertificate;
-}
-
-export interface PlatformPrimitiveBindingCertificate {
-  readonly kind: "exactCatalogMatch";
-  readonly signatureFingerprint: string;
-  readonly proofContractFingerprint: string;
-}
 ```
 
 The primitive name is a simple identifier, not a dotted path. If a family needs
@@ -435,10 +425,10 @@ disambiguation, the catalog bakes that into the identifier, such as
 
 `PlatformPrimitiveBinding` is a name-resolution artifact only. It says that a
 source `FunctionId` has the same simple name as one selected-target primitive.
-It is not a proof certificate. Type/resource checking must turn it into a
-`CertifiedPlatformPrimitiveBinding` by proving that the source declaration
+It is not a proof certificate. Semantic surface checking must turn it into a
+certified semantic-surface binding by proving that the source declaration
 matches the primitive's full target catalog signature and proof contract. HIR
-and Proof MIR consume only certified bindings.
+and Proof MIR consume only certified semantic-surface bindings.
 
 ## Namespace Model
 
@@ -590,9 +580,13 @@ Console.write
 
 For owner-qualified member references, the left side must resolve to an item
 that owns the requested member namespace. The right side resolves through the
-member table for that owner. If the owner is not known until type checking, the
-resolver records a deferred member reference that HIR lowering completes by
-passing the owner `ItemId` back into the same member table.
+member table for that owner. If the owner is not known until a typed layer, the
+resolver records a deferred member reference. Semantic surface checking
+completes declaration-level deferred sites whose receiver owner is known from
+checked signatures, constraints, platform surfaces, or image surfaces. HIR
+lowering completes body-local deferred sites after it builds local scopes and
+expression types. Both layers pass the owner `ItemId` back into the same member
+table.
 
 ## Member Tables
 
@@ -654,18 +648,19 @@ export type ResolveMemberResult =
 ```
 
 This keeps the member lookup algorithm deterministic and central while letting
-type checking provide information that syntax alone cannot know. If
+typed layers provide information that syntax alone cannot know. If
 `allowedNamespaces` is omitted, the lookup searches every member namespace for
 that owner. If more than one candidate remains, the result is ambiguous and the
 caller emits `NAME_AMBIGUOUS_MEMBER` when the source context cannot narrow the
 kind. If the source context expects only fields, functions, enum cases, or image
 devices, the caller passes the relevant namespace subset.
 
-Deferred member references are returned from `ResolvedReferences.deferredMembers()`
-in stable source order. HIR lowering or type checking resolves each deferred
-site by first determining the receiver owner item, then calling
-`MemberNamespace.resolveMember`. A deferred site is therefore not silently
-dropped: it is either completed into a normal `ResolvedReference` at the typed
+Deferred member references are returned from
+`ResolvedReferences.deferredMembers()` in stable source order. Semantic surface
+checking resolves declaration-level sites by first determining the receiver
+owner item, then calling `MemberNamespace.resolveMember`. HIR lowering uses the
+same flow for body-local sites. A deferred site is therefore not silently
+dropped: it is either completed into a normal `ResolvedReference` at a typed
 layer or reported as unresolved/ambiguous with the original member span.
 
 ## Platform Functions And Target Primitives
@@ -797,11 +792,11 @@ argument. The primitive catalog should still use globally unique simple names
 such as `volatile_load_u32` or `aarch64_dmb_ish`, not method-local names such as
 `load` or dotted intrinsic paths.
 
-A `platform fn` that is missing from the catalog, has the wrong signature,
-exposes weaker requirements than the primitive contract, or appears in a
-non-freestanding target-bound position receives a semantic diagnostic. Name
-resolution owns only the name-to-primitive binding; type, declaration legality,
-and proof phases own certification and contract compatibility.
+A `platform fn` that is missing from the catalog, has the wrong signature, has
+a non-exact visible proof contract, or appears in a non-freestanding
+target-bound position receives a semantic diagnostic. Name resolution owns only
+the name-to-primitive binding; semantic surface checking owns certification and
+contract compatibility, and proof phases own call-site entailment.
 
 ## Diagnostics
 
@@ -909,18 +904,17 @@ Name resolution consumes AST views but does not mutate CST nodes or item-index
 records. Later phases consume `ResolvedReferences`:
 
 ```text
-type checking
-  uses resolved type/function references, checks platform function signatures
-  against primitive signatures, certifies exact source/catalog platform
-  contracts, and completes owner-known members
-
-image graph checking
-  uses resolved image declarations and image device fields
+semantic surface checking
+  uses resolved type/function/image references, checks source signatures and
+  resource kinds, certifies exact source/catalog platform contracts, validates
+  the selected image root, and completes declaration-level deferred members
 
 HIR lowering
   stores ItemId, TypeId, FunctionId, FieldId, ImageId, ParameterId, and
   TypeParameterOwner references instead of source text names, and emits platform
-  primitive contract edges only from certified platform bindings
+  primitive contract edges only from certified platform bindings. It also
+  completes body-local deferred members after local scopes and expression types
+  are known.
 
 proof and lowering
   consume HIR/MIR references and catalog-owned platform primitive contracts, not
@@ -1022,8 +1016,9 @@ The implementation should be refactored as follows:
   validation diagnostics for duplicate primitive names or IDs.
 - Replace tests that build fake intrinsic modules with fake platform primitive
   catalogs and source `platform fn` declarations.
-- Keep stable serialization for target primitive catalog entries so duplicate
-  diagnostics and binding order remain deterministic.
+- Keep deterministic target primitive catalog summaries in tests so duplicate
+  diagnostics and binding order remain stable without depending on item-index
+  serialization helpers.
 
 Source-visible opaque platform types should also be revisited under this model.
 If a type is visible to Wrela source, prefer declaring it as ordinary vendored

@@ -29,8 +29,8 @@ import type {
   FunctionRecord,
   ImageRecord,
   ItemIndexRecords,
+  ParameterRecord,
   SourceItemRecord,
-  SourceParameterRecord,
   TypeParameterRecord,
   TypeRecord,
 } from "./item-records";
@@ -43,7 +43,7 @@ export interface SourceMemberCollectionContext {
   images: ImageRecord[];
   fields: FieldRecord[];
   typeParameters: TypeParameterRecord[];
-  parameters: SourceParameterRecord[];
+  parameters: ParameterRecord[];
   workQueue: SourceDeclarationWorkItem[];
   toResult(): ItemIndexRecords;
 }
@@ -54,7 +54,7 @@ function createContext(source: SourceCollectionResult): SourceMemberCollectionCo
   const images = [...source.images];
   const fields: FieldRecord[] = [];
   const typeParameters: TypeParameterRecord[] = [];
-  const parameters: SourceParameterRecord[] = [];
+  const parameters: ParameterRecord[] = [];
   const workQueue = [...source.declarationWorkItems];
 
   return {
@@ -100,7 +100,7 @@ function addTypeParameter(
   context.typeParameters.push(record);
 }
 
-function addParameter(context: SourceMemberCollectionContext, record: SourceParameterRecord): void {
+function addParameter(context: SourceMemberCollectionContext, record: ParameterRecord): void {
   context.parameters.push(record);
 }
 
@@ -163,7 +163,6 @@ function collectFunctionDeclaration(
   const funcId = functionId(context.functions.length);
   const itemRec: SourceItemRecord = {
     id: itemId(context.items.length),
-    origin: "source",
     kind: "function",
     moduleId: moduleIdValue,
     parentItemId,
@@ -283,7 +282,6 @@ function collectFunctionParameters(
     addParameter(context, {
       id: paramId,
       functionId: functionIdValue,
-      origin: "source",
       index: index,
       name,
       isConsumed: param.isConsumed(),
@@ -341,7 +339,6 @@ function collectEnumDeclaration(
 
     addItem(context, {
       id: itemId(context.items.length),
-      origin: "source",
       kind: "enumCase",
       moduleId: item.moduleId,
       parentItemId: item.id,

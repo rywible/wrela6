@@ -1,9 +1,21 @@
 import { AstView } from "./ast-view";
+import { childNode } from "./syntax-query";
+import { QualifiedNameView } from "./name-views";
 import { RedNode, SyntaxKind } from "../syntax";
 
 export class PatternView extends AstView {
   static from(node: RedNode): PatternView | undefined {
     return node.kind === SyntaxKind.Pattern ? new PatternView(node) : undefined;
+  }
+
+  qualifiedName(): QualifiedNameView | undefined {
+    const nameNode = childNode(this.node, SyntaxKind.QualifiedName);
+    return nameNode !== undefined ? QualifiedNameView.from(nameNode) : undefined;
+  }
+
+  patternList(): PatternListView | undefined {
+    const listNode = childNode(this.node, SyntaxKind.PatternList);
+    return listNode !== undefined ? PatternListView.from(listNode) : undefined;
   }
 }
 

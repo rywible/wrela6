@@ -86,8 +86,7 @@ Source files and package roots
   -> AST views
   -> item index
   -> name resolution
-  -> type and kind checking
-  -> image graph checking
+  -> semantic surface checking
   -> typed HIR and proof-relevant surface
   -> monomorphized whole-image program
   -> representation and layout facts
@@ -479,8 +478,8 @@ validated-buffer source relationship, a private-state transition, a consumed
 receiver, or a platform primitive contract edge, no later phase should have to
 recover that meaning from ordinary calls and blocks.
 
-HIR should own checks that depend on declaration context, source intent, or
-language grammar shape:
+Semantic surface checking owns declaration-level checks that depend on resolved
+names, target catalogs, source declaration shape, and early proof-surface seeds:
 
 - item legality, such as where `platform`, `terminal`, `private`, and
   `predicate` functions may appear
@@ -493,6 +492,10 @@ language grammar shape:
   bindings in v1
 - platform binding certification before HIR accepts primitive contract edges
 - source-level diagnostics that benefit from CST child identity
+
+HIR consumes the checked semantic surface. It should not repeat those checks,
+but it should assign proof IDs, lower source-shaped bodies, and preserve the
+proof-relevant constructs that semantic surface checking identified.
 
 HIR should not try to solve every path-sensitive property. It should instead
 label the program with stable IDs and obligations that MIR can prove.
@@ -649,31 +652,31 @@ MirTerminator
 The split should stay flexible. A check belongs at the layer where it is easiest
 to make correct and easiest to diagnose.
 
-| Check                                     | Preferred Layer      | Reason                                           |
-| ----------------------------------------- | -------------------- | ------------------------------------------------ |
-| package root selection                    | compiler edge        | filesystem/package config concern                |
-| tokenization, grammar, recovery           | frontend             | source preservation                              |
-| declaration legality                      | HIR / semantic       | depends on source declarations                   |
-| name resolution                           | semantic             | builds stable references                         |
-| type references and generic bounds        | semantic / HIR       | source-level types and declarations              |
-| platform primitive signature availability | semantic / target    | compiler-owned target contracts                  |
-| platform binding certification            | semantic / target    | source handles must exactly match target catalog |
-| image device section shape                | HIR / semantic image | image-specific language meaning                  |
-| ABI shape of public/platform functions    | layout / target      | target-specific representation                   |
-| monomorphization completeness             | mono                 | whole-image reachability                         |
-| validated-buffer layout shape             | HIR / layout         | declaration structure and concrete offsets       |
-| layout-derived proof facts                | layout -> Proof MIR  | proof checks need concrete representation facts  |
-| use after move                            | Proof MIR            | path-sensitive resource flow                     |
-| consume exactly once                      | Proof MIR            | path-sensitive resource flow                     |
-| take-session closure                      | Proof MIR            | all exit paths are explicit                      |
-| `?` crossing obligations                  | Proof MIR            | exceptional/control exits are explicit           |
-| predicate fact availability               | Proof MIR / SSA      | dominance and fact propagation                   |
-| `requires` call-site discharge            | Proof MIR            | facts are attached to values and blocks          |
-| platform primitive call preconditions     | Proof MIR            | checked like ordinary call obligations           |
-| terminal function closure                 | Proof MIR            | graph reachability over exits/calls              |
-| validated-buffer requirement proofs       | Proof MIR            | path facts plus layout-derived facts             |
-| stack frame correctness                   | codegen/layout       | target ABI                                       |
-| relocation correctness                    | object/linker        | binary layout                                    |
+| Check                                     | Preferred Layer     | Reason                                           |
+| ----------------------------------------- | ------------------- | ------------------------------------------------ |
+| package root selection                    | compiler edge       | filesystem/package config concern                |
+| tokenization, grammar, recovery           | frontend            | source preservation                              |
+| declaration legality                      | HIR / semantic      | depends on source declarations                   |
+| name resolution                           | semantic            | builds stable references                         |
+| type references and generic bounds        | semantic surface    | source-level types and declarations              |
+| platform primitive signature availability | semantic surface    | compiler-owned target contracts                  |
+| platform binding certification            | semantic surface    | source handles must exactly match target catalog |
+| image device section shape                | semantic surface    | image-specific language meaning                  |
+| ABI shape of public/platform functions    | layout / target     | target-specific representation                   |
+| monomorphization completeness             | mono                | whole-image reachability                         |
+| validated-buffer layout shape             | HIR / layout        | declaration structure and concrete offsets       |
+| layout-derived proof facts                | layout -> Proof MIR | proof checks need concrete representation facts  |
+| use after move                            | Proof MIR           | path-sensitive resource flow                     |
+| consume exactly once                      | Proof MIR           | path-sensitive resource flow                     |
+| take-session closure                      | Proof MIR           | all exit paths are explicit                      |
+| `?` crossing obligations                  | Proof MIR           | exceptional/control exits are explicit           |
+| predicate fact availability               | Proof MIR / SSA     | dominance and fact propagation                   |
+| `requires` call-site discharge            | Proof MIR           | facts are attached to values and blocks          |
+| platform primitive call preconditions     | Proof MIR           | checked like ordinary call obligations           |
+| terminal function closure                 | Proof MIR           | graph reachability over exits/calls              |
+| validated-buffer requirement proofs       | Proof MIR           | path facts plus layout-derived facts             |
+| stack frame correctness                   | codegen/layout      | target ABI                                       |
+| relocation correctness                    | object/linker       | binary layout                                    |
 
 If a HIR check starts building its own CFG, it probably belongs in MIR. If a MIR
 check starts asking "what syntax form was this," HIR probably needs to attach a
@@ -731,7 +734,7 @@ The target primitive catalog does not contribute modules or item records. Source
 `platform fn` declarations remain ordinary source items; name resolution sees
 only the names-and-IDs projection of the selected target primitive catalog and
 binds freestanding declarations to target primitives by matching simple
-function names. Type/resource checking consumes the full target primitive
+function names. Semantic surface checking consumes the full target primitive
 catalog and certifies that the source declaration exactly matches the selected
 target primitive contract before HIR may use the binding.
 
@@ -786,7 +789,13 @@ should not decide whether a caller or source declaration is trusted. A platform
 binding is just a name-level source function to target primitive ID edge that
 later passes must certify against the full target catalog and check.
 
-### Type And Kind Checking
+### Semantic Surface Checking
+
+Semantic surface checking groups type/resource checks, platform primitive
+certification, and image-root checks into one semantic subsystem. The internal
+subpasses should remain separately testable, but HIR should consume one checked
+surface rather than independently revalidating declarations, platform
+contracts, and image roots.
 
 The type layer assigns types and resource kinds:
 
@@ -806,9 +815,11 @@ Never
 The exact lattice can evolve, but the compiler should represent resource kind
 explicitly before flow checks begin.
 
-### Image Graph
+The platform subpass certifies name-only platform bindings from name resolution
+against the selected target's full primitive catalog before HIR may preserve a
+platform primitive contract edge.
 
-Image checking starts from a `uefi image` declaration:
+The image subpass starts from a `uefi image` declaration:
 
 - find the image entry
 - validate `devices:` entries
@@ -817,6 +828,9 @@ Image checking starts from a `uefi image` declaration:
 - build the closed image root for reachability
 
 The output is a typed image root, not yet code.
+
+The detailed design is in
+`docs/design/semantic-surface-checking-design.md`.
 
 ## Monomorphization And Layout Before Proof
 
@@ -1105,7 +1119,7 @@ Output: CST/HIR-facing references resolved to item IDs, with no trust
 distinction between project modules and stdlib modules, plus platform primitive
 name-only bindings for source `platform fn` declarations.
 
-### 4. Type And Resource Kind Checking
+### 4. Semantic Surface Checking
 
 - type-reference validation
 - generic parameters and bounds
@@ -1114,23 +1128,19 @@ name-only bindings for source `platform fn` declarations.
 - signature checking for parameters, receivers, returns, function modifiers, and
   platform declarations
 - platform primitive signature checking and target-availability diagnostics
-- platform binding certification that rejects missing, mismatched, weaker, or
+- platform binding certification that rejects missing, mismatched, non-exact, or
   non-freestanding target-bound platform declarations
-
-Output: typed declarations and signatures with resource kinds plus certified
-platform primitive bindings.
-
-### 5. Image Graph Checking
-
 - `uefi image` root selection
 - `devices:` section validation
 - unique edge root binding
 - platform surface availability
 - image entry shape
 
-Output: typed image root and image reachability seed.
+Output: typed declarations and signatures with resource kinds, proof-surface
+seeds, certified platform primitive bindings, and a typed image
+root/reachability seed.
 
-### 6. Typed HIR And Proof-Relevant Surface
+### 5. Typed HIR And Proof-Relevant Surface
 
 - lower AST views to typed, source-origin-preserving HIR
 - preserve proof-relevant constructs such as `take`, `requires`, validation,
@@ -1146,7 +1156,7 @@ Output: typed image root and image reachability seed.
 Output: typed HIR for the reachable source program with proof-relevant metadata
 that later phases instantiate and check.
 
-### 7. Whole-Image Monomorphization
+### 6. Whole-Image Monomorphization
 
 - start from the image root
 - collect reachable functions and types
@@ -1160,7 +1170,7 @@ that later phases instantiate and check.
 
 Output: closed monomorphized HIR plus reachable platform primitive IDs.
 
-### 8. Representation And Layout Facts
+### 7. Representation And Layout Facts
 
 - type sizes and alignments
 - field offsets
@@ -1171,7 +1181,7 @@ Output: closed monomorphized HIR plus reachable platform primitive IDs.
 
 Output: concrete layout and ABI facts for the closed program.
 
-### 9. Proof MIR Builder
+### 8. Proof MIR Builder
 
 - lower monomorphized HIR to CFG blocks
 - represent scalar values in SSA where useful
@@ -1181,7 +1191,7 @@ Output: concrete layout and ABI facts for the closed program.
 
 Output: Proof MIR for each monomorphized function.
 
-### 10. Proof And Resource Checking
+### 9. Proof And Resource Checking
 
 - fact propagation
 - requirement entailment
@@ -1196,7 +1206,7 @@ Output: Proof MIR for each monomorphized function.
 
 Output: checked MIR or proof diagnostics.
 
-### 11. Codegen MIR And LIR Lowering
+### 10. Codegen MIR And LIR Lowering
 
 - erase proof-only facts
 - lower resource operations to executable effects or no-ops
@@ -1206,7 +1216,7 @@ Output: checked MIR or proof diagnostics.
 
 Output: LIR with symbols, sections, and relocations.
 
-### 12. AArch64 Backend
+### 11. AArch64 Backend
 
 - ABI classification
 - instruction selection
@@ -1217,7 +1227,7 @@ Output: LIR with symbols, sections, and relocations.
 
 Output: internal object code for AArch64.
 
-### 13. Internal Object Model And Linker
+### 12. Internal Object Model And Linker
 
 - sections
 - symbols
@@ -1229,7 +1239,7 @@ Output: internal object code for AArch64.
 
 Output: linked image layout.
 
-### 14. PE/COFF EFI Writer
+### 13. PE/COFF EFI Writer
 
 - PE32+ headers
 - AArch64 COFF machine type
@@ -1241,7 +1251,7 @@ Output: linked image layout.
 
 Output: one `.efi` file.
 
-### 15. UEFI AArch64 Target Driver
+### 14. UEFI AArch64 Target Driver
 
 - compiler-owned UEFI entry thunk
 - firmware ABI lowering
@@ -1251,7 +1261,7 @@ Output: one `.efi` file.
 
 Output: a UEFI AArch64 image that can be run under firmware.
 
-### 16. Full Image Validation
+### 15. Full Image Validation
 
 - compile representative `uefi image` programs
 - compile with the default vendored stdlib

@@ -6,6 +6,7 @@ import {
   ClassDeclarationView,
   DataclassDeclarationView,
 } from "../../../../src/frontend/ast/declaration-views";
+import { presentTokenText } from "../../../../src/frontend/ast/syntax-query";
 import { parseSourceRoot } from "../../../support/frontend/ast-test-support";
 
 describe("source declaration views", () => {
@@ -61,5 +62,17 @@ describe("source declaration views", () => {
     const view = SourceFileView.fromRoot(root)!;
 
     expect(view.declarations().map((decl) => decl.nameText())).toEqual(["Color", "Box", "run"]);
+  });
+
+  test("ImportDeclarationView.importedNames returns only ImportNameList names", () => {
+    const root = parseSourceRoot("use Writer, Status from std.io\n");
+    const view = SourceFileView.fromRoot(root)!;
+    const importView = view.imports()[0]!;
+
+    expect(importView.importedNames().map((token) => presentTokenText(token))).toEqual([
+      "Writer",
+      "Status",
+    ]);
+    expect(importView.moduleName()!.text()).toBe("std.io");
   });
 });

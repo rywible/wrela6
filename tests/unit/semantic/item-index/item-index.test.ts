@@ -15,8 +15,8 @@ import type {
   FunctionRecord,
   ImageRecord,
   ModuleRecord,
+  ParameterRecord,
   SourceItemRecord,
-  SourceParameterRecord,
   TypeParameterRecord,
   TypeRecord,
 } from "../../../../src/semantic/item-index/item-records";
@@ -27,13 +27,11 @@ describe("ItemIndex", () => {
   function makeTestIndex(): ItemIndex {
     const moduleRecord: ModuleRecord = {
       id: moduleId(0),
-      origin: "source",
       pathKey: "app/main.wr",
       display: "app/main.wr",
     };
     const itemRecord: SourceItemRecord = {
       id: itemId(0),
-      origin: "source",
       kind: "class",
       moduleId: moduleId(0),
       name: "Box",
@@ -78,10 +76,9 @@ describe("ItemIndex", () => {
       nameSpan: SourceSpan.from(10, 11),
       span: SourceSpan.from(10, 11),
     };
-    const parameterRecord: SourceParameterRecord = {
+    const parameterRecord: ParameterRecord = {
       id: parameterId(0),
       functionId: functionId(0),
-      origin: "source",
       index: 0,
       name: "x",
       isConsumed: false,
@@ -119,8 +116,8 @@ describe("ItemIndex", () => {
     ]);
     expect(index.item(itemId(99))).toBeUndefined();
     expect(index.type(itemId(99) as any)).toBeUndefined();
-    expect(index.moduleByPath("app/main.wr", "source")!.id).toBe(moduleId(0));
-    expect(index.moduleByPath("app/main.wr", "intrinsic")).toBeUndefined();
+    expect(index.moduleByPath("app/main.wr")!.id).toBe(moduleId(0));
+    expect(index.moduleByPath("app/main.wr")).toBeDefined();
     expect(index.itemsInModule(moduleId(0)).map((item) => item.name)).toEqual(["Box"]);
   });
 

@@ -1,30 +1,11 @@
-import type {
-  IntrinsicSignature,
-  IntrinsicTargetAvailability,
-  IntrinsicProofContract,
-  IntrinsicLoweringContract,
-  IntrinsicTypeReferenceSpec,
-} from "./intrinsic-catalog";
 import type { TypeReferenceView } from "../../frontend/ast/type-views";
-import type {
-  FunctionId,
-  ImageId,
-  IntrinsicId,
-  ItemId,
-  ModuleId,
-  ParameterId,
-  TypeId,
-  FieldId,
-} from "../ids";
+import type { FunctionId, ImageId, ItemId, ModuleId, ParameterId, TypeId, FieldId } from "../ids";
 import type { SourceSpan } from "../../frontend";
 
 export type DeclarationView = object;
 
-export type ModuleOrigin = "source" | "intrinsic";
-
 export interface ModuleRecord {
   readonly id: ModuleId;
-  readonly origin: ModuleOrigin;
   readonly pathKey: string;
   readonly display: string;
   readonly source?: import("../../frontend").SourceText;
@@ -42,9 +23,7 @@ export type SourceItemKind =
   | "image"
   | "function";
 
-export type IntrinsicItemKind = "intrinsicFunction" | "intrinsicType";
-
-export type ItemKind = SourceItemKind | IntrinsicItemKind;
+export type ItemKind = SourceItemKind;
 
 export type SourceItemModifier =
   | "private"
@@ -56,7 +35,6 @@ export type SourceItemModifier =
 
 export interface SourceItemRecord {
   readonly id: ItemId;
-  readonly origin: "source";
   readonly kind: SourceItemKind;
   readonly moduleId: ModuleId;
   readonly parentItemId?: ItemId;
@@ -70,22 +48,7 @@ export interface SourceItemRecord {
   readonly imageId?: ImageId;
 }
 
-export interface IntrinsicItemRecord {
-  readonly id: ItemId;
-  readonly origin: "intrinsic";
-  readonly kind: IntrinsicItemKind;
-  readonly moduleId: ModuleId;
-  readonly name: string;
-  readonly intrinsicId: IntrinsicId;
-  readonly signature: IntrinsicSignature;
-  readonly targetAvailability: IntrinsicTargetAvailability;
-  readonly proofContract: IntrinsicProofContract;
-  readonly lowering: IntrinsicLoweringContract;
-  readonly typeId?: TypeId;
-  readonly functionId?: FunctionId;
-}
-
-export type ItemRecord = SourceItemRecord | IntrinsicItemRecord;
+export type ItemRecord = SourceItemRecord;
 
 export type FieldRole = "field" | "imageDevice" | "validatedParam" | "layoutField";
 
@@ -113,7 +76,6 @@ export interface FunctionRecord {
   readonly parentItemId?: ItemId;
   readonly name: string;
   readonly parameterIds: readonly ParameterId[];
-  readonly intrinsicId?: IntrinsicId;
 }
 
 export interface ImageRecord {
@@ -138,30 +100,16 @@ export interface TypeParameterRecord {
   readonly bound?: TypeReferenceView;
 }
 
-export type ParameterOrigin = "source" | "intrinsic";
-
-export interface BaseParameterRecord {
+export interface ParameterRecord {
   readonly id: ParameterId;
   readonly functionId: FunctionId;
-  readonly origin: ParameterOrigin;
   readonly index: number;
   readonly name: string;
   readonly isConsumed: boolean;
-}
-
-export interface SourceParameterRecord extends BaseParameterRecord {
-  readonly origin: "source";
   readonly nameSpan: SourceSpan;
   readonly span: SourceSpan;
   readonly type?: TypeReferenceView;
 }
-
-export interface IntrinsicParameterRecord extends BaseParameterRecord {
-  readonly origin: "intrinsic";
-  readonly type: IntrinsicTypeReferenceSpec;
-}
-
-export type ParameterRecord = SourceParameterRecord | IntrinsicParameterRecord;
 
 export interface ItemIndexRecords {
   readonly modules: readonly ModuleRecord[];

@@ -5,7 +5,8 @@ export type FunctionId = number & { readonly __brand: "FunctionId" };
 export type ImageId = number & { readonly __brand: "ImageId" };
 export type FieldId = number & { readonly __brand: "FieldId" };
 export type ParameterId = number & { readonly __brand: "ParameterId" };
-export type IntrinsicId = string & { readonly __brand: "IntrinsicId" };
+export type CoreTypeId = string & { readonly __brand: "CoreTypeId" };
+export type PlatformPrimitiveId = string & { readonly __brand: "PlatformPrimitiveId" };
 
 function denseId(value: number, label: string): number {
   if (!Number.isInteger(value) || value < 0) {
@@ -42,12 +43,22 @@ export function parameterId(value: number): ParameterId {
   return denseId(value, "ParameterId") as ParameterId;
 }
 
-export function intrinsicId(value: string): IntrinsicId {
+export function coreTypeId(value: string): CoreTypeId {
   if (value.length === 0) {
-    throw new RangeError("IntrinsicId must not be empty.");
+    throw new RangeError("CoreTypeId must not be empty.");
   }
   if (value !== value.trim()) {
-    throw new RangeError("IntrinsicId must not have leading or trailing whitespace.");
+    throw new RangeError("CoreTypeId must not have leading or trailing whitespace.");
   }
-  return value as IntrinsicId;
+  return value as CoreTypeId;
+}
+
+export function platformPrimitiveId(value: string): PlatformPrimitiveId {
+  if (value.length === 0) {
+    throw new RangeError("PlatformPrimitiveId must not be empty.");
+  }
+  if (value !== value.trim()) {
+    throw new RangeError("PlatformPrimitiveId must not have leading or trailing whitespace.");
+  }
+  return value as PlatformPrimitiveId;
 }

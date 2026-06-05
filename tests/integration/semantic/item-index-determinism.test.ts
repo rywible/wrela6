@@ -1,10 +1,6 @@
 import { expect, test } from "bun:test";
 import { buildItemIndex } from "../../../src/semantic";
-import {
-  parseModuleGraphForTest,
-  parseSingleModuleGraphForTest,
-} from "../../support/frontend/module-graph-test-support";
-import { intrinsicCatalogFake } from "../../support/semantic/intrinsic-fakes";
+import { parseModuleGraphForTest } from "../../support/frontend/module-graph-test-support";
 
 test("source module input order does not change item names or IDs", () => {
   const resultA = buildItemIndex({
@@ -25,21 +21,6 @@ test("source module input order does not change item names or IDs", () => {
   );
   expect(resultA.index.items().map((item) => [item.id, item.name])).toEqual(
     resultB.index.items().map((item) => [item.id, item.name]),
-  );
-});
-
-test("intrinsic declaration input order does not change item order", () => {
-  const resultA = buildItemIndex({
-    graph: parseSingleModuleGraphForTest("main.wr", "fn main()\n"),
-    intrinsics: intrinsicCatalogFake(["zeta", "alpha"]),
-  });
-  const resultB = buildItemIndex({
-    graph: parseSingleModuleGraphForTest("main.wr", "fn main()\n"),
-    intrinsics: intrinsicCatalogFake(["alpha", "zeta"]),
-  });
-
-  expect(resultA.index.items().map((item) => item.name)).toEqual(
-    resultB.index.items().map((item) => item.name),
   );
 });
 

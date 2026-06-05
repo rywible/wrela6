@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { SyntaxKind } from "../../../../src/frontend";
-import { childNode, presentTokenText } from "../../../../src/frontend/ast/syntax-query";
+import {
+  childNode,
+  descendants,
+  presentTokenText,
+} from "../../../../src/frontend/ast/syntax-query";
 import { DottedModuleNameView, QualifiedNameView } from "../../../../src/frontend/ast/name-views";
+import { PatternView } from "../../../../src/frontend/ast/pattern-views";
 import {
   TypeParameterView,
   TypeReferenceView,
@@ -86,5 +91,28 @@ describe("name and type views", () => {
 
     expect(view.qualifiedNameText()).toBe("U8");
     expect(view.typeArguments()).toEqual([]);
+  });
+
+  test("PatternView exposes qualified name and pattern list", () => {
+    const root = parseSourceRoot(
+      "fn main():\n    match value:\n        case Name(x, y):\n            ok\n",
+    );
+    const patternNode = descendants(root, SyntaxKind.Pattern)[0]!;
+    const view = PatternView.from(patternNode)!;
+
+    expect(view.qualifiedName()).toBeDefined();
+    expect(view.qualifiedName()!.text()).toBe("Name");
+    expect(view.patternList()).toBeDefined();
+    expect(view.patternList()!.patterns()).toHaveLength(2);
+  });
+
+  test("PatternView returns undefined patternList for simple identifier pattern", () => {
+    const root = parseSourceRoot("fn main():\n    let x = 5\n");
+    const patternNode = descendants(root, SyntaxKind.Pattern)[0]!;
+    const view = PatternView.from(patternNode)!;
+
+    expect(view.qualifiedName()).toBeDefined();
+    expect(view.qualifiedName()!.text()).toBe("x");
+    expect(view.patternList()).toBeUndefined();
   });
 });

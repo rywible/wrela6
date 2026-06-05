@@ -2,13 +2,10 @@ import type { Diagnostic } from "../../shared";
 
 export type ItemIndexDiagnosticCode =
   | "ITEM_DUPLICATE_MODULE"
-  | "ITEM_SOURCE_MODULE_SHADOWS_INTRINSIC_MODULE"
   | "ITEM_DUPLICATE_DECLARATION"
   | "ITEM_DUPLICATE_FIELD"
   | "ITEM_DUPLICATE_PARAMETER"
   | "ITEM_DUPLICATE_TYPE_PARAMETER"
-  | "ITEM_DUPLICATE_ENUM_CASE"
-  | "ITEM_DUPLICATE_INTRINSIC_ID"
-  | "ITEM_DUPLICATE_INTRINSIC_DECLARATION";
+  | "ITEM_DUPLICATE_ENUM_CASE";
 
 export type ItemIndexDiagnostic = Diagnostic<ItemIndexDiagnosticCode>;

@@ -12,6 +12,15 @@ test("semantic namespace exports item-index API", () => {
   expect(typeof itemId(0)).toBe("number");
 });
 
+test("semantic namespace exports name-resolution API", () => {
+  expect(semantic.resolveNames).toBeDefined();
+  expect(semantic.CoreTypeCatalog).toBeDefined();
+  expect(semantic.platformPrimitiveNameCatalog).toBeDefined();
+  expect(semantic.buildMemberNamespace).toBeDefined();
+  expect(semantic.buildModuleNamespace).toBeDefined();
+});
+
 test("top-level package exports semantic namespace", () => {
   expect(packageRoot.semantic.buildItemIndex).toBeDefined();
+  expect(packageRoot.semantic.resolveNames).toBeDefined();
 });

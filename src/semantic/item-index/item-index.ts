@@ -5,7 +5,6 @@ import type {
   ItemIndexRecords,
   ItemRecord,
   ModuleRecord,
-  ModuleOrigin,
   ParameterRecord,
   TypeParameterRecord,
   TypeRecord,
@@ -47,7 +46,7 @@ export class ItemIndex {
     this.typeParametersByFunction = new Map();
 
     for (const module of this.moduleRecords) {
-      this.moduleByPathIndex.set(`${module.origin}:${module.pathKey}`, module);
+      this.moduleByPathIndex.set(module.pathKey, module);
     }
 
     for (const item of this.itemRecords) {
@@ -156,8 +155,8 @@ export class ItemIndex {
     return this.parameterRecords[id as number];
   }
 
-  moduleByPath(pathKey: string, origin: ModuleOrigin): ModuleRecord | undefined {
-    return this.moduleByPathIndex.get(`${origin}:${pathKey}`);
+  moduleByPath(pathKey: string): ModuleRecord | undefined {
+    return this.moduleByPathIndex.get(pathKey);
   }
 
   itemsInModule(moduleId: ModuleId): readonly ItemRecord[] {

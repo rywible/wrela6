@@ -112,7 +112,6 @@ export function collectSourceModulesAndTopLevelItems(
     const parsedModule = sortedModules[moduleIndex]!;
     const moduleRecord: ModuleRecord = {
       id: moduleId(moduleIndex),
-      origin: "source",
       pathKey: parsedModule.path.key,
       display: parsedModule.path.display,
       source: parsedModule.source,
@@ -173,7 +172,6 @@ export function collectSourceModulesAndTopLevelItems(
 
       const itemRecord: SourceItemRecord = {
         id: itemId(items.length),
-        origin: "source",
         kind: itemKind,
         moduleId: moduleRecord.id,
         name,
