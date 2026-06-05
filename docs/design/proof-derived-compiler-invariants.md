@@ -187,7 +187,7 @@ The model establishes:
 - proving a fact records the current private-state generation
 - advancing private state increments the generation and clears old facts
 - requiring a fact succeeds only for the current generation
-- stale facts cannot satisfy platform or intrinsic preconditions
+- stale facts cannot satisfy catalog-owned platform primitive preconditions
 
 Compiler consequence:
 
@@ -198,6 +198,34 @@ Compiler consequence:
   not be usable as proof functions.
 - Diagnostics should identify stale facts by their origin and the state
   transition that invalidated them.
+
+## Platform Primitive Boundary
+
+Platform functions are source handles for target primitive contracts.
+
+The compiler trust root is the selected target primitive catalog, not the source
+module that declares a `platform fn`. Project source, vendored stdlib source,
+replacement stdlib source, source platform declarations, and source wrappers are
+all checked under the same rules.
+
+Compiler consequence:
+
+- A source `platform fn` must be certified against the selected target primitive
+  catalog before HIR may emit a platform primitive contract edge.
+- The first implementation should require an exact source/catalog match for the
+  function signature, required facts, consumed capabilities, and produced
+  capabilities.
+- Calls to platform functions must generate proof obligations from the catalog
+  contract, not from source text alone.
+- Source declarations may document or mirror primitive requirements, but they
+  must not weaken preconditions, hide consumed capabilities, invent produced
+  capabilities, or override lowering behavior.
+- Target-bound platform functions are freestanding in v1. Methods may wrap
+  certified freestanding platform functions as ordinary checked source, but they
+  do not bind directly to target primitives.
+- If a primitive produces a sealed token or capability, Proof MIR must represent
+  that token explicitly and ordinary source code must not be able to forge or
+  rebrand it.
 
 ## Terminal Closure
 
@@ -222,8 +250,8 @@ Compiler consequence:
   Proof MIR.
 - Terminal dispatch must be statically known. Dynamic dispatch over terminal
   ownership closure is not part of the initial language model.
-- A terminal function may delegate closure only to platform functions or other
-  certified terminal functions.
+- A terminal function may delegate closure only to certified platform functions
+  or other certified terminal functions.
 
 ## Layout Facts
 
@@ -306,6 +334,9 @@ Priority negative cases:
 - stale private predicate fact after private-state advancement
 - terminal fallthrough, terminal cycles, and missing terminal call targets
 - dynamic payload read without both `payloadEnd` and `layout.fits`
+- source `platform fn` declaration that weakens a target primitive contract
+- method-shaped `platform fn` declaration attempting to bind a target primitive
+  in v1
 
 ## Implementation Checklist
 
@@ -323,7 +354,7 @@ Monomorphization must preserve and instantiate:
 - resource kinds
 - proof IDs
 - terminal call graph nodes
-- intrinsic contract edges
+- certified platform primitive contract edges
 - validated-buffer identities
 
 Layout must produce:
@@ -348,5 +379,7 @@ The checker must reject:
 - any terminal return without certified terminal reachability
 - any branch, validation, or attempt join with divergent resource state
 - any stale fact use
+- any platform call whose source function lacks a certified target primitive
+  binding
 - any misrouted session/member discharge
 - any validated-buffer read without the required layout facts

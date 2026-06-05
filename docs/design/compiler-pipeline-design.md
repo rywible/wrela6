@@ -5,7 +5,7 @@
 The compiler should turn a `uefi image` declaration and its reachable modules
 into one self-contained AArch64 `.efi` file. The final artifact contains the
 whole image: project source, any reachable vendored or replacement standard
-library source, compiler-owned runtime intrinsics, generated sections,
+library source, compiler-owned runtime support, generated sections,
 relocations, and PE/COFF headers. No external C runtime, C object files, system
 linker, or foreign startup code participates in the build.
 
@@ -26,8 +26,9 @@ selection, linking, relocation emission, and final PE/COFF image writing.
   CFG and dominance make proofs easier.
 - Treat the standard library as ordinary, replaceable source with no semantic
   privilege over project code.
-- Keep compiler-owned authority narrow: explicit intrinsic contracts, target ABI
-  lowering, generated entry thunks, code generation, linking, and image writing.
+- Keep compiler-owned authority narrow: explicit platform primitive contracts,
+  target ABI lowering, generated entry thunks, code generation, linking, and
+  image writing.
 - Keep compiler back-end layers independent from language concepts such as
   `take`, `requires`, unique edge roots, or validated-buffer syntax.
 - Make early binary milestones possible before the full language checker is
@@ -68,8 +69,8 @@ Load-bearing risks:
 - validated-buffer proofs depend on representation and layout facts, which
   means serious proof checking should happen after monomorphization and layout
   facts exist
-- the intrinsic boundary must be small and explicit enough that a replacement
-  standard library cannot accidentally rely on compiler magic
+- the platform primitive boundary must be small and explicit enough that a
+  replacement standard library cannot accidentally rely on compiler magic
 
 This document is the pipeline roadmap. It does not fully define the proof
 calculus. A companion proof-semantics design should define the core resource
@@ -135,7 +136,6 @@ src/
     package-map.ts
     package-root.ts
     standard-library.ts
-    intrinsic-root.ts
 
   semantic/
     index.ts
@@ -143,7 +143,6 @@ src/
     item-index/
       index.ts
       diagnostics.ts
-      intrinsic-catalog.ts
       item-index.ts
       item-index-builder.ts
       item-records.ts
@@ -219,7 +218,7 @@ src/
       base-relocations.ts
 
   runtime/
-    intrinsics.ts
+    support.ts
     memory.ts
     arithmetic.ts
     panic.ts
@@ -227,6 +226,7 @@ src/
   target/
     uefi-aarch64/
       target.ts
+      platform-primitives.ts
       entry-thunk.ts
       firmware-abi.ts
       image-writer.ts
@@ -253,7 +253,7 @@ tests/
       reference-pe-reader.ts
 ```
 
-## Standard Library And Intrinsics Boundary
+## Standard Library And Platform Primitive Boundary
 
 The standard library is replaceable source. The compiler may ship a convenient
 default stdlib, and the CLI may vendor it into new projects, but the language
@@ -264,20 +264,21 @@ Design rule:
 ```text
 The standard library is ordinary Wrela source.
 
-It may import compiler intrinsics, but it receives no private capabilities,
-no hidden lowering behavior, no bypass of proof checks, and no privileged access
-to layout, memory, target, firmware, or image operations.
+It may declare and wrap `platform fn` source declarations that match selected
+target primitives, but it receives no private capabilities, no hidden lowering
+behavior, no bypass of proof checks, and no privileged access to layout,
+memory, target, firmware, or image operations.
 
 Any operation the stdlib can perform must be expressible as:
   ordinary Wrela code
-  plus explicit calls to compiler intrinsics
-  plus proof/type obligations checked at that call site.
+  plus calls to source-declared platform functions
+  plus proof/type obligations checked against target primitive contracts.
 ```
 
 That makes the shipped stdlib one library distribution rather than a trusted
-compiler extension. If the Wrela language model and intrinsic contracts are
-sound, users can build different stdlibs for different domains without changing
-the compiler.
+compiler extension. If the Wrela language model and platform primitive
+contracts are sound, users can build different stdlibs for different domains
+without changing the compiler.
 
 Examples:
 
@@ -316,59 +317,54 @@ project/
         uefi/
 ```
 
-The project manifest maps package roots. The default mapping can point `std` to
-the vendored copy, but a project may point it at a fork, a sibling package, or
-omit it and import only project modules and intrinsics.
+The first module resolver can keep stdlib pathing simple: vendored stdlib source
+lives at ordinary source paths such as `std/...`, and imports resolve through
+the same path-based module rules as project modules.
 
 ```text
-package roots:
-  app -> src
-  std -> vendor/wrela-std
-  intrinsics -> compiler-owned intrinsic declarations
+source roots:
+  project root containing app/ and std/
 
 target:
   uefi-aarch64
 ```
 
-The exact manifest syntax can evolve. The important contract is that package
-resolution is explicit compiler-edge configuration. It is not a semantic
+The exact manifest syntax can evolve. The important contract is that source
+path resolution is explicit compiler-edge configuration. It is not a semantic
 privilege granted to a particular source tree.
 
 ### Resolver Contract
 
-The module graph resolver sees three kinds of roots:
+The module graph resolver sees source roots:
 
 ```text
 project roots
   ordinary source files owned by the user's project
 
-package roots
-  ordinary source files from vendored or dependency packages, including std
-
-intrinsic root
-  compiler-owned declarations with compiler-owned lowering contracts
+vendored stdlib paths
+  ordinary source files checked into the project tree
 ```
 
 Name resolution must not ask whether a module is "the real stdlib" to decide
 whether an operation is allowed. A stdlib module, project module, or replacement
-stdlib module may call the same intrinsic only by importing the same intrinsic
-declaration and satisfying the same type and proof obligations.
+stdlib module may call the same platform function only by resolving the same
+source declaration and satisfying the same type and proof obligations. The
+platform function itself must match a selected target primitive by simple name.
 
 ```text
 project module
   imports std.memory
-  imports intrinsics.aarch64.barrier
 
 default std module
-  imports intrinsics.memory.volatile_load
+  declares platform fn volatile_load_u32
 
 replacement std module
-  imports intrinsics.memory.volatile_load
+  declares platform fn volatile_load_u32
 
 all three callers:
-  typecheck the intrinsic signature
-  prove the intrinsic preconditions
-  receive the same lowering behavior
+  certify the source platform function signature and visible requirements
+  prove the target primitive preconditions from the catalog
+  receive the same target primitive lowering behavior
 ```
 
 This makes authority capability-shaped rather than package-shaped. If a raw
@@ -376,57 +372,98 @@ firmware operation requires a firmware table handle, boot-services token, unique
 device root, or validated memory fact, the caller must have that value and prove
 the obligation. The compiler should not special-case the caller's package path.
 
-### Intrinsic Contracts
+### Platform Primitive Contracts
 
-Intrinsics are the narrow trusted boundary. They are compiler-known declarations
-with explicit signatures, target availability, proof obligations, and lowering
-rules.
+Platform primitives are the narrow trusted boundary. They are compiler-known
+target entries with explicit signatures, proof obligations, and lowering rules.
+Source reaches a primitive only through a freestanding `platform fn` declaration
+whose simple name matches one primitive in the selected target catalog.
 
 ```text
-IntrinsicDeclaration
-  stable intrinsic ID
-  module path
+PlatformPrimitive
+  stable primitive ID
+  simple name
   signature
-  target availability
   required facts
   consumed capabilities
   produced capabilities
   lowering contract
 ```
 
-The compiler trusts the intrinsic contract and lowering, not the caller. The
-proof-semantics companion should model intrinsics as trusted axioms with
-preconditions and postconditions. Every intrinsic call site should be checked as
-a normal call with an explicit obligation edge into Proof MIR.
+The compiler trusts the primitive contract and lowering, not the caller, not
+the stdlib wrapper, and not the source `platform fn` declaration by itself. A
+source platform function is an untrusted handle until a semantic certification
+step proves that it exactly mirrors the selected target primitive's signature
+and proof contract. Every call to a certified platform function should be
+checked as a normal call with an explicit obligation edge into Proof MIR, using
+the catalog contract as the authority.
 
-Useful initial intrinsic families:
+The first implementation should use exact certification:
 
 ```text
-intrinsics.memory
-  volatile load/store
-  raw copy/set if not inlined
-  pointer offset with bounds/layout obligations
+source platform function
+  simple name matches exactly one target primitive
+  signature matches the catalog signature
+  required facts match the catalog proof contract
+  consumed and produced capabilities match the catalog proof contract
+```
 
-intrinsics.arithmetic
-  checked integer operations
+A later implementation may allow source to state a provably stronger contract,
+but source must never weaken a primitive precondition, hide a consumed
+capability, invent a produced capability, or override the lowering contract.
+If a source declaration is wrong, the compiler rejects that declaration before
+HIR construction; it does not reinterpret source text as the authority.
+
+Freestanding platform declarations may appear in any source module, including a
+replacement stdlib or a no-stdlib project module. Multiple source declarations
+may bind the same primitive if each independently certifies against the same
+catalog entry. Methods do not bind directly to target primitives in v1. They
+should wrap freestanding platform functions as ordinary checked source:
+
+```wr
+class Register32:
+    address: Address[u32]
+
+    fn load(self) -> u32
+        requires self.address.valid_for_read_u32
+        requires self.address.aligned_for_u32:
+            volatile_load_u32(self.address)
+```
+
+Future method-shaped platform declarations may be considered only as syntax for
+a freestanding primitive call with `self` as the first argument. Target
+primitive names remain globally unique simple identifiers, not dotted names and
+not method-local names.
+
+Useful initial platform primitive families:
+
+```text
+memory
+  volatile_load_u8/u16/u32/u64/usize
+  volatile_store_u8/u16/u32/u64/usize
+  raw_copy/raw_set if not inlined
+  pointer_offset with bounds/layout obligations
+
+arithmetic
+  checked_add/sub/mul for concrete integer widths
   widening/narrowing conversions with explicit range obligations
 
-intrinsics.aarch64
-  barriers
+target_aarch64
+  barriers such as dmb_ish, dmb_ishst, dsb_sy, isb
   register or system operations that are valid in the target profile
 
-intrinsics.uefi
+target_uefi
   firmware call ABI helpers over explicit firmware function pointers
   status conversion primitives
 
-intrinsics.image
+image_runtime
   compiler-known entry capability initialization
   panic/abort lowering policy
 ```
 
 The default stdlib should mostly wrap these families in safer, domain-shaped
 APIs. Replacement stdlibs can choose very different wrappers or expose the
-intrinsics more directly.
+platform functions more directly.
 
 ## Typed HIR And Proof-Relevant Surface
 
@@ -439,8 +476,8 @@ language's proof-relevant surface. It does not prove path-sensitive resource
 properties, but it must retain the semantic evidence that later whole-image
 monomorphization and Proof MIR need. If HIR erases a `take` session, a
 validated-buffer source relationship, a private-state transition, a consumed
-receiver, or an intrinsic contract edge, no later phase should have to recover
-that meaning from ordinary calls and blocks.
+receiver, or a platform primitive contract edge, no later phase should have to
+recover that meaning from ordinary calls and blocks.
 
 HIR should own checks that depend on declaration context, source intent, or
 language grammar shape:
@@ -452,7 +489,9 @@ language grammar shape:
 - generic bounds and interface constraints before monomorphization
 - type-reference validity and type-kind assignment
 - validated-buffer section shape
-- platform surface declaration rules
+- platform surface declaration rules, including freestanding-only primitive
+  bindings in v1
+- platform binding certification before HIR accepts primitive contract edges
 - source-level diagnostics that benefit from CST child identity
 
 HIR should not try to solve every path-sensitive property. It should instead
@@ -467,8 +506,11 @@ HIR should make these proof-relevant concepts explicit:
 - obligation IDs for opened `take` sessions, live buffers, validation/attempt
   inputs, terminal discharge obligations, and private-state transitions
 - session and brand IDs for stream membership, edge/path provenance, validated
-  buffers, and tokens minted from platform or intrinsic operations
-- call-site requirement IDs for `requires` clauses and intrinsic preconditions
+  buffers, and tokens minted from platform primitive operations
+- call-site requirement IDs for `requires` clauses and platform primitive
+  preconditions
+- certified platform primitive binding IDs for calls that lower through target
+  primitive contracts
 - predicate and `ensure` fact origins, without attempting full dominance checks
 - source spans and HIR origin IDs for every proof-relevant node
 
@@ -607,30 +649,31 @@ MirTerminator
 The split should stay flexible. A check belongs at the layer where it is easiest
 to make correct and easiest to diagnose.
 
-| Check                                  | Preferred Layer      | Reason                                          |
-| -------------------------------------- | -------------------- | ----------------------------------------------- |
-| package root selection                 | compiler edge        | filesystem/package config concern               |
-| tokenization, grammar, recovery        | frontend             | source preservation                             |
-| declaration legality                   | HIR / semantic       | depends on source declarations                  |
-| name resolution                        | semantic             | builds stable references                        |
-| type references and generic bounds     | semantic / HIR       | source-level types and declarations             |
-| intrinsic signature availability       | semantic / target    | compiler-owned declarations, target-gated       |
-| image device section shape             | HIR / semantic image | image-specific language meaning                 |
-| ABI shape of public/platform functions | layout / target      | target-specific representation                  |
-| monomorphization completeness          | mono                 | whole-image reachability                        |
-| validated-buffer layout shape          | HIR / layout         | declaration structure and concrete offsets      |
-| layout-derived proof facts             | layout -> Proof MIR  | proof checks need concrete representation facts |
-| use after move                         | Proof MIR            | path-sensitive resource flow                    |
-| consume exactly once                   | Proof MIR            | path-sensitive resource flow                    |
-| take-session closure                   | Proof MIR            | all exit paths are explicit                     |
-| `?` crossing obligations               | Proof MIR            | exceptional/control exits are explicit          |
-| predicate fact availability            | Proof MIR / SSA      | dominance and fact propagation                  |
-| `requires` call-site discharge         | Proof MIR            | facts are attached to values and blocks         |
-| intrinsic call preconditions           | Proof MIR            | checked like ordinary call obligations          |
-| terminal function closure              | Proof MIR            | graph reachability over exits/calls             |
-| validated-buffer requirement proofs    | Proof MIR            | path facts plus layout-derived facts            |
-| stack frame correctness                | codegen/layout       | target ABI                                      |
-| relocation correctness                 | object/linker        | binary layout                                   |
+| Check                                     | Preferred Layer      | Reason                                           |
+| ----------------------------------------- | -------------------- | ------------------------------------------------ |
+| package root selection                    | compiler edge        | filesystem/package config concern                |
+| tokenization, grammar, recovery           | frontend             | source preservation                              |
+| declaration legality                      | HIR / semantic       | depends on source declarations                   |
+| name resolution                           | semantic             | builds stable references                         |
+| type references and generic bounds        | semantic / HIR       | source-level types and declarations              |
+| platform primitive signature availability | semantic / target    | compiler-owned target contracts                  |
+| platform binding certification            | semantic / target    | source handles must exactly match target catalog |
+| image device section shape                | HIR / semantic image | image-specific language meaning                  |
+| ABI shape of public/platform functions    | layout / target      | target-specific representation                   |
+| monomorphization completeness             | mono                 | whole-image reachability                         |
+| validated-buffer layout shape             | HIR / layout         | declaration structure and concrete offsets       |
+| layout-derived proof facts                | layout -> Proof MIR  | proof checks need concrete representation facts  |
+| use after move                            | Proof MIR            | path-sensitive resource flow                     |
+| consume exactly once                      | Proof MIR            | path-sensitive resource flow                     |
+| take-session closure                      | Proof MIR            | all exit paths are explicit                      |
+| `?` crossing obligations                  | Proof MIR            | exceptional/control exits are explicit           |
+| predicate fact availability               | Proof MIR / SSA      | dominance and fact propagation                   |
+| `requires` call-site discharge            | Proof MIR            | facts are attached to values and blocks          |
+| platform primitive call preconditions     | Proof MIR            | checked like ordinary call obligations           |
+| terminal function closure                 | Proof MIR            | graph reachability over exits/calls              |
+| validated-buffer requirement proofs       | Proof MIR            | path facts plus layout-derived facts             |
+| stack frame correctness                   | codegen/layout       | target ABI                                       |
+| relocation correctness                    | object/linker        | binary layout                                    |
 
 If a HIR check starts building its own CFG, it probably belongs in MIR. If a MIR
 check starts asking "what syntax form was this," HIR probably needs to attach a
@@ -646,8 +689,8 @@ companion design that specifies:
 - place and field-sensitivity rules
 - move, consume, loan, transfer, and discharge judgments
 - the fact language and entailment rules
-- trusted axioms for platform functions, runtime intrinsics, raw memory, and
-  generated validated-buffer operations
+- trusted axioms for platform primitive contracts, runtime support operations,
+  raw memory, and generated validated-buffer operations
 - small-step operational semantics for the proof-relevant core
 - proof-failure diagnostics, including counterexample path reporting
 
@@ -661,26 +704,36 @@ The current Lean-derived compiler invariants are captured in
 minimum proof-relevant contract for future HIR, layout, Proof MIR, checker, and
 diagnostic work.
 
+Core scalar/control-flow type names such as `bool`, `u8`, `u16`, `u32`, `u64`,
+`usize`, and `Never` are language builtins. They are resolved from a small core
+type catalog in type position, not imported from stdlib and not supplied by a
+prelude.
+
 ## Semantic Modules
 
-### Package Roots And Intrinsic Declarations
+### Source Modules And Platform Primitives
 
-Package root selection happens at the compiler edge before the module graph is
-loaded. The semantic layers receive stable module identities and should not
-perform filesystem discovery.
+Source path selection happens at the compiler edge before the module graph is
+loaded. Target selection also happens at the edge. The semantic layers receive
+stable source module identities, the core type catalog, and the selected target
+primitive catalog; they should not perform filesystem discovery.
 
 ```text
-PackageMap
-  app root
-  named package roots
+Compiler edge
+  source root
+  vendored stdlib source paths
+  core type catalog
   selected target
-  intrinsic root for selected target
+  platform primitive catalog for selected target
 ```
 
-The intrinsic root contributes compiler-owned declarations to the same item
-space as source declarations, but those declarations carry intrinsic IDs and
-lowering contracts. Source modules cannot redefine an intrinsic ID by creating a
-module with the same path.
+The target primitive catalog does not contribute modules or item records. Source
+`platform fn` declarations remain ordinary source items; name resolution sees
+only the names-and-IDs projection of the selected target primitive catalog and
+binds freestanding declarations to target primitives by matching simple
+function names. Type/resource checking consumes the full target primitive
+catalog and certifies that the source declaration exactly matches the selected
+target primitive contract before HIR may use the binding.
 
 ### AST Views
 
@@ -713,21 +766,25 @@ This pass records declarations but does not resolve every reference.
 
 ### Name Resolution
 
-Name resolution maps syntactic references to item IDs:
+Name resolution maps syntactic references to item IDs and binds platform
+functions to target primitive IDs:
 
 - imports
-- package-qualified module paths
+- source module paths
 - module-qualified names
 - type names
 - function names
 - fields and member names
 - enum cases
 - image devices
-- intrinsic declarations exposed by the selected target
+- core builtin type names in type position
+- freestanding `platform fn` declarations backed by the selected target
+  primitive name catalog
 
 It should produce deterministic diagnostics and should not typecheck. It also
-should not decide whether a caller is trusted. A resolved intrinsic is just a
-compiler-owned callee with a contract that later passes must check.
+should not decide whether a caller or source declaration is trusted. A platform
+binding is just a name-level source function to target primitive ID edge that
+later passes must certify against the full target catalog and check.
 
 ### Type And Kind Checking
 
@@ -774,14 +831,15 @@ Image root
   -> reachable calls
   -> reachable types
   -> generic instantiations
-  -> reachable intrinsic declarations
+  -> reachable platform primitive bindings
   -> closed monomorphized HIR
 ```
 
 The result is a closed program with no unresolved polymorphism at the codegen or
 proof boundary. Any unresolved polymorphism or unresolved source package here is
-a compiler diagnostic. Intrinsics remain compiler-owned declarations with
-lowering IDs rather than ordinary source bodies.
+a compiler diagnostic. Platform functions remain source declarations, while
+their certified target primitive bindings carry compiler-owned lowering IDs and
+catalog-owned proof contracts.
 
 Representation and layout facts are then computed for the monomorphized
 program:
@@ -857,11 +915,11 @@ Once Proof MIR is checked, lower to codegen-oriented MIR/LIR:
 
 Back-end layers should not need to know why a move was legal.
 
-## Runtime Intrinsics
+## Runtime Support
 
-Runtime intrinsics are compiler-owned. They are not an implicit standard
-library, and they are not source modules with special privileges. They may be
-emitted as:
+Runtime support operations are compiler-owned. They are not source-facing
+intrinsic functions, an implicit standard library, or source modules with
+special privileges. They may be emitted as:
 
 - inline MIR/LIR expansions
 - compiler-generated functions
@@ -878,8 +936,8 @@ Initial runtime candidates:
 - small integer conversion helpers
 
 The default stdlib may wrap these candidates in ordinary Wrela APIs, but the
-wrapper is not trusted by the compiler. No runtime intrinsic may depend on libc,
-compiler-rt, or external object files.
+wrapper is not trusted by the compiler. No runtime support operation may depend
+on libc, compiler-rt, or external object files.
 
 ## AArch64 Backend
 
@@ -1007,44 +1065,45 @@ The proof-semantics companion can be drafted in parallel with earlier
 subsystems. It is supporting design for HIR, monomorphization, Proof MIR, and
 the checker rather than a standalone implementation phase.
 
-### 1. Source Frontend And Package Roots
+### 1. Source Frontend And Source Paths
 
 - shared source text, spans, and diagnostics
-- project manifest and explicit package root loading at the compiler edge
-- default `std` root selection for new projects and support for replacement or
-  omitted stdlib roots
-- selected-target intrinsic root with compiler-owned declarations
+- project manifest and explicit source path loading at the compiler edge
+- vendored `std` source pathing for new projects and support for replacement
+  source files
+- core builtin type catalog
+- selected-target platform primitive catalog
 - lexer and module graph lexer
 - parser and lossless CST
-- module graph parser across project and package roots
+- module graph parser across loaded source paths
 
-Output: parsed module graph with source-preserving CSTs for project/package
-source modules, compiler-owned declaration entries for the intrinsic root, and
-combined frontend diagnostics.
+Output: parsed module graph with source-preserving CSTs for project, vendored,
+and replacement stdlib source modules, plus combined frontend diagnostics.
 
 ### 2. AST Views And Item Index
 
 - typed CST views for declarations, expressions, statements, and type syntax
 - module IDs and item IDs
 - declaration collection across the parsed module graph
-- intrinsic declaration collection into the same item ID space, marked with
-  intrinsic IDs and lowering contracts
 - duplicate declaration diagnostics
 
 Output: stable IDs for modules, declarations, functions, types, images, fields,
-parameters, and intrinsic declarations.
+and parameters.
 
 ### 3. Name Resolution
 
 - imports and module-qualified names
-- package-qualified paths, including default or replacement `std` roots
+- source module paths, including vendored `std` source
 - declaration scopes
 - type names, function names, fields, enum cases, and image devices
-- intrinsic paths exposed by the selected target
+- core builtin type names in type position
+- freestanding `platform fn` declarations bound to selected target primitives
+  by simple name as name-only platform bindings
 - deterministic unresolved/ambiguous-name diagnostics
 
 Output: CST/HIR-facing references resolved to item IDs, with no trust
-distinction between project modules and stdlib modules.
+distinction between project modules and stdlib modules, plus platform primitive
+name-only bindings for source `platform fn` declarations.
 
 ### 4. Type And Resource Kind Checking
 
@@ -1054,9 +1113,12 @@ distinction between project modules and stdlib modules.
 - resource kind assignment
 - signature checking for parameters, receivers, returns, function modifiers, and
   platform declarations
-- intrinsic signature checking and target-availability diagnostics
+- platform primitive signature checking and target-availability diagnostics
+- platform binding certification that rejects missing, mismatched, weaker, or
+  non-freestanding target-bound platform declarations
 
-Output: typed declarations and signatures with resource kinds.
+Output: typed declarations and signatures with resource kinds plus certified
+platform primitive bindings.
 
 ### 5. Image Graph Checking
 
@@ -1075,8 +1137,8 @@ Output: typed image root and image reachability seed.
   attempt, terminal calls, private state transitions, and image/device origins
 - assign stable obligation, session, brand, resource-place, and call-site
   requirement IDs
-- retain resource kinds, parameter modes, receiver modes, intrinsic contract
-  edges, predicate fact origins, and `ensure` fact origins
+- retain resource kinds, parameter modes, receiver modes, certified platform
+  primitive contract edges, predicate fact origins, and `ensure` fact origins
 - make field-sensitive receiver access explicit enough for later place and loan
   tracking
 - keep diagnostics source-level
@@ -1091,11 +1153,12 @@ that later phases instantiate and check.
 - include reachable project, vendored, replacement stdlib, and package modules
 - instantiate generics
 - instantiate proof-relevant HIR metadata such as resource kinds, obligation
-  IDs, session/brand IDs, call-site requirements, and intrinsic contract edges
-- retain reachable compiler-owned intrinsic declarations by intrinsic ID
+  IDs, session/brand IDs, call-site requirements, and platform primitive contract
+  edges
+- retain reachable platform primitive IDs through platform function bindings
 - reject unresolved polymorphism at the whole-image boundary
 
-Output: closed monomorphized HIR plus reachable intrinsic IDs.
+Output: closed monomorphized HIR plus reachable platform primitive IDs.
 
 ### 8. Representation And Layout Facts
 
@@ -1122,7 +1185,8 @@ Output: Proof MIR for each monomorphized function.
 
 - fact propagation
 - requirement entailment
-- intrinsic call precondition and postcondition checking
+- platform primitive precondition and postcondition checking from catalog-owned
+  contracts
 - move/use/consume checking
 - take-session and validation/attempt obligations
 - terminal closure
@@ -1191,8 +1255,10 @@ Output: a UEFI AArch64 image that can be run under firmware.
 
 - compile representative `uefi image` programs
 - compile with the default vendored stdlib
-- compile with a tiny replacement stdlib that wraps the same intrinsics
-- compile a no-stdlib program that imports intrinsics directly where allowed
+- compile with a tiny replacement stdlib that declares and wraps the same
+  platform primitives
+- compile a no-stdlib program that declares required `platform fn` boundaries
+  directly where allowed
 - run parser/semantic/proof/codegen integration tests
 - run binary structure checks
 - run QEMU/OVMF smoke tests
@@ -1371,9 +1437,12 @@ it before a bad `.efi` is emitted.
 - Property tests for CFG invariants, SSA dominance, relocation bounds, and
   deterministic output.
 - Integration tests that compile equivalent programs through default stdlib,
-  replacement stdlib, and direct intrinsic wrappers where the language permits.
-- Negative tests proving stdlib modules cannot bypass intrinsic preconditions,
-  resource checks, target availability, or layout obligations.
+  replacement stdlib, and direct platform-function wrappers where the language
+  permits.
+- Negative tests proving stdlib modules cannot bypass platform primitive
+  preconditions, resource checks, target availability, or layout obligations.
+- Negative tests proving source `platform fn` declarations cannot weaken target
+  primitive contracts or bind as methods in v1.
 - Targeted differential tests for Proof MIR facts/resource flow, requirement
   entailment, layout, MIR lowering on small pure programs, linker layout, and PE
   validation.
@@ -1384,8 +1453,14 @@ Required invariants:
 CST reconstructs source exactly.
 HIR nodes keep source origins.
 Project modules and stdlib modules follow the same semantic rules.
-Replacement stdlibs can wrap the same intrinsics as the default stdlib.
-No source module can shadow or redefine a compiler-owned intrinsic ID.
+Replacement stdlibs can declare and wrap the same platform primitives as the
+default stdlib.
+No source module can redefine a target primitive contract; it can only declare a
+matching `platform fn` binding.
+Source `platform fn` declarations are untrusted handles until certified against
+the selected target primitive catalog.
+Methods wrap certified freestanding platform functions in v1; they do not bind
+directly to target primitives.
 MIR blocks have valid terminators.
 SSA values have one definition.
 Every live obligation is discharged or intentionally transferred on each exit.
@@ -1403,9 +1478,11 @@ Repeated builds produce identical bytes for identical inputs.
 - Keep proof MIR before destructive lowering.
 - Keep the back end ignorant of language obligations.
 - Treat the standard library as source, not compiler authority.
-- Make intrinsic contracts explicit, target-gated, and checked at every call
-  site.
-- Resolve package roots at compiler edges and keep filesystem access out of
+- Make platform primitive contracts explicit, target-gated, certified before
+  HIR, and checked at every call site.
+- Keep target-bound `platform fn` declarations freestanding in v1; use ordinary
+  source methods as wrappers.
+- Resolve source paths at compiler edges and keep filesystem access out of
   semantic layers.
 - Build the binary spine early, even before the full semantic checker exists.
 - Prefer small target-owned ABI abstractions over scattered target constants.

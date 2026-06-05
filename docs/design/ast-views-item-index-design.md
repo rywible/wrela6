@@ -6,18 +6,16 @@ The AST views and item index are the first compiler layer after parsing. This
 phase turns a parsed module graph into ergonomic typed views over the CST and a
 deterministic catalog of declarations. It is the bridge between lossless syntax
 and later semantic passes such as name resolution, type checking, image graph
-checking, HIR lowering, and intrinsic lowering.
+checking, HIR lowering, and platform primitive lowering.
 
 The parser remains the source of truth for source text. AST views wrap red CST
 nodes; they do not copy source data or replace syntax trees. The item index
-assigns stable IDs to modules, source declarations, intrinsic declarations,
-functions, types, images, fields, and parameters. It also reports duplicate
-declaration diagnostics that can be found without resolving references or
-checking types.
+assigns stable IDs to modules, source declarations, functions, types, images,
+fields, and parameters. It also reports duplicate declaration diagnostics that
+can be found without resolving references or checking types.
 
 In this document, "stable ID" means deterministic for the same parsed module
-graph and selected intrinsic catalog. It does not mean persistent across source
-edits or incremental rebuilds.
+graph. It does not mean persistent across source edits or incremental rebuilds.
 
 ## Goals
 
@@ -27,12 +25,11 @@ edits or incremental rebuilds.
 - Preserve parser recovery behavior: malformed syntax is navigable and view
   accessors return `undefined` or empty arrays instead of throwing.
 - Add deterministic `ModuleId`, `ItemId`, `TypeId`, `FunctionId`, `ImageId`,
-  `FieldId`, `ParameterId`, and `IntrinsicId` handles.
+  `FieldId`, and `ParameterId` handles.
 - Collect declarations across a full `ParsedModuleGraph`.
-- Collect compiler-owned intrinsic declarations into the same `ItemId` space as
-  source declarations.
-- Mark intrinsic items with intrinsic IDs, target availability, proof contract
-  metadata, and lowering contracts.
+- Preserve `platform` as an ordinary source function modifier so later semantic
+  phases can bind and certify freestanding platform functions against target
+  primitives.
 - Report deterministic duplicate declaration diagnostics.
 - Keep filesystem access, package root selection, target selection, and module
   loading outside this phase.
@@ -45,9 +42,10 @@ edits or incremental rebuilds.
   names, enum cases, or image devices.
 - This phase does not typecheck signatures, evaluate expressions, or validate
   proof obligations.
-- This phase does not decide whether intrinsic callers are trusted.
-- This phase does not lower intrinsics, generate HIR, or build image reachability
-  graphs.
+- This phase does not decide whether platform primitive callers are trusted.
+- This phase does not bind platform functions to target primitives, lower
+  platform primitives, certify platform contracts, generate HIR, or build image
+  reachability graphs.
 - This phase does not promise edit-stable incremental IDs.
 
 ## Repository Shape
@@ -71,7 +69,6 @@ src/
     item-index/
       index.ts
       diagnostics.ts
-      intrinsic-catalog.ts
       item-index.ts
       item-index-builder.ts
       item-records.ts
@@ -87,7 +84,6 @@ tests/
     semantic/
       ids.test.ts
       item-index/
-        intrinsic-catalog.test.ts
         item-index-builder.test.ts
         duplicates.test.ts
 
@@ -127,7 +123,6 @@ import { buildItemIndex } from "./src/semantic";
 
 const result = buildItemIndex({
   graph: parsedModuleGraph,
-  intrinsics: targetIntrinsicCatalog,
 });
 
 for (const diagnostic of result.diagnostics) {
@@ -140,7 +135,6 @@ The phase returns a pure result:
 ```ts
 export interface BuildItemIndexInput {
   readonly graph: ParsedModuleGraph;
-  readonly intrinsics?: IntrinsicCatalog;
 }
 
 export interface BuildItemIndexResult {
@@ -480,6 +474,12 @@ validate parameter types or requires expressions.
 Multiple requires sections are preserved in source order. The accessor does not
 walk into nested control-flow blocks.
 
+For platform functions, the view layer exposes only source shape. It should not
+try to decide whether the declaration is a freestanding target-bound primitive
+handle, an illegal platform method, or an ordinary wrapper candidate. The item
+index records the function and modifier; later semantic phases own platform
+binding, certification, and declaration-legality diagnostics.
+
 ### Field-Like Views
 
 `FieldDeclarationView` wraps ordinary `FieldDeclaration` nodes and is reused by
@@ -657,7 +657,6 @@ export type FunctionId = number & { readonly __brand: "FunctionId" };
 export type ImageId = number & { readonly __brand: "ImageId" };
 export type FieldId = number & { readonly __brand: "FieldId" };
 export type ParameterId = number & { readonly __brand: "ParameterId" };
-export type IntrinsicId = string & { readonly __brand: "IntrinsicId" };
 ```
 
 The implementation should expose constructors instead of type casts at call
@@ -671,7 +670,6 @@ export function functionId(value: number): FunctionId;
 export function imageId(value: number): ImageId;
 export function fieldId(value: number): FieldId;
 export function parameterId(value: number): ParameterId;
-export function intrinsicId(value: string): IntrinsicId;
 ```
 
 The numeric IDs are dense and zero-based inside one `ItemIndex`. They are
@@ -679,20 +677,8 @@ assigned deterministically by the builder. Code outside `semantic/ids.ts` should
 not depend on numeric ordering except for stable sorting in tests and diagnostic
 presentation.
 
-`IntrinsicId` is a stable string because it names a compiler-owned semantic
-operation across targets and lowering layers. Example intrinsic IDs:
-
-```text
-intrinsics.memory.volatile_load
-intrinsics.memory.volatile_store
-intrinsics.arithmetic.checked_add
-intrinsics.aarch64.dmb
-intrinsics.uefi.call_firmware
-intrinsics.image.entry_capability
-```
-
-`intrinsicId(value)` rejects empty strings and strings with leading or trailing
-whitespace.
+Target primitive IDs are selected-target catalog keys. They belong with target
+and name-resolution support, not with the source item index.
 
 ## Item Index Records
 
@@ -717,7 +703,7 @@ export class ItemIndex {
   field(id: FieldId): FieldRecord | undefined;
   parameter(id: ParameterId): ParameterRecord | undefined;
 
-  moduleByPath(pathKey: string, origin: ModuleOrigin): ModuleRecord | undefined;
+  moduleByPath(pathKey: string): ModuleRecord | undefined;
   itemsInModule(moduleId: ModuleId): readonly ItemRecord[];
   fieldsForItem(itemId: ItemId): readonly FieldRecord[];
   parametersForFunction(functionId: FunctionId): readonly ParameterRecord[];
@@ -733,31 +719,21 @@ mutate index contents.
 ### Module Records
 
 ```ts
-export type ModuleOrigin = "source" | "intrinsic";
-
 export interface ModuleRecord {
   readonly id: ModuleId;
-  readonly origin: ModuleOrigin;
   readonly pathKey: string;
   readonly display: string;
-  readonly source?: SourceText;
+  readonly source: SourceText;
 }
 ```
 
-Source modules use `ParsedModule.path.key`. Intrinsic modules use the module
-path key exposed by the intrinsic catalog, such as `intrinsics/memory.wr`.
-
-If a source module has the same path key as an intrinsic module, the builder
-reports `ITEM_SOURCE_MODULE_SHADOWS_INTRINSIC_MODULE`. Both records may still be
-created so diagnostics and later recovery can proceed. Callers must pass an
-explicit `ModuleOrigin` to `moduleByPath`, so name resolution cannot silently
-choose between a source module and an intrinsic module with the same path.
+Source modules use `ParsedModule.path.key`. Duplicate source module path keys
+produce `ITEM_DUPLICATE_MODULE`. There is no intrinsic-module shadowing check
+because target primitives are not modules.
 
 ### Item Records
 
 ```ts
-export type ItemOrigin = "source" | "intrinsic";
-
 export type SourceItemKind =
   | "enum"
   | "enumCase"
@@ -770,17 +746,14 @@ export type SourceItemKind =
   | "image"
   | "function";
 
-export type IntrinsicItemKind = "intrinsicFunction" | "intrinsicType";
-
-export type ItemKind = SourceItemKind | IntrinsicItemKind;
+export type ItemKind = SourceItemKind;
 ```
 
-Source items preserve their AST view:
+Items preserve their AST view:
 
 ```ts
 export interface SourceItemRecord {
   readonly id: ItemId;
-  readonly origin: "source";
   readonly kind: SourceItemKind;
   readonly moduleId: ModuleId;
   readonly parentItemId?: ItemId;
@@ -793,27 +766,8 @@ export interface SourceItemRecord {
   readonly functionId?: FunctionId;
   readonly imageId?: ImageId;
 }
-```
 
-Intrinsic items preserve their intrinsic contract:
-
-```ts
-export interface IntrinsicItemRecord {
-  readonly id: ItemId;
-  readonly origin: "intrinsic";
-  readonly kind: IntrinsicItemKind;
-  readonly moduleId: ModuleId;
-  readonly name: string;
-  readonly intrinsicId: IntrinsicId;
-  readonly signature: IntrinsicSignature;
-  readonly targetAvailability: IntrinsicTargetAvailability;
-  readonly proofContract: IntrinsicProofContract;
-  readonly lowering: IntrinsicLoweringContract;
-  readonly typeId?: TypeId;
-  readonly functionId?: FunctionId;
-}
-
-export type ItemRecord = SourceItemRecord | IntrinsicItemRecord;
+export type ItemRecord = SourceItemRecord;
 ```
 
 Source records omit malformed declarations that do not have a present name
@@ -837,7 +791,12 @@ export interface TypeRecord {
 }
 ```
 
-Function records include both source and intrinsic functions:
+Function records are source records. A `platform fn` receives a normal
+`FunctionId`; name resolution later binds that `FunctionId` to a target
+primitive when the declaration is a freestanding platform function and the name
+matches the selected catalog. The item index does not certify the declaration
+and does not decide whether a platform function appears in a legal target-bound
+position.
 
 ```ts
 export interface FunctionRecord {
@@ -847,7 +806,6 @@ export interface FunctionRecord {
   readonly parentItemId?: ItemId;
   readonly name: string;
   readonly parameterIds: readonly ParameterId[];
-  readonly intrinsicId?: IntrinsicId;
 }
 ```
 
@@ -881,8 +839,7 @@ export interface FieldRecord {
 Type-parameter records are source-only and preserve source names plus optional
 source bounds. They do not receive branded IDs in this phase because later
 phases address type parameters through the owning declaration/function plus
-source index. Intrinsic type parameters stay in intrinsic signature specs
-because they have no source span for diagnostics.
+source index.
 
 ```ts
 export type TypeParameterOwner =
@@ -902,190 +859,94 @@ export interface TypeParameterRecord {
 Parameter records are scoped to a function:
 
 ```ts
-export type ParameterOrigin = "source" | "intrinsic";
-
-export interface BaseParameterRecord {
+export interface ParameterRecord {
   readonly id: ParameterId;
   readonly functionId: FunctionId;
-  readonly origin: ParameterOrigin;
   readonly index: number;
   readonly name: string;
   readonly isConsumed: boolean;
-}
-
-export interface SourceParameterRecord extends BaseParameterRecord {
-  readonly origin: "source";
   readonly nameSpan: SourceSpan;
   readonly span: SourceSpan;
   readonly type?: TypeReferenceView;
 }
-
-export interface IntrinsicParameterRecord extends BaseParameterRecord {
-  readonly origin: "intrinsic";
-  readonly type: IntrinsicTypeReferenceSpec;
-}
-
-export type ParameterRecord = SourceParameterRecord | IntrinsicParameterRecord;
 ```
 
 The item index records syntactic type views for source fields, source
-type-parameter bounds, and source parameters, and structured intrinsic type
-references for intrinsic parameters. It does not validate whether the types
-exist.
+type-parameter bounds, and source parameters. It does not validate whether the
+types exist.
 
-## Intrinsic Catalog
+## Platform Primitive Refactor
 
-Intrinsic declarations are compiler-owned declarations selected by the target
-before semantic analysis. They are not loaded from source files and they are not
-allowed to receive hidden semantic privileges beyond their explicit contracts.
+The older item-index plan treated compiler intrinsics as synthetic modules and
+synthetic declarations that shared the source `ItemId` space. That model is
+superseded by the platform-primitive model in
+`docs/design/name-resolution-design.md`.
 
-The item-index layer receives an intrinsic catalog:
+The item index should be source-only:
 
-```ts
-export interface IntrinsicCatalog {
-  readonly modules: readonly IntrinsicModuleSpec[];
-}
-
-export interface IntrinsicModuleSpec {
-  readonly pathKey: string;
-  readonly display: string;
-  readonly declarations: readonly IntrinsicDeclarationSpec[];
-}
-
-export type IntrinsicDeclarationSpec =
-  | IntrinsicFunctionDeclarationSpec
-  | IntrinsicTypeDeclarationSpec;
+```text
+ParsedModuleGraph
+  -> AST views
+  -> source ModuleRecord[]
+  -> source ItemRecord[]
+  -> source TypeRecord[] / FunctionRecord[] / ImageRecord[]
+  -> source FieldRecord[] / ParameterRecord[]
 ```
 
-Intrinsic function specs:
+Target primitives are selected by the target layer, not collected by the item
+index. A source `platform fn` is still a normal source function declaration: it
+gets an ordinary `ItemId`, `FunctionId`, source parameter records, source spans,
+and the `platform` modifier. Name resolution later binds freestanding platform
+functions to `PlatformPrimitiveId`s by matching the function's simple name
+against the selected target primitive catalog.
 
-```ts
-export interface IntrinsicFunctionDeclarationSpec {
-  readonly kind: "function";
-  readonly intrinsicId: IntrinsicId;
-  readonly name: string;
-  readonly signature: IntrinsicFunctionSignature;
-  readonly targetAvailability: IntrinsicTargetAvailability;
-  readonly proofContract: IntrinsicProofContract;
-  readonly lowering: IntrinsicLoweringContract;
-}
+The item index may still record parser-accepted function declarations in class,
+image, interface, or local statement positions. In v1, those records do not bind
+directly to target primitives. Later declaration-legality and HIR checks reject
+method-shaped or local target-bound `platform fn` declarations, while allowing
+ordinary methods to wrap certified freestanding platform functions.
+
+This refactor removes these item-index concepts:
+
+```text
+IntrinsicCatalog
+IntrinsicModuleSpec
+IntrinsicItemRecord
+IntrinsicParameterRecord
+intrinsic-origin ModuleRecord
+intrinsic-origin ItemRecord
+source-module shadows intrinsic-module diagnostics
 ```
 
-Intrinsic type specs:
+The target primitive catalog still needs deterministic validation and a stable
+names/IDs projection for name-resolution binding order, but that belongs with
+target/name-resolution support instead of item-index record collection. Exact
+source/catalog certification also belongs after item indexing; this phase only
+preserves the source declaration data needed by that later check.
 
-```ts
-export interface IntrinsicTypeDeclarationSpec {
-  readonly kind: "type";
-  readonly intrinsicId: IntrinsicId;
-  readonly name: string;
-  readonly signature: IntrinsicTypeSignature;
-  readonly targetAvailability: IntrinsicTargetAvailability;
-  readonly proofContract: IntrinsicProofContract;
-  readonly lowering: IntrinsicLoweringContract;
-}
-```
-
-`IntrinsicSignature` uses structured type references instead of source strings:
-
-```ts
-export type IntrinsicSignature = IntrinsicFunctionSignature | IntrinsicTypeSignature;
-
-export interface IntrinsicFunctionSignature {
-  readonly typeParameters: readonly IntrinsicTypeParameterSpec[];
-  readonly parameters: readonly IntrinsicParameterSpec[];
-  readonly returnType?: IntrinsicTypeReferenceSpec;
-}
-
-export interface IntrinsicTypeSignature {
-  readonly typeParameters: readonly IntrinsicTypeParameterSpec[];
-}
-
-export interface IntrinsicTypeParameterSpec {
-  readonly name: string;
-  readonly bound?: IntrinsicTypeReferenceSpec;
-}
-
-export interface IntrinsicParameterSpec {
-  readonly name: string;
-  readonly type: IntrinsicTypeReferenceSpec;
-  readonly isConsumed: boolean;
-}
-
-export interface IntrinsicTypeReferenceSpec {
-  readonly name: readonly string[];
-  readonly arguments: readonly IntrinsicTypeReferenceSpec[];
-}
-```
-
-The item-index builder does not interpret proof or lowering contracts. It stores
-them with intrinsic item records so later passes have one authoritative lookup.
-
-```ts
-export interface IntrinsicTargetAvailability {
-  readonly targets: readonly string[];
-}
-
-export interface IntrinsicProofContract {
-  readonly requiredFacts: readonly string[];
-  readonly consumedCapabilities: readonly string[];
-  readonly producedCapabilities: readonly string[];
-}
-
-export interface IntrinsicLoweringContract {
-  readonly backend: string;
-  readonly operation: string;
-  readonly attributes: Readonly<Record<string, string>>;
-}
-```
-
-The builder treats the proof and lowering strings as opaque, deterministically
-stored metadata. Proof and lowering layers define their own validation rules
-when they consume those records.
-
-Intrinsic collection receives source-count offsets so source records always
-occupy the first dense ID range and intrinsic records append after them:
-
-```ts
-export interface IntrinsicCollectionOffsets {
-  readonly moduleIdOffset: number;
-  readonly itemIdOffset: number;
-  readonly typeIdOffset: number;
-  readonly functionIdOffset: number;
-  readonly imageIdOffset: number;
-  readonly fieldIdOffset: number;
-  readonly parameterIdOffset: number;
-}
-```
-
-Type-parameter records are appended in deterministic owner order; they do not
-use an offset because this phase deliberately does not assign a branded
-type-parameter ID.
+Type-parameter records remain source records in deterministic owner order. This
+phase deliberately does not assign a branded type-parameter ID.
 
 ## Deterministic ID Assignment
 
 The builder assigns IDs in a deterministic order:
 
 1. Sort source modules by `path.key`, then `source.name`, then `source.text`.
-2. Sort intrinsic modules by `pathKey`, then `display`, then a stable
-   serialization of their declarations.
-3. Assign source `ModuleId`s first, then intrinsic `ModuleId`s.
-4. For each source module in sorted order, collect source items in source order.
-5. For each intrinsic module in sorted order, collect intrinsic declarations
-   sorted by `intrinsicId`, then declaration name, then declaration kind, then a
-   stable serialization of the signature.
-6. Assign `ItemId`s in collection order.
-7. Assign `TypeId`, `FunctionId`, and `ImageId` when an item is created.
-8. Store type-parameter records in owner source order.
-9. Assign `FieldId`s and `ParameterId`s in owner source order.
+2. Assign source `ModuleId`s in sorted source-module order.
+3. For each source module in sorted order, collect source items in source order.
+4. Assign `ItemId`s in collection order.
+5. Assign `TypeId`, `FunctionId`, and `ImageId` when an item is created.
+6. Store type-parameter records in owner source order.
+7. Assign `FieldId`s and `ParameterId`s in owner source order.
 
 Source order means the order produced by direct CST child traversal, not object
 identity and not map iteration order.
 
 This assignment gives deterministic IDs even if a test constructs
 `ParsedModuleGraph.modules` in a different order from the lexer traversal.
-When duplicate records tie on every stable source or intrinsic field, the
-records are indistinguishable for deterministic purposes and tests must not
-assert an identity difference between those tied records.
+When duplicate records tie on every stable source field, the records are
+indistinguishable for deterministic purposes and tests must not assert an
+identity difference between those tied records.
 
 ## Source Declaration Collection
 
@@ -1140,14 +1001,11 @@ Diagnostic codes live in `src/semantic/item-index/diagnostics.ts`:
 ```ts
 export type ItemIndexDiagnosticCode =
   | "ITEM_DUPLICATE_MODULE"
-  | "ITEM_SOURCE_MODULE_SHADOWS_INTRINSIC_MODULE"
   | "ITEM_DUPLICATE_DECLARATION"
   | "ITEM_DUPLICATE_FIELD"
   | "ITEM_DUPLICATE_PARAMETER"
   | "ITEM_DUPLICATE_TYPE_PARAMETER"
-  | "ITEM_DUPLICATE_ENUM_CASE"
-  | "ITEM_DUPLICATE_INTRINSIC_ID"
-  | "ITEM_DUPLICATE_INTRINSIC_DECLARATION";
+  | "ITEM_DUPLICATE_ENUM_CASE";
 ```
 
 All item-index diagnostics use the shared diagnostic shape:
@@ -1172,21 +1030,9 @@ Duplicate type parameter 'T' in item Packet.
 If useful, messages may mention the first declaration's position. The diagnostic
 span remains on the duplicate name.
 
-Intrinsic duplicate diagnostics do not have source text. The implementation
-should create a synthetic `SourceText` for intrinsic catalog diagnostics:
-
-```text
-<intrinsics>
-```
-
-The span may be zero-width at the start of that synthetic source. This keeps all
-diagnostics in the shared substrate without adding a second diagnostic shape.
-
 Duplicate rules:
 
 - Two source modules with the same `path.key` produce `ITEM_DUPLICATE_MODULE`.
-- A source module whose `path.key` equals an intrinsic module `pathKey` produces
-  `ITEM_SOURCE_MODULE_SHADOWS_INTRINSIC_MODULE`.
 - Two source items with the same name in the same declaration scope produce
   `ITEM_DUPLICATE_DECLARATION`.
 - Two fields with the same name and owner item produce `ITEM_DUPLICATE_FIELD`.
@@ -1196,17 +1042,13 @@ Duplicate rules:
   `ITEM_DUPLICATE_TYPE_PARAMETER`.
 - Two enum cases with the same name and enum owner produce
   `ITEM_DUPLICATE_ENUM_CASE`.
-- Two intrinsic declarations with the same `intrinsicId` produce
-  `ITEM_DUPLICATE_INTRINSIC_ID`.
-- Two intrinsic declarations with the same module path and declaration name
-  produce `ITEM_DUPLICATE_INTRINSIC_DECLARATION`.
 
 Missing names do not participate in duplicate checking.
 
 When a compiler driver merges lexer, parser, and item-index diagnostics, it
 sorts by `source.name`, then span start, span end, and diagnostic code. This
-gives intrinsic diagnostics from the synthetic `<intrinsics>` source a stable
-position relative to real source files.
+gives item-index diagnostics a stable position relative to lexer and parser
+diagnostics.
 
 ## Error Handling And Recovery
 
@@ -1219,7 +1061,6 @@ Rules:
 - Skip unnamed source declarations, fields, parameters, and type parameters.
 - Preserve records for well-named declarations even if their body or signature is
   malformed.
-- Keep intrinsic catalog validation in diagnostics when possible.
 - Bounds-check ID lookups and return `undefined` for unknown numeric IDs.
 - Throw only for programmer errors that violate TypeScript-level invariants that
   can actually be detected at runtime.
@@ -1232,12 +1073,11 @@ present lexer, parser, and item-index diagnostics together after sorting.
 
 ## Dependency Injection And Fakes
 
-The main builder is a pure function over `ParsedModuleGraph` and
-`IntrinsicCatalog`. It does not need injected filesystem or target services.
+The main builder is a pure function over `ParsedModuleGraph`. It does not need
+injected filesystem or target services.
 
 Tests should use real lexer/parser output for integration coverage and small
-fakes for intrinsic catalogs. Do not use mocks. Intrinsic fakes should be plain
-objects that satisfy `IntrinsicCatalog`.
+parsed-module graph fakes for narrow item-index units. Do not use mocks.
 
 ## Testing Strategy
 
@@ -1258,7 +1098,6 @@ Unit tests for AST views:
 Unit tests for IDs:
 
 - Branded constructor helpers return dense numeric IDs.
-- `IntrinsicId` rejects empty strings.
 - ID values are stable for the same builder input.
 
 Unit tests for item indexing:
@@ -1266,40 +1105,31 @@ Unit tests for item indexing:
 - Source modules are sorted by `ModulePath.key` before module IDs are assigned.
 - Top-level declarations receive `ItemId`s in source order within sorted
   modules.
-- Duplicate module and intrinsic declaration inputs use stable secondary
-  tie-breaks for ID assignment.
+- Duplicate source module inputs use stable secondary tie-breaks for ID
+  assignment.
 - Type-like declarations receive `TypeId`s.
 - Function declarations receive `FunctionId`s and parameter IDs.
 - Source declaration and function type parameters receive `TypeParameterRecord`s.
-- Intrinsic function parameters receive intrinsic `ParameterRecord`s without
-  source spans.
 - Image declarations receive `ImageId`s, field IDs, and device field IDs.
 - Validated buffers receive `TypeId`s plus field IDs for params-section fields
   and layout-section fields.
-- Intrinsic declarations receive `ItemId`s in the same item array as source
-  items.
-- Intrinsic functions receive `FunctionId`s and preserve intrinsic IDs.
 - Source item records preserve source modifiers such as `private` and `unique`.
+- Source platform function records preserve the `platform` modifier.
 - Malformed declarations without names are skipped and do not throw.
 
 Duplicate diagnostics tests:
 
 - Duplicate module path.
-- Source module shadowing intrinsic module path.
 - Duplicate top-level declarations.
 - Duplicate fields in a class or image.
 - Duplicate parameters in a function.
 - Duplicate source type parameters.
 - Duplicate enum cases.
-- Duplicate intrinsic IDs.
-- Duplicate intrinsic declaration names in one intrinsic module.
 
 Integration tests:
 
 - Parse a multi-module graph, build an item index, and assert deterministic IDs
   and records.
-- Build an item index for source modules plus an intrinsic catalog and assert
-  source and intrinsic records share the same item space.
 - Verify item-index diagnostics can be concatenated with parser diagnostics and
   sorted by source position.
 
@@ -1314,14 +1144,12 @@ tests only.
 2. Add expression, statement, pattern, requirement, and name views for current
    `SyntaxKind` coverage.
 3. Add `src/semantic/ids.ts` and item-index record types.
-4. Add intrinsic catalog types and small test catalogs.
-5. Implement source module sorting and `ModuleRecord` creation.
-6. Implement source declaration collection and ID assignment.
-7. Implement field, parameter, type-parameter, and enum-case collection.
-8. Implement intrinsic module and declaration collection.
-9. Implement duplicate diagnostics.
-10. Export public API from frontend and semantic barrels.
-11. Add unit, integration, and property tests.
+4. Implement source module sorting and `ModuleRecord` creation.
+5. Implement source declaration collection and ID assignment.
+6. Implement field, parameter, type-parameter, and enum-case collection.
+7. Implement duplicate diagnostics.
+8. Export public API from frontend and semantic barrels.
+9. Add unit, integration, and property tests.
 
 Each milestone should keep `bun run agent:check` passing before handoff.
 
@@ -1329,16 +1157,14 @@ Each milestone should keep `bun run agent:check` passing before handoff.
 
 For a successful build, this phase outputs:
 
-- stable module IDs for all source and intrinsic modules
-- stable item IDs for source declarations and intrinsic declarations
-- stable type IDs for source type declarations and intrinsic type declarations
-- stable function IDs for source and intrinsic function declarations
+- stable module IDs for all source modules
+- stable item IDs for source declarations
+- stable type IDs for source type declarations
+- stable function IDs for source function declarations
 - stable image IDs for source image declarations
 - stable field IDs for source fields, image devices, validated-buffer params,
   and layout fields
-- stable parameter IDs for source and intrinsic function parameters
-- intrinsic item records marked with intrinsic IDs, proof contracts, target
-  availability, and lowering contracts
+- stable parameter IDs for source function parameters
 - deterministic duplicate declaration diagnostics
 
 Later phases consume this output instead of re-scanning raw CST for declaration
