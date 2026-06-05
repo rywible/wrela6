@@ -22,7 +22,8 @@ import { checkImageEntry } from "./image-entry-checker";
 import { selectImageRoot } from "./image-root-selection";
 import type { ImageRootSelection } from "./image-root-selection";
 import { certifyPlatformBindings } from "./platform-certifier";
-import { checkedProofSurface } from "./proof-surface";
+import { checkedProofSurface, requirementSurface, terminalSurface } from "./proof-surface";
+import type { CheckedRequirementSurface, CheckedTerminalSurface } from "./proof-surface";
 import type { ImageId, ImageProfileId, FunctionId } from "../ids";
 
 export interface CheckSemanticSurfaceInput {
@@ -91,7 +92,38 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
   });
   diagnostics.push(...imageRootResult.diagnostics);
 
-  const proofSurface = checkedProofSurface({});
+  const requirements: CheckedRequirementSurface[] = [];
+  const terminalSurfaces: CheckedTerminalSurface[] = [];
+  for (const signature of signaturesResult.signatures.entries()) {
+    const item = input.index.item(signature.itemId);
+    if (item === undefined) continue;
+    const declaration = item.declaration;
+    if (declaration === undefined) continue;
+    const requiresSections = (declaration as any).requiresSections?.() ?? [];
+    for (const section of requiresSections) {
+      for (const requirement of section.requirements()) {
+        const expr = requirement.expression();
+        if (expr === undefined) continue;
+        const span = expr.span;
+        requirements.push(
+          requirementSurface({
+            ownerFunctionId: signature.functionId,
+            expression: { kind: "opaque", text: "" },
+            span,
+          }),
+        );
+      }
+    }
+    if (signature.modifiers.isTerminal) {
+      terminalSurfaces.push(
+        terminalSurface({
+          functionId: signature.functionId,
+          span: signature.sourceSpan,
+        }),
+      );
+    }
+  }
+  const proofSurface = checkedProofSurface({ requirements, terminalSurfaces });
 
   const certResult = certifyPlatformBindings({
     index: input.index,

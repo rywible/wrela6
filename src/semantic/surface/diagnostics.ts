@@ -469,6 +469,7 @@ export function duplicateUniqueEdgeRoot(
   fieldName: string,
   previousFieldName: string,
   span: SourceSpan,
+  previousSpan: SourceSpan,
   source: SourceText,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
@@ -479,7 +480,9 @@ export function duplicateUniqueEdgeRoot(
     source,
     span,
     order,
-    relatedInformation: [{ message: `First bound by '${previousFieldName}'.`, span, source }],
+    relatedInformation: [
+      { message: `First bound by '${previousFieldName}'.`, span: previousSpan, source },
+    ],
   };
 }
 

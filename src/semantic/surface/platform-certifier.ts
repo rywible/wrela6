@@ -12,7 +12,10 @@ import type {
   PlatformPrimitiveSpec,
   TargetAvailability,
 } from "./platform-surface";
-import { targetSignatureExactlyMatches } from "./signature-checker";
+import {
+  targetSignatureExactlyMatches,
+  checkedFunctionSignatureFingerprint,
+} from "./signature-checker";
 import type { CheckedProofSurface } from "./proof-surface";
 import type { TargetAvailabilityContext } from "./image-root-selection";
 import type { SemanticSurfaceDiagnostic, SemanticSurfaceDiagnosticOrder } from "./diagnostics";
@@ -62,6 +65,11 @@ function diagnosticOrder(
   return { moduleId, span, codeTieBreaker };
 }
 
+function functionNameFrom(index: ItemIndex, signature: CheckedFunctionSignature): string {
+  const record = index.function(signature.functionId);
+  return record?.name ?? `function_${signature.functionId}`;
+}
+
 function checkPlatformShape(
   signature: CheckedFunctionSignature,
   diagnostics: SemanticSurfaceDiagnostic[],
@@ -88,6 +96,8 @@ function certifiedBindingFor(
   primitive: PlatformPrimitiveSpec,
   functionId: FunctionId,
   itemId: ItemId,
+  signatureFingerprint: string,
+  proofContractFingerprint: string,
 ): CertifiedPlatformBinding {
   return {
     itemId,
@@ -97,8 +107,8 @@ function certifiedBindingFor(
     targetId,
     certificate: {
       kind: "exactCatalogMatch",
-      signatureFingerprint: "exact",
-      proofContractFingerprint: "exact",
+      signatureFingerprint,
+      proofContractFingerprint,
     },
   };
 }
@@ -121,6 +131,7 @@ export function certifyPlatformBindings(
     if (!signature.modifiers.isPlatform) continue;
 
     const { source, moduleId } = diagnosticSourceAndModuleId(input.index, signature.functionId);
+    const functionName = functionNameFrom(input.index, signature);
 
     if (!checkPlatformShape(signature, diagnostics, source, moduleId)) continue;
 
@@ -128,7 +139,7 @@ export function certifyPlatformBindings(
     if (binding === undefined) {
       diagnostics.push(
         missingPlatformBinding(
-          `function_${signature.functionId}`,
+          functionName,
           signature.sourceSpan,
           source as any,
           diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
@@ -142,7 +153,7 @@ export function certifyPlatformBindings(
       diagnostics.push(
         platformPrimitiveCatalogEntryMissing(
           binding.primitiveId,
-          `function_${signature.functionId}`,
+          functionName,
           signature.sourceSpan,
           source as any,
           diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
@@ -154,7 +165,7 @@ export function certifyPlatformBindings(
     if (!targetAvailabilityAllows(input.availability, primitive.availability)) {
       diagnostics.push(
         targetUnavailablePlatformPrimitive(
-          `function_${signature.functionId}`,
+          functionName,
           binding.primitiveId,
           signature.sourceSpan,
           source as any,
@@ -170,12 +181,18 @@ export function certifyPlatformBindings(
           source: source as any,
           span: signature.sourceSpan,
           order: diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
-          functionName: `function_${signature.functionId}`,
+          functionName,
           reason: "Signature does not match target catalog",
         }),
       );
       continue;
     }
+
+    const sigFingerprint = checkedFunctionSignatureFingerprint(signature);
+    const proofContractFingerprint = JSON.stringify({
+      required: primitive.proofContract.requiredFacts,
+      ensured: primitive.proofContract.ensuredFacts,
+    });
 
     bindings.push(
       certifiedBindingFor(
@@ -184,6 +201,8 @@ export function certifyPlatformBindings(
         primitive,
         signature.functionId,
         signature.itemId,
+        sigFingerprint,
+        proofContractFingerprint,
       ),
     );
   }

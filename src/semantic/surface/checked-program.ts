@@ -10,9 +10,10 @@ import type {
 } from "../ids";
 import type { CheckedType } from "./type-model";
 import type { CheckedResourceKind, TypeParameterKey } from "./resource-kind";
+import type { TypeParameterOwner } from "../item-index/item-records";
 import type { CheckedProofSurface } from "./proof-surface";
 import { checkedProofSurface } from "./proof-surface";
-import type { SyntaxReferenceKey } from "../names/reference";
+import type { SyntaxReferenceKey, ResolvedReference } from "../names/reference";
 import type { SourceSpan } from "../../frontend";
 
 // ── Checked type table ──────────────────────────────────────
@@ -41,10 +42,23 @@ function checkedTypeTable(records: readonly CheckedTypeRecord[]): CheckedTypeTab
 
 // ── Checked function signature ──────────────────────────────
 
+export interface CheckedGenericParameter {
+  readonly key: any;
+  readonly name: string;
+  readonly bounds: readonly any[];
+  readonly span: SourceSpan;
+}
+
+export interface CheckedInterfaceConstraint {
+  readonly interfaceType: CheckedType;
+  readonly arguments: readonly CheckedType[];
+  readonly span: SourceSpan;
+}
+
 export interface CheckedGenericSignature {
-  readonly owner: any;
-  readonly parameters: readonly any[];
-  readonly constraints: readonly any[];
+  readonly owner: TypeParameterOwner;
+  readonly parameters: readonly CheckedGenericParameter[];
+  readonly constraints: readonly CheckedInterfaceConstraint[];
 }
 
 export interface CheckedParameter {
@@ -164,7 +178,7 @@ function checkedGenericParameterTable(
 
 export interface CompletedMemberReference {
   readonly key: SyntaxReferenceKey;
-  readonly reference: any;
+  readonly reference: ResolvedReference;
 }
 
 export interface CompletedMemberReferenceTable {
@@ -246,8 +260,8 @@ export class CheckedProgramBuilder {
   private readonly completedMemberEntries: CompletedMemberReference[] = [];
   private readonly platformBindingRecords: CertifiedPlatformBinding[] = [];
   private proofSurfaceSeeds: {
-    requirements?: readonly any[];
-    terminalSurfaces?: readonly any[];
+    requirements?: readonly import("./proof-surface").CheckedRequirementSurface[];
+    terminalSurfaces?: readonly import("./proof-surface").CheckedTerminalSurface[];
   } = {};
 
   addType(record: CheckedTypeRecord): void {
@@ -275,8 +289,8 @@ export class CheckedProgramBuilder {
   }
 
   setProofSurfaceSeeds(seeds: {
-    requirements?: readonly any[];
-    terminalSurfaces?: readonly any[];
+    requirements?: readonly import("./proof-surface").CheckedRequirementSurface[];
+    terminalSurfaces?: readonly import("./proof-surface").CheckedTerminalSurface[];
   }): void {
     this.proofSurfaceSeeds = seeds;
   }

@@ -104,6 +104,7 @@ export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevi
             field.name,
             previous.name,
             field.span,
+            previous.span,
             undefined as any,
             { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
           ),

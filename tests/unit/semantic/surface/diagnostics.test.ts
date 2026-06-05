@@ -58,7 +58,7 @@ test("duplicateUniqueEdgeRoot includes related information", () => {
   const source = SourceText.from("main.wr", "abc");
   const span = source.span(0, 1);
 
-  const diagnostic = duplicateUniqueEdgeRoot("pci-root", "dev2", "dev1", span, source, {
+  const diagnostic = duplicateUniqueEdgeRoot("pci-root", "dev2", "dev1", span, span, source, {
     moduleId: moduleId(0),
     span,
     codeTieBreaker: "a",
