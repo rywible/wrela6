@@ -156,7 +156,9 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
       targetSurface: input.targetSurface,
       kindContext,
     });
-    devices = deviceResult.devices;
+    devices = [...deviceResult.devices].sort(
+      (left, right) => (left.fieldId as number) - (right.fieldId as number),
+    );
     diagnostics.push(...deviceResult.diagnostics);
   }
 
@@ -173,6 +175,15 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
 
   const program = builder.build();
 
+  const imageRecord =
+    imageRootResult.selection !== undefined
+      ? input.index.image(imageRootResult.selection.imageId)
+      : undefined;
+  const imageSpan =
+    imageRecord !== undefined
+      ? (input.index.item(imageRecord.itemId)?.span ?? SourceSpan.from(0, 0))
+      : SourceSpan.from(0, 0);
+
   const image: CheckedImageSeed | undefined =
     imageRootResult.selection !== undefined
       ? {
@@ -180,7 +191,7 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
           profileId: imageRootResult.selection.profileId,
           entryFunctionId,
           devices,
-          sourceSpan: SourceSpan.from(0, 0),
+          sourceSpan: imageSpan,
         }
       : undefined;
 

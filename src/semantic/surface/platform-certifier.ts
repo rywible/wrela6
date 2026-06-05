@@ -189,10 +189,7 @@ export function certifyPlatformBindings(
     }
 
     const sigFingerprint = checkedFunctionSignatureFingerprint(signature);
-    const proofContractFingerprint = JSON.stringify({
-      required: primitive.proofContract.requiredFacts,
-      ensured: primitive.proofContract.ensuredFacts,
-    });
+    const proofContractFingerprint = `required:${primitive.proofContract.requiredFacts.length}|ensured:${primitive.proofContract.ensuredFacts.length}`;
 
     bindings.push(
       certifiedBindingFor(

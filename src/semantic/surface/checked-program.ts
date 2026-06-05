@@ -43,16 +43,16 @@ function checkedTypeTable(records: readonly CheckedTypeRecord[]): CheckedTypeTab
 
 // ── Checked function signature ──────────────────────────────
 
-export interface CheckedGenericParameter {
-  readonly key: any;
-  readonly name: string;
-  readonly bounds: readonly any[];
-  readonly span: SourceSpan;
-}
-
 export interface CheckedInterfaceConstraint {
   readonly interfaceType: CheckedType;
   readonly arguments: readonly CheckedType[];
+  readonly span: SourceSpan;
+}
+
+export interface CheckedGenericParameter {
+  readonly key: import("./resource-kind").TypeParameterKey;
+  readonly name: string;
+  readonly bounds: readonly CheckedInterfaceConstraint[];
   readonly span: SourceSpan;
 }
 
@@ -152,7 +152,7 @@ function checkedFieldTable(records: readonly CheckedFieldRecord[]): CheckedField
 export interface CheckedGenericParameterRecord {
   readonly key: TypeParameterKey;
   readonly name: string;
-  readonly owner: any;
+  readonly owner: TypeParameterOwner;
   readonly span: SourceSpan;
 }
 
@@ -160,12 +160,17 @@ export interface CheckedGenericParameterTable {
   entries(): readonly CheckedGenericParameterRecord[];
 }
 
+function ownerIdString(owner: TypeParameterOwner): string {
+  if (owner.kind === "item") return String(owner.itemId);
+  return String(owner.functionId);
+}
+
 function checkedGenericParameterTable(
   records: readonly CheckedGenericParameterRecord[],
 ): CheckedGenericParameterTable {
   const sorted = [...records].sort((left, right) => {
-    const aKey = `${left.owner.kind}:${left.owner.itemId ?? left.owner.functionId}:${left.key.index}`;
-    const bKey = `${right.owner.kind}:${right.owner.itemId ?? right.owner.functionId}:${right.key.index}`;
+    const aKey = `${left.owner.kind}:${ownerIdString(left.owner)}:${left.key.index}`;
+    const bKey = `${right.owner.kind}:${ownerIdString(right.owner)}:${right.key.index}`;
     if (aKey < bKey) return -1;
     if (aKey > bKey) return 1;
     return 0;
@@ -183,7 +188,7 @@ export interface CompletedMemberReference {
 }
 
 export interface CompletedMemberReferenceTable {
-  get(key: SyntaxReferenceKey): any | undefined;
+  get(key: SyntaxReferenceKey): ResolvedReference | undefined;
   entries(): readonly CompletedMemberReference[];
 }
 

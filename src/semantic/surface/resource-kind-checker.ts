@@ -1,4 +1,4 @@
-import type { CoreTypeId } from "../ids";
+import { coreTypeId } from "../ids";
 import type { CoreTypeCatalog } from "../names/core-types";
 import type { CheckedType } from "./type-model";
 import type { CheckedResourceKind } from "./resource-kind";
@@ -20,7 +20,7 @@ export function emptyKindContext(coreTypes: CoreTypeCatalog): ResourceKindContex
   };
 }
 
-const neverCoreTypeId: CoreTypeId = "Never" as unknown as CoreTypeId;
+const neverCoreTypeId = coreTypeId("Never");
 
 export function resourceKindForType(input: {
   readonly type: CheckedType;
