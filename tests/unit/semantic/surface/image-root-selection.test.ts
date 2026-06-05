@@ -27,7 +27,9 @@ test("multiple images require explicit selection", () => {
   });
 
   expect(result.selection).toBeUndefined();
-  expect(result.diagnostics.map((d) => d.code)).toContain("SURFACE_AMBIGUOUS_IMAGE_ROOT");
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+    "SURFACE_AMBIGUOUS_IMAGE_ROOT",
+  );
 });
 
 test("no images produces missing image root", () => {
@@ -39,7 +41,9 @@ test("no images produces missing image root", () => {
   });
 
   expect(result.selection).toBeUndefined();
-  expect(result.diagnostics.map((d) => d.code)).toContain("SURFACE_MISSING_IMAGE_ROOT");
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+    "SURFACE_MISSING_IMAGE_ROOT",
+  );
 });
 
 test("byImageId selection resolves correctly", () => {
@@ -80,7 +84,9 @@ test("explicit selection of non-existent image produces diagnostic", () => {
   });
 
   expect(result.selection).toBeUndefined();
-  expect(result.diagnostics.map((d) => d.code)).toContain("SURFACE_INVALID_IMAGE_ROOT_SELECTION");
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+    "SURFACE_INVALID_IMAGE_ROOT_SELECTION",
+  );
 });
 
 test("byQualifiedName with wrong module path fails", () => {
@@ -93,7 +99,9 @@ test("byQualifiedName with wrong module path fails", () => {
   });
 
   expect(result.selection).toBeUndefined();
-  expect(result.diagnostics.map((d) => d.code)).toContain("SURFACE_INVALID_IMAGE_ROOT_SELECTION");
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+    "SURFACE_INVALID_IMAGE_ROOT_SELECTION",
+  );
 });
 
 test("byQualifiedName with wrong image name fails", () => {
@@ -106,7 +114,9 @@ test("byQualifiedName with wrong image name fails", () => {
   });
 
   expect(result.selection).toBeUndefined();
-  expect(result.diagnostics.map((d) => d.code)).toContain("SURFACE_INVALID_IMAGE_ROOT_SELECTION");
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+    "SURFACE_INVALID_IMAGE_ROOT_SELECTION",
+  );
 });
 
 test("selection maps to uefi profile", () => {

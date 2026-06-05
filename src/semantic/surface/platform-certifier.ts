@@ -1,0 +1,204 @@
+import type { FunctionId, ItemId, TargetId } from "../ids";
+import type { ItemIndex } from "../item-index";
+import type { ResolvedPlatformBindings, PlatformPrimitiveBinding } from "../names";
+import type {
+  CheckedFunctionSignatureTable,
+  CheckedFunctionSignature,
+  CertifiedPlatformBinding,
+  CertifiedPlatformBindingTable,
+} from "./checked-program";
+import type {
+  SemanticTargetSurface,
+  PlatformPrimitiveSpec,
+  TargetAvailability,
+} from "./platform-surface";
+import { targetSignatureExactlyMatches } from "./signature-checker";
+import type { CheckedProofSurface } from "./proof-surface";
+import type { TargetAvailabilityContext } from "./image-root-selection";
+import type { SemanticSurfaceDiagnostic, SemanticSurfaceDiagnosticOrder } from "./diagnostics";
+import type { SourceSpan, SourceText } from "../../frontend";
+import {
+  missingPlatformBinding,
+  platformPrimitiveCatalogEntryMissing,
+  platformPrimitiveSignatureMismatch,
+  illegalPlatformShape,
+  targetUnavailablePlatformPrimitive,
+} from "./diagnostics";
+import { sortSemanticSurfaceDiagnostics } from "./diagnostics";
+
+export interface CertifyPlatformBindingsInput {
+  readonly index: ItemIndex;
+  readonly platformBindings: ResolvedPlatformBindings;
+  readonly signatures: CheckedFunctionSignatureTable;
+  readonly proofSurface: CheckedProofSurface;
+  readonly targetSurface: SemanticTargetSurface;
+  readonly availability: TargetAvailabilityContext;
+}
+
+export interface CertifyPlatformBindingsResult {
+  readonly bindings: CertifiedPlatformBindingTable;
+  readonly diagnostics: readonly SemanticSurfaceDiagnostic[];
+}
+
+function diagnosticSourceAndModuleId(
+  index: ItemIndex,
+  functionId: FunctionId,
+): { source: SourceText | undefined; moduleId: any } {
+  const funcRecord = index.function(functionId);
+  const moduleId = funcRecord?.moduleId ?? (0 as any);
+  let source: SourceText | undefined;
+  if (funcRecord !== undefined) {
+    const moduleRecord = index.module(funcRecord.moduleId);
+    source = moduleRecord?.source;
+  }
+  return { source, moduleId };
+}
+
+function diagnosticOrder(
+  moduleId: any,
+  span: SourceSpan,
+  codeTieBreaker: string,
+): SemanticSurfaceDiagnosticOrder {
+  return { moduleId, span, codeTieBreaker };
+}
+
+function checkPlatformShape(
+  signature: CheckedFunctionSignature,
+  diagnostics: SemanticSurfaceDiagnostic[],
+  source: SourceText | undefined,
+  moduleId: any,
+): boolean {
+  if (signature.ownerItemId !== undefined) {
+    diagnostics.push(
+      illegalPlatformShape(
+        "Platform functions must be freestanding, not methods",
+        signature.sourceSpan,
+        source as any,
+        diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
+      ),
+    );
+    return false;
+  }
+  return true;
+}
+
+function certifiedBindingFor(
+  targetId: TargetId,
+  binding: PlatformPrimitiveBinding,
+  primitive: PlatformPrimitiveSpec,
+  functionId: FunctionId,
+  itemId: ItemId,
+): CertifiedPlatformBinding {
+  return {
+    itemId,
+    functionId,
+    primitiveId: binding.primitiveId,
+    contractId: primitive.contractId,
+    targetId,
+    certificate: {
+      kind: "exactCatalogMatch",
+      signatureFingerprint: "exact",
+      proofContractFingerprint: "exact",
+    },
+  };
+}
+
+function targetAvailabilityAllows(
+  availability: TargetAvailabilityContext,
+  primitiveAvailability: TargetAvailability,
+): boolean {
+  if (primitiveAvailability.targetId !== availability.targetId) return false;
+  return primitiveAvailability.profiles.includes(availability.profileId);
+}
+
+export function certifyPlatformBindings(
+  input: CertifyPlatformBindingsInput,
+): CertifyPlatformBindingsResult {
+  const diagnostics: SemanticSurfaceDiagnostic[] = [];
+  const bindings: CertifiedPlatformBinding[] = [];
+
+  for (const signature of input.signatures.entries()) {
+    if (!signature.modifiers.isPlatform) continue;
+
+    const { source, moduleId } = diagnosticSourceAndModuleId(input.index, signature.functionId);
+
+    if (!checkPlatformShape(signature, diagnostics, source, moduleId)) continue;
+
+    const binding = input.platformBindings.get(signature.functionId);
+    if (binding === undefined) {
+      diagnostics.push(
+        missingPlatformBinding(
+          `function_${signature.functionId}`,
+          signature.sourceSpan,
+          source as any,
+          diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
+        ),
+      );
+      continue;
+    }
+
+    const primitive = input.targetSurface.platformPrimitives.get(binding.primitiveId);
+    if (primitive === undefined) {
+      diagnostics.push(
+        platformPrimitiveCatalogEntryMissing(
+          binding.primitiveId,
+          `function_${signature.functionId}`,
+          signature.sourceSpan,
+          source as any,
+          diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
+        ),
+      );
+      continue;
+    }
+
+    if (!targetAvailabilityAllows(input.availability, primitive.availability)) {
+      diagnostics.push(
+        targetUnavailablePlatformPrimitive(
+          `function_${signature.functionId}`,
+          binding.primitiveId,
+          signature.sourceSpan,
+          source as any,
+          diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
+        ),
+      );
+      continue;
+    }
+
+    if (!targetSignatureExactlyMatches(signature, primitive.signature)) {
+      diagnostics.push(
+        platformPrimitiveSignatureMismatch({
+          source: source as any,
+          span: signature.sourceSpan,
+          order: diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
+          functionName: `function_${signature.functionId}`,
+          reason: "Signature does not match target catalog",
+        }),
+      );
+      continue;
+    }
+
+    bindings.push(
+      certifiedBindingFor(
+        input.targetSurface.targetId,
+        binding,
+        primitive,
+        signature.functionId,
+        signature.itemId,
+      ),
+    );
+  }
+
+  const sorted = [...bindings].sort(
+    (left, right) => (left.functionId as number) - (right.functionId as number),
+  );
+  const byId = new Map(sorted.map((entry) => [entry.functionId, entry]));
+  const bindingTable: CertifiedPlatformBindingTable = {
+    get: (functionId) => byId.get(functionId),
+    entries: () => sorted,
+  };
+
+  return {
+    bindings: bindingTable,
+    diagnostics: sortSemanticSurfaceDiagnostics(diagnostics),
+  };
+}

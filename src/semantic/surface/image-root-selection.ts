@@ -75,7 +75,7 @@ function resolveSingleImage(
   input: SelectImageRootInput,
   image: ImageRecord,
 ): SelectImageRootResult {
-  const profile = input.targetSurface.imageProfiles.find((p) => p.declarationKind === "uefi");
+  const profile = input.targetSurface.imageProfiles.find((prof) => prof.declarationKind === "uefi");
 
   if (profile === undefined) {
     return {

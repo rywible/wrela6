@@ -1,4 +1,3 @@
-import type { ItemId, FunctionId } from "../ids";
 import type { TypeParameterOwner } from "../item-index/item-records";
 
 export type { TypeParameterOwner };
@@ -82,11 +81,11 @@ export function joinConcreteResourceKinds(
 }
 
 export function joinResourceKinds(kinds: readonly CheckedResourceKind[]): CheckedResourceKind {
-  if (kinds.some((k) => k.kind === "error")) return errorKind();
-  if (kinds.some((k) => k.kind === "parametric" || k.kind === "derived")) {
+  if (kinds.some((kind) => kind.kind === "error")) return errorKind();
+  if (kinds.some((kind) => kind.kind === "parametric" || kind.kind === "derived")) {
     return derivedKind("join", kinds);
   }
-  const concrete = kinds.map((k) => (k.kind === "concrete" ? k.value : "Copy"));
+  const concrete = kinds.map((kind) => (kind.kind === "concrete" ? kind.value : "Copy"));
   return concreteKind(joinConcreteResourceKinds(concrete));
 }
 
