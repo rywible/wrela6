@@ -3,18 +3,27 @@ import fastCheck from "fast-check";
 import {
   addFact,
   advancePrivateState,
+  callFallibleConsume,
+  callOrdinaryFunctionDischarge,
+  checkLoopBackedge,
   cloneState,
   consumePlace,
   dischargeObligation,
   dropPlace,
   emptyState,
   enterLinearObligation,
+  exitFunction,
+  markValidationMatched,
+  matchValidationOk,
   openLoan,
+  readDynamicLayoutField,
   requireFact,
+  transferToCore,
   type ProofResult,
   type ProofState,
   usePlace,
   withPlace,
+  wrapPlace,
 } from "../support/proof-core-reference";
 
 type ProofMirInstruction =
@@ -24,6 +33,24 @@ type ProofMirInstruction =
   | { readonly kind: "openObligation"; readonly obligationId: string; readonly place: string }
   | { readonly kind: "discharge"; readonly obligationId: string; readonly place: string }
   | { readonly kind: "openLoan"; readonly loanId: string; readonly place: string }
+  | { readonly kind: "wrap"; readonly wrapperPlace: string; readonly sourcePlace: string }
+  | {
+      readonly kind: "matchValidationOk";
+      readonly validationPlace: string;
+      readonly sourcePlace: string;
+      readonly packetPlace: string;
+    }
+  | { readonly kind: "markValidation"; readonly place: string }
+  | {
+      readonly kind: "fallibleConsume";
+      readonly place: string;
+      readonly contract: "attempt" | "plainResult";
+    }
+  | { readonly kind: "ordinaryDischarge"; readonly place: string }
+  | { readonly kind: "transferToCore"; readonly place: string; readonly targetCore: string }
+  | { readonly kind: "readLayout"; readonly field: string }
+  | { readonly kind: "exit" }
+  | { readonly kind: "loopBackedge" }
   | { readonly kind: "addFact"; readonly fact: string }
   | { readonly kind: "requireFact"; readonly fact: string }
   | { readonly kind: "advancePrivate"; readonly place: string };
@@ -72,7 +99,7 @@ describe("proof core generated trace semantics", () => {
   test("generated Proof MIR traces match the declarative trace checker", () => {
     fastCheck.assert(
       fastCheck.property(
-        fastCheck.array(instructionGenerator, { minLength: 0, maxLength: 10 }),
+        fastCheck.array(instructionGenerator, { minLength: 0, maxLength: 16 }),
         (trace) => {
           const initialState = initialTraceState();
           const operationalResult = runOperationalTrace(initialState, trace);
@@ -83,20 +110,29 @@ describe("proof core generated trace semantics", () => {
           );
         },
       ),
-      { numRuns: 1_000, seed: 0x71ace },
+      { numRuns: 5_000, seed: 0x71ace },
     );
   });
 });
 
-const placeGenerator = fastCheck.constantFrom("a", "b", "builder", "count", "missing");
+const placeGenerator = fastCheck.constantFrom("a", "b", "builder", "count", "mobile", "missing");
+const producedPlaceGenerator = fastCheck.constantFrom("packet", "wrapped", "a", "b");
+const validationPlaceGenerator = fastCheck.constantFrom("validation", "looseValidation", "a");
 const obligationIdGenerator = fastCheck.constantFrom("oa", "ob");
 const loanIdGenerator = fastCheck.constantFrom("la", "lb");
+const contractGenerator = fastCheck.constantFrom<"attempt" | "plainResult">(
+  "attempt",
+  "plainResult",
+);
+const coreGenerator = fastCheck.constantFrom("core0", "core1");
+const layoutFieldGenerator = fastCheck.constantFrom("Packet.payload", "Packet.header");
 const factGenerator = fastCheck.constantFrom(
   "a.ready",
   "b.ready",
   "builder@0.ready",
   "builder@1.ready",
   "layout.fixedFits(Packet)",
+  "layout.dynamicRange(Packet.payload)",
 );
 
 const instructionGenerator: fastCheck.Arbitrary<ProofMirInstruction> = fastCheck.oneof(
@@ -124,6 +160,40 @@ const instructionGenerator: fastCheck.Arbitrary<ProofMirInstruction> = fastCheck
       place,
     }),
   ),
+  fastCheck.tuple(producedPlaceGenerator, placeGenerator).map(
+    ([wrapperPlace, sourcePlace]): ProofMirInstruction => ({
+      kind: "wrap",
+      wrapperPlace,
+      sourcePlace,
+    }),
+  ),
+  fastCheck.tuple(validationPlaceGenerator, placeGenerator, producedPlaceGenerator).map(
+    ([validationPlace, sourcePlace, packetPlace]): ProofMirInstruction => ({
+      kind: "matchValidationOk",
+      validationPlace,
+      sourcePlace,
+      packetPlace,
+    }),
+  ),
+  validationPlaceGenerator.map((place): ProofMirInstruction => ({ kind: "markValidation", place })),
+  fastCheck.tuple(placeGenerator, contractGenerator).map(
+    ([place, contract]): ProofMirInstruction => ({
+      kind: "fallibleConsume",
+      place,
+      contract,
+    }),
+  ),
+  placeGenerator.map((place): ProofMirInstruction => ({ kind: "ordinaryDischarge", place })),
+  fastCheck.tuple(placeGenerator, coreGenerator).map(
+    ([place, targetCore]): ProofMirInstruction => ({
+      kind: "transferToCore",
+      place,
+      targetCore,
+    }),
+  ),
+  layoutFieldGenerator.map((field): ProofMirInstruction => ({ kind: "readLayout", field })),
+  fastCheck.constant<ProofMirInstruction>({ kind: "exit" }),
+  fastCheck.constant<ProofMirInstruction>({ kind: "loopBackedge" }),
   factGenerator.map((fact): ProofMirInstruction => ({ kind: "addFact", fact })),
   factGenerator.map((fact): ProofMirInstruction => ({ kind: "requireFact", fact })),
   placeGenerator.map((place): ProofMirInstruction => ({ kind: "advancePrivate", place })),
@@ -132,12 +202,25 @@ const instructionGenerator: fastCheck.Arbitrary<ProofMirInstruction> = fastCheck
 function initialTraceState(): ProofState {
   return withPlace(
     withPlace(
-      withPlace(withPlace(emptyState(), "a", { kind: "linear", brand: "session" }), "b", {
-        kind: "affine",
-        droppable: true,
-      }),
-      "builder",
-      { kind: "privateState", generation: 0 },
+      withPlace(
+        withPlace(
+          withPlace(
+            withPlace(withPlace(emptyState(), "a", { kind: "linear", brand: "session" }), "b", {
+              kind: "affine",
+              droppable: true,
+              coreMovable: true,
+            }),
+            "builder",
+            { kind: "privateState", generation: 0 },
+          ),
+          "validation",
+          { kind: "singleUse", brand: "session" },
+        ),
+        "looseValidation",
+        { kind: "singleUse" },
+      ),
+      "mobile",
+      { kind: "linear", coreMovable: true },
     ),
     "count",
     { kind: "copy" },
@@ -182,6 +265,29 @@ function applyOperationalInstruction(
       return dischargeObligation(state, instruction.obligationId, instruction.place);
     case "openLoan":
       return openLoan(state, instruction.loanId, instruction.place);
+    case "wrap":
+      return wrapPlace(state, instruction.wrapperPlace, instruction.sourcePlace);
+    case "matchValidationOk":
+      return matchValidationOk(
+        state,
+        instruction.validationPlace,
+        instruction.sourcePlace,
+        instruction.packetPlace,
+      );
+    case "markValidation":
+      return markValidationMatched(state, instruction.place);
+    case "fallibleConsume":
+      return callFallibleConsume(state, instruction.place, instruction.contract);
+    case "ordinaryDischarge":
+      return callOrdinaryFunctionDischarge(state, instruction.place);
+    case "transferToCore":
+      return transferToCore(state, instruction.place, instruction.targetCore);
+    case "readLayout":
+      return readDynamicLayoutField(state, instruction.field);
+    case "exit":
+      return exitFunction(state, "return");
+    case "loopBackedge":
+      return checkLoopBackedge(state);
     case "addFact":
       return accepted(addFact(state, instruction.fact));
     case "requireFact":
@@ -229,6 +335,29 @@ function applyDeclarativeInstruction(
       return dischargeDeclarative(state, instruction.obligationId, instruction.place);
     case "openLoan":
       return openLoanDeclarative(state, instruction.loanId, instruction.place);
+    case "wrap":
+      return wrapDeclarative(state, instruction.wrapperPlace, instruction.sourcePlace);
+    case "matchValidationOk":
+      return matchValidationOkDeclarative(
+        state,
+        instruction.validationPlace,
+        instruction.sourcePlace,
+        instruction.packetPlace,
+      );
+    case "markValidation":
+      return markValidationDeclarative(state, instruction.place);
+    case "fallibleConsume":
+      return fallibleConsumeDeclarative(state, instruction.place, instruction.contract);
+    case "ordinaryDischarge":
+      return ordinaryDischargeDeclarative(state, instruction.place);
+    case "transferToCore":
+      return transferToCoreDeclarative(state, instruction.place, instruction.targetCore);
+    case "readLayout":
+      return readLayoutDeclarative(state, instruction.field);
+    case "exit":
+      return exitDeclarative(state);
+    case "loopBackedge":
+      return loopBackedgeDeclarative(state);
     case "addFact":
       return accepted(addFactDeclarative(state, instruction.fact));
     case "requireFact":
@@ -276,10 +405,164 @@ function openLoanDeclarative(state: ProofState, loanId: string, place: string): 
   const useResult = checkAvailableDeclarative(state, place);
   if (!useResult.succeeded) return useResult;
   if (state.loans.has(loanId)) return rejected(state, "LOAN_ALREADY_OPEN");
+  if (hasOverlappingObligation(state, place)) {
+    return rejected(state, "RESOURCE_HAS_LIVE_OBLIGATION");
+  }
 
   const loans = new Map(state.loans);
   loans.set(loanId, { loanId, place });
   return accepted({ ...cloneState(state), loans });
+}
+
+function wrapDeclarative(
+  state: ProofState,
+  wrapperPlace: string,
+  sourcePlace: string,
+): ProofResult {
+  const bindResult = checkCanBindPlaceDeclarative(state, wrapperPlace);
+  if (!bindResult.succeeded) return bindResult;
+
+  const useResult = checkAvailableDeclarative(state, sourcePlace);
+  if (!useResult.succeeded) return useResult;
+
+  const sourceRecord = state.places.get(sourcePlace)!;
+  const consumedResult = consumeDeclarative(state, sourcePlace, false);
+  if (!consumedResult.succeeded) return consumedResult;
+
+  return accepted(
+    withPlace(consumedResult.state, wrapperPlace, {
+      kind: sourceRecord.kind,
+      brand: sourceRecord.brand,
+      generation: sourceRecord.generation,
+      droppable: false,
+      coreMovable: false,
+    }),
+  );
+}
+
+function matchValidationOkDeclarative(
+  state: ProofState,
+  validationPlace: string,
+  sourcePlace: string,
+  packetPlace: string,
+): ProofResult {
+  const validationRecord = state.places.get(validationPlace);
+  if (validationRecord === undefined) return rejected(state, "RESOURCE_UNKNOWN_PLACE");
+
+  const sourceRecord = state.places.get(sourcePlace);
+  if (sourceRecord === undefined) return rejected(state, "RESOURCE_UNKNOWN_PLACE");
+
+  if (validationRecord.brand !== sourceRecord.brand) {
+    return rejected(state, "BRAND_MISMATCH");
+  }
+
+  const bindResult = checkCanBindPlaceDeclarative(state, packetPlace);
+  if (!bindResult.succeeded) return bindResult;
+
+  const validationResult = markValidationDeclarative(state, validationPlace);
+  if (!validationResult.succeeded) return validationResult;
+
+  const sourceResult = consumeDeclarative(validationResult.state, sourcePlace, true);
+  if (!sourceResult.succeeded) return sourceResult;
+
+  const packetState = withPlace(sourceResult.state, packetPlace, {
+    kind: "linear",
+    brand: sourceRecord.brand,
+    droppable: false,
+    coreMovable: false,
+  });
+  const obligations = new Map(packetState.obligations);
+
+  for (const [obligationId, obligation] of obligations) {
+    if (obligation.place === sourcePlace) {
+      obligations.set(obligationId, { ...obligation, place: packetPlace });
+    }
+  }
+
+  return accepted({ ...cloneState(packetState), obligations });
+}
+
+function markValidationDeclarative(state: ProofState, place: string): ProofResult {
+  const useResult = checkAvailableDeclarative(state, place);
+  if (!useResult.succeeded) return useResult;
+
+  const record = state.places.get(place)!;
+  if (record.kind !== "singleUse") return rejected(state, "RESOURCE_KIND_MISMATCH");
+
+  return consumeDeclarative(state, place, false);
+}
+
+function fallibleConsumeDeclarative(
+  state: ProofState,
+  place: string,
+  contract: "attempt" | "plainResult",
+): ProofResult {
+  const useResult = checkAvailableDeclarative(state, place);
+  if (!useResult.succeeded) return useResult;
+
+  const record = state.places.get(place)!;
+  if (contract !== "attempt" && record.kind !== "copy") {
+    return rejected(state, "ATTEMPT_REQUIRED");
+  }
+  if (hasOverlappingObligation(state, place)) {
+    return rejected(state, "RESOURCE_HAS_LIVE_OBLIGATION");
+  }
+
+  return consumeDeclarative(state, place, false);
+}
+
+function ordinaryDischargeDeclarative(state: ProofState, place: string): ProofResult {
+  const useResult = checkAvailableDeclarative(state, place);
+  if (!useResult.succeeded) return useResult;
+
+  const record = state.places.get(place)!;
+  if (record.kind !== "copy") return rejected(state, "ORDINARY_DISCHARGE");
+
+  return accepted(state);
+}
+
+function transferToCoreDeclarative(
+  state: ProofState,
+  place: string,
+  targetCore: string,
+): ProofResult {
+  const useResult = checkAvailableDeclarative(state, place);
+  if (!useResult.succeeded) return useResult;
+
+  const record = state.places.get(place)!;
+  if (!record.coreMovable) return rejected(state, "RESOURCE_NOT_CORE_MOVABLE");
+  if (hasOverlappingObligation(state, place)) {
+    return rejected(state, "RESOURCE_HAS_LIVE_OBLIGATION");
+  }
+
+  const places = new Map(state.places);
+  places.set(place, { ...record, ownerCore: targetCore });
+  return accepted({ ...cloneState(state), places });
+}
+
+function readLayoutDeclarative(state: ProofState, field: string): ProofResult {
+  const owner = field.split(".")[0] ?? field;
+  if (!state.facts.has(`layout.fixedFits(${owner})`)) {
+    return rejected(state, "LAYOUT_FIT_NOT_PROVEN");
+  }
+  if (!state.facts.has(`layout.dynamicRange(${field})`)) {
+    return rejected(state, "LAYOUT_DYNAMIC_RANGE_NOT_PROVEN");
+  }
+  return accepted(state);
+}
+
+function exitDeclarative(state: ProofState): ProofResult {
+  if (state.obligations.size > 0) return rejected(state, "LIVE_OBLIGATION_ON_EXIT");
+  if (state.loans.size > 0) return rejected(state, "LIVE_LOAN_ON_EXIT");
+  return accepted(state);
+}
+
+function loopBackedgeDeclarative(state: ProofState): ProofResult {
+  if (state.obligations.size > 0) {
+    return rejected(state, "LIVE_OBLIGATION_ON_LOOP_BACKEDGE");
+  }
+  if (state.loans.size > 0) return rejected(state, "LIVE_LOAN_ON_LOOP_BACKEDGE");
+  return accepted(state);
 }
 
 function dropDeclarative(state: ProofState, place: string): ProofResult {
@@ -353,6 +636,14 @@ function checkAvailableDeclarative(state: ProofState, place: string): ProofResul
   if (isLoaned(state, place)) return rejected(state, "PLACE_LOANED");
   if (hasLoanedChild(state, place)) return rejected(state, "RESOURCE_PARTIALLY_LOANED");
   if (hasConsumedChild(state, place)) return rejected(state, "RESOURCE_PARTIALLY_MOVED");
+  return accepted(state);
+}
+
+function checkCanBindPlaceDeclarative(state: ProofState, place: string): ProofResult {
+  const existing = state.places.get(place);
+  if (existing !== undefined && existing.status === "live" && existing.kind !== "copy") {
+    return rejected(state, "PLACE_SHADOWS_LIVE_RESOURCE");
+  }
   return accepted(state);
 }
 

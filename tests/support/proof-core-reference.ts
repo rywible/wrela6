@@ -279,6 +279,9 @@ export function wrapPlace(
   wrapperPlace: string,
   sourcePlace: string,
 ): ProofResult {
+  const bindResult = checkCanBindPlace(state, wrapperPlace);
+  if (!bindResult.succeeded) return bindResult;
+
   const useResult = checkPlaceAvailable(state, sourcePlace);
   if (!useResult.succeeded) return useResult;
 
@@ -303,6 +306,9 @@ export function openLoan(state: ProofState, loanId: string, place: string): Proo
 
   if (state.loans.has(loanId)) {
     return rejected(state, "LOAN_ALREADY_OPEN");
+  }
+  if (hasOverlappingObligation(state, place)) {
+    return rejected(state, "RESOURCE_HAS_LIVE_OBLIGATION");
   }
 
   const loans = new Map(state.loans);
@@ -361,13 +367,12 @@ export function matchValidationOk(
     return rejected(state, "RESOURCE_UNKNOWN_PLACE");
   }
 
-  if (
-    validationRecord.brand !== undefined &&
-    sourceRecord.brand !== undefined &&
-    validationRecord.brand !== sourceRecord.brand
-  ) {
+  if (validationRecord.brand !== sourceRecord.brand) {
     return rejected(state, "BRAND_MISMATCH");
   }
+
+  const bindResult = checkCanBindPlace(state, packetPlace);
+  if (!bindResult.succeeded) return bindResult;
 
   const validationResult = markValidationMatched(state, validationPlace);
   if (!validationResult.succeeded) return validationResult;
@@ -544,6 +549,14 @@ function checkPlaceAvailable(state: ProofState, place: string): ProofResult {
   }
   if (hasConsumedChild(state, place)) {
     return rejected(state, "RESOURCE_PARTIALLY_MOVED");
+  }
+  return accepted(state);
+}
+
+function checkCanBindPlace(state: ProofState, place: string): ProofResult {
+  const existing = state.places.get(place);
+  if (existing !== undefined && existing.status === "live" && existing.kind !== "copy") {
+    return rejected(state, "PLACE_SHADOWS_LIVE_RESOURCE");
   }
   return accepted(state);
 }

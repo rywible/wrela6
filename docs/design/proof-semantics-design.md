@@ -21,10 +21,10 @@ tests/unit/proof-core-composition.test.ts
 tests/unit/proof-core-trace.test.ts
 ```
 
-The sketch is intentionally tiny, but it verifies the thirty-nine worked rejection
-examples in this document plus composition and permutation properties over the
-core judgments and generated small-trace differential checks. It is a pressure
-test for the rules, not the production checker.
+The sketch is intentionally tiny, but it verifies the worked rejection examples
+in this document plus positive-path checks, composition and permutation
+properties over the core judgments, and generated trace differential checks. It
+is a pressure test for the rules, not the production checker.
 
 ## Goals
 
@@ -301,6 +301,11 @@ The first executable sketch checks these properties with generated inputs:
 - adding independent facts is permutation invariant
 - consuming disjoint resources commutes
 - opening disjoint loans commutes
+- wrapping disjoint resources commutes
+- transferring disjoint core-movable resources commutes
+- validation success matching commutes with independent wrapping
+- validation obligation transfer commutes with independent core transfer
+- dynamic layout facts are permutation invariant before layout reads
 - branch joins are commutative for compatible resource states
 - branch joins are associative for compatible resource states
 - terminal graph validation is invariant under edge list order
@@ -324,10 +329,25 @@ drop
 openObligation
 discharge
 openLoan
+wrap
+matchValidationOk
+markValidation
+fallibleConsume
+ordinaryDischarge
+transferToCore
+readLayout
+exit
+loopBackedge
 addFact
 requireFact
 advancePrivate
 ```
+
+The current generated pass runs 5,000 seeded traces up to 16 instructions long.
+The generated initial state includes live linear, affine, copy, private-state,
+validation, unbranded-validation, and core-movable resources so that traces
+exercise owner production, validation targets, fallible ownership transfer,
+ordinary-call rejection, core transfer, layout reads, exits, and loop backedges.
 
 Each accepted operational step is checked against whole-state invariants:
 
@@ -345,6 +365,11 @@ The first generated-trace pass found a real hole: direct `consume` could consume
 a resource with a live obligation, leaving the obligation dangling. The core rule
 now rejects that; only explicit discharge or validation transfer may consume an
 obligated place.
+
+Later hardening passes found additional holes that are now locked by both
+deterministic tests and generated traces: generated owners cannot shadow a live
+non-copy place, validation success requires exact source-brand equality, and
+loans cannot open over places with live overlapping obligations.
 
 ## Core Judgments
 

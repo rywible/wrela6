@@ -1,4 +1,4 @@
-import { test } from "bun:test";
+import { expect, test } from "bun:test";
 import {
   addFact,
   advancePrivateState,
@@ -164,6 +164,20 @@ test("proof core transfers validation Ok obligation from source to packet", () =
   expectRejected(dischargeObligation(okState, "rx-buffer", "packet", "batch-b"), "BRAND_MISMATCH");
 });
 
+test("proof core accepts validated packet discharge before function exit", () => {
+  const initialState = withPlace(
+    withPlace(emptyState(), "buffer", { kind: "linear", brand: "batch-a" }),
+    "validation",
+    { kind: "singleUse", brand: "batch-a" },
+  );
+  const obligatedState = enterLinearObligation(initialState, "rx-buffer", "buffer").state;
+  const okState = matchValidationOk(obligatedState, "validation", "buffer", "packet").state;
+  const dischargedResult = dischargeObligation(okState, "rx-buffer", "packet", "batch-a");
+
+  expect(dischargedResult.succeeded).toBe(true);
+  expect(exitFunction(dischargedResult.state, "return").succeeded).toBe(true);
+});
+
 test("proof core rejects cross-core transfer of session-bound token", () => {
   const initialState = withPlace(emptyState(), "packet", {
     kind: "linear",
@@ -233,6 +247,15 @@ test("proof core rejects dynamic layout reads without the dynamic range fact", (
     readDynamicLayoutField(initialState, "Packet.payload"),
     "LAYOUT_DYNAMIC_RANGE_NOT_PROVEN",
   );
+});
+
+test("proof core accepts dynamic layout reads with fixed fit and dynamic range facts", () => {
+  const initialState = addFact(
+    addFact(emptyState(), "layout.fixedFits(Packet)"),
+    "layout.dynamicRange(Packet.payload)",
+  );
+
+  expect(readDynamicLayoutField(initialState, "Packet.payload").succeeded).toBe(true);
 });
 
 test("proof core rejects using a field after its aggregate is consumed", () => {
@@ -382,6 +405,51 @@ test("proof core rejects Attempt consume of a resource with a live obligation", 
     callFallibleConsume(obligatedState, "buffer", "attempt"),
     "RESOURCE_HAS_LIVE_OBLIGATION",
   );
+});
+
+test("proof core rejects wrapping into a live non-copy target", () => {
+  const initialState = withPlace(withPlace(emptyState(), "source", { kind: "linear" }), "target", {
+    kind: "affine",
+  });
+
+  expectRejected(wrapPlace(initialState, "target", "source"), "PLACE_SHADOWS_LIVE_RESOURCE");
+});
+
+test("proof core rejects validation Ok into a live non-copy target", () => {
+  const initialState = withPlace(
+    withPlace(
+      withPlace(emptyState(), "buffer", { kind: "linear", brand: "batch-a" }),
+      "validation",
+      { kind: "singleUse", brand: "batch-a" },
+    ),
+    "packet",
+    { kind: "linear", brand: "other" },
+  );
+
+  expectRejected(
+    matchValidationOk(initialState, "validation", "buffer", "packet"),
+    "PLACE_SHADOWS_LIVE_RESOURCE",
+  );
+});
+
+test("proof core rejects unbranded validation for a branded source", () => {
+  const initialState = withPlace(
+    withPlace(emptyState(), "buffer", { kind: "linear", brand: "batch-a" }),
+    "validation",
+    { kind: "singleUse" },
+  );
+
+  expectRejected(
+    matchValidationOk(initialState, "validation", "buffer", "packet"),
+    "BRAND_MISMATCH",
+  );
+});
+
+test("proof core rejects opening a loan on an obligated place", () => {
+  const initialState = withPlace(emptyState(), "buffer", { kind: "linear" });
+  const obligatedState = enterLinearObligation(initialState, "rx-buffer", "buffer").state;
+
+  expectRejected(openLoan(obligatedState, "loan", "buffer"), "RESOURCE_HAS_LIVE_OBLIGATION");
 });
 
 function forcePlaceStatus(state: ProofState, place: string, status: ResourceStatus): ProofState {

@@ -5,14 +5,20 @@ import {
   advancePrivateState,
   checkTerminalGraph,
   consumePlace,
+  dischargeObligation,
   emptyState,
+  enterLinearObligation,
   joinStates,
+  matchValidationOk,
   openLoan,
+  readDynamicLayoutField,
   requireFact,
+  transferToCore,
   type ProofResult,
   type ProofState,
   type ResourceStatus,
   withPlace,
+  wrapPlace,
 } from "../support/proof-core-reference";
 
 type GeneratedStatus = Extract<ResourceStatus, "live" | "consumed" | "maybeConsumed">;
@@ -103,6 +109,124 @@ describe("proof core composition and permutation properties", () => {
     );
   });
 
+  test("disjoint wraps commute", () => {
+    fastCheck.assert(
+      fastCheck.property(disjointPlacePair, ([leftPlace, rightPlace]) => {
+        const initialState = withLinearPlaces([leftPlace, rightPlace]);
+        const leftWrapper = `${leftPlace}Wrapped`;
+        const rightWrapper = `${rightPlace}Wrapped`;
+
+        const leftThenRight = wrapPlace(
+          wrapPlace(initialState, leftWrapper, leftPlace).state,
+          rightWrapper,
+          rightPlace,
+        );
+        const rightThenLeft = wrapPlace(
+          wrapPlace(initialState, rightWrapper, rightPlace).state,
+          leftWrapper,
+          leftPlace,
+        );
+
+        expectAcceptedEquivalent(leftThenRight, rightThenLeft);
+      }),
+      { numRuns: 200, seed: 0xc004 },
+    );
+  });
+
+  test("disjoint core transfers commute", () => {
+    fastCheck.assert(
+      fastCheck.property(disjointPlacePair, ([leftPlace, rightPlace]) => {
+        const initialState = withCoreMovablePlaces([leftPlace, rightPlace]);
+
+        const leftThenRight = transferToCore(
+          transferToCore(initialState, leftPlace, "core1").state,
+          rightPlace,
+          "core2",
+        );
+        const rightThenLeft = transferToCore(
+          transferToCore(initialState, rightPlace, "core2").state,
+          leftPlace,
+          "core1",
+        );
+
+        expectAcceptedEquivalent(leftThenRight, rightThenLeft);
+      }),
+      { numRuns: 200, seed: 0xc005 },
+    );
+  });
+
+  test("validation Ok matching commutes with independent wrapping", () => {
+    const initialState = withPlace(
+      withPlace(
+        withPlace(emptyState(), "buffer", { kind: "linear", brand: "batch-a" }),
+        "validation",
+        { kind: "singleUse", brand: "batch-a" },
+      ),
+      "item",
+      { kind: "linear", brand: "item" },
+    );
+
+    const matchThenWrap = wrapPlace(
+      matchValidationOk(initialState, "validation", "buffer", "packet").state,
+      "wrappedItem",
+      "item",
+    );
+    const wrapThenMatch = matchValidationOk(
+      wrapPlace(initialState, "wrappedItem", "item").state,
+      "validation",
+      "buffer",
+      "packet",
+    );
+
+    expectAcceptedEquivalent(matchThenWrap, wrapThenMatch);
+  });
+
+  test("validation obligation transfer commutes with independent core transfer", () => {
+    const initialState = withPlace(
+      withPlace(
+        withPlace(emptyState(), "buffer", { kind: "linear", brand: "batch-a" }),
+        "validation",
+        { kind: "singleUse", brand: "batch-a" },
+      ),
+      "mobile",
+      { kind: "linear", coreMovable: true },
+    );
+    const obligatedState = enterLinearObligation(initialState, "rx-buffer", "buffer").state;
+
+    const matchThenTransfer = transferToCore(
+      matchValidationOk(obligatedState, "validation", "buffer", "packet").state,
+      "mobile",
+      "core1",
+    );
+    const transferThenMatch = matchValidationOk(
+      transferToCore(obligatedState, "mobile", "core1").state,
+      "validation",
+      "buffer",
+      "packet",
+    );
+
+    expectAcceptedEquivalent(matchThenTransfer, transferThenMatch);
+    expect(
+      dischargeObligation(matchThenTransfer.state, "rx-buffer", "packet", "batch-a").succeeded,
+    ).toBe(true);
+  });
+
+  test("layout read facts are permutation invariant", () => {
+    const fixedFact = "layout.fixedFits(Packet)";
+    const rangeFact = "layout.dynamicRange(Packet.payload)";
+
+    const fixedThenRange = readDynamicLayoutField(
+      addFact(addFact(emptyState(), fixedFact), rangeFact),
+      "Packet.payload",
+    );
+    const rangeThenFixed = readDynamicLayoutField(
+      addFact(addFact(emptyState(), rangeFact), fixedFact),
+      "Packet.payload",
+    );
+
+    expectAcceptedEquivalent(fixedThenRange, rangeThenFixed);
+  });
+
   test("branch joins are commutative for generated resource statuses", () => {
     fastCheck.assert(
       fastCheck.property(generatedStatus, generatedStatus, (leftStatus, rightStatus) => {
@@ -114,7 +238,7 @@ describe("proof core composition and permutation properties", () => {
           joinStates(rightState, leftState),
         );
       }),
-      { numRuns: 200, seed: 0xc004 },
+      { numRuns: 200, seed: 0xc006 },
     );
   });
 
@@ -135,7 +259,7 @@ describe("proof core composition and permutation properties", () => {
           expectAcceptedEquivalent(leftGrouped, rightGrouped);
         },
       ),
-      { numRuns: 200, seed: 0xc005 },
+      { numRuns: 200, seed: 0xc007 },
     );
   });
 
@@ -156,7 +280,7 @@ describe("proof core composition and permutation properties", () => {
 
         expect(result.succeeded).toBe(true);
       }),
-      { numRuns: 20, seed: 0xc006 },
+      { numRuns: 20, seed: 0xc008 },
     );
   });
 
@@ -170,7 +294,7 @@ describe("proof core composition and permutation properties", () => {
 
         expect(requireFact(revivedState, fact).succeeded).toBe(false);
       }),
-      { numRuns: 100, seed: 0xc007 },
+      { numRuns: 100, seed: 0xc009 },
     );
   });
 
@@ -201,6 +325,13 @@ function withLinearPlaces(places: readonly string[]): ProofState {
 
 function withAffinePlaces(places: readonly string[]): ProofState {
   return places.reduce((state, place) => withPlace(state, place, { kind: "affine" }), emptyState());
+}
+
+function withCoreMovablePlaces(places: readonly string[]): ProofState {
+  return places.reduce(
+    (state, place) => withPlace(state, place, { kind: "linear", coreMovable: true }),
+    emptyState(),
+  );
 }
 
 function stateWithStatus(status: GeneratedStatus): ProofState {
