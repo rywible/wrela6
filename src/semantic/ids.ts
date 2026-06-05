@@ -7,6 +7,15 @@ export type FieldId = number & { readonly __brand: "FieldId" };
 export type ParameterId = number & { readonly __brand: "ParameterId" };
 export type CoreTypeId = string & { readonly __brand: "CoreTypeId" };
 export type PlatformPrimitiveId = string & { readonly __brand: "PlatformPrimitiveId" };
+export type TargetId = string & { readonly __brand: "TargetId" };
+export type PlatformContractId = string & { readonly __brand: "PlatformContractId" };
+export type ImageProfileId = string & { readonly __brand: "ImageProfileId" };
+export type DeviceSurfaceId = string & { readonly __brand: "DeviceSurfaceId" };
+export type PlatformPrimitiveFamilyId = string & {
+  readonly __brand: "PlatformPrimitiveFamilyId";
+};
+export type TargetTypeId = string & { readonly __brand: "TargetTypeId" };
+export type UniqueEdgeRootKey = string & { readonly __brand: "UniqueEdgeRootKey" };
 
 function denseId(value: number, label: string): number {
   if (!Number.isInteger(value) || value < 0) {
@@ -43,22 +52,46 @@ export function parameterId(value: number): ParameterId {
   return denseId(value, "ParameterId") as ParameterId;
 }
 
-export function coreTypeId(value: string): CoreTypeId {
-  if (value.length === 0) {
-    throw new RangeError("CoreTypeId must not be empty.");
-  }
+function nonEmptyTrimmedId(value: string, label: string): string {
+  if (value.length === 0) throw new RangeError(`${label} must not be empty.`);
   if (value !== value.trim()) {
-    throw new RangeError("CoreTypeId must not have leading or trailing whitespace.");
+    throw new RangeError(`${label} must not have leading or trailing whitespace.`);
   }
-  return value as CoreTypeId;
+  return value;
+}
+
+export function coreTypeId(value: string): CoreTypeId {
+  return nonEmptyTrimmedId(value, "CoreTypeId") as CoreTypeId;
 }
 
 export function platformPrimitiveId(value: string): PlatformPrimitiveId {
-  if (value.length === 0) {
-    throw new RangeError("PlatformPrimitiveId must not be empty.");
-  }
-  if (value !== value.trim()) {
-    throw new RangeError("PlatformPrimitiveId must not have leading or trailing whitespace.");
-  }
-  return value as PlatformPrimitiveId;
+  return nonEmptyTrimmedId(value, "PlatformPrimitiveId") as PlatformPrimitiveId;
+}
+
+export function targetId(value: string): TargetId {
+  return nonEmptyTrimmedId(value, "TargetId") as TargetId;
+}
+
+export function platformContractId(value: string): PlatformContractId {
+  return nonEmptyTrimmedId(value, "PlatformContractId") as PlatformContractId;
+}
+
+export function imageProfileId(value: string): ImageProfileId {
+  return nonEmptyTrimmedId(value, "ImageProfileId") as ImageProfileId;
+}
+
+export function deviceSurfaceId(value: string): DeviceSurfaceId {
+  return nonEmptyTrimmedId(value, "DeviceSurfaceId") as DeviceSurfaceId;
+}
+
+export function platformPrimitiveFamilyId(value: string): PlatformPrimitiveFamilyId {
+  return nonEmptyTrimmedId(value, "PlatformPrimitiveFamilyId") as PlatformPrimitiveFamilyId;
+}
+
+export function targetTypeId(value: string): TargetTypeId {
+  return nonEmptyTrimmedId(value, "TargetTypeId") as TargetTypeId;
+}
+
+export function uniqueEdgeRootKey(value: string): UniqueEdgeRootKey {
+  return nonEmptyTrimmedId(value, "UniqueEdgeRootKey") as UniqueEdgeRootKey;
 }

@@ -1,14 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import {
   coreTypeId,
+  deviceSurfaceId,
   fieldId,
   functionId,
   imageId,
+  imageProfileId,
   itemId,
   moduleId,
   parameterId,
+  platformContractId,
+  platformPrimitiveFamilyId,
   platformPrimitiveId,
+  targetId,
+  targetTypeId,
   typeId,
+  uniqueEdgeRootKey,
 } from "../../../src/semantic/ids";
 
 describe("semantic IDs", () => {
@@ -57,5 +64,30 @@ describe("semantic IDs", () => {
     expect(() => platformPrimitiveId("foo ")).toThrow(
       "PlatformPrimitiveId must not have leading or trailing whitespace.",
     );
+  });
+
+  test("semantic surface string IDs preserve valid values", () => {
+    expect(targetId("aarch64-uefi")).toBe(targetId("aarch64-uefi"));
+    expect(platformContractId("firmware-exit-contract")).toBe(
+      platformContractId("firmware-exit-contract"),
+    );
+    expect(imageProfileId("uefi")).toBe(imageProfileId("uefi"));
+    expect(deviceSurfaceId("net0")).toBe(deviceSurfaceId("net0"));
+    expect(platformPrimitiveFamilyId("firmware")).toBe(platformPrimitiveFamilyId("firmware"));
+    expect(targetTypeId("FirmwareHandle")).toBe(targetTypeId("FirmwareHandle"));
+    expect(uniqueEdgeRootKey("pci-root")).toBe(uniqueEdgeRootKey("pci-root"));
+  });
+
+  test.each([
+    ["targetId", targetId],
+    ["platformContractId", platformContractId],
+    ["imageProfileId", imageProfileId],
+    ["deviceSurfaceId", deviceSurfaceId],
+    ["platformPrimitiveFamilyId", platformPrimitiveFamilyId],
+    ["targetTypeId", targetTypeId],
+    ["uniqueEdgeRootKey", uniqueEdgeRootKey],
+  ])("%s rejects empty values", (_name, build) => {
+    expect(() => build("")).toThrow(RangeError);
+    expect(() => build(" padded ")).toThrow(RangeError);
   });
 });
