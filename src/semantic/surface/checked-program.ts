@@ -37,7 +37,7 @@ function checkedTypeTable(records: readonly CheckedTypeRecord[]): CheckedTypeTab
   const byId = new Map(sorted.map((record) => [record.typeId, record]));
   return {
     get: (typeId) => byId.get(typeId),
-    entries: () => sorted,
+    entries: () => [...sorted],
   };
 }
 
@@ -114,7 +114,7 @@ function checkedFunctionSignatureTable(
   const byId = new Map(sorted.map((record) => [record.functionId, record]));
   return {
     get: (functionId) => byId.get(functionId),
-    entries: () => sorted,
+    entries: () => [...sorted],
   };
 }
 
@@ -143,7 +143,7 @@ function checkedFieldTable(records: readonly CheckedFieldRecord[]): CheckedField
   const byId = new Map(sorted.map((record) => [record.fieldId, record]));
   return {
     get: (fieldId) => byId.get(fieldId),
-    entries: () => sorted,
+    entries: () => [...sorted],
   };
 }
 
@@ -176,7 +176,7 @@ function checkedGenericParameterTable(
     return 0;
   });
   return {
-    entries: () => sorted,
+    entries: () => [...sorted],
   };
 }
 
@@ -206,7 +206,7 @@ function completedMemberReferenceTable(
   }
   return {
     get: (key) => byKey.get(completedMemberKeyString(key)),
-    entries: () => sorted,
+    entries: () => [...sorted],
   };
 }
 
@@ -245,7 +245,7 @@ function certifiedPlatformBindingTable(
   const byId = new Map(sorted.map((binding) => [binding.functionId, binding]));
   return {
     get: (functionId) => byId.get(functionId),
-    entries: () => sorted,
+    entries: () => [...sorted],
   };
 }
 

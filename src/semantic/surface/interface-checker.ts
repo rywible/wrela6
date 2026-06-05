@@ -1,5 +1,6 @@
 import type { CheckedInterfaceConstraint } from "./generic-checker";
 import type { CheckedType } from "./type-model";
+import { SourceSpan } from "../../frontend";
 
 export interface CheckInterfaceConstraintInput {
   readonly interfaceType: CheckedType;
@@ -18,7 +19,7 @@ export function checkInterfaceConstraint(
     constraint: {
       interfaceType: input.interfaceType,
       arguments: input.arguments,
-      span: { start: 0, end: 0 },
+      span: SourceSpan.from(0, 0),
     },
     diagnostics: [],
   };

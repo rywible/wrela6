@@ -11,7 +11,7 @@ import {
 } from "./type-model";
 import type { SurfaceReferenceLookup, ReferenceLookupResult } from "./reference-lookup";
 import type { SemanticSurfaceDiagnostic } from "./diagnostics";
-import { invalidTypeReference, nonTypeReference } from "./diagnostics";
+import { invalidTypeReference, nonTypeReference, wrongGenericArgumentCount } from "./diagnostics";
 import type { SourceSpan, SourceText, TypeReferenceView } from "../../frontend";
 import { SourceSpan as SourceSpanConstructor, presentTokenSpan } from "../../frontend";
 
@@ -35,6 +35,16 @@ function qualifiedNameSpan(qualifiedName: { segments(): readonly any[] }): Sourc
   const lastSpan = presentTokenSpan(segments[segments.length - 1]);
   if (firstSpan === undefined || lastSpan === undefined) return undefined;
   return SourceSpanConstructor.from(firstSpan.start, lastSpan.end);
+}
+
+function declaredTypeParameterCount(
+  constructorType: CheckedType,
+  index: ItemIndex,
+): number | undefined {
+  if (constructorType.kind === "source") {
+    return index.typeParametersForItem(constructorType.itemId).length;
+  }
+  return undefined;
 }
 
 function checkedTypeFromLookupResult(
@@ -126,6 +136,18 @@ function checkTypeArguments(
   const typeArgs = input.view?.typeArguments() ?? [];
   const resolvedTypeArgs: CheckedType[] = [];
 
+  const expectedArity = declaredTypeParameterCount(constructorType, input.index);
+  if (expectedArity !== undefined && typeArgs.length !== 0 && typeArgs.length !== expectedArity) {
+    const name = input.view?.qualifiedNameText() ?? "<unknown>";
+    diagnostics.push(
+      wrongGenericArgumentCount(name, expectedArity, typeArgs.length, input.span, input.source, {
+        moduleId: input.moduleId,
+        span: input.span,
+        codeTieBreaker: "type",
+      }),
+    );
+  }
+
   for (const argView of typeArgs) {
     const argResult = checkTypeReference({ ...input, view: argView });
     resolvedTypeArgs.push(argResult.type);
@@ -138,6 +160,12 @@ function checkTypeArguments(
 
   const constructorId = typeConstructorIdFromCheckedType(constructorType);
   if (constructorId === undefined) {
+    return { type: errorCheckedType(), diagnostics };
+  }
+
+  if (
+    diagnostics.some((diagnostic) => diagnostic.code === "SURFACE_WRONG_GENERIC_ARGUMENT_COUNT")
+  ) {
     return { type: errorCheckedType(), diagnostics };
   }
 
@@ -186,11 +214,19 @@ export function checkTypeReference(input: CheckTypeReferenceInput): CheckTypeRef
 
   const source = qualifiedName.source;
 
-  const lookup = input.referenceLookup.findOne({
+  let lookup = input.referenceLookup.findOne({
     moduleId: input.moduleId,
     span,
     kind: "typeName",
   });
+
+  if (lookup.kind === "missing") {
+    lookup = input.referenceLookup.findOne({
+      moduleId: input.moduleId,
+      span,
+      kind: "typeParameter",
+    });
+  }
 
   return checkedTypeFromLookupResult(lookup, { ...input, span, source });
 }

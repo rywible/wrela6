@@ -7,20 +7,19 @@ import type { CheckedType } from "./type-model";
 import type { SemanticSurfaceDiagnostic } from "./diagnostics";
 import { duplicateGenericParameter, invalidGenericBound } from "./diagnostics";
 import type { ModuleId } from "../ids";
-import type { SourceSpan } from "../../frontend";
-import { SourceSpan as SourceSpanConstructor, presentTokenSpan } from "../../frontend";
+import { SourceSpan, presentTokenSpan } from "../../frontend";
 
 export interface CheckedGenericParameter {
   readonly key: { owner: TypeParameterOwner; index: number };
   readonly name: string;
   readonly bounds: readonly CheckedInterfaceConstraint[];
-  readonly span: { start: number; end: number };
+  readonly span: SourceSpan;
 }
 
 export interface CheckedInterfaceConstraint {
   readonly interfaceType: CheckedType;
   readonly arguments: readonly CheckedType[];
-  readonly span: { start: number; end: number };
+  readonly span: SourceSpan;
 }
 
 export interface CheckedGenericSignature {
@@ -63,7 +62,7 @@ function boundSpan(boundView: {
   const firstSpan = presentTokenSpan(segments[0]);
   const lastSpan = presentTokenSpan(segments[segments.length - 1]);
   if (firstSpan === undefined || lastSpan === undefined) return undefined;
-  return SourceSpanConstructor.from(firstSpan.start, lastSpan.end);
+  return SourceSpan.from(firstSpan.start, lastSpan.end);
 }
 
 function resolvedTypeItemId(type: CheckedType): number | undefined {
@@ -163,7 +162,7 @@ export function checkGenericSignature(
       key: { owner: input.owner, index },
       name: record.name,
       bounds,
-      span: { start: record.nameSpan.start, end: record.nameSpan.end },
+      span: SourceSpan.from(record.nameSpan.start, record.nameSpan.end),
     };
   });
 

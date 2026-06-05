@@ -115,28 +115,33 @@ export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevi
       continue;
     }
 
-    const resourceKind = resourceKindForType({
+    const deviceResourceKind: CheckedResourceKind = resourceKindForType({
       type: checkedType.type,
       context: input.kindContext,
     });
 
-    if (resourceKind.kind !== "error" && resourceKind.kind !== "concrete") {
-      diagnostics.push(
-        invalidImageDeviceType(
-          field.name,
-          "Device field resource kind must be concrete",
-          field.span,
-          undefined as any,
-          { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
-        ),
-      );
+    if (deviceSurface.resourceKind !== undefined) {
+      if (
+        deviceResourceKind.kind === "concrete" &&
+        deviceResourceKind.value !== deviceSurface.resourceKind
+      ) {
+        diagnostics.push(
+          invalidImageDeviceType(
+            field.name,
+            `Expected resource kind '${deviceSurface.resourceKind}', got '${deviceResourceKind.value}'`,
+            field.span,
+            undefined as any,
+            { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
+          ),
+        );
+      }
     }
 
     const checkedDevice: CheckedImageDevice = {
       fieldId: field.id,
       deviceSurfaceId: deviceSurface.deviceSurfaceId,
       type: checkedType.type,
-      resourceKind,
+      resourceKind: deviceResourceKind,
       uniqueEdgeRoots: deviceSurface.uniqueEdgeRoots,
       span: field.span,
     };

@@ -202,9 +202,27 @@ export function certifyPlatformBindings(
       );
       continue;
     }
+    for (let requirementIndex = 0; requirementIndex < sourceRequires.length; requirementIndex++) {
+      const sourceText = sourceRequires[requirementIndex]!.expression.text;
+      const targetText = primitive.proofContract.requiredFacts[requirementIndex]!.text;
+      if (sourceText !== targetText) {
+        diagnostics.push(
+          platformContractNotExact(
+            functionName,
+            `requires[${requirementIndex}] text mismatch: expected '${targetText}', got '${sourceText}'`,
+            signature.sourceSpan,
+            source as any,
+            diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
+          ),
+        );
+      }
+    }
 
     const sigFingerprint = checkedFunctionSignatureFingerprint(signature);
-    const proofContractFingerprint = `sourceRequires:${sourceRequires.length}|targetRequired:${primitive.proofContract.requiredFacts.length}|targetEnsured:${primitive.proofContract.ensuredFacts.length}`;
+    const sourceFacts = sourceRequires.map((req) => req.expression.text).join(",");
+    const targetFacts = primitive.proofContract.requiredFacts.map((fact) => fact.text).join(",");
+    const ensuredFacts = primitive.proofContract.ensuredFacts.map((fact) => fact.text).join(",");
+    const proofContractFingerprint = `source:${sourceFacts}|target:${targetFacts}|ensured:${ensuredFacts}`;
 
     bindings.push(
       certifiedBindingFor(

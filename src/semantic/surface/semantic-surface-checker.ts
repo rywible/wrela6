@@ -88,7 +88,7 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
         key: param.key,
         name: param.name,
         owner: genericResult.signature.owner,
-        span: { start: 0, end: 0 } as any,
+        span: param.span,
       });
     }
   }
@@ -130,7 +130,7 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
         key: param.key,
         name: param.name,
         owner: funcGenericResult.signature.owner,
-        span: { start: 0, end: 0 } as any,
+        span: param.span,
       });
     }
   }

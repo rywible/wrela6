@@ -2,6 +2,7 @@ import { coreTypeId } from "../ids";
 import type { ItemIndex } from "../item-index";
 import type { FunctionRecord, ParameterRecord } from "../item-index/item-records";
 import { checkTypeReference } from "./type-reference-checker";
+import { checkGenericSignature } from "./generic-checker";
 import type { SurfaceReferenceLookup } from "./reference-lookup";
 import type { CoreTypeCatalog } from "../names/core-types";
 import type { CheckedType } from "./type-model";
@@ -21,6 +22,7 @@ import type { TargetFunctionSignature } from "./platform-surface";
 import { compareCodeUnitStrings } from "./deterministic-sort";
 import { SourceSpan } from "../../frontend";
 import type { SourceText, TypeReferenceView } from "../../frontend";
+import type { SyntaxReferenceKey } from "../names/reference";
 
 export interface CheckFunctionSignatureInput {
   readonly functionRecord: FunctionRecord;
@@ -143,12 +145,15 @@ function checkedParameterFromRecord(
     context: input.kindContext,
   });
 
-  const parameterRef = input.referenceLookup.findOne({
-    moduleId: input.functionRecord.moduleId,
-    span: paramRecord.span,
-    kind: "parameter",
-  });
-  const referenceKey = parameterRef.kind === "found" ? parameterRef.entry.key : undefined;
+  let referenceKey: SyntaxReferenceKey | undefined;
+  if (typeResult.type.kind === "source") {
+    referenceKey = {
+      moduleId: input.functionRecord.moduleId,
+      span: paramRecord.span,
+      kind: "parameter",
+      ordinal: paramRecord.id as number,
+    } as any;
+  }
 
   return {
     parameterId: paramRecord.id,
@@ -235,10 +240,24 @@ export function checkFunctionSignature(
     context: input.kindContext,
   });
 
+  const genericResult = checkGenericSignature({
+    owner: {
+      kind: "function",
+      functionId: input.functionRecord.id,
+      itemId: input.functionRecord.itemId,
+    },
+    index: input.index,
+    referenceLookup: input.referenceLookup,
+    coreTypes: input.coreTypes,
+  });
+  diagnostics.push(...genericResult.diagnostics);
+
   const signature: CheckedFunctionSignature = {
     functionId: input.functionRecord.id,
     itemId: input.functionRecord.itemId,
     ownerItemId: input.functionRecord.parentItemId,
+    genericSignature:
+      genericResult.signature.parameters.length > 0 ? genericResult.signature : undefined,
     parameters,
     returnType,
     returnKind,

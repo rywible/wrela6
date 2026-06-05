@@ -6,7 +6,7 @@ import type {
   ResolveMemberInput,
   ResolveMemberResult,
 } from "../names/member-namespace";
-import type { ResolvedReferences } from "../names/resolution-result";
+import type { ResolvedReference, ResolvedReferences } from "../names";
 import type {
   CheckedFunctionSignatureTable,
   CompletedMemberReference,
@@ -122,12 +122,12 @@ export function completeDeferredMembers(
     handleMemberResult(result, deferredMember, completed, diagnostics);
   }
 
+  const completedByKey = new Map<string, ResolvedReference>();
+  for (const entry of completed) {
+    completedByKey.set(syntaxReferenceKeyToString(entry.key), entry.reference);
+  }
   const completedTable: CompletedMemberReferenceTable = {
-    get: (key) => {
-      const keyString = syntaxReferenceKeyToString(key);
-      return completed.find((entry) => syntaxReferenceKeyToString(entry.key) === keyString)
-        ?.reference;
-    },
+    get: (key) => completedByKey.get(syntaxReferenceKeyToString(key)),
     entries: () => completed,
   };
 
