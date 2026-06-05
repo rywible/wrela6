@@ -15,6 +15,7 @@ import type { CheckedProofSurface } from "./proof-surface";
 import { checkedProofSurface } from "./proof-surface";
 import type { SyntaxReferenceKey, ResolvedReference } from "../names/reference";
 import type { SourceSpan } from "../../frontend";
+import { compareCodeUnitStrings } from "./deterministic-sort";
 
 // ── Checked type table ──────────────────────────────────────
 
@@ -189,13 +190,18 @@ export interface CompletedMemberReferenceTable {
 function completedMemberReferenceTable(
   entries: readonly CompletedMemberReference[],
 ): CompletedMemberReferenceTable {
+  const sorted = [...entries].sort((left, right) => {
+    const leftKey = completedMemberKeyString(left.key);
+    const rightKey = completedMemberKeyString(right.key);
+    return compareCodeUnitStrings(leftKey, rightKey);
+  });
   const byKey = new Map<string, any>();
-  for (const entry of entries) {
+  for (const entry of sorted) {
     byKey.set(completedMemberKeyString(entry.key), entry.reference);
   }
   return {
     get: (key) => byKey.get(completedMemberKeyString(key)),
-    entries: () => entries,
+    entries: () => sorted,
   };
 }
 

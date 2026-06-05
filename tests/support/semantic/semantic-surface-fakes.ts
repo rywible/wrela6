@@ -27,6 +27,7 @@ import {
 } from "../../../src/semantic/surface/semantic-surface-checker";
 import type { ImageRootSelection } from "../../../src/semantic/surface/image-root-selection";
 import {
+  coreTypeId,
   deviceSurfaceId,
   imageProfileId,
   platformContractId,
@@ -51,7 +52,7 @@ export function voidTargetSignature() {
     genericArity: 0,
     receiver: undefined,
     parameters: [] as const,
-    returnType: coreCheckedType(platformPrimitiveId("void") as unknown as any),
+    returnType: coreCheckedType(coreTypeId("void")),
     returnKind: concreteKind("Copy"),
     requiredModifiers: [] as const,
     forbiddenModifiers: [] as const,
@@ -68,7 +69,7 @@ export function uefiImageProfileFake(overrides?: { entryFunctionName?: string })
       genericArity: 0,
       receiver: undefined,
       parameters: [],
-      returnType: coreCheckedType(platformPrimitiveId("Never") as unknown as any),
+      returnType: coreCheckedType(coreTypeId("Never")),
       returnKind: concreteKind("Never"),
       requiredModifiers: [],
       forbiddenModifiers: [],

@@ -102,14 +102,16 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
     const requiresSections = (declaration as any).requiresSections?.() ?? [];
     for (const section of requiresSections) {
       for (const requirement of section.requirements()) {
-        const expr = requirement.expression();
-        if (expr === undefined) continue;
-        const span = expr.span;
+        const reqExpr = requirement.expression();
+        if (reqExpr === undefined) continue;
         requirements.push(
           requirementSurface({
             ownerFunctionId: signature.functionId,
-            expression: { kind: "opaque", text: "" },
-            span,
+            expression: {
+              kind: "opaque",
+              text: (reqExpr as any).text?.() ?? "",
+            },
+            span: reqExpr.span,
           }),
         );
       }
@@ -123,6 +125,7 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
       );
     }
   }
+  builder.setProofSurfaceSeeds({ requirements, terminalSurfaces });
   const proofSurface = checkedProofSurface({ requirements, terminalSurfaces });
 
   const certResult = certifyPlatformBindings({

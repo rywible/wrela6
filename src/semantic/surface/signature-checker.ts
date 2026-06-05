@@ -126,12 +126,20 @@ function checkedParameterFromRecord(
     context: input.kindContext,
   });
 
+  const parameterRef = input.referenceLookup.findOne({
+    moduleId: input.functionRecord.moduleId,
+    span: paramRecord.span,
+    kind: "parameter",
+  });
+  const referenceKey = parameterRef.kind === "found" ? parameterRef.entry.key : undefined;
+
   return {
     parameterId: paramRecord.id,
     name: paramRecord.name,
     type: typeResult.type,
     mode: paramRecord.isConsumed ? "consume" : "observe",
     resourceKind,
+    referenceKey,
     sourceSpan: paramRecord.span,
   };
 }
