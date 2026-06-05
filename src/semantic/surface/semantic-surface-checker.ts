@@ -26,6 +26,7 @@ import type { ImageRootSelection } from "./image-root-selection";
 import { certifyPlatformBindings } from "./platform-certifier";
 import { checkedProofSurface, requirementSurface, terminalSurface } from "./proof-surface";
 import type { CheckedRequirementSurface, CheckedTerminalSurface } from "./proof-surface";
+import { errorCheckedType } from "./type-model";
 import type { ImageId, ImageProfileId, FunctionId } from "../ids";
 
 export interface CheckSemanticSurfaceInput {
@@ -104,7 +105,7 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
             referenceLookup,
             coreTypes: input.coreTypes,
           })
-        : { type: { kind: "error" } as any, diagnostics: [] as readonly any[] };
+        : { type: errorCheckedType(), diagnostics: [] as readonly SemanticSurfaceDiagnostic[] };
       diagnostics.push(...fieldTypeResult.diagnostics);
       builder.addField({
         fieldId: fieldRecord.id,
@@ -117,21 +118,16 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
     }
   }
 
-  for (const functionRecord of input.index.functions()) {
-    const funcGenericResult = checkGenericSignature({
-      owner: { kind: "function", functionId: functionRecord.id, itemId: functionRecord.itemId },
-      index: input.index,
-      referenceLookup,
-      coreTypes: input.coreTypes,
-    });
-    diagnostics.push(...funcGenericResult.diagnostics);
-    for (const param of funcGenericResult.signature.parameters) {
-      builder.addGenericParameter({
-        key: param.key,
-        name: param.name,
-        owner: funcGenericResult.signature.owner,
-        span: param.span,
-      });
+  for (const signature of signaturesResult.signatures.entries()) {
+    if (signature.genericSignature !== undefined) {
+      for (const param of signature.genericSignature.parameters) {
+        builder.addGenericParameter({
+          key: param.key,
+          name: param.name,
+          owner: signature.genericSignature.owner,
+          span: param.span,
+        });
+      }
     }
   }
 
@@ -171,14 +167,17 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
       for (const requirement of section.requirements()) {
         const reqExpr = requirement.expression();
         if (reqExpr === undefined) continue;
+        const exprSource = reqExpr.source;
+        const exprSpan = reqExpr.span;
+        const exprText = exprSource.text.slice(exprSpan.start, exprSpan.end);
         requirements.push(
           requirementSurface({
             ownerFunctionId: signature.functionId,
             expression: {
               kind: "opaque",
-              text: (reqExpr as any).text?.() ?? "",
+              text: exprText,
             },
-            span: reqExpr.span,
+            span: exprSpan,
           }),
         );
       }

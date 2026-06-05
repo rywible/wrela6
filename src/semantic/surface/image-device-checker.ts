@@ -98,11 +98,8 @@ export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevi
       continue;
     }
 
-    const profileDeviceNames = (input.selection as any).profile?.availableDeviceSurfaces ?? [];
-    if (
-      profileDeviceNames.length > 0 &&
-      !profileDeviceNames.includes(deviceSurface.deviceSurfaceId)
-    ) {
+    const profileDevices = input.selection.profile.availableDeviceSurfaces;
+    if (profileDevices.length > 0 && !profileDevices.includes(deviceSurface.deviceSurfaceId)) {
       diagnostics.push(
         targetUnavailableImageDevice(
           field.name,

@@ -64,6 +64,9 @@ export function sortSemanticSurfaceDiagnostics(
     const pathCmp = compareCodeUnitStrings(pathA, pathB);
     if (pathCmp !== 0) return pathCmp;
 
+    const moduleCmp = (diagA.order.moduleId as number) - (diagB.order.moduleId as number);
+    if (moduleCmp !== 0) return moduleCmp;
+
     const aStart = diagA.span?.start ?? 0;
     const bStart = diagB.span?.start ?? 0;
     if (aStart !== bStart) return aStart - bStart;

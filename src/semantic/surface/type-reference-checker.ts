@@ -137,7 +137,7 @@ function checkTypeArguments(
   const resolvedTypeArgs: CheckedType[] = [];
 
   const expectedArity = declaredTypeParameterCount(constructorType, input.index);
-  if (expectedArity !== undefined && typeArgs.length !== 0 && typeArgs.length !== expectedArity) {
+  if (expectedArity !== undefined && typeArgs.length !== expectedArity) {
     const name = input.view?.qualifiedNameText() ?? "<unknown>";
     diagnostics.push(
       wrongGenericArgumentCount(name, expectedArity, typeArgs.length, input.span, input.source, {

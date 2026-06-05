@@ -365,7 +365,7 @@ export function checkAllFunctionSignatures(
 
   const signatureTable: CheckedFunctionSignatureTable = {
     get: (functionId) => byId.get(functionId),
-    entries: () => sorted,
+    entries: () => [...sorted],
   };
 
   return { signatures: signatureTable, diagnostics };

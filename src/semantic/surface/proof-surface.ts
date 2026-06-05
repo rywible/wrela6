@@ -100,7 +100,7 @@ function checkedRequirementSurfaceTable(
     get(functionId) {
       return byFunction.get(functionId);
     },
-    entries: () => sorted,
+    entries: () => [...sorted],
   };
 }
 
@@ -115,7 +115,7 @@ function checkedTerminalSurfaceTable(
     get(functionId) {
       return byFunction.get(functionId);
     },
-    entries: () => sorted,
+    entries: () => [...sorted],
   };
 }
 
@@ -135,7 +135,7 @@ function checkedPredicateFactSurfaceTable(
     get(functionId) {
       return byFunction.get(functionId);
     },
-    entries: () => sorted,
+    entries: () => [...sorted],
   };
 }
 

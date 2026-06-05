@@ -202,6 +202,7 @@ export function certifyPlatformBindings(
       );
       continue;
     }
+    let contractExact = true;
     for (let requirementIndex = 0; requirementIndex < sourceRequires.length; requirementIndex++) {
       const sourceText = sourceRequires[requirementIndex]!.expression.text;
       const targetText = primitive.proofContract.requiredFacts[requirementIndex]!.text;
@@ -215,8 +216,24 @@ export function certifyPlatformBindings(
             diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
           ),
         );
+        contractExact = false;
       }
     }
+
+    if (primitive.proofContract.ensuredFacts.length > 0) {
+      diagnostics.push(
+        platformContractNotExact(
+          functionName,
+          `target has ${primitive.proofContract.ensuredFacts.length} ensured facts, source cannot declare them`,
+          signature.sourceSpan,
+          source as any,
+          diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
+        ),
+      );
+      contractExact = false;
+    }
+
+    if (!contractExact) continue;
 
     const sigFingerprint = checkedFunctionSignatureFingerprint(signature);
     const sourceFacts = sourceRequires.map((req) => req.expression.text).join(",");

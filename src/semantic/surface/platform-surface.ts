@@ -70,7 +70,7 @@ export function platformPrimitiveCatalog(
   }
   return {
     get: (primitiveId) => byId.get(primitiveId),
-    entries: () => sorted,
+    entries: () => [...sorted],
   };
 }
 
