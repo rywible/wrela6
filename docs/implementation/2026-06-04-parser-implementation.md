@@ -1,5 +1,10 @@
 # Parser Implementation Plan
 
+> **Status: COMPLETE.** All 40 tasks have been implemented. The parser is a
+> lossless, trivia-preserving second compiler layer that consumes lexer
+> `TokenStream` values and produces a red/green concrete syntax tree with
+> deterministic parser diagnostics and recovery.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `superpowers:subagent-driven-development` (recommended) or
 > `superpowers:executing-plans` to implement this plan task by task. Each task
@@ -25,9 +30,9 @@ tests only, `oxlint`, and `oxfmt`.
 ## Research Notes
 
 - `docs/design/parser-design.md` is the authoritative design for this plan.
-- The current lexer implementation still lives in `src/lexer`, while the parser
-  design expects `src/frontend/lexer`, `src/frontend/syntax`, and
-  `src/frontend/parser`.
+- The lexer implementation now lives in `src/frontend/lexer`. Syntax tree types
+  are in `src/frontend/syntax`, and the parser is in `src/frontend/parser`.
+  The old `src/lexer` remains as a temporary compatibility barrel.
 - Existing lexer tokens are immutable, preserve leading and trailing trivia, and
   reconstruct through `Token.reconstruct()` and `TokenStream.reconstruct()`.
 - Existing `TokenStream.from(...)` enforces exactly one `TokenKind.Eof` as the
@@ -45,9 +50,9 @@ tests only, `oxlint`, and `oxfmt`.
 - `docs/language/invalid.md` is mostly semantic invalid programs. Parser tests
   should still parse its code fences losslessly and should only emit parse
   diagnostics for structural syntax problems.
-- `scripts/check-policy.ts` currently allows `Bun.file` only in
-  `src/lexer/bun-file-repository.ts`; the frontend migration must update this
-  path.
+- `scripts/check-policy.ts` allows `Bun.file` only in
+  `src/frontend/lexer/bun-file-repository.ts` (the frontend path from the
+  migration).
 - Repository rules require fakes through dependency injection, no mocks, and
   `fast-check` only in tests.
 

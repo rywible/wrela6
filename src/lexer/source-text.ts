@@ -1,1 +1,1 @@
-export { SourceText, type SourcePosition } from "../shared/source-text";
+export * from "../frontend/lexer/source-text";

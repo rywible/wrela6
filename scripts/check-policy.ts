@@ -9,7 +9,10 @@ interface PolicyViolation {
 
 const policyScriptPath = "scripts/check-policy.ts";
 const checkedRoots = ["src", "tests", "scripts"] as const;
-const allowedBunFilePaths = new Set(["src/lexer/bun-file-repository.ts", policyScriptPath]);
+const allowedBunFilePaths = new Set([
+  "src/frontend/lexer/bun-file-repository.ts",
+  policyScriptPath,
+]);
 
 const bannedIdentifierSuggestions = new Map<string, string>([
   ["src", "source"],

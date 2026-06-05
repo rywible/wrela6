@@ -94,6 +94,11 @@ tests/
 tests the lexer module through its public API. `tests/system` is reserved for
 future composed compiler workflows such as lexing plus parsing.
 
+> **Migration note:** The old `src/lexer` path is now a compatibility barrel
+> (`export * from "../frontend/lexer"`). It remains temporarily so existing
+> imports continue to work, but new code should import from `src/frontend/lexer`
+> or the `src/frontend` barrel.
+
 ## Public API
 
 Each compiler module should expose its public API through its own `index.ts`.
@@ -936,12 +941,23 @@ class FakeModuleResolver implements ModuleResolver {
 - No parser dependencies inside the lexer.
 - No parser assumptions beyond public token shapes.
 
-## Future Parser Boundary
+## Parser Boundary
 
-The parser should consume lexer output through public values:
+The parser consumes lexer output through public values.
+
+Preferred convenience path (recommended):
 
 ```ts
 const lexResult = lexer.lex(source);
+const parseResult = parser.parseLexResult({
+  lexResult,
+  lexerDiagnostics: diagnostics.diagnostics,
+});
+```
+
+Explicit source-and-tokens path:
+
+```ts
 const parseResult = parser.parse({
   source: lexResult.source,
   tokens: lexResult.tokens,
@@ -949,6 +965,6 @@ const parseResult = parser.parse({
 });
 ```
 
-The parser layer should have its own root class, dependency object, tests, and
-public module API. The compiler workflow can compose lexer and parser later
-without forcing a top-level facade now.
+The parser layer has its own root class, dependency object, tests, and
+public module API at `src/frontend/parser/index.ts`. The compiler workflow
+composes lexer and parser through the `src/frontend` barrel.

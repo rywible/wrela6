@@ -1,1 +1,1 @@
-export { SourceSpan } from "../shared/source-span";
+export * from "../frontend/lexer/source-span";

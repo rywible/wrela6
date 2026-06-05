@@ -184,6 +184,7 @@ export class FunctionDeclarationView extends AstView {
   parameters(): ParameterView[];
   typeParameters(): TypeParameterView[];
   returnType(): TypeReferenceView | undefined;
+  requiresSections(): RequiresSectionView[];
   body(): BlockView | undefined;
   modifiers(): FunctionModifier[];
 }
@@ -224,12 +225,23 @@ export function childToken(node: RedNode, kind: SyntaxKind): RedToken | undefine
 export function childTokens(node: RedNode, kind: SyntaxKind): RedToken[];
 
 export function descendants(node: RedNode, kind: SyntaxKind): RedNode[];
+
+export function blockStatementList(block: RedNode): RedNode | undefined;
+
+export function blockItems(block: RedNode): RedNode[];
 ```
 
 `childNode`, `childNodes`, `childToken`, and `childTokens` inspect direct
 children only. `descendants` is explicit because recursive traversal is more
 expensive and can accidentally cross scope boundaries. Item-index collection
 should prefer view-owned accessors over arbitrary descendant searches.
+
+`blockStatementList` and `blockItems` encode the parser's consistent
+`Block -> StatementList -> item` shape. View accessors that enumerate fields,
+members, validated-buffer sections, device sections, requirements, or function
+body items must use this one-block traversal. They must not use `descendants`
+for member collection because nested blocks can contain same-kind nodes in a
+different declaration or statement scope.
 
 Token helpers must ignore missing tokens unless the caller explicitly asks for
 them:
@@ -303,11 +315,34 @@ export class SourceFileView extends AstView {
 }
 ```
 
+Import views preserve import paths as import syntax, not type syntax:
+
+```ts
+export class ImportDeclarationView extends AstView {
+  moduleName(): DottedModuleNameView | undefined;
+  importedNames(): RedToken[];
+}
+```
+
 Declaration views expose only source-shaped children. They do not decide whether
 a child declaration is legal in that location. For example, the parser can
 produce `FunctionDeclaration` nodes inside statement lists. The item index may
 assign a `FunctionId` to such a node, and a later semantic pass may reject the
 placement if the language forbids it.
+
+Views for declarations that carry source modifiers expose those modifiers:
+
+```ts
+export type SourceItemModifier = "private" | "unique" | FunctionModifier;
+
+export class ClassDeclarationView extends AstView implements NamedDeclarationView {
+  modifiers(): readonly Extract<SourceItemModifier, "private">[];
+}
+
+export class EdgeClassDeclarationView extends AstView implements NamedDeclarationView {
+  modifiers(): readonly Extract<SourceItemModifier, "unique">[];
+}
+```
 
 ### Type-Like Declarations
 
@@ -323,7 +358,7 @@ StreamDeclaration
 ValidatedBufferDeclaration
 ```
 
-Type-like views expose type parameters and declaration-local children:
+Most type-like views expose type parameters and declaration-local children:
 
 ```ts
 export interface TypeDeclarationView extends NamedDeclarationView {
@@ -337,6 +372,43 @@ export interface TypeDeclarationView extends NamedDeclarationView {
 Not every type-like declaration has all child categories. Empty arrays are used
 when a category does not apply.
 
+`ValidatedBufferDeclarationView` is type-like because it creates a `TypeId`, but
+its CST is sectioned and does not fit the common `TypeDeclarationView` shape. It
+has dedicated accessors:
+
+```ts
+export class ValidatedBufferDeclarationView extends AstView implements NamedDeclarationView {
+  paramsSections(): ParamsSectionView[];
+  layoutSections(): LayoutSectionView[];
+  deriveSections(): DeriveSectionView[];
+  requireSections(): RequireSectionView[];
+
+  paramFields(): FieldDeclarationView[];
+  layoutFields(): LayoutFieldView[];
+}
+
+export class ParamsSectionView extends AstView {
+  fields(): FieldDeclarationView[];
+}
+
+export class LayoutSectionView extends AstView {
+  fields(): LayoutFieldView[];
+}
+
+export class DeriveSectionView extends AstView {
+  fields(): DerivedFieldView[];
+}
+
+export class RequireSectionView extends AstView {
+  requirements(): RequirementView[];
+}
+```
+
+The section accessors return all direct sections in source order. The convenience
+`paramFields()` and `layoutFields()` flatten direct fields from those sections in
+section order so the item index can assign `FieldId`s without guessing which CST
+path to walk.
+
 ### Image Declarations
 
 `ImageDeclarationView` creates an `ImageId` and an `ItemId`.
@@ -348,12 +420,21 @@ view should expose fields in separate source-shaped groups:
 export class ImageDeclarationView extends AstView implements NamedDeclarationView {
   fields(): FieldDeclarationView[];
   deviceFields(): FieldDeclarationView[];
+  deviceSections(): DevicesSectionView[];
   memberFunctions(): FunctionDeclarationView[];
+}
+
+export class DevicesSectionView extends AstView {
+  fields(): FieldDeclarationView[];
 }
 ```
 
 The item index records the field group so later image graph checks can
 distinguish ordinary image fields from device bindings without re-walking syntax.
+`fields()` returns `FieldDeclaration` nodes that are direct items of the image
+body block. `deviceFields()` walks only direct `DevicesSection` items in that
+same body block, then direct field items in each device section's block. It must
+not collect fields from nested statement blocks.
 
 ### Function Declarations
 
@@ -374,6 +455,15 @@ body block
 The item index records parameter IDs and type-parameter names, but it does not
 validate parameter types or requires expressions.
 
+`requiresSections()` returns both syntactic forms the parser can produce:
+
+- direct `RequiresSection` children on a bodyless function
+- `RequiresSection` items that are direct items of the function body's
+  `StatementList`
+
+Multiple requires sections are preserved in source order. The accessor does not
+walk into nested control-flow blocks.
+
 ### Field-Like Views
 
 `FieldDeclarationView` wraps ordinary `FieldDeclaration` nodes and is reused by
@@ -388,6 +478,31 @@ export type FieldRole = "field" | "imageDevice" | "validatedParam" | "layoutFiel
 Derived fields in validated-buffer `derive` sections are not ordinary field
 declarations in the CST, and this phase does not assign field IDs to them. This
 phase collects the currently parsed `FieldDeclaration` and `LayoutField` nodes.
+
+Field-like views preserve the syntactic type and any field-local expressions:
+
+```ts
+export class FieldDeclarationView extends AstView implements NamedDeclarationView {
+  type(): TypeReferenceView | undefined;
+}
+
+export class LayoutFieldView extends AstView implements NamedDeclarationView {
+  type(): TypeReferenceView | undefined;
+  offsetExpression(): ExpressionView | undefined;
+  lengthExpression(): ExpressionView | undefined;
+}
+
+export class DerivedFieldView extends AstView implements NamedDeclarationView {
+  type(): TypeReferenceView | undefined;
+  sourceExpression(): ExpressionView | undefined;
+  cases(): DeriveCaseView[];
+}
+
+export class DeriveCaseView extends AstView {
+  conditionExpression(): ExpressionView | undefined;
+  resultExpression(): ExpressionView | undefined;
+}
+```
 
 ## Expression, Statement, Pattern, And Type Views
 
@@ -410,6 +525,8 @@ ComparisonExpressionView
 EqualityExpressionView
 ObjectLiteralExpressionView
 ObjectFieldView
+CallArgumentListView
+ArgumentView
 NamedArgumentView
 ElseRequirementExpressionView
 ```
@@ -431,15 +548,30 @@ YieldStatementView
 ContinueStatementView
 ExpressionStatementView
 AssignmentStatementView
+ConditionView
 BlockView
 StatementListView
 ```
 
 Pattern views cover `Pattern` and `PatternList`.
 
-Type views cover:
+Requirement views cover both function `requires` sections and validated-buffer
+`require` sections:
 
 ```text
+RequiresSectionView
+RequireSectionView
+RequirementView
+```
+
+`RequirementView.expression()` returns the direct requirement expression when it
+is present. It does not evaluate the predicate and does not normalize
+`ElseRequirementExpression` syntax.
+
+Type and name views cover:
+
+```text
+DottedModuleNameView
 QualifiedNameView
 TypeReferenceView
 TypeParameterListView
@@ -588,6 +720,7 @@ export interface SourceItemRecord {
   readonly moduleId: ModuleId;
   readonly parentItemId?: ItemId;
   readonly name: string;
+  readonly modifiers: readonly SourceItemModifier[];
   readonly nameSpan: SourceSpan;
   readonly span: SourceSpan;
   readonly declaration: DeclarationView;
@@ -622,6 +755,9 @@ Source records omit malformed declarations that do not have a present name
 token. Parser diagnostics already explain the missing name. This keeps item IDs
 stable and avoids creating empty-name symbols that would pollute duplicate
 diagnostics.
+
+`modifiers` is empty for declarations whose grammar does not support source
+modifiers.
 
 ### Type, Function, Image, Field, And Parameter Records
 
@@ -680,20 +816,35 @@ export interface FieldRecord {
 Parameter records are scoped to a function:
 
 ```ts
-export interface ParameterRecord {
+export type ParameterOrigin = "source" | "intrinsic";
+
+export interface BaseParameterRecord {
   readonly id: ParameterId;
   readonly functionId: FunctionId;
+  readonly origin: ParameterOrigin;
   readonly index: number;
   readonly name: string;
+  readonly isConsumed: boolean;
+}
+
+export interface SourceParameterRecord extends BaseParameterRecord {
+  readonly origin: "source";
   readonly nameSpan: SourceSpan;
   readonly span: SourceSpan;
   readonly type?: TypeReferenceView;
-  readonly isConsumed: boolean;
 }
+
+export interface IntrinsicParameterRecord extends BaseParameterRecord {
+  readonly origin: "intrinsic";
+  readonly type: IntrinsicTypeReferenceSpec;
+}
+
+export type ParameterRecord = SourceParameterRecord | IntrinsicParameterRecord;
 ```
 
-The item index records syntactic type views for fields and parameters, but does
-not validate whether the types exist.
+The item index records syntactic type views for source fields and source
+parameters, and structured intrinsic type references for intrinsic parameters.
+It does not validate whether the types exist.
 
 ## Intrinsic Catalog
 
@@ -726,7 +877,7 @@ export interface IntrinsicFunctionDeclarationSpec {
   readonly kind: "function";
   readonly intrinsicId: IntrinsicId;
   readonly name: string;
-  readonly signature: IntrinsicSignature;
+  readonly signature: IntrinsicFunctionSignature;
   readonly targetAvailability: IntrinsicTargetAvailability;
   readonly proofContract: IntrinsicProofContract;
   readonly lowering: IntrinsicLoweringContract;
@@ -740,7 +891,7 @@ export interface IntrinsicTypeDeclarationSpec {
   readonly kind: "type";
   readonly intrinsicId: IntrinsicId;
   readonly name: string;
-  readonly signature: IntrinsicSignature;
+  readonly signature: IntrinsicTypeSignature;
   readonly targetAvailability: IntrinsicTargetAvailability;
   readonly proofContract: IntrinsicProofContract;
   readonly lowering: IntrinsicLoweringContract;
@@ -750,10 +901,16 @@ export interface IntrinsicTypeDeclarationSpec {
 `IntrinsicSignature` uses structured type references instead of source strings:
 
 ```ts
-export interface IntrinsicSignature {
+export type IntrinsicSignature = IntrinsicFunctionSignature | IntrinsicTypeSignature;
+
+export interface IntrinsicFunctionSignature {
   readonly typeParameters: readonly IntrinsicTypeParameterSpec[];
   readonly parameters: readonly IntrinsicParameterSpec[];
   readonly returnType?: IntrinsicTypeReferenceSpec;
+}
+
+export interface IntrinsicTypeSignature {
+  readonly typeParameters: readonly IntrinsicTypeParameterSpec[];
 }
 
 export interface IntrinsicTypeParameterSpec {
@@ -802,12 +959,14 @@ when they consume those records.
 
 The builder assigns IDs in a deterministic order:
 
-1. Sort source modules by `path.key`.
-2. Sort intrinsic modules by `pathKey`.
+1. Sort source modules by `path.key`, then `source.name`, then `source.text`.
+2. Sort intrinsic modules by `pathKey`, then `display`, then a stable
+   serialization of their declarations.
 3. Assign source `ModuleId`s first, then intrinsic `ModuleId`s.
 4. For each source module in sorted order, collect source items in source order.
 5. For each intrinsic module in sorted order, collect intrinsic declarations
-   sorted by `intrinsicId`.
+   sorted by `intrinsicId`, then declaration name, then declaration kind, then a
+   stable serialization of the signature.
 6. Assign `ItemId`s in collection order.
 7. Assign `TypeId`, `FunctionId`, and `ImageId` when an item is created.
 8. Assign `FieldId`s and `ParameterId`s in owner source order.
@@ -817,6 +976,9 @@ identity and not map iteration order.
 
 This assignment gives deterministic IDs even if a test constructs
 `ParsedModuleGraph.modules` in a different order from the lexer traversal.
+When duplicate records tie on every stable source or intrinsic field, the
+records are indistinguishable for deterministic purposes and tests must not
+assert an identity difference between those tied records.
 
 ## Source Declaration Collection
 
@@ -836,12 +998,20 @@ Declaration-local collection is recursive:
 - Type-like declarations collect type parameters, fields, enum cases, and member
   functions exposed by their views.
 - Image declarations collect fields, device fields, and member functions.
-- Function declarations collect type parameters and parameters.
-- Function declarations found inside declaration bodies receive a
+- Validated buffers collect params-section fields and layout-section fields.
+- Function declarations collect type parameters, parameters, and requires
+  sections.
+- Member functions exposed as direct declaration-body items receive a
   `parentItemId`.
-- Function declarations found inside another function body may receive a
-  `parentItemId` for recovery and diagnostics. Later semantic passes decide
-  whether local functions are legal.
+- Function declarations found anywhere inside another function body's statement
+  tree receive a `parentItemId` for the nearest enclosing function item. The item
+  index does not create lexical block IDs; duplicate diagnostics for these
+  recovery/local functions are scoped to that nearest enclosing function item
+  until a later local-function design introduces block scopes.
+- Function declarations nested under control-flow blocks inside non-function
+  declaration bodies are not member functions. Later statement validation can
+  reject those placements through statement views without treating them as
+  declaration-local members.
 
 Enum cases are declaration-local symbols. They are recorded as source item
 records with `kind: "enumCase"` and `parentItemId` set to the owning enum item.
@@ -917,6 +1087,11 @@ Duplicate rules:
 
 Missing names do not participate in duplicate checking.
 
+When a compiler driver merges lexer, parser, and item-index diagnostics, it
+sorts by `source.name`, then span start, span end, and diagnostic code. This
+gives intrinsic diagnostics from the synthetic `<intrinsics>` source a stable
+position relative to real source files.
+
 ## Error Handling And Recovery
 
 This phase must be total over parser output. It should return an `ItemIndex`
@@ -929,9 +1104,12 @@ Rules:
 - Preserve records for well-named declarations even if their body or signature is
   malformed.
 - Keep intrinsic catalog validation in diagnostics when possible.
-- Throw only for programmer errors that violate TypeScript-level invariants,
-  such as asking `ItemIndex.item()` for an ID from another index if that is
-  detectable.
+- Bounds-check ID lookups and return `undefined` for unknown numeric IDs.
+- Throw only for programmer errors that violate TypeScript-level invariants that
+  can actually be detected at runtime.
+
+Opaque branded numeric IDs do not carry an index identity. This design does not
+attempt to detect an `ItemId` from another `ItemIndex`.
 
 The item index should not suppress parser diagnostics. A compiler driver should
 present lexer, parser, and item-index diagnostics together after sorting.
@@ -951,8 +1129,12 @@ Unit tests for AST views:
 
 - `SourceFileView` returns imports and top-level declarations in source order.
 - Named declaration views return `undefined` for missing names.
-- Function views expose modifiers, type parameters, parameters, return type, and
-  body without resolving names.
+- Function views expose modifiers, type parameters, parameters, return type,
+  body, and `requires` sections in both bodyless and block-body forms without
+  resolving names.
+- Validated-buffer views expose params, layout, derive, and require sections.
+- Image views keep ordinary fields separate from device fields when both appear
+  in nested blocks.
 - Type views expose qualified name segments and type arguments.
 - Statement and expression views wrap current `SyntaxKind` nodes without
   throwing on recovery nodes.
@@ -968,12 +1150,19 @@ Unit tests for item indexing:
 - Source modules are sorted by `ModulePath.key` before module IDs are assigned.
 - Top-level declarations receive `ItemId`s in source order within sorted
   modules.
+- Duplicate module and intrinsic declaration inputs use stable secondary
+  tie-breaks for ID assignment.
 - Type-like declarations receive `TypeId`s.
 - Function declarations receive `FunctionId`s and parameter IDs.
+- Intrinsic function parameters receive intrinsic `ParameterRecord`s without
+  source spans.
 - Image declarations receive `ImageId`s, field IDs, and device field IDs.
+- Validated buffers receive `TypeId`s plus field IDs for params-section fields
+  and layout-section fields.
 - Intrinsic declarations receive `ItemId`s in the same item array as source
   items.
 - Intrinsic functions receive `FunctionId`s and preserve intrinsic IDs.
+- Source item records preserve source modifiers such as `private` and `unique`.
 - Malformed declarations without names are skipped and do not throw.
 
 Duplicate diagnostics tests:
@@ -1003,9 +1192,10 @@ tests only.
 
 ## Implementation Milestones
 
-1. Add `src/frontend/ast` with syntax query helpers and declaration/type views.
-2. Add expression, statement, and pattern views for current `SyntaxKind`
-   coverage.
+1. Add `src/frontend/ast` with syntax query helpers and declaration, section,
+   and type views.
+2. Add expression, statement, pattern, requirement, and name views for current
+   `SyntaxKind` coverage.
 3. Add `src/semantic/ids.ts` and item-index record types.
 4. Add intrinsic catalog types and small test catalogs.
 5. Implement source module sorting and `ModuleRecord` creation.

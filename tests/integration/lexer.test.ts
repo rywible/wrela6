@@ -169,7 +169,7 @@ describe("Lexer", () => {
   test("recovers from invalid characters", () => {
     const diagnostics = new CollectingDiagnosticSink();
     const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
-    const source = SourceText.from("bad.wr", "image @ Main\n");
+    const source = SourceText.from("bad.wr", "image ~ Main\n");
 
     const result = lexer.lex(source);
 

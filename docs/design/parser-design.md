@@ -92,10 +92,9 @@ should use syntax APIs directly without depending on parser internals.
 diagnostics are cross-stack concerns used by parser, semantic analysis,
 tooling, and later back-end stages.
 
-The `tests` tree should mirror source module boundaries as those boundaries
-move. When lexer code moves from `src/lexer` to `src/frontend/lexer`, lexer
-tests should move from broad legacy locations into matching frontend-focused
-paths. New parser and syntax tests should follow the same pattern so future
+The `tests` tree mirrors source module boundaries. Lexer code has moved from
+`src/lexer` to `src/frontend/lexer`, and lexer tests have moved into matching
+frontend-focused paths. New parser and syntax tests follow the same pattern so
 readers can map source modules to tests without archaeology.
 
 ```text
@@ -117,6 +116,20 @@ tests/
 ```
 
 ## Public API
+
+Public types and classes are available through the frontend barrel:
+
+```ts
+import {
+  Lexer,
+  Parser,
+  SourceText,
+  KeywordTable,
+  CollectingDiagnosticSink,
+  SyntaxKind,
+  SyntaxTree,
+} from "./src/frontend";
+```
 
 Expected parser use with a lexer result:
 
@@ -161,8 +174,8 @@ syntax tree. A caller that already has lexer diagnostics may pass them into
 `parse` so `ParseResult.diagnostics` can expose a combined, source-ordered view,
 but parser diagnostics remain distinguishable from lexer diagnostics by code.
 
-The parser module should expose parser-specific types from
-`src/frontend/parser/index.ts`. The syntax module should expose reusable tree
+The parser module exposes parser-specific types from
+`src/frontend/parser/index.ts`. The syntax module exposes reusable tree
 primitives from `src/frontend/syntax/index.ts`.
 
 ## Red And Green Trees
@@ -567,10 +580,10 @@ Suggested responsibilities:
 The parser should not depend on lexer internals such as `Cursor`. It consumes
 public lexer tokens only.
 
-Before parser implementation begins, the lexer should move from `src/lexer` to
-`src/frontend/lexer` so parser work starts in the intended module layout. Public
-compatibility exports may stay in place temporarily if needed, but new frontend
-code should import through the frontend paths.
+The lexer has moved from `src/lexer` to `src/frontend/lexer` so parser work
+starts in the intended module layout. The old `src/lexer` remains as a
+compatibility barrel; new frontend code should import through the frontend
+paths.
 
 ## Testing Strategy
 
