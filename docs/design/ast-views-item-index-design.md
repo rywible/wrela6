@@ -196,6 +196,16 @@ export class FunctionDeclarationView extends AstView {
 export type FunctionModifier = "private" | "platform" | "terminal" | "predicate" | "constructor";
 ```
 
+Function modifier text is derived from direct `FunctionModifierList` children:
+
+```text
+PrivateKeyword      -> "private"
+PlatformKeyword     -> "platform"
+TerminalKeyword     -> "terminal"
+PredicateKeyword    -> "predicate"
+ConstructorKeyword  -> "constructor"
+```
+
 Accessors follow these rules:
 
 - If a required token is missing, return `undefined` for token and text accessors.
@@ -251,7 +261,10 @@ export function presentTokenText(token: RedToken | undefined): string | undefine
 ```
 
 `presentTokenText` returns `undefined` for `undefined` and for
-`token.isMissing`.
+`token.isMissing`. For present tokens it returns `token.green.lexeme`, not
+`token.text`, because `RedToken.text` includes leading and trailing trivia in
+the token span. All `nameText()`, modifier, and source-shaped qualified-name
+helpers must use `presentTokenText` or the same bare-lexeme rule.
 
 ## Declaration Views
 
@@ -343,6 +356,9 @@ export class EdgeClassDeclarationView extends AstView implements NamedDeclaratio
   modifiers(): readonly Extract<SourceItemModifier, "unique">[];
 }
 ```
+
+Class modifier text is derived from a direct `PrivateKeyword` child. Edge-class
+modifier text is derived from a direct `UniqueKeyword` child.
 
 ### Type-Like Declarations
 
@@ -504,6 +520,36 @@ export class DeriveCaseView extends AstView {
 }
 ```
 
+Field-like views use direct children and section blocks with this shape:
+
+```text
+FieldDeclaration
+  IdentifierToken
+  TypeReference?
+
+LayoutField
+  IdentifierToken
+  TypeReference?
+  Expression?       # offset expression
+  Expression?       # optional length expression
+
+DerivedField
+  IdentifierToken
+  TypeReference?
+  Expression?       # source expression after "from"
+  Block?
+    StatementList
+      DeriveCase*
+
+DeriveCase
+  Expression?       # condition
+  Expression?       # result
+```
+
+Accessors must use direct children and `blockItems()` instead of
+`descendants()` so fields nested in unrelated statement blocks are not assigned
+to the wrong owner.
+
 ## Expression, Statement, Pattern, And Type Views
 
 This phase needs views beyond declarations because item records should preserve
@@ -585,6 +631,20 @@ names or normalize types. For example, `TypeReferenceView.qualifiedNameText()`
 may return `"core.memory.Buffer"` as source text, but it must not map that name
 to a `TypeId`.
 
+`TypeReferenceView.typeArguments()` follows this exact CST shape:
+
+```text
+TypeReference
+  QualifiedName
+  TypeArgumentList?
+    TypeReference*
+```
+
+It descends through the direct `TypeArgumentList` child, then wraps that list's
+direct `TypeReference` children in source order. It must not call
+`childNodes(typeReference, SyntaxKind.TypeReference)`, because that would miss
+the list layer and can confuse nested type arguments with direct ones.
+
 ## ID Model
 
 IDs should be opaque branded numbers:
@@ -646,6 +706,7 @@ export class ItemIndex {
   functions(): readonly FunctionRecord[];
   images(): readonly ImageRecord[];
   fields(): readonly FieldRecord[];
+  typeParameters(): readonly TypeParameterRecord[];
   parameters(): readonly ParameterRecord[];
 
   module(id: ModuleId): ModuleRecord | undefined;
@@ -658,6 +719,10 @@ export class ItemIndex {
 
   moduleByPath(pathKey: string, origin: ModuleOrigin): ModuleRecord | undefined;
   itemsInModule(moduleId: ModuleId): readonly ItemRecord[];
+  fieldsForItem(itemId: ItemId): readonly FieldRecord[];
+  parametersForFunction(functionId: FunctionId): readonly ParameterRecord[];
+  typeParametersForItem(itemId: ItemId): readonly TypeParameterRecord[];
+  typeParametersForFunction(functionId: FunctionId): readonly TypeParameterRecord[];
 }
 ```
 
@@ -759,7 +824,7 @@ diagnostics.
 `modifiers` is empty for declarations whose grammar does not support source
 modifiers.
 
-### Type, Function, Image, Field, And Parameter Records
+### Type, Function, Image, Field, Type-Parameter, And Parameter Records
 
 Type records point back to item records:
 
@@ -813,6 +878,27 @@ export interface FieldRecord {
 }
 ```
 
+Type-parameter records are source-only and preserve source names plus optional
+source bounds. They do not receive branded IDs in this phase because later
+phases address type parameters through the owning declaration/function plus
+source index. Intrinsic type parameters stay in intrinsic signature specs
+because they have no source span for diagnostics.
+
+```ts
+export type TypeParameterOwner =
+  | { readonly kind: "item"; readonly itemId: ItemId }
+  | { readonly kind: "function"; readonly itemId: ItemId; readonly functionId: FunctionId };
+
+export interface TypeParameterRecord {
+  readonly owner: TypeParameterOwner;
+  readonly index: number;
+  readonly name: string;
+  readonly nameSpan: SourceSpan;
+  readonly span: SourceSpan;
+  readonly bound?: TypeReferenceView;
+}
+```
+
 Parameter records are scoped to a function:
 
 ```ts
@@ -842,9 +928,10 @@ export interface IntrinsicParameterRecord extends BaseParameterRecord {
 export type ParameterRecord = SourceParameterRecord | IntrinsicParameterRecord;
 ```
 
-The item index records syntactic type views for source fields and source
-parameters, and structured intrinsic type references for intrinsic parameters.
-It does not validate whether the types exist.
+The item index records syntactic type views for source fields, source
+type-parameter bounds, and source parameters, and structured intrinsic type
+references for intrinsic parameters. It does not validate whether the types
+exist.
 
 ## Intrinsic Catalog
 
@@ -955,6 +1042,25 @@ The builder treats the proof and lowering strings as opaque, deterministically
 stored metadata. Proof and lowering layers define their own validation rules
 when they consume those records.
 
+Intrinsic collection receives source-count offsets so source records always
+occupy the first dense ID range and intrinsic records append after them:
+
+```ts
+export interface IntrinsicCollectionOffsets {
+  readonly moduleIdOffset: number;
+  readonly itemIdOffset: number;
+  readonly typeIdOffset: number;
+  readonly functionIdOffset: number;
+  readonly imageIdOffset: number;
+  readonly fieldIdOffset: number;
+  readonly parameterIdOffset: number;
+}
+```
+
+Type-parameter records are appended in deterministic owner order; they do not
+use an offset because this phase deliberately does not assign a branded
+type-parameter ID.
+
 ## Deterministic ID Assignment
 
 The builder assigns IDs in a deterministic order:
@@ -969,7 +1075,8 @@ The builder assigns IDs in a deterministic order:
    stable serialization of the signature.
 6. Assign `ItemId`s in collection order.
 7. Assign `TypeId`, `FunctionId`, and `ImageId` when an item is created.
-8. Assign `FieldId`s and `ParameterId`s in owner source order.
+8. Store type-parameter records in owner source order.
+9. Assign `FieldId`s and `ParameterId`s in owner source order.
 
 Source order means the order produced by direct CST child traversal, not object
 identity and not map iteration order.
@@ -1017,6 +1124,11 @@ Enum cases are declaration-local symbols. They are recorded as source item
 records with `kind: "enumCase"` and `parentItemId` set to the owning enum item.
 They do not receive `TypeId`, `FunctionId`, or `ImageId` records.
 
+Final source `ItemId` order is recursive preorder. For each sorted source module,
+the builder records a well-named top-level declaration, then records that
+declaration's enum cases, member functions, and nested function subtree before
+moving to the next top-level declaration.
+
 ## Duplicate Diagnostics
 
 Duplicate checking is deterministic and scope-based. The builder reports
@@ -1044,13 +1156,17 @@ All item-index diagnostics use the shared diagnostic shape:
 export interface ItemIndexDiagnostic extends Diagnostic<ItemIndexDiagnosticCode> {}
 ```
 
-Source duplicate diagnostics point at the duplicate declaration's name span.
-Messages name both the duplicate and the scope:
+All item-index diagnostics have severity `"error"`. Source duplicate diagnostics
+point at the duplicate declaration/member/parameter/type-parameter name span and
+use the owning syntax node's `SourceText`. Messages name both the duplicate and
+the scope:
 
 ```text
 Duplicate declaration 'Packet' in module app/main.wr.
 Duplicate field 'rx' in class NetworkPaths.
 Duplicate parameter 'buffer' in function drop_rx.
+Duplicate type parameter 'T' in function parse.
+Duplicate type parameter 'T' in item Packet.
 ```
 
 If useful, messages may mention the first declaration's position. The diagnostic
@@ -1154,6 +1270,7 @@ Unit tests for item indexing:
   tie-breaks for ID assignment.
 - Type-like declarations receive `TypeId`s.
 - Function declarations receive `FunctionId`s and parameter IDs.
+- Source declaration and function type parameters receive `TypeParameterRecord`s.
 - Intrinsic function parameters receive intrinsic `ParameterRecord`s without
   source spans.
 - Image declarations receive `ImageId`s, field IDs, and device field IDs.
@@ -1172,7 +1289,7 @@ Duplicate diagnostics tests:
 - Duplicate top-level declarations.
 - Duplicate fields in a class or image.
 - Duplicate parameters in a function.
-- Duplicate type parameters.
+- Duplicate source type parameters.
 - Duplicate enum cases.
 - Duplicate intrinsic IDs.
 - Duplicate intrinsic declaration names in one intrinsic module.

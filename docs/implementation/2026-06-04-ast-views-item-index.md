@@ -14,29 +14,52 @@
 
 - The parser root is `SyntaxKind.SourceFile`; `SyntaxTree.root()` returns a `RedNode`.
 - Red tree navigation is `RedNode.child(index)` and `RedNode.children()`. Repeated navigation returns new wrapper objects with stable coordinates.
-- `RedToken.text` slices from `SourceText`; `RedToken.isMissing` identifies parser-inserted missing tokens.
+- `RedToken.text` slices the whole token span, including leading and trailing
+  trivia. Name and modifier helpers must use `token.green.lexeme` through
+  `presentTokenText()` so indented names like `"    Blue"` report `"Blue"`.
+- `RedToken.isMissing` identifies parser-inserted missing tokens.
 - Every parsed `Block` stores its direct logical children through `Block -> StatementList -> item`. Declaration/member collection must use this one-block path, not broad descendant traversal.
 - Function `requires` has two forms: bodyless direct `RequiresSection` child, and block-body direct item inside the body `StatementList`.
 - Validated buffer sections are direct block items: `ParamsSection`, `LayoutSection`, `DeriveSection`, and `RequireSection`.
 - Image device fields live in `ImageDeclaration -> Block -> StatementList -> DevicesSection -> Block -> StatementList -> FieldDeclaration`.
+- Parser grammar coverage already exists in targeted tests that implementers can
+  inspect before changing view traversal: `tests/unit/frontend/parser/function-declaration-parser.test.ts`,
+  `tests/unit/frontend/parser/image-declaration-parser.test.ts`,
+  `tests/unit/frontend/parser/validated-buffer-parser.test.ts`,
+  `tests/unit/frontend/parser/validated-buffer-section-parser.test.ts`,
+  `tests/unit/frontend/parser/type-parser.test.ts`,
+  `tests/unit/frontend/parser/expression-postfix.test.ts`, and
+  `tests/unit/frontend/parser/pattern-condition-parser.test.ts`.
 - Existing command requirements are from `package.json`: `bun run typecheck`, `bun run format:check`, `bun run lint`, `bun run policy:check`, and `bun test`. Handoff command is `bun run agent:check`.
 - The current shell used to draft this plan did not have `bun` on PATH, but implementers should run the commands in the normal project environment.
 
 ## Parallel Execution Model
 
-Use these waves to keep subagents from editing the same files at the same time:
+Use these waves to keep subagents from editing the same files at the same time.
+Tasks in the same wave are genuinely independent. Tasks in later waves must not
+start until their listed dependencies are complete.
 
 ```text
-Wave 0: Tasks 1, 10, 11
-Wave 1: Tasks 2, 3, 4 after Task 1
-Wave 2: Tasks 5, 6, 7, 8 after Tasks 2-4
-Wave 3: Task 9 after Tasks 5-8; Task 12 after Tasks 10-11
-Wave 4: Tasks 13, 14, 15, 16 after Tasks 9 and 12
-Wave 5: Tasks 17, 18 after Tasks 13-16
-Wave 6: Task 19 after all prior tasks
+Wave 0: Tasks 1 and 10
+Wave 1: Task 11 after Task 10; Task 2 after Task 1
+Wave 2: Task 3 after Task 2; Task 12 after Task 11
+Wave 3: Task 4 after Task 3; Tasks 15 and 16 after Task 12
+Wave 4: Tasks 5 and 6 after Task 4
+Wave 5: Task 7 after Task 6
+Wave 6: Task 8 after Tasks 5 and 7
+Wave 7: Task 9 after Task 8; Task 13 after Tasks 8 and 12
+Wave 8: Task 14 after Task 13; Task 17 after Tasks 13, 15, and 16
+Wave 9: Task 18 after Tasks 9, 14, and 17
+Wave 10: Task 19 after all prior tasks
 ```
 
 Subagents should only pick tasks whose dependencies are satisfied. Each task includes its own acceptance criteria and command list. Commit messages in examples include `-Codex Automated` per repository convention.
+
+Barrel files are single-writer files. Tasks 1-8 must import AST modules by
+direct file path and must not edit `src/frontend/ast/index.ts`; Task 9 creates
+the AST barrel and frontend exports. Tasks 11-17 must import semantic item-index
+modules by direct file path and must not edit `src/semantic/item-index/index.ts`;
+Task 18 creates semantic barrels and top-level exports.
 
 ## Target File Structure
 
@@ -115,6 +138,210 @@ tests/integration/semantic/
 - Do not change parser behavior unless a test proves the parser already violates the AST design. This plan expects no parser changes.
 - AST view methods must never throw for malformed syntax; return `undefined` or `[]`.
 - Item-index builder code must be pure over `ParsedModuleGraph` and `IntrinsicCatalog`.
+- Before Task 9, AST tests import direct files such as
+  `../../../../src/frontend/ast/syntax-query`, not `../../../../src/frontend/ast`.
+- Before Task 18, semantic tests import direct files such as
+  `../../../../src/semantic/item-index/item-index-builder`, not
+  `../../../../src/semantic`.
+
+## Interface And Traversal Contracts
+
+These contracts are part of the plan. Subagents must implement the whole table
+for their task, not only the shorter snippets shown later.
+
+### Token Text
+
+```ts
+export function presentTokenText(token: RedToken | undefined): string | undefined {
+  if (token === undefined || token.isMissing) return undefined;
+  return token.green.lexeme;
+}
+```
+
+`RedToken.text` includes trivia and is not valid for `nameText()`, modifier
+strings, or qualified-name segment text.
+
+### Modifier Mapping
+
+```text
+FunctionModifierList children:
+PrivateKeyword      -> "private"
+PlatformKeyword     -> "platform"
+TerminalKeyword     -> "terminal"
+PredicateKeyword    -> "predicate"
+ConstructorKeyword  -> "constructor"
+
+ClassDeclaration direct child:
+PrivateKeyword      -> "private"
+
+EdgeClassDeclaration direct child:
+UniqueKeyword       -> "unique"
+```
+
+### TypeReference Traversal
+
+```text
+TypeReference
+  QualifiedName
+  TypeArgumentList?
+    TypeReference*
+```
+
+`TypeReferenceView.typeArguments()` descends through the direct
+`TypeArgumentList`; it does not call `childNodes(typeReference,
+SyntaxKind.TypeReference)`.
+
+### View Kind Contract
+
+`AstView.kind` is always the numeric `SyntaxKind` of the wrapped red node. Source
+item strings such as `"enum"` live on `SourceItemRecord.kind`, not on AST views.
+
+### Recursive Source Item Order
+
+Source item IDs use recursive preorder within each sorted module: record the
+well-named top-level declaration, then record that declaration's enum cases,
+member functions, and nested function subtree before moving to the next
+top-level declaration.
+
+### Expression View Mapping
+
+```text
+LiteralExpression           -> LiteralExpressionView
+NameExpression              -> NameExpressionView
+MemberAccessExpression      -> MemberAccessExpressionView
+CallExpression              -> CallExpressionView
+TypeApplicationExpression   -> TypeApplicationExpressionView
+AttemptExpression           -> AttemptExpressionView
+UnaryExpression             -> UnaryExpressionView
+BinaryExpression            -> BinaryExpressionView
+ComparisonExpression        -> ComparisonExpressionView
+EqualityExpression          -> EqualityExpressionView
+ObjectLiteralExpression     -> ObjectLiteralExpressionView
+ElseRequirementExpression   -> ElseRequirementExpressionView
+Argument                    -> ArgumentView
+NamedArgument               -> NamedArgumentView
+ObjectField                 -> ObjectFieldView
+CallArgumentList            -> CallArgumentListView
+```
+
+### Statement And Pattern View Mapping
+
+```text
+Block                       -> BlockView
+StatementList               -> StatementListView
+IfStatement                 -> IfStatementView
+ForStatement                -> ForStatementView
+WhileStatement              -> WhileStatementView
+MatchStatement              -> MatchStatementView
+Statement                   -> StatementView
+Condition                   -> ConditionView
+Pattern                     -> PatternView
+PatternList                 -> PatternListView
+Requirement                 -> RequirementView
+RequiresSection             -> RequiresSectionView
+RequireSection              -> RequireSectionView
+```
+
+`walkStatementTree(items)` used by the source member collector recursively
+enters statement-owned blocks (`IfStatement`, `ForStatement`, `WhileStatement`,
+and `MatchStatement` arms/blocks) and yields `FunctionDeclaration` nodes in
+source order. Declaration-local member collection must not use this walk except
+inside an already-collected function body.
+
+### Field And Derive Traversal
+
+```text
+FieldDeclaration
+  IdentifierToken
+  TypeReference?
+
+LayoutField
+  IdentifierToken
+  TypeReference?
+  Expression?       # offset expression
+  Expression?       # optional length expression
+
+DerivedField
+  IdentifierToken
+  TypeReference?
+  Expression?       # source expression after "from"
+  Block?
+    StatementList
+      DeriveCase*
+
+DeriveCase
+  Expression?       # condition
+  Expression?       # result
+
+DeriveSection
+  Block
+    StatementList
+      DerivedField*
+```
+
+Field and derive accessors use direct children plus `blockItems()` for section
+blocks. They must not use `descendants()` because field-like nodes can appear in
+nested statement blocks that belong to another owner.
+
+### ItemIndex Method Coverage
+
+```ts
+export interface ItemIndexRecords {
+  readonly modules: readonly ModuleRecord[];
+  readonly items: readonly ItemRecord[];
+  readonly types: readonly TypeRecord[];
+  readonly functions: readonly FunctionRecord[];
+  readonly images: readonly ImageRecord[];
+  readonly fields: readonly FieldRecord[];
+  readonly typeParameters: readonly TypeParameterRecord[];
+  readonly parameters: readonly ParameterRecord[];
+}
+```
+
+```text
+modules()                         -> copy of all ModuleRecord values
+items()                           -> copy of all ItemRecord values
+types()                           -> copy of all TypeRecord values
+functions()                       -> copy of all FunctionRecord values
+images()                          -> copy of all ImageRecord values
+fields()                          -> copy of all FieldRecord values
+typeParameters()                  -> copy of all TypeParameterRecord values
+parameters()                      -> copy of all ParameterRecord values
+module(id)                        -> ModuleRecord | undefined
+item(id)                          -> ItemRecord | undefined
+type(id)                          -> TypeRecord | undefined
+function(id)                      -> FunctionRecord | undefined
+image(id)                         -> ImageRecord | undefined
+field(id)                         -> FieldRecord | undefined
+parameter(id)                     -> ParameterRecord | undefined
+moduleByPath(pathKey, origin)     -> ModuleRecord | undefined
+itemsInModule(moduleId)           -> readonly ItemRecord[]
+fieldsForItem(itemId)             -> readonly FieldRecord[]
+parametersForFunction(functionId) -> readonly ParameterRecord[]
+typeParametersForItem(itemId)     -> readonly TypeParameterRecord[]
+typeParametersForFunction(id)     -> readonly TypeParameterRecord[]
+```
+
+### Type Parameter Records
+
+Type-parameter records are source-only because duplicate diagnostics need
+`SourceText` and source spans. Intrinsic type parameters stay in intrinsic
+signature specs.
+
+```ts
+export type TypeParameterOwner =
+  | { readonly kind: "item"; readonly itemId: ItemId }
+  | { readonly kind: "function"; readonly itemId: ItemId; readonly functionId: FunctionId };
+
+export interface TypeParameterRecord {
+  readonly owner: TypeParameterOwner;
+  readonly index: number;
+  readonly name: string;
+  readonly nameSpan: SourceSpan;
+  readonly span: SourceSpan;
+  readonly bound?: TypeReferenceView;
+}
+```
 
 ---
 
@@ -130,7 +357,6 @@ tests/integration/semantic/
 
 - Create: `src/frontend/ast/ast-view.ts`
 - Create: `src/frontend/ast/syntax-query.ts`
-- Create: `src/frontend/ast/index.ts`
 - Create: `tests/support/frontend/ast-test-support.ts`
 - Create: `tests/unit/frontend/ast/syntax-query.test.ts`
 
@@ -138,7 +364,8 @@ tests/integration/semantic/
 
 - `AstView.kind`, `AstView.span`, and `AstView.source` delegate to the wrapped `RedNode`.
 - `childNode`, `childNodes`, `childToken`, and `childTokens` inspect direct children only.
-- `presentTokenText` returns `undefined` for absent or missing tokens.
+- `presentTokenText` returns `undefined` for absent or missing tokens and
+  `token.green.lexeme` for present tokens, excluding leading/trailing trivia.
 - `descendants` recursively returns descendant `RedNode`s in source order and excludes the input node itself.
 - `blockStatementList` returns the direct `StatementList` child under a `Block`.
 - `blockItems` returns only direct `RedNode` items from a block's direct `StatementList`, skipping tokens and returning `[]` for malformed blocks.
@@ -161,7 +388,7 @@ import {
   childToken,
   descendants,
   presentTokenText,
-} from "../../../../src/frontend/ast";
+} from "../../../../src/frontend/ast/syntax-query";
 import { RedNode } from "../../../../src/frontend/syntax";
 
 function parseRoot(sourceCode: string): RedNode {
@@ -191,6 +418,16 @@ describe("syntax query helpers", () => {
     expect(blockStatementList(block)!.kind).toBe(SyntaxKind.StatementList);
     expect(blockItems(block).map((node) => node.kind)).toEqual([SyntaxKind.FieldDeclaration]);
   });
+
+  test("presentTokenText returns bare lexeme without trivia", () => {
+    const root = parseRoot("class Box:\n    field: U8\n");
+    const field = descendants(root, SyntaxKind.FieldDeclaration)[0]!;
+    const token = childToken(field, SyntaxKind.IdentifierToken)!;
+
+    expect(token.text).toBe("    field");
+    expect(presentTokenText(token)).toBe("field");
+    expect(presentTokenText(undefined)).toBeUndefined();
+  });
 });
 ```
 
@@ -202,13 +439,38 @@ Run:
 bun test ./tests/unit/frontend/ast/syntax-query.test.ts
 ```
 
-Expected: fails because `src/frontend/ast` exports do not exist.
+Expected: fails because AST helper files do not exist.
 
 - [ ] **Step 3: Implement the AST foundation**
 
 Use this implementation pattern:
 
 ```ts
+// src/frontend/ast/ast-view.ts
+import type { SourceSpan, SourceText } from "../lexer";
+import type { RedNode } from "../syntax";
+import { SyntaxKind } from "../syntax";
+
+export abstract class AstView {
+  readonly node: RedNode;
+
+  protected constructor(node: RedNode) {
+    this.node = node;
+  }
+
+  get kind(): SyntaxKind {
+    return this.node.kind;
+  }
+
+  get span(): SourceSpan {
+    return this.node.span;
+  }
+
+  get source(): SourceText {
+    return this.node.source;
+  }
+}
+
 // src/frontend/ast/syntax-query.ts
 import { RedNode, RedToken, SyntaxKind } from "../syntax";
 
@@ -222,6 +484,11 @@ export function blockItems(block: RedNode): RedNode[] {
   const statementList = blockStatementList(block);
   if (statementList === undefined) return [];
   return statementList.children().filter((child): child is RedNode => child instanceof RedNode);
+}
+
+export function presentTokenText(token: RedToken | undefined): string | undefined {
+  if (token === undefined || token.isMissing) return undefined;
+  return token.green.lexeme;
 }
 ```
 
@@ -265,7 +532,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/frontend/ast/ast-view.ts src/frontend/ast/syntax-query.ts src/frontend/ast/index.ts tests/support/frontend/ast-test-support.ts tests/unit/frontend/ast/syntax-query.test.ts
+git add src/frontend/ast/ast-view.ts src/frontend/ast/syntax-query.ts tests/support/frontend/ast-test-support.ts tests/unit/frontend/ast/syntax-query.test.ts
 git commit -m "feat: add AST syntax query foundation -Codex Automated"
 ```
 
@@ -283,17 +550,17 @@ git commit -m "feat: add AST syntax query foundation -Codex Automated"
 
 - Create: `src/frontend/ast/name-views.ts`
 - Create: `src/frontend/ast/type-views.ts`
-- Modify: `src/frontend/ast/index.ts`
 - Create: `tests/unit/frontend/ast/name-type-views.test.ts`
 
 **Acceptance Criteria:**
 
 - `DottedModuleNameView.segments()` returns present name tokens in source order.
-- `DottedModuleNameView.text()` joins segment token text with `"."`.
+- `DottedModuleNameView.text()` joins segment bare lexemes with `"."`.
 - `QualifiedNameView.segments()` and `QualifiedNameView.text()` behave the same for type names.
 - `TypeReferenceView.qualifiedName()` returns a `QualifiedNameView` when present.
 - `TypeReferenceView.qualifiedNameText()` returns source-shaped dotted text.
-- `TypeReferenceView.typeArguments()` returns direct type arguments in source order.
+- `TypeReferenceView.typeArguments()` descends through the direct `TypeArgumentList`
+  and returns nested `TypeReferenceView`s in source order.
 - `TypeParameterView.nameText()` and `bound()` handle missing names and absent bounds.
 - `ReturnTypeClauseView.type()` returns the direct `TypeReferenceView`.
 
@@ -304,13 +571,9 @@ Use this test shape:
 ```ts
 import { describe, expect, test } from "bun:test";
 import { SyntaxKind } from "../../../../src/frontend";
-import { childNode } from "../../../../src/frontend/ast";
-import {
-  DottedModuleNameView,
-  QualifiedNameView,
-  TypeParameterView,
-  TypeReferenceView,
-} from "../../../../src/frontend/ast";
+import { childNode, presentTokenText } from "../../../../src/frontend/ast/syntax-query";
+import { DottedModuleNameView, QualifiedNameView } from "../../../../src/frontend/ast/name-views";
+import { TypeParameterView, TypeReferenceView } from "../../../../src/frontend/ast/type-views";
 import { RedNode } from "../../../../src/frontend/syntax";
 import { parseSourceRoot } from "../../../support/frontend/ast-test-support";
 
@@ -321,7 +584,11 @@ describe("name and type views", () => {
     const moduleName = childNode(importNode, SyntaxKind.DottedModuleName)!;
     const view = DottedModuleNameView.from(moduleName)!;
 
-    expect(view.segments().map((token) => token.text)).toEqual(["core", "net", "driver"]);
+    expect(view.segments().map((token) => presentTokenText(token))).toEqual([
+      "core",
+      "net",
+      "driver",
+    ]);
     expect(view.text()).toBe("core.net.driver");
   });
 
@@ -348,7 +615,7 @@ Run:
 bun test ./tests/unit/frontend/ast/name-type-views.test.ts
 ```
 
-Expected: fails because name/type views are not exported.
+Expected: fails because name/type view files do not exist.
 
 - [ ] **Step 3: Implement name and type views**
 
@@ -365,7 +632,9 @@ export class QualifiedNameView extends AstView {
   }
 
   text(): string | undefined {
-    const segments = this.segments().map((token) => token.text);
+    const segments = this.segments()
+      .map((token) => presentTokenText(token))
+      .filter((text): text is string => text !== undefined);
     return segments.length === 0 ? undefined : segments.join(".");
   }
 }
@@ -385,7 +654,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/frontend/ast/name-views.ts src/frontend/ast/type-views.ts src/frontend/ast/index.ts tests/unit/frontend/ast/name-type-views.test.ts
+git add src/frontend/ast/name-views.ts src/frontend/ast/type-views.ts tests/unit/frontend/ast/name-type-views.test.ts
 git commit -m "feat: add AST name and type views -Codex Automated"
 ```
 
@@ -393,7 +662,7 @@ git commit -m "feat: add AST name and type views -Codex Automated"
 
 ### Task 3: Expression Views
 
-**Wave:** 1
+**Wave:** 2
 
 **Dependencies:** Task 1 and Task 2
 
@@ -402,7 +671,6 @@ git commit -m "feat: add AST name and type views -Codex Automated"
 **Files:**
 
 - Create: `src/frontend/ast/expression-views.ts`
-- Modify: `src/frontend/ast/index.ts`
 - Create: `tests/unit/frontend/ast/expression-views.test.ts`
 
 **Acceptance Criteria:**
@@ -423,12 +691,12 @@ Use this test shape:
 ```ts
 import { describe, expect, test } from "bun:test";
 import { SyntaxKind } from "../../../../src/frontend";
-import { childNode, descendants } from "../../../../src/frontend/ast";
+import { descendants } from "../../../../src/frontend/ast/syntax-query";
 import {
   CallExpressionView,
   NameExpressionView,
   ObjectLiteralExpressionView,
-} from "../../../../src/frontend/ast";
+} from "../../../../src/frontend/ast/expression-views";
 import { parseSourceRoot } from "../../../support/frontend/ast-test-support";
 
 describe("expression views", () => {
@@ -487,10 +755,30 @@ export type ExpressionView =
 
 export function expressionViewFrom(node: RedNode): ExpressionView | undefined {
   switch (node.kind) {
+    case SyntaxKind.LiteralExpression:
+      return LiteralExpressionView.from(node);
     case SyntaxKind.NameExpression:
       return NameExpressionView.from(node);
+    case SyntaxKind.MemberAccessExpression:
+      return MemberAccessExpressionView.from(node);
     case SyntaxKind.CallExpression:
       return CallExpressionView.from(node);
+    case SyntaxKind.TypeApplicationExpression:
+      return TypeApplicationExpressionView.from(node);
+    case SyntaxKind.AttemptExpression:
+      return AttemptExpressionView.from(node);
+    case SyntaxKind.UnaryExpression:
+      return UnaryExpressionView.from(node);
+    case SyntaxKind.BinaryExpression:
+      return BinaryExpressionView.from(node);
+    case SyntaxKind.ComparisonExpression:
+      return ComparisonExpressionView.from(node);
+    case SyntaxKind.EqualityExpression:
+      return EqualityExpressionView.from(node);
+    case SyntaxKind.ObjectLiteralExpression:
+      return ObjectLiteralExpressionView.from(node);
+    case SyntaxKind.ElseRequirementExpression:
+      return ElseRequirementExpressionView.from(node);
     default:
       return undefined;
   }
@@ -511,7 +799,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/frontend/ast/expression-views.ts src/frontend/ast/index.ts tests/unit/frontend/ast/expression-views.test.ts
+git add src/frontend/ast/expression-views.ts tests/unit/frontend/ast/expression-views.test.ts
 git commit -m "feat: add AST expression views -Codex Automated"
 ```
 
@@ -519,7 +807,7 @@ git commit -m "feat: add AST expression views -Codex Automated"
 
 ### Task 4: Statement, Pattern, Block, And Requirement Views
 
-**Wave:** 1
+**Wave:** 3
 
 **Dependencies:** Task 1, Task 2, and Task 3
 
@@ -530,7 +818,6 @@ git commit -m "feat: add AST expression views -Codex Automated"
 - Create: `src/frontend/ast/statement-views.ts`
 - Create: `src/frontend/ast/pattern-views.ts`
 - Create: `src/frontend/ast/requirement-views.ts`
-- Modify: `src/frontend/ast/index.ts`
 - Create: `tests/unit/frontend/ast/statement-requirement-views.test.ts`
 
 **Acceptance Criteria:**
@@ -550,8 +837,9 @@ Use this test shape:
 ```ts
 import { describe, expect, test } from "bun:test";
 import { SyntaxKind } from "../../../../src/frontend";
-import { childNode, descendants } from "../../../../src/frontend/ast";
-import { BlockView, RequireSectionView, RequiresSectionView } from "../../../../src/frontend/ast";
+import { childNode, descendants } from "../../../../src/frontend/ast/syntax-query";
+import { BlockView } from "../../../../src/frontend/ast/statement-views";
+import { RequireSectionView, RequiresSectionView } from "../../../../src/frontend/ast/requirement-views";
 import { parseSourceRoot } from "../../../support/frontend/ast-test-support";
 
 describe("statement and requirement views", () => {
@@ -629,7 +917,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/frontend/ast/statement-views.ts src/frontend/ast/pattern-views.ts src/frontend/ast/requirement-views.ts src/frontend/ast/index.ts tests/unit/frontend/ast/statement-requirement-views.test.ts
+git add src/frontend/ast/statement-views.ts src/frontend/ast/pattern-views.ts src/frontend/ast/requirement-views.ts tests/unit/frontend/ast/statement-requirement-views.test.ts
 git commit -m "feat: add AST statement and requirement views -Codex Automated"
 ```
 
@@ -637,7 +925,7 @@ git commit -m "feat: add AST statement and requirement views -Codex Automated"
 
 ### Task 5: Function And Parameter Views
 
-**Wave:** 2
+**Wave:** 4
 
 **Dependencies:** Tasks 2 and 4
 
@@ -646,7 +934,6 @@ git commit -m "feat: add AST statement and requirement views -Codex Automated"
 **Files:**
 
 - Create: `src/frontend/ast/function-views.ts`
-- Modify: `src/frontend/ast/index.ts`
 - Create: `tests/unit/frontend/ast/function-views.test.ts`
 
 **Acceptance Criteria:**
@@ -668,8 +955,8 @@ Use this test shape:
 ```ts
 import { describe, expect, test } from "bun:test";
 import { SyntaxKind } from "../../../../src/frontend";
-import { childNode } from "../../../../src/frontend/ast";
-import { FunctionDeclarationView } from "../../../../src/frontend/ast";
+import { childNode } from "../../../../src/frontend/ast/syntax-query";
+import { FunctionDeclarationView } from "../../../../src/frontend/ast/function-views";
 import { parseSourceRoot } from "../../../support/frontend/ast-test-support";
 
 describe("FunctionDeclarationView", () => {
@@ -746,7 +1033,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/frontend/ast/function-views.ts src/frontend/ast/index.ts tests/unit/frontend/ast/function-views.test.ts
+git add src/frontend/ast/function-views.ts tests/unit/frontend/ast/function-views.test.ts
 git commit -m "feat: add AST function views -Codex Automated"
 ```
 
@@ -754,7 +1041,7 @@ git commit -m "feat: add AST function views -Codex Automated"
 
 ### Task 6: Field, Image, And Device Views
 
-**Wave:** 2
+**Wave:** 4
 
 **Dependencies:** Tasks 2, 3, and 4
 
@@ -764,7 +1051,6 @@ git commit -m "feat: add AST function views -Codex Automated"
 
 - Create: `src/frontend/ast/field-views.ts`
 - Create: `src/frontend/ast/image-views.ts`
-- Modify: `src/frontend/ast/index.ts`
 - Create: `tests/unit/frontend/ast/image-views.test.ts`
 
 **Acceptance Criteria:**
@@ -785,8 +1071,8 @@ Use this test shape:
 ```ts
 import { describe, expect, test } from "bun:test";
 import { SyntaxKind } from "../../../../src/frontend";
-import { childNode } from "../../../../src/frontend/ast";
-import { ImageDeclarationView } from "../../../../src/frontend/ast";
+import { childNode } from "../../../../src/frontend/ast/syntax-query";
+import { ImageDeclarationView } from "../../../../src/frontend/ast/image-views";
 import { parseSourceRoot } from "../../../support/frontend/ast-test-support";
 
 describe("image and field views", () => {
@@ -845,7 +1131,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/frontend/ast/field-views.ts src/frontend/ast/image-views.ts src/frontend/ast/index.ts tests/unit/frontend/ast/image-views.test.ts
+git add src/frontend/ast/field-views.ts src/frontend/ast/image-views.ts tests/unit/frontend/ast/image-views.test.ts
 git commit -m "feat: add AST image and field views -Codex Automated"
 ```
 
@@ -853,7 +1139,7 @@ git commit -m "feat: add AST image and field views -Codex Automated"
 
 ### Task 7: Validated Buffer Section Views
 
-**Wave:** 2
+**Wave:** 5
 
 **Dependencies:** Tasks 2, 3, 4, and 6
 
@@ -862,7 +1148,6 @@ git commit -m "feat: add AST image and field views -Codex Automated"
 **Files:**
 
 - Create: `src/frontend/ast/validated-buffer-views.ts`
-- Modify: `src/frontend/ast/index.ts`
 - Create: `tests/unit/frontend/ast/validated-buffer-views.test.ts`
 
 **Acceptance Criteria:**
@@ -881,8 +1166,8 @@ Use this test shape:
 ```ts
 import { describe, expect, test } from "bun:test";
 import { SyntaxKind } from "../../../../src/frontend";
-import { childNode } from "../../../../src/frontend/ast";
-import { ValidatedBufferDeclarationView } from "../../../../src/frontend/ast";
+import { childNode } from "../../../../src/frontend/ast/syntax-query";
+import { ValidatedBufferDeclarationView } from "../../../../src/frontend/ast/validated-buffer-views";
 import { parseSourceRoot } from "../../../support/frontend/ast-test-support";
 
 describe("ValidatedBufferDeclarationView", () => {
@@ -942,7 +1227,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/frontend/ast/validated-buffer-views.ts src/frontend/ast/index.ts tests/unit/frontend/ast/validated-buffer-views.test.ts
+git add src/frontend/ast/validated-buffer-views.ts tests/unit/frontend/ast/validated-buffer-views.test.ts
 git commit -m "feat: add AST validated buffer views -Codex Automated"
 ```
 
@@ -950,16 +1235,15 @@ git commit -m "feat: add AST validated buffer views -Codex Automated"
 
 ### Task 8: Source Declaration Views And Declaration Union
 
-**Wave:** 2
+**Wave:** 6
 
 **Dependencies:** Tasks 2, 5, 6, and 7
 
-**Description:** Implement source-file, import, enum, enum case, dataclass, class, edge class, interface, stream, and declaration-union views. Re-export all AST view modules through the AST barrel.
+**Description:** Implement source-file, import, enum, enum case, dataclass, class, edge class, interface, stream, and declaration-union views.
 
 **Files:**
 
 - Create: `src/frontend/ast/declaration-views.ts`
-- Modify: `src/frontend/ast/index.ts`
 - Create: `tests/unit/frontend/ast/declaration-views.test.ts`
 
 **Acceptance Criteria:**
@@ -979,7 +1263,8 @@ Use this test shape:
 
 ```ts
 import { describe, expect, test } from "bun:test";
-import { SourceFileView } from "../../../../src/frontend/ast";
+import { SyntaxKind } from "../../../../src/frontend";
+import { SourceFileView } from "../../../../src/frontend/ast/declaration-views";
 import { parseSourceRoot } from "../../../support/frontend/ast-test-support";
 
 describe("source declaration views", () => {
@@ -997,7 +1282,7 @@ describe("source declaration views", () => {
     const view = SourceFileView.fromRoot(root)!;
     const enumView = view.declarations()[0]!;
 
-    expect(enumView.kind).toBe("enum");
+    expect(enumView.kind).toBe(SyntaxKind.EnumDeclaration);
     expect(enumView.enumCases().map((item) => item.nameText())).toEqual(["Red", "Blue"]);
   });
 });
@@ -1056,7 +1341,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/frontend/ast/declaration-views.ts src/frontend/ast/index.ts tests/unit/frontend/ast/declaration-views.test.ts
+git add src/frontend/ast/declaration-views.ts tests/unit/frontend/ast/declaration-views.test.ts
 git commit -m "feat: add AST declaration views -Codex Automated"
 ```
 
@@ -1064,7 +1349,7 @@ git commit -m "feat: add AST declaration views -Codex Automated"
 
 ### Task 9: Frontend AST Barrel Integration
 
-**Wave:** 3
+**Wave:** 7
 
 **Dependencies:** Tasks 1-8
 
@@ -1072,11 +1357,13 @@ git commit -m "feat: add AST declaration views -Codex Automated"
 
 **Files:**
 
+- Create: `src/frontend/ast/index.ts`
 - Modify: `src/frontend/index.ts`
 - Modify: `tests/integration/frontend/public-api.test.ts`
 
 **Acceptance Criteria:**
 
+- `src/frontend/ast/index.ts` re-exports every AST view module.
 - `src/frontend/index.ts` exports `./ast`.
 - Existing frontend public API tests still pass.
 - New public API assertions can import `SourceFileView`, `FunctionDeclarationView`, and `TypeReferenceView` from `src/frontend`.
@@ -1087,6 +1374,8 @@ git commit -m "feat: add AST declaration views -Codex Automated"
 Use this test addition:
 
 ```ts
+import { expect, test } from "bun:test";
+import * as frontend from "../../../src/frontend";
 import { FunctionDeclarationView, SourceFileView, TypeReferenceView } from "../../../src/frontend";
 
 test("frontend namespace exports AST views", () => {
@@ -1111,7 +1400,25 @@ Expected: fails because frontend does not export AST views yet.
 
 - [ ] **Step 3: Export AST views**
 
-Use this barrel shape:
+Create `src/frontend/ast/index.ts` with this shape:
+
+```ts
+export * from "./ast-view";
+export * from "./syntax-query";
+export * from "./name-views";
+export * from "./type-views";
+export * from "./expression-views";
+export * from "./statement-views";
+export * from "./pattern-views";
+export * from "./requirement-views";
+export * from "./field-views";
+export * from "./function-views";
+export * from "./image-views";
+export * from "./validated-buffer-views";
+export * from "./declaration-views";
+```
+
+Use this `src/frontend/index.ts` shape:
 
 ```ts
 export * from "./lexer";
@@ -1136,7 +1443,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/frontend/index.ts tests/integration/frontend/public-api.test.ts
+git add src/frontend/ast/index.ts src/frontend/index.ts tests/integration/frontend/public-api.test.ts
 git commit -m "feat: export AST views from frontend API -Codex Automated"
 ```
 
@@ -1239,7 +1546,7 @@ git commit -m "feat: add semantic ID constructors -Codex Automated"
 
 ### Task 11: Intrinsic Catalog Contracts And Stable Serialization
 
-**Wave:** 0
+**Wave:** 1
 
 **Dependencies:** Task 10
 
@@ -1249,7 +1556,6 @@ git commit -m "feat: add semantic ID constructors -Codex Automated"
 
 - Create: `src/semantic/item-index/intrinsic-catalog.ts`
 - Create: `src/semantic/item-index/stable-serialization.ts`
-- Create: `src/semantic/item-index/index.ts`
 - Create: `tests/support/semantic/intrinsic-fakes.ts`
 - Create: `tests/unit/semantic/item-index/intrinsic-catalog.test.ts`
 
@@ -1269,10 +1575,10 @@ Use this test shape:
 ```ts
 import { describe, expect, test } from "bun:test";
 import { intrinsicId } from "../../../../src/semantic/ids";
+import { stableSerializeIntrinsicDeclaration } from "../../../../src/semantic/item-index/stable-serialization";
 import {
-  stableSerializeIntrinsicDeclaration,
   type IntrinsicCatalog,
-} from "../../../../src/semantic/item-index";
+} from "../../../../src/semantic/item-index/intrinsic-catalog";
 
 describe("intrinsic catalog contracts", () => {
   test("stable serialization sorts object keys recursively", () => {
@@ -1361,7 +1667,7 @@ import { intrinsicId, type IntrinsicId } from "../../../src/semantic/ids";
 import type {
   IntrinsicCatalog,
   IntrinsicFunctionDeclarationSpec,
-} from "../../../src/semantic/item-index";
+} from "../../../src/semantic/item-index/intrinsic-catalog";
 
 const testType = { name: ["U8"], arguments: [] };
 
@@ -1411,7 +1717,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/semantic/item-index/intrinsic-catalog.ts src/semantic/item-index/stable-serialization.ts src/semantic/item-index/index.ts tests/support/semantic/intrinsic-fakes.ts tests/unit/semantic/item-index/intrinsic-catalog.test.ts
+git add src/semantic/item-index/intrinsic-catalog.ts src/semantic/item-index/stable-serialization.ts tests/support/semantic/intrinsic-fakes.ts tests/unit/semantic/item-index/intrinsic-catalog.test.ts
 git commit -m "feat: add intrinsic catalog contracts -Codex Automated"
 ```
 
@@ -1419,7 +1725,7 @@ git commit -m "feat: add intrinsic catalog contracts -Codex Automated"
 
 ### Task 12: Item Records And Immutable ItemIndex
 
-**Wave:** 3
+**Wave:** 2
 
 **Dependencies:** Tasks 10 and 11
 
@@ -1429,16 +1735,17 @@ git commit -m "feat: add intrinsic catalog contracts -Codex Automated"
 
 - Create: `src/semantic/item-index/item-records.ts`
 - Create: `src/semantic/item-index/item-index.ts`
-- Modify: `src/semantic/item-index/index.ts`
 - Create: `tests/unit/semantic/item-index/item-index.test.ts`
 
 **Acceptance Criteria:**
 
-- Record types match the design, including source/intrinsic item variants and source/intrinsic parameter variants.
+- Record types match the design, including source/intrinsic item variants, type-parameter records, and source/intrinsic parameter variants.
 - `ItemIndex` methods return readonly arrays or copies that callers cannot mutate into internal state.
 - ID lookup methods bounds-check and return `undefined` for unknown numeric IDs.
 - `moduleByPath(pathKey, origin)` requires explicit origin and returns the matching module only.
 - `itemsInModule(moduleId)` returns items in item order.
+- `fieldsForItem(itemId)` and `parametersForFunction(functionId)` return scoped records in stored order.
+- `typeParameters()`, `typeParametersForItem(itemId)`, and `typeParametersForFunction(functionId)` expose type-parameter records without leaking mutable internal arrays.
 
 - [ ] **Step 1: Write failing ItemIndex tests**
 
@@ -1447,12 +1754,16 @@ Use this test shape:
 ```ts
 import { describe, expect, test } from "bun:test";
 import { SourceSpan } from "../../../../src/frontend";
-import { itemId, moduleId } from "../../../../src/semantic/ids";
-import {
-  ItemIndex,
-  type ModuleRecord,
-  type SourceItemRecord,
-} from "../../../../src/semantic/item-index";
+import { fieldId, functionId, itemId, moduleId, parameterId } from "../../../../src/semantic/ids";
+import { ItemIndex } from "../../../../src/semantic/item-index/item-index";
+import type {
+  FieldRecord,
+  FunctionRecord,
+  ModuleRecord,
+  SourceParameterRecord,
+  SourceItemRecord,
+  TypeParameterRecord,
+} from "../../../../src/semantic/item-index/item-records";
 
 describe("ItemIndex", () => {
   test("returns copies for arrays and bounds-checks lookups", () => {
@@ -1477,20 +1788,63 @@ describe("ItemIndex", () => {
       functionId: undefined,
       imageId: undefined,
     };
+    const functionRecord: FunctionRecord = {
+      id: functionId(0),
+      itemId: itemId(0),
+      moduleId: moduleId(0),
+      name: "run",
+      parameterIds: [parameterId(0)],
+    };
+    const fieldRecord: FieldRecord = {
+      id: fieldId(0),
+      ownerItemId: itemId(0),
+      role: "field",
+      name: "value",
+      nameSpan: SourceSpan.from(12, 17),
+      span: SourceSpan.from(12, 21),
+    };
+    const typeParameter: TypeParameterRecord = {
+      owner: { kind: "item", itemId: itemId(0) },
+      index: 0,
+      name: "T",
+      nameSpan: SourceSpan.from(10, 11),
+      span: SourceSpan.from(10, 11),
+    };
+    const parameterRecord: SourceParameterRecord = {
+      id: parameterId(0),
+      functionId: functionId(0),
+      origin: "source",
+      index: 0,
+      name: "x",
+      isConsumed: false,
+      nameSpan: SourceSpan.from(22, 23),
+      span: SourceSpan.from(22, 27),
+    };
 
     const index = new ItemIndex({
       modules: [moduleRecord],
       items: [itemRecord],
       types: [],
-      functions: [],
+      functions: [functionRecord],
       images: [],
-      fields: [],
-      parameters: [],
+      fields: [fieldRecord],
+      typeParameters: [typeParameter],
+      parameters: [parameterRecord],
     });
     const modules = index.modules() as ModuleRecord[];
+    const typeParameters = index.typeParameters() as TypeParameterRecord[];
     modules.pop();
+    typeParameters.pop();
 
     expect(index.modules()).toHaveLength(1);
+    expect(index.fieldsForItem(itemId(0)).map((field) => field.name)).toEqual(["value"]);
+    expect(index.parametersForFunction(functionId(0)).map((parameter) => parameter.name)).toEqual([
+      "x",
+    ]);
+    expect(index.typeParameters()).toHaveLength(1);
+    expect(index.typeParametersForItem(itemId(0)).map((parameter) => parameter.name)).toEqual([
+      "T",
+    ]);
     expect(index.item(itemId(99))).toBeUndefined();
     expect(index.moduleByPath("app/main.wr", "source")!.id).toBe(moduleId(0));
     expect(index.moduleByPath("app/main.wr", "intrinsic")).toBeUndefined();
@@ -1532,6 +1886,10 @@ export class ItemIndex {
 }
 ```
 
+Include every array from `ItemIndexRecords` in the constructor, including
+`typeParameters`, and implement the full method table from
+`Interface And Traversal Contracts`.
+
 - [ ] **Step 4: Verify and commit**
 
 Run:
@@ -1546,7 +1904,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/semantic/item-index/item-records.ts src/semantic/item-index/item-index.ts src/semantic/item-index/index.ts tests/unit/semantic/item-index/item-index.test.ts
+git add src/semantic/item-index/item-records.ts src/semantic/item-index/item-index.ts tests/unit/semantic/item-index/item-index.test.ts
 git commit -m "feat: add immutable item index records -Codex Automated"
 ```
 
@@ -1554,7 +1912,7 @@ git commit -m "feat: add immutable item index records -Codex Automated"
 
 ### Task 13: Source Module And Top-Level Item Collector
 
-**Wave:** 4
+**Wave:** 7
 
 **Dependencies:** Tasks 8, 10, and 12
 
@@ -1563,7 +1921,6 @@ git commit -m "feat: add immutable item index records -Codex Automated"
 **Files:**
 
 - Create: `src/semantic/item-index/source-module-collector.ts`
-- Modify: `src/semantic/item-index/index.ts`
 - Create: `tests/support/frontend/module-graph-test-support.ts`
 - Create: `tests/unit/semantic/item-index/source-module-collector.test.ts`
 
@@ -1578,7 +1935,7 @@ git commit -m "feat: add immutable item index records -Codex Automated"
 - Top-level image declarations receive `ImageId`s.
 - Source modifiers are copied into source item records.
 - `tests/support/frontend/module-graph-test-support.ts` exports parser-backed graph helpers for later semantic tests.
-- This task does not collect fields, parameters, enum cases, member functions, or duplicates; those are handled by later collector tasks.
+- This task does not collect fields, parameters, type parameters, enum cases, member functions, or duplicates; those are handled by later collector tasks.
 
 - [ ] **Step 1: Add graph support and write failing source module collector tests**
 
@@ -1635,7 +1992,7 @@ Use this test shape in `tests/unit/semantic/item-index/source-module-collector.t
 
 ```ts
 import { describe, expect, test } from "bun:test";
-import { collectSourceModulesAndTopLevelItems } from "../../../../src/semantic/item-index";
+import { collectSourceModulesAndTopLevelItems } from "../../../../src/semantic/item-index/source-module-collector";
 import { parsedModuleForTest } from "../../../support/frontend/module-graph-test-support";
 
 describe("source module collector", () => {
@@ -1673,6 +2030,7 @@ export interface SourceCollectionResult {
   readonly types: readonly TypeRecord[];
   readonly functions: readonly FunctionRecord[];
   readonly images: readonly ImageRecord[];
+  readonly typeParameters: readonly TypeParameterRecord[]; // empty until collectSourceMembers
   readonly declarationWorkItems: readonly SourceDeclarationWorkItem[];
 }
 ```
@@ -1691,7 +2049,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/semantic/item-index/source-module-collector.ts src/semantic/item-index/index.ts tests/support/frontend/module-graph-test-support.ts tests/unit/semantic/item-index/source-module-collector.test.ts
+git add src/semantic/item-index/source-module-collector.ts tests/support/frontend/module-graph-test-support.ts tests/unit/semantic/item-index/source-module-collector.test.ts
 git commit -m "feat: collect source modules and top-level items -Codex Automated"
 ```
 
@@ -1699,7 +2057,7 @@ git commit -m "feat: collect source modules and top-level items -Codex Automated
 
 ### Task 14: Source Member, Field, Parameter, Enum Case, And Nested Function Collector
 
-**Wave:** 4
+**Wave:** 8
 
 **Dependencies:** Tasks 5, 6, 7, 8, 10, 12, and 13
 
@@ -1708,15 +2066,17 @@ git commit -m "feat: collect source modules and top-level items -Codex Automated
 **Files:**
 
 - Create: `src/semantic/item-index/source-member-collector.ts`
-- Modify: `src/semantic/item-index/index.ts`
 - Create: `tests/unit/semantic/item-index/source-member-collector.test.ts`
 
 **Acceptance Criteria:**
 
 - Enum cases become `SourceItemRecord`s with `kind: "enumCase"` and `parentItemId` set to the enum item.
+- Final source `ItemRecord` order is recursive preorder: a declaration is followed immediately by its enum cases, member functions, and nested function subtree before the next top-level declaration.
 - Class/dataclass/interface fields receive `FieldRecord`s with role `"field"`.
 - Image direct fields receive role `"field"` and image device fields receive role `"imageDevice"`.
 - Validated-buffer param fields receive role `"validatedParam"` and layout fields receive role `"layoutField"`.
+- Type-like declaration type parameters receive `TypeParameterRecord`s with owner `{ kind: "item", itemId }`.
+- Function declaration type parameters receive `TypeParameterRecord`s with owner `{ kind: "function", itemId, functionId }`.
 - Source function parameters receive `SourceParameterRecord`s in parameter order.
 - Function declarations inside declaration bodies receive `parentItemId`.
 - Function declarations anywhere inside another function body's statement tree receive `parentItemId` for the nearest enclosing function item.
@@ -1729,11 +2089,9 @@ Use this test shape:
 
 ```ts
 import { describe, expect, test } from "bun:test";
-import { ItemIndex } from "../../../../src/semantic/item-index";
-import {
-  collectSourceMembers,
-  collectSourceModulesAndTopLevelItems,
-} from "../../../../src/semantic/item-index";
+import { ItemIndex } from "../../../../src/semantic/item-index/item-index";
+import { collectSourceMembers } from "../../../../src/semantic/item-index/source-member-collector";
+import { collectSourceModulesAndTopLevelItems } from "../../../../src/semantic/item-index/source-module-collector";
 import { parseSingleModuleGraphForTest } from "../../../support/frontend/module-graph-test-support";
 
 function collectSourceIndexForTest(path: string, sourceCode: string): ItemIndex {
@@ -1750,7 +2108,7 @@ describe("source member collector", () => {
       [
         "enum Color:",
         "    Red",
-        "class Box:",
+        "dataclass Box[T]:",
         "    field: U8",
         "uefi image Boot:",
         "    top: ImageField",
@@ -1761,11 +2119,19 @@ describe("source member collector", () => {
         "        size: U16",
         "    layout:",
         "        data: U8 @ 0 len 4",
-        "fn run(consume packet: Packet)",
+        "fn run[U](consume packet: Packet)",
       ].join("\n") + "\n",
     );
 
-    expect(index.items().map((item) => item.name)).toContain("Red");
+    expect(index.items().map((item) => item.name)).toEqual([
+      "Color",
+      "Red",
+      "Box",
+      "Boot",
+      "Packet",
+      "run",
+    ]);
+    expect(index.typeParameters().map((parameter) => parameter.name)).toEqual(["T", "U"]);
     expect(index.fields().map((field) => field.role)).toEqual([
       "field",
       "field",
@@ -1816,6 +2182,26 @@ function collectNestedFunctionsInFunctionBody(owner: FunctionRecord, body: Block
 }
 ```
 
+Collect source type parameters with this owner split:
+
+```ts
+function collectItemTypeParameters(item: SourceItemRecord, parameters: readonly TypeParameterView[]): void {
+  parameters.forEach((parameter, index) => {
+    const name = parameter.nameText();
+    const nameSpan = parameter.nameSpan();
+    if (name === undefined || nameSpan === undefined) return;
+    addTypeParameter({
+      owner: { kind: "item", itemId: item.id },
+      index,
+      name,
+      nameSpan,
+      span: parameter.span,
+      bound: parameter.bound(),
+    });
+  });
+}
+```
+
 - [ ] **Step 4: Verify and commit**
 
 Run:
@@ -1830,7 +2216,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/semantic/item-index/source-member-collector.ts src/semantic/item-index/index.ts tests/unit/semantic/item-index/source-member-collector.test.ts
+git add src/semantic/item-index/source-member-collector.ts tests/unit/semantic/item-index/source-member-collector.test.ts
 git commit -m "feat: collect source declaration members -Codex Automated"
 ```
 
@@ -1838,7 +2224,7 @@ git commit -m "feat: collect source declaration members -Codex Automated"
 
 ### Task 15: Intrinsic Module, Declaration, And Parameter Collector
 
-**Wave:** 4
+**Wave:** 3
 
 **Dependencies:** Tasks 10, 11, and 12
 
@@ -1847,7 +2233,6 @@ git commit -m "feat: collect source declaration members -Codex Automated"
 **Files:**
 
 - Create: `src/semantic/item-index/intrinsic-collector.ts`
-- Modify: `src/semantic/item-index/index.ts`
 - Create: `tests/unit/semantic/item-index/intrinsic-collector.test.ts`
 
 **Acceptance Criteria:**
@@ -1857,6 +2242,8 @@ git commit -m "feat: collect source declaration members -Codex Automated"
 - Intrinsic items receive `origin: "intrinsic"`.
 - Intrinsic function declarations receive `FunctionId`s and intrinsic parameter records without source spans.
 - Intrinsic type declarations receive `TypeId`s and no function record.
+- Intrinsic declaration type parameters remain preserved in their intrinsic signatures; they do not emit `TypeParameterRecord`s because those records require source spans.
+- Collector offsets include `moduleIdOffset`, `itemIdOffset`, `typeIdOffset`, `functionIdOffset`, `imageIdOffset`, `fieldIdOffset`, and `parameterIdOffset`; every emitted dense ID uses the corresponding offset. Type-parameter records are appended in deterministic owner order and do not use a branded ID offset.
 - Proof contract, lowering contract, target availability, and intrinsic ID are preserved by reference or value without interpretation.
 
 - [ ] **Step 1: Write failing intrinsic collector tests**
@@ -1866,7 +2253,8 @@ Use this test shape:
 ```ts
 import { describe, expect, test } from "bun:test";
 import { intrinsicId } from "../../../../src/semantic/ids";
-import { collectIntrinsicItems, type IntrinsicCatalog } from "../../../../src/semantic/item-index";
+import { collectIntrinsicItems } from "../../../../src/semantic/item-index/intrinsic-collector";
+import type { IntrinsicCatalog } from "../../../../src/semantic/item-index/intrinsic-catalog";
 
 const testType = { name: ["U8"], arguments: [] };
 
@@ -1913,8 +2301,17 @@ describe("intrinsic collector", () => {
       ],
     };
 
-    const result = collectIntrinsicItems(catalog, { moduleIdOffset: 0, itemIdOffset: 0 });
+    const result = collectIntrinsicItems(catalog, {
+      moduleIdOffset: 0,
+      itemIdOffset: 0,
+      typeIdOffset: 0,
+      functionIdOffset: 0,
+      imageIdOffset: 0,
+      fieldIdOffset: 0,
+      parameterIdOffset: 0,
+    });
     expect(result.items.map((item) => item.origin)).toEqual(["intrinsic", "intrinsic"]);
+    expect(result.typeParameters).toEqual([]);
     expect(result.parameters[0]!.origin).toBe("intrinsic");
     expect(result.parameters[0]!).not.toHaveProperty("span");
   });
@@ -1941,6 +2338,9 @@ export interface IntrinsicCollectionResult {
   readonly items: readonly IntrinsicItemRecord[];
   readonly types: readonly TypeRecord[];
   readonly functions: readonly FunctionRecord[];
+  readonly images: readonly ImageRecord[];
+  readonly fields: readonly FieldRecord[];
+  readonly typeParameters: readonly TypeParameterRecord[]; // always empty for intrinsic collection
   readonly parameters: readonly IntrinsicParameterRecord[];
 }
 ```
@@ -1959,7 +2359,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/semantic/item-index/intrinsic-collector.ts src/semantic/item-index/index.ts tests/unit/semantic/item-index/intrinsic-collector.test.ts
+git add src/semantic/item-index/intrinsic-collector.ts tests/unit/semantic/item-index/intrinsic-collector.test.ts
 git commit -m "feat: collect intrinsic item records -Codex Automated"
 ```
 
@@ -1967,7 +2367,7 @@ git commit -m "feat: collect intrinsic item records -Codex Automated"
 
 ### Task 16: Duplicate Diagnostics
 
-**Wave:** 4
+**Wave:** 3
 
 **Dependencies:** Tasks 10, 11, and 12
 
@@ -1977,7 +2377,6 @@ git commit -m "feat: collect intrinsic item records -Codex Automated"
 
 - Create: `src/semantic/item-index/diagnostics.ts`
 - Create: `src/semantic/item-index/duplicate-checker.ts`
-- Modify: `src/semantic/item-index/index.ts`
 - Create: `tests/unit/semantic/item-index/duplicates.test.ts`
 
 **Acceptance Criteria:**
@@ -1988,12 +2387,54 @@ git commit -m "feat: collect intrinsic item records -Codex Automated"
 - Duplicate source declarations in one declaration scope produce `ITEM_DUPLICATE_DECLARATION`.
 - Duplicate fields by owner item produce `ITEM_DUPLICATE_FIELD`.
 - Duplicate parameters by function produce `ITEM_DUPLICATE_PARAMETER`.
-- Duplicate type parameters by owner item/function produce `ITEM_DUPLICATE_TYPE_PARAMETER`.
+- Duplicate source type parameters by owner item/function produce `ITEM_DUPLICATE_TYPE_PARAMETER`.
 - Duplicate enum cases by enum owner produce `ITEM_DUPLICATE_ENUM_CASE`.
 - Duplicate intrinsic IDs produce `ITEM_DUPLICATE_INTRINSIC_ID`.
 - Duplicate intrinsic declaration names in one intrinsic module produce `ITEM_DUPLICATE_INTRINSIC_DECLARATION`.
 - Intrinsic diagnostics use `SourceText.from("<intrinsics>", "")` and zero-width span.
 - Diagnostics sort by `source.name`, span start, span end, and code.
+- Every item-index diagnostic has `severity: "error"`.
+
+Use these source/span/message rules:
+
+```text
+ITEM_DUPLICATE_MODULE
+  source/span: duplicate source module record's source and zero-width span at 0
+  message: Duplicate source module 'app/main.wr'.
+
+ITEM_SOURCE_MODULE_SHADOWS_INTRINSIC_MODULE
+  source/span: source module record's source and zero-width span at 0
+  message: Source module 'intrinsics/test.wr' shadows an intrinsic module.
+
+ITEM_DUPLICATE_DECLARATION
+  source/span: duplicate source item's declaration source and nameSpan
+  message: Duplicate declaration 'Box' in module app/main.wr.
+
+ITEM_DUPLICATE_FIELD
+  source/span: duplicate source field's owner source and nameSpan
+  message: Duplicate field 'value' in item Box.
+
+ITEM_DUPLICATE_PARAMETER
+  source/span: duplicate source parameter's owner source and nameSpan
+  message: Duplicate parameter 'x' in function run.
+
+ITEM_DUPLICATE_TYPE_PARAMETER
+  source/span: duplicate source type parameter's owner source and nameSpan
+  message for item owner: Duplicate type parameter 'T' in item Box.
+  message for function owner: Duplicate type parameter 'T' in function run.
+
+ITEM_DUPLICATE_ENUM_CASE
+  source/span: duplicate source enum case item's declaration source and nameSpan
+  message: Duplicate enum case 'Red' in enum Color.
+
+ITEM_DUPLICATE_INTRINSIC_ID
+  source/span: SourceText.from("<intrinsics>", "") and SourceSpan.from(0, 0)
+  message: Duplicate intrinsic id 'intrinsics.dup'.
+
+ITEM_DUPLICATE_INTRINSIC_DECLARATION
+  source/span: SourceText.from("<intrinsics>", "") and SourceSpan.from(0, 0)
+  message: Duplicate intrinsic declaration 'load' in module intrinsics/test.wr.
+```
 
 - [ ] **Step 1: Write failing duplicate tests**
 
@@ -2003,23 +2444,22 @@ Use this test shape:
 import { describe, expect, test } from "bun:test";
 import { SourceSpan, SourceText } from "../../../../src/frontend";
 import {
-  fieldId,
   functionId,
   intrinsicId,
   itemId,
   moduleId,
   parameterId,
 } from "../../../../src/semantic/ids";
-import {
-  checkItemIndexDuplicates,
-  type IntrinsicItemRecord,
-  type ItemIndexRecords,
-  type SourceItemRecord,
-} from "../../../../src/semantic/item-index";
+import { checkItemIndexDuplicates } from "../../../../src/semantic/item-index/duplicate-checker";
+import type {
+  IntrinsicItemRecord,
+  ItemIndexRecords,
+  SourceItemRecord,
+} from "../../../../src/semantic/item-index/item-records";
 import { intrinsicFunctionFake } from "../../../support/semantic/intrinsic-fakes";
 
-const declaration = {} as SourceItemRecord["declaration"];
 const source = SourceText.from("main.wr", "class Box:\nclass Box:\n");
+const declaration = { source } as SourceItemRecord["declaration"];
 
 function sourceItem(id: number, name: string, start: number): SourceItemRecord {
   return {
@@ -2054,6 +2494,22 @@ describe("item-index duplicate diagnostics", () => {
       ],
       images: [],
       fields: [],
+      typeParameters: [
+        {
+          owner: { kind: "function", itemId: itemId(0), functionId: functionId(0) },
+          index: 0,
+          name: "T",
+          nameSpan: SourceSpan.from(46, 47),
+          span: SourceSpan.from(46, 47),
+        },
+        {
+          owner: { kind: "function", itemId: itemId(0), functionId: functionId(0) },
+          index: 1,
+          name: "T",
+          nameSpan: SourceSpan.from(50, 51),
+          span: SourceSpan.from(50, 51),
+        },
+      ],
       parameters: [
         {
           id: parameterId(0),
@@ -2083,7 +2539,15 @@ describe("item-index duplicate diagnostics", () => {
     expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
       "ITEM_DUPLICATE_DECLARATION",
       "ITEM_DUPLICATE_PARAMETER",
+      "ITEM_DUPLICATE_TYPE_PARAMETER",
     ]);
+    const typeParameterDiagnostic = diagnostics.find(
+      (diagnostic) => diagnostic.code === "ITEM_DUPLICATE_TYPE_PARAMETER",
+    )!;
+    expect(typeParameterDiagnostic.severity).toBe("error");
+    expect(typeParameterDiagnostic.message).toBe("Duplicate type parameter 'T' in function run.");
+    expect(typeParameterDiagnostic.source).toBe(source);
+    expect(typeParameterDiagnostic.span).toEqual(SourceSpan.from(50, 51));
   });
 
   test("reports intrinsic duplicates on synthetic source", () => {
@@ -2116,6 +2580,7 @@ describe("item-index duplicate diagnostics", () => {
       functions: [],
       images: [],
       fields: [],
+      typeParameters: [],
       parameters: [],
     };
 
@@ -2172,7 +2637,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/semantic/item-index/diagnostics.ts src/semantic/item-index/duplicate-checker.ts src/semantic/item-index/index.ts tests/unit/semantic/item-index/duplicates.test.ts
+git add src/semantic/item-index/diagnostics.ts src/semantic/item-index/duplicate-checker.ts tests/unit/semantic/item-index/duplicates.test.ts
 git commit -m "feat: add item index duplicate diagnostics -Codex Automated"
 ```
 
@@ -2180,7 +2645,7 @@ git commit -m "feat: add item index duplicate diagnostics -Codex Automated"
 
 ### Task 17: BuildItemIndex Composition
 
-**Wave:** 5
+**Wave:** 8
 
 **Dependencies:** Tasks 13, 14, 15, and 16
 
@@ -2189,7 +2654,6 @@ git commit -m "feat: add item index duplicate diagnostics -Codex Automated"
 **Files:**
 
 - Create: `src/semantic/item-index/item-index-builder.ts`
-- Modify: `src/semantic/item-index/index.ts`
 - Create: `tests/unit/semantic/item-index/item-index-builder.test.ts`
 
 **Acceptance Criteria:**
@@ -2198,7 +2662,7 @@ git commit -m "feat: add item index duplicate diagnostics -Codex Automated"
 - `buildItemIndex({ graph, intrinsics })` merges source and intrinsic records into one dense item space.
 - Source module IDs are assigned before intrinsic module IDs.
 - Source item IDs are assigned before intrinsic item IDs.
-- Field and parameter IDs remain dense across source and intrinsic records.
+- Type, function, image, field, type-parameter, and parameter IDs remain dense across source and intrinsic records.
 - Parser diagnostics are not copied into `BuildItemIndexResult.diagnostics`.
 - Returned index is valid even when diagnostics are present.
 
@@ -2208,7 +2672,9 @@ Use this test shape:
 
 ```ts
 import { describe, expect, test } from "bun:test";
-import { buildItemIndex, intrinsicId, type IntrinsicCatalog } from "../../../../src/semantic";
+import { intrinsicId } from "../../../../src/semantic/ids";
+import { buildItemIndex } from "../../../../src/semantic/item-index/item-index-builder";
+import type { IntrinsicCatalog } from "../../../../src/semantic/item-index/intrinsic-catalog";
 import { parseSingleModuleGraphForTest } from "../../../support/frontend/module-graph-test-support";
 import { intrinsicFunctionFake } from "../../../support/semantic/intrinsic-fakes";
 
@@ -2257,6 +2723,18 @@ Expected: fails because `buildItemIndex` does not exist.
 Use this composition shape:
 
 ```ts
+function offsetsFrom(records: ItemIndexRecords): IntrinsicCollectionOffsets {
+  return {
+    moduleIdOffset: records.modules.length,
+    itemIdOffset: records.items.length,
+    typeIdOffset: records.types.length,
+    functionIdOffset: records.functions.length,
+    imageIdOffset: records.images.length,
+    fieldIdOffset: records.fields.length,
+    parameterIdOffset: records.parameters.length,
+  };
+}
+
 export function buildItemIndex(input: BuildItemIndexInput): BuildItemIndexResult {
   const source = collectSourceModulesAndTopLevelItems(input.graph.modules);
   const sourceWithMembers = collectSourceMembers(source);
@@ -2285,7 +2763,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/semantic/item-index/item-index-builder.ts src/semantic/item-index/index.ts tests/unit/semantic/item-index/item-index-builder.test.ts
+git add src/semantic/item-index/item-index-builder.ts tests/unit/semantic/item-index/item-index-builder.test.ts
 git commit -m "feat: compose item index builder -Codex Automated"
 ```
 
@@ -2293,7 +2771,7 @@ git commit -m "feat: compose item index builder -Codex Automated"
 
 ### Task 18: Semantic Public API And Integration Tests
 
-**Wave:** 5
+**Wave:** 9
 
 **Dependencies:** Tasks 9 and 17
 
@@ -2301,6 +2779,7 @@ git commit -m "feat: compose item index builder -Codex Automated"
 
 **Files:**
 
+- Create: `src/semantic/item-index/index.ts`
 - Create: `src/semantic/index.ts`
 - Modify: `src/index.ts`
 - Create: `tests/integration/semantic/item-index.test.ts`
@@ -2308,6 +2787,7 @@ git commit -m "feat: compose item index builder -Codex Automated"
 
 **Acceptance Criteria:**
 
+- `src/semantic/item-index/index.ts` re-exports every item-index module.
 - `buildItemIndex`, `ItemIndex`, ID constructors, record types, diagnostics, and intrinsic catalog types are importable from `src/semantic`.
 - Top-level `src/index.ts` exports `semantic` namespace and direct semantic exports.
 - Integration test parses a multi-module graph, builds an item index, and asserts deterministic module/item/function/type/field/parameter records.
@@ -2382,7 +2862,29 @@ Expected: fails because semantic exports do not exist.
 
 - [ ] **Step 4: Implement semantic exports and integration helpers**
 
-Use this top-level export shape:
+Create `src/semantic/item-index/index.ts` with this shape:
+
+```ts
+export * from "./diagnostics";
+export * from "./duplicate-checker";
+export * from "./intrinsic-catalog";
+export * from "./intrinsic-collector";
+export * from "./item-index";
+export * from "./item-index-builder";
+export * from "./item-records";
+export * from "./source-member-collector";
+export * from "./source-module-collector";
+export * from "./stable-serialization";
+```
+
+Create `src/semantic/index.ts` with this shape:
+
+```ts
+export * from "./ids";
+export * from "./item-index";
+```
+
+Use this top-level `src/index.ts` export shape:
 
 ```ts
 export * from "./frontend";
@@ -2406,7 +2908,7 @@ Expected: both commands pass.
 Commit:
 
 ```bash
-git add src/semantic/index.ts src/index.ts tests/integration/semantic/public-api.test.ts tests/integration/semantic/item-index.test.ts
+git add src/semantic/item-index/index.ts src/semantic/index.ts src/index.ts tests/integration/semantic/public-api.test.ts tests/integration/semantic/item-index.test.ts
 git commit -m "feat: export semantic item index API -Codex Automated"
 ```
 
@@ -2414,7 +2916,7 @@ git commit -m "feat: export semantic item index API -Codex Automated"
 
 ### Task 19: Determinism, Property Coverage, Formatting, And Handoff Verification
 
-**Wave:** 6
+**Wave:** 10
 
 **Dependencies:** Tasks 1-18
 
