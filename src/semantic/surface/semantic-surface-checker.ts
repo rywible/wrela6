@@ -208,14 +208,7 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
   builder.setProofSurfaceSeeds({ requirements, terminalSurfaces });
   const proofSurface = checkedProofSurface({ requirements, terminalSurfaces });
 
-  const certAvailability =
-    imageRootResult.selection !== undefined
-      ? imageRootResult.selection.availability
-      : {
-          targetId: input.targetSurface.targetId,
-          profileId: "" as ImageProfileId,
-          features: [] as readonly string[],
-        };
+  const certAvailability = imageRootResult.selection?.availability;
 
   const certResult = certifyPlatformBindings({
     index: input.index,

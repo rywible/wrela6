@@ -65,10 +65,12 @@ function boundSpan(boundView: {
   return SourceSpan.from(firstSpan.start, lastSpan.end);
 }
 
-function resolvedTypeItemId(type: CheckedType): number | undefined {
+function resolvedTypeItemId(type: CheckedType, index: ItemIndex): number | undefined {
   if (type.kind === "source") return type.itemId as number;
-  if (type.kind === "applied" && type.constructor.kind === "source")
-    return type.constructor.typeId as number;
+  if (type.kind === "applied" && type.constructor.kind === "source") {
+    const typeRecord = index.type(type.constructor.typeId);
+    return typeRecord?.itemId as number | undefined;
+  }
   return undefined;
 }
 
@@ -93,7 +95,7 @@ function checkBound(
   const checkedType = typeResult.type;
   if (checkedType.kind === "error") return undefined;
 
-  const boundTypeItemId = resolvedTypeItemId(checkedType);
+  const boundTypeItemId = resolvedTypeItemId(checkedType, input.index);
   const boundItem =
     boundTypeItemId !== undefined ? input.index.item(boundTypeItemId as any) : undefined;
   const constraintSpan = boundSpan(record.bound) ?? record.nameSpan;

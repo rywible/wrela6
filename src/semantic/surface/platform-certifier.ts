@@ -36,7 +36,7 @@ export interface CertifyPlatformBindingsInput {
   readonly signatures: CheckedFunctionSignatureTable;
   readonly proofSurface: CheckedProofSurface;
   readonly targetSurface: SemanticTargetSurface;
-  readonly availability: TargetAvailabilityContext;
+  readonly availability?: TargetAvailabilityContext;
 }
 
 export interface CertifyPlatformBindingsResult {
@@ -167,7 +167,10 @@ export function certifyPlatformBindings(
       continue;
     }
 
-    if (!targetAvailabilityAllows(input.availability, primitive.availability)) {
+    if (
+      input.availability !== undefined &&
+      !targetAvailabilityAllows(input.availability, primitive.availability)
+    ) {
       diagnostics.push(
         targetUnavailablePlatformPrimitive(
           functionName,
