@@ -27,6 +27,7 @@ export interface CompleteDeferredMembersInput {
 export interface CompleteDeferredMembersResult {
   readonly completed: CompletedMemberReferenceTable;
   readonly remainingDeferred: readonly DeferredMemberReference[];
+  readonly failedDeferred: readonly DeferredMemberReference[];
   readonly diagnostics: readonly SemanticSurfaceDiagnostic[];
 }
 
@@ -96,6 +97,7 @@ export function completeDeferredMembers(
 ): CompleteDeferredMembersResult {
   const completed: CompletedMemberReference[] = [];
   const remaining: DeferredMemberReference[] = [];
+  const failed: DeferredMemberReference[] = [];
   const diagnostics: SemanticSurfaceDiagnostic[] = [];
 
   const entriesByKey = new Map<string, ResolvedReference>();
@@ -113,7 +115,11 @@ export function completeDeferredMembers(
     }
 
     if (ownerItemId === undefined) {
-      remaining.push(deferredMember);
+      if (receiverRef?.kind === "parameter") {
+        failed.push(deferredMember);
+      } else {
+        remaining.push(deferredMember);
+      }
       continue;
     }
 
@@ -146,6 +152,7 @@ export function completeDeferredMembers(
   return {
     completed: completedTable,
     remainingDeferred: remaining,
+    failedDeferred: failed,
     diagnostics,
   };
 }

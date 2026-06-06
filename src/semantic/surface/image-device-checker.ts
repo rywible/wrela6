@@ -107,20 +107,43 @@ export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevi
       continue;
     }
 
-    if (
-      deviceSurface.availability.targetId !== input.selection.availability.targetId ||
-      !deviceSurface.availability.profiles.includes(input.selection.availability.profileId)
-    ) {
+    if (deviceSurface.availability.targetId !== input.selection.availability.targetId) {
       diagnostics.push(
         targetUnavailableImageDevice(
           field.name,
-          "Device surface not available for selected target/profile",
+          "Device surface not available for selected target",
           field.span,
           undefined as any,
           { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
         ),
       );
       continue;
+    }
+    if (!deviceSurface.availability.profiles.includes(input.selection.availability.profileId)) {
+      diagnostics.push(
+        targetUnavailableImageDevice(
+          field.name,
+          "Device surface not available for selected profile",
+          field.span,
+          undefined as any,
+          { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
+        ),
+      );
+      continue;
+    }
+    for (const requiredFeature of deviceSurface.availability.features) {
+      if (!input.selection.availability.features.includes(requiredFeature)) {
+        diagnostics.push(
+          targetUnavailableImageDevice(
+            field.name,
+            `Device surface requires feature '${requiredFeature}' which is not available`,
+            field.span,
+            undefined as any,
+            { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
+          ),
+        );
+        continue;
+      }
     }
 
     const deviceResourceKind: CheckedResourceKind = {

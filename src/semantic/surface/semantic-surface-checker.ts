@@ -148,15 +148,15 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
     builder.addCompletedMember(completed);
   }
 
-  for (const remaining of deferredResult.remainingDeferred) {
+  for (const failed of deferredResult.failedDeferred) {
     diagnostics.push({
       code: "SURFACE_UNRESOLVED_DEFERRED_MEMBER" as const,
-      message: `Unresolved deferred member '${remaining.memberName}'.`,
+      message: `Unresolved deferred member '${failed.memberName}'.`,
       severity: "error" as const,
-      span: remaining.memberSpan,
+      span: failed.memberSpan,
       order: {
-        moduleId: remaining.key.moduleId,
-        span: remaining.memberSpan,
+        moduleId: failed.key.moduleId,
+        span: failed.memberSpan,
         codeTieBreaker: "deferred",
       },
     });

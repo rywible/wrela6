@@ -25,7 +25,7 @@ test("deferred member completion runs without error", () => {
   expect(Array.isArray(result.remainingDeferred)).toBe(true);
 });
 
-test("body-local deferred member remains explicit for HIR", () => {
+test("parameter deferred member without typed owner is reported as failed", () => {
   const fixture = parseAndResolveSurfaceFixture([
     ["main.wr", "fn f(packet: Packet):\n    packet.len\nclass Packet:\n    len: u32\n"],
   ]);
@@ -37,7 +37,7 @@ test("body-local deferred member remains explicit for HIR", () => {
     typedOwners: new Map(),
   });
 
-  expect(result.remainingDeferred.length).toBeGreaterThan(0);
+  expect(result.failedDeferred.length).toBeGreaterThan(0);
 });
 
 test("deriveTypedOwnersFromSignatures returns empty map for empty signatures", () => {
