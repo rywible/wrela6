@@ -13,7 +13,8 @@ import type { CheckedResourceKind, TypeParameterKey } from "./resource-kind";
 import type { TypeParameterOwner } from "../item-index/item-records";
 import type { CheckedProofSurface } from "./proof-surface";
 import { checkedProofSurface } from "./proof-surface";
-import type { SyntaxReferenceKey, ResolvedReference } from "../names/reference";
+import type { ResolvedReference } from "../names/reference";
+import type { SyntaxReferenceKey } from "../names/reference";
 import type { SourceSpan } from "../../frontend";
 import { compareCodeUnitStrings } from "./deterministic-sort";
 
@@ -68,7 +69,6 @@ export interface CheckedParameter {
   readonly type: CheckedType;
   readonly mode: "observe" | "consume";
   readonly resourceKind: CheckedResourceKind;
-  readonly referenceKey?: SyntaxReferenceKey;
   readonly sourceSpan: SourceSpan;
 }
 
@@ -76,7 +76,6 @@ export interface CheckedReceiver {
   readonly parameterId: ParameterId;
   readonly ownerItemId: ItemId;
   readonly mode: "observe" | "consume";
-  readonly referenceKey?: SyntaxReferenceKey;
 }
 
 export interface CheckedFunctionModifiers {

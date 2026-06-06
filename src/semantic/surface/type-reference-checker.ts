@@ -169,9 +169,10 @@ function checkTypeArguments(
   ) {
     return { type: errorCheckedType(), diagnostics };
   }
-
   const appliedResourceKind =
-    constructorType.kind === "core" ? concreteKind("Copy") : { kind: "error" as const };
+    constructorType.kind === "core" || constructorType.kind === "source"
+      ? concreteKind("Copy")
+      : { kind: "error" as const };
 
   return {
     type: appliedType({

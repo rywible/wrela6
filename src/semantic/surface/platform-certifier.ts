@@ -119,7 +119,11 @@ function targetAvailabilityAllows(
   primitiveAvailability: TargetAvailability,
 ): boolean {
   if (primitiveAvailability.targetId !== availability.targetId) return false;
-  return primitiveAvailability.profiles.includes(availability.profileId);
+  if (!primitiveAvailability.profiles.includes(availability.profileId)) return false;
+  for (const requiredFeature of primitiveAvailability.features) {
+    if (!availability.features.includes(requiredFeature)) return false;
+  }
+  return true;
 }
 
 export function certifyPlatformBindings(

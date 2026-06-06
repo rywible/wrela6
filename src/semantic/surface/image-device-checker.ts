@@ -6,16 +6,11 @@ import type { SemanticTargetSurface, DeviceSurfaceSpec } from "./platform-surfac
 import type { SurfaceReferenceLookup } from "./reference-lookup";
 import type { CoreTypeCatalog } from "../names/core-types";
 import { checkTypeReference } from "./type-reference-checker";
-import type { ResourceKindContext } from "./resource-kind-checker";
-import { resourceKindForType } from "./resource-kind-checker";
 import type { CheckedType } from "./type-model";
+import type { ResourceKindContext } from "./resource-kind-checker";
 import type { CheckedResourceKind } from "./resource-kind";
 import type { SemanticSurfaceDiagnostic } from "./diagnostics";
-import {
-  duplicateUniqueEdgeRoot,
-  targetUnavailableImageDevice,
-  invalidImageDeviceType,
-} from "./diagnostics";
+import { duplicateUniqueEdgeRoot, targetUnavailableImageDevice } from "./diagnostics";
 import type { SourceSpan } from "../../frontend";
 
 export interface CheckedImageDevice {
@@ -112,27 +107,26 @@ export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevi
       continue;
     }
 
-    const deviceResourceKind: CheckedResourceKind = resourceKindForType({
-      type: checkedType.type,
-      context: input.kindContext,
-    });
-
-    if (deviceSurface.resourceKind !== undefined) {
-      if (
-        deviceResourceKind.kind === "concrete" &&
-        deviceResourceKind.value !== deviceSurface.resourceKind
-      ) {
-        diagnostics.push(
-          invalidImageDeviceType(
-            field.name,
-            `Expected resource kind '${deviceSurface.resourceKind}', got '${deviceResourceKind.value}'`,
-            field.span,
-            undefined as any,
-            { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
-          ),
-        );
-      }
+    if (
+      deviceSurface.availability.targetId !== input.selection.availability.targetId ||
+      !deviceSurface.availability.profiles.includes(input.selection.availability.profileId)
+    ) {
+      diagnostics.push(
+        targetUnavailableImageDevice(
+          field.name,
+          "Device surface not available for selected target/profile",
+          field.span,
+          undefined as any,
+          { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
+        ),
+      );
+      continue;
     }
+
+    const deviceResourceKind: CheckedResourceKind = {
+      kind: "concrete",
+      value: deviceSurface.resourceKind,
+    };
 
     const checkedDevice: CheckedImageDevice = {
       fieldId: field.id,

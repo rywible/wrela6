@@ -148,6 +148,20 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
     builder.addCompletedMember(completed);
   }
 
+  for (const remaining of deferredResult.remainingDeferred) {
+    diagnostics.push({
+      code: "SURFACE_UNRESOLVED_DEFERRED_MEMBER" as const,
+      message: `Unresolved deferred member '${remaining.memberName}'.`,
+      severity: "error" as const,
+      span: remaining.memberSpan,
+      order: {
+        moduleId: remaining.key.moduleId,
+        span: remaining.memberSpan,
+        codeTieBreaker: "deferred",
+      },
+    });
+  }
+
   const imageRootResult = selectImageRoot({
     index: input.index,
     targetSurface: input.targetSurface,
