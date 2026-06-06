@@ -9,6 +9,7 @@ import {
   appliedType,
   errorCheckedType,
 } from "./type-model";
+import { concreteKind } from "./resource-kind";
 import type { SurfaceReferenceLookup, ReferenceLookupResult } from "./reference-lookup";
 import type { SemanticSurfaceDiagnostic } from "./diagnostics";
 import { invalidTypeReference, nonTypeReference, wrongGenericArgumentCount } from "./diagnostics";
@@ -169,11 +170,14 @@ function checkTypeArguments(
     return { type: errorCheckedType(), diagnostics };
   }
 
+  const appliedResourceKind =
+    constructorType.kind === "core" ? concreteKind("Copy") : { kind: "error" as const };
+
   return {
     type: appliedType({
       constructor: constructorId,
       arguments: resolvedTypeArgs,
-      resourceKind: { kind: "error" },
+      resourceKind: appliedResourceKind,
     }),
     diagnostics,
   };

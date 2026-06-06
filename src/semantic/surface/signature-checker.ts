@@ -22,7 +22,6 @@ import type { TargetFunctionSignature } from "./platform-surface";
 import { compareCodeUnitStrings } from "./deterministic-sort";
 import { SourceSpan } from "../../frontend";
 import type { SourceText, TypeReferenceView } from "../../frontend";
-import type { SyntaxReferenceKey } from "../names/reference";
 
 export interface CheckFunctionSignatureInput {
   readonly functionRecord: FunctionRecord;
@@ -145,23 +144,12 @@ function checkedParameterFromRecord(
     context: input.kindContext,
   });
 
-  let referenceKey: SyntaxReferenceKey | undefined;
-  if (typeResult.type.kind === "source") {
-    referenceKey = {
-      moduleId: input.functionRecord.moduleId,
-      span: paramRecord.span,
-      kind: "parameter",
-      ordinal: paramRecord.id as number,
-    } as any;
-  }
-
   return {
     parameterId: paramRecord.id,
     name: paramRecord.name,
     type: typeResult.type,
     mode: paramRecord.isConsumed ? "consume" : "observe",
     resourceKind,
-    referenceKey,
     sourceSpan: paramRecord.span,
   };
 }

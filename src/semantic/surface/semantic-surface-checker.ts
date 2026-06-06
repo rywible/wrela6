@@ -194,20 +194,27 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
   builder.setProofSurfaceSeeds({ requirements, terminalSurfaces });
   const proofSurface = checkedProofSurface({ requirements, terminalSurfaces });
 
-  if (imageRootResult.selection !== undefined) {
-    const certResult = certifyPlatformBindings({
-      index: input.index,
-      platformBindings: input.platformBindings,
-      signatures: signaturesResult.signatures,
-      proofSurface,
-      targetSurface: input.targetSurface,
-      availability: imageRootResult.selection.availability,
-    });
-    diagnostics.push(...certResult.diagnostics);
+  const certAvailability =
+    imageRootResult.selection !== undefined
+      ? imageRootResult.selection.availability
+      : {
+          targetId: input.targetSurface.targetId,
+          profileId: "" as ImageProfileId,
+          features: [] as readonly string[],
+        };
 
-    for (const binding of certResult.bindings.entries()) {
-      builder.addCertifiedPlatformBinding(binding);
-    }
+  const certResult = certifyPlatformBindings({
+    index: input.index,
+    platformBindings: input.platformBindings,
+    signatures: signaturesResult.signatures,
+    proofSurface,
+    targetSurface: input.targetSurface,
+    availability: certAvailability,
+  });
+  diagnostics.push(...certResult.diagnostics);
+
+  for (const binding of certResult.bindings.entries()) {
+    builder.addCertifiedPlatformBinding(binding);
   }
 
   let devices: readonly CheckedImageDevice[] = [];

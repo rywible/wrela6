@@ -1,4 +1,4 @@
-import type { ItemId } from "../ids";
+import type { ItemId, ParameterId } from "../ids";
 import type { ItemIndex } from "../item-index";
 import type { DeferredMemberReference } from "../names";
 import type {
@@ -21,7 +21,7 @@ export interface CompleteDeferredMembersInput {
   readonly index: ItemIndex;
   readonly references: ResolvedReferences;
   readonly memberNamespace: MemberNamespace;
-  readonly typedOwners: ReadonlyMap<string, ItemId>;
+  readonly typedOwners: ReadonlyMap<ParameterId, ItemId>;
 }
 
 export interface CompleteDeferredMembersResult {
@@ -30,31 +30,25 @@ export interface CompleteDeferredMembersResult {
   readonly diagnostics: readonly SemanticSurfaceDiagnostic[];
 }
 
-export function ownerItemIdForCheckedType(type: CheckedType): ItemId | undefined {
-  if (type.kind === "source") return type.itemId;
-  return undefined;
-}
-
 export function deriveTypedOwnersFromSignatures(input: {
   readonly signatures: CheckedFunctionSignatureTable;
   readonly references: ResolvedReferences;
-}): ReadonlyMap<string, ItemId> {
-  const owners = new Map<string, ItemId>();
+}): ReadonlyMap<ParameterId, ItemId> {
+  const owners = new Map<ParameterId, ItemId>();
   for (const signature of input.signatures.entries()) {
-    if (signature.receiver?.referenceKey) {
-      owners.set(
-        syntaxReferenceKeyToString(signature.receiver.referenceKey),
-        signature.receiver.ownerItemId,
-      );
-    }
     for (const parameter of signature.parameters) {
       const ownerItemId = ownerItemIdForCheckedType(parameter.type);
-      if (parameter.referenceKey !== undefined && ownerItemId !== undefined) {
-        owners.set(syntaxReferenceKeyToString(parameter.referenceKey), ownerItemId);
+      if (ownerItemId !== undefined) {
+        owners.set(parameter.parameterId, ownerItemId);
       }
     }
   }
   return owners;
+}
+
+export function ownerItemIdForCheckedType(type: CheckedType): ItemId | undefined {
+  if (type.kind === "source") return type.itemId;
+  return undefined;
 }
 
 function handleMemberResult(
@@ -104,9 +98,20 @@ export function completeDeferredMembers(
   const remaining: DeferredMemberReference[] = [];
   const diagnostics: SemanticSurfaceDiagnostic[] = [];
 
+  const entriesByKey = new Map<string, ResolvedReference>();
+  for (const entry of input.references.entries()) {
+    entriesByKey.set(syntaxReferenceKeyToString(entry.key), entry.reference);
+  }
+
   for (const deferredMember of input.references.deferredMembers()) {
     const ownerKey = deferredMember.receiverExpressionKey ?? deferredMember.key;
-    const ownerItemId = input.typedOwners.get(syntaxReferenceKeyToString(ownerKey));
+    const receiverRef = entriesByKey.get(syntaxReferenceKeyToString(ownerKey));
+    let ownerItemId: ItemId | undefined;
+
+    if (receiverRef?.kind === "parameter") {
+      ownerItemId = input.typedOwners.get(receiverRef.parameterId);
+    }
+
     if (ownerItemId === undefined) {
       remaining.push(deferredMember);
       continue;
@@ -126,9 +131,16 @@ export function completeDeferredMembers(
   for (const entry of completed) {
     completedByKey.set(syntaxReferenceKeyToString(entry.key), entry.reference);
   }
+  const sorted = [...completed].sort((left, right) => {
+    const leftKey = syntaxReferenceKeyToString(left.key);
+    const rightKey = syntaxReferenceKeyToString(right.key);
+    if (leftKey < rightKey) return -1;
+    if (leftKey > rightKey) return 1;
+    return 0;
+  });
   const completedTable: CompletedMemberReferenceTable = {
     get: (key) => completedByKey.get(syntaxReferenceKeyToString(key)),
-    entries: () => completed,
+    entries: () => [...sorted],
   };
 
   return {

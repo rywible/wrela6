@@ -68,11 +68,9 @@ export interface CheckedImageSurfaceTable {
 }
 
 export interface CheckedProofSurface {
-  readonly resourceKindByType: ReadonlyMap<string, any>;
-  readonly signatureModes: ReadonlyMap<string, any>;
   readonly requirementSurfaces: CheckedRequirementSurfaceTable;
-  readonly predicateFactSurfaces: CheckedPredicateFactSurfaceTable;
   readonly terminalSurfaces: CheckedTerminalSurfaceTable;
+  readonly predicateFactSurfaces: CheckedPredicateFactSurfaceTable;
   readonly validationSurfaces: CheckedValidationSurfaceTable;
   readonly privateStateSurfaces: CheckedPrivateStateSurfaceTable;
   readonly imageSurfaces: CheckedImageSurfaceTable;
@@ -170,8 +168,6 @@ export function checkedProofSurface(input: {
   readonly terminalSurfaces?: readonly CheckedTerminalSurface[];
 }): CheckedProofSurface {
   return {
-    resourceKindByType: new Map(),
-    signatureModes: new Map(),
     requirementSurfaces: checkedRequirementSurfaceTable(input.requirements ?? []),
     predicateFactSurfaces: checkedPredicateFactSurfaceTable([]),
     terminalSurfaces: checkedTerminalSurfaceTable(input.terminalSurfaces ?? []),

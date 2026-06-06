@@ -260,7 +260,7 @@ export function certifyPlatformBindings(
   const byId = new Map(sorted.map((entry) => [entry.functionId, entry]));
   const bindingTable: CertifiedPlatformBindingTable = {
     get: (functionId) => byId.get(functionId),
-    entries: () => sorted,
+    entries: () => [...sorted],
   };
 
   return {

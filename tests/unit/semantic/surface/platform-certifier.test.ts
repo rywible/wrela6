@@ -20,8 +20,6 @@ import type { CheckedProofSurface } from "../../../../src/semantic/surface/proof
 
 function emptyProofSurface(): CheckedProofSurface {
   return {
-    resourceKindByType: new Map(),
-    signatureModes: new Map(),
     requirementSurfaces: { entries: () => [], get: () => undefined },
     predicateFactSurfaces: { entries: () => [], get: () => undefined },
     terminalSurfaces: { entries: () => [], get: () => undefined },
