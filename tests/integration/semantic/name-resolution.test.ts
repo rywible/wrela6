@@ -106,6 +106,20 @@ test("unknown function call produces diagnostic", () => {
   ).toBe(true);
 });
 
+test("name resolution walks ensure expressions", () => {
+  const graph = parseModuleGraphForTest([["main.wr", "fn run():\n    ensure missing_fn()\n"]]);
+  const indexResult = buildItemIndex({ graph });
+  const nameResult = resolveNames({
+    graph,
+    index: indexResult.index,
+    coreTypes: CoreTypeCatalog.default(),
+    platformPrimitiveNames: platformPrimitiveNameCatalog([]),
+  });
+  expect(nameResult.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+    "NAME_UNRESOLVED_NAME",
+  );
+});
+
 test("let locals do not produce unresolved diagnostics", () => {
   const graph = parseModuleGraphForTest([
     ["main.wr", "fn run() -> u32:\n    let x = 42\n    return x\n"],

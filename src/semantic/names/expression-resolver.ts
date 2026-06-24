@@ -294,6 +294,13 @@ function walkStatement(node: RedNode, context: ResolutionWalkContext): void {
     case SyntaxKind.ContinueStatement: {
       break;
     }
+    case SyntaxKind.EnsureStatement: {
+      const ensureStmt = stmtViews.EnsureStatementView.from(node);
+      if (ensureStmt === undefined) break;
+      const expr = ensureStmt.expression();
+      if (expr !== undefined) resolveExpression(expr, context);
+      break;
+    }
     case SyntaxKind.TakeStatement: {
       const takeStmt = stmtViews.TakeStatementView.from(node);
       if (takeStmt === undefined) break;
