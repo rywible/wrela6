@@ -3,6 +3,7 @@ import { RedNode } from "./red-node";
 import type { SourceText } from "../lexer/source-text";
 import { SourceSpan } from "../lexer/source-span";
 import type { DiagnosticSeverity } from "../../shared/diagnostics";
+import { compareCodeUnitStrings } from "../../semantic/surface/deterministic-sort";
 
 export class SyntaxTree {
   readonly source: SourceText;
@@ -31,7 +32,7 @@ export class SyntaxTree {
     result.sort((left, right) => {
       if (left.span.start !== right.span.start) return left.span.start - right.span.start;
       if (left.span.end !== right.span.end) return left.span.end - right.span.end;
-      return left.code.localeCompare(right.code);
+      return compareCodeUnitStrings(left.code, right.code);
     });
     return result;
   }

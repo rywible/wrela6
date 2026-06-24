@@ -9,6 +9,8 @@ import {
   ForStatementView,
   TakeStatementView,
   ElseClauseView,
+  BreakStatementView,
+  EnsureStatementView,
 } from "../../../../src/frontend/ast/statement-views";
 import {
   RequireSectionView,
@@ -131,5 +133,32 @@ describe("statement and requirement views", () => {
 
     expect(view.body()).toBeUndefined();
     expect(view.statement()).toBeDefined();
+  });
+
+  test("BreakStatementView recognizes break nodes", () => {
+    const root = parseSourceRoot("fn main() -> Never:\n    loop:\n        break\n");
+    const breakNode = descendants(root, SyntaxKind.BreakStatement)[0]!;
+    expect(BreakStatementView.from(breakNode)).toBeDefined();
+  });
+
+  test("BreakStatementView returns undefined for non-break nodes", () => {
+    const root = parseSourceRoot("fn main() -> Never:\n    loop:\n        break\n");
+    const loopNode = descendants(root, SyntaxKind.LoopStatement)[0]!;
+    expect(BreakStatementView.from(loopNode)).toBeUndefined();
+  });
+
+  test("EnsureStatementView exposes ensured expression", () => {
+    const root = parseSourceRoot("fn main(x: bool) -> Never:\n    ensure x\n");
+    const ensureNode = descendants(root, SyntaxKind.EnsureStatement)[0]!;
+    const view = EnsureStatementView.from(ensureNode)!;
+
+    expect(view.expression()).toBeDefined();
+    expect(view.expression()!.kind).toBe(SyntaxKind.NameExpression);
+  });
+
+  test("EnsureStatementView returns undefined for non-ensure nodes", () => {
+    const root = parseSourceRoot("fn main(x: bool) -> Never:\n    ensure x\n");
+    const functionNode = descendants(root, SyntaxKind.FunctionDeclaration)[0]!;
+    expect(EnsureStatementView.from(functionNode)).toBeUndefined();
   });
 });

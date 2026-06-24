@@ -57,6 +57,8 @@ export enum TokenKind {
   Return,
   Yield,
   Continue,
+  Break,
+  Ensure,
   Take,
   // oxlint-disable-next-line id-length
   As,

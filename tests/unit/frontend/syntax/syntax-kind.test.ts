@@ -8,7 +8,7 @@ import {
 import { TokenKind } from "../../../../src/frontend/lexer/token-kind";
 import { allTokenKinds } from "../../../support/frontend/token-kind-helpers";
 
-const TOKEN_COUNT = 79;
+const TOKEN_COUNT = 81;
 
 describe("syntax kind mapping", () => {
   test("every TokenKind maps to a SyntaxKind without throwing", () => {

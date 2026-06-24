@@ -1,5 +1,6 @@
 import type { Diagnostic } from "../../shared/diagnostics";
 import type { LexDiagnostic } from "../lexer/diagnostics";
+import { compareCodeUnitStrings } from "../../semantic/surface/deterministic-sort";
 
 export type ParseDiagnosticCode =
   | "PARSE_EXPECTED_TOKEN"
@@ -47,7 +48,7 @@ export function combineDiagnostics(
   all.sort((left, right) => {
     if (left.span.start !== right.span.start) return left.span.start - right.span.start;
     if (left.span.end !== right.span.end) return left.span.end - right.span.end;
-    return left.code.localeCompare(right.code);
+    return compareCodeUnitStrings(left.code, right.code);
   });
   return all;
 }

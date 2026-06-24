@@ -124,3 +124,32 @@ export function parseTakeStatement(context: ParserContext): GreenNode {
 
   return nodeFromMark({ factory, context, mark, kind: SyntaxKind.TakeStatement, children });
 }
+
+export function parseBreakStatement(context: ParserContext): GreenNode {
+  const factory = context.factory;
+  const mark = context.mark();
+  const children: GreenElement[] = [];
+
+  children.push(context.expect(SyntaxKind.BreakKeyword));
+
+  if (context.currentSyntaxKind() === SyntaxKind.NewlineToken) {
+    children.push(context.consume());
+  }
+
+  return nodeFromMark({ factory, context, mark, kind: SyntaxKind.BreakStatement, children });
+}
+
+export function parseEnsureStatement(context: ParserContext): GreenNode {
+  const factory = context.factory;
+  const mark = context.mark();
+  const children: GreenElement[] = [];
+
+  children.push(context.expect(SyntaxKind.EnsureKeyword));
+  children.push(parseExpression(context));
+
+  if (context.currentSyntaxKind() === SyntaxKind.NewlineToken) {
+    children.push(context.consume());
+  }
+
+  return nodeFromMark({ factory, context, mark, kind: SyntaxKind.EnsureStatement, children });
+}

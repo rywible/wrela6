@@ -15,6 +15,8 @@ import {
   parseWhileStatement,
   parseForStatement,
   parseTakeStatement,
+  parseBreakStatement,
+  parseEnsureStatement,
 } from "./control-statement-parser";
 import { parseMatchStatement } from "./match-statement-parser";
 import { parseFunctionDeclaration } from "./function-declaration-parser";
@@ -29,6 +31,10 @@ export function parseStatement(context: ParserContext): GreenElement | undefined
       return parseYieldStatement(context);
     case SyntaxKind.ContinueKeyword:
       return parseContinueStatement(context);
+    case SyntaxKind.BreakKeyword:
+      return parseBreakStatement(context);
+    case SyntaxKind.EnsureKeyword:
+      return parseEnsureStatement(context);
     case SyntaxKind.LoopKeyword:
       return parseLoopStatement(context);
     case SyntaxKind.IfKeyword:

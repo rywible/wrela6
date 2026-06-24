@@ -256,6 +256,24 @@ export class ContinueStatementView extends AstView {
   }
 }
 
+export class BreakStatementView extends AstView {
+  static from(node: RedNode): BreakStatementView | undefined {
+    return node.kind === SyntaxKind.BreakStatement ? new BreakStatementView(node) : undefined;
+  }
+}
+
+export class EnsureStatementView extends AstView {
+  static from(node: RedNode): EnsureStatementView | undefined {
+    return node.kind === SyntaxKind.EnsureStatement ? new EnsureStatementView(node) : undefined;
+  }
+
+  expression(): ExpressionView | undefined {
+    return expressionViewFrom(
+      this.node.children().find((child): child is RedNode => child instanceof RedNode),
+    );
+  }
+}
+
 export class ExpressionStatementView extends AstView {
   static from(node: RedNode): ExpressionStatementView | undefined {
     return node.kind === SyntaxKind.ExpressionStatement

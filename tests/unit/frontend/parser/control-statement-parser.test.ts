@@ -12,7 +12,10 @@ import {
   parseWhileStatement,
   parseForStatement,
   parseTakeStatement,
+  parseBreakStatement,
+  parseEnsureStatement,
 } from "../../../../src/frontend/parser/control-statement-parser";
+import { parseStatement } from "../../../../src/frontend/parser/statement-parser";
 
 function makeToken(kind: TokenKind, lexeme: string, start: number, end: number): Token {
   return new Token({
@@ -312,5 +315,110 @@ describe("parseTakeStatement", () => {
 
     expect(node.reconstruct()).toBe("takevalueasx:\n    ");
     expect(context.draftDiagnostics()).toHaveLength(0);
+  });
+});
+
+describe("parseBreakStatement", () => {
+  test("creates break statement node", () => {
+    const tokens = [
+      makeToken(TokenKind.Break, "break", 0, 5),
+      makeToken(TokenKind.Newline, "\n", 5, 6),
+      makeToken(TokenKind.Eof, "", 6, 6),
+    ];
+    const context = makeContext(tokens);
+    const node = parseBreakStatement(context);
+
+    expect(node.kind).toBe(SyntaxKind.BreakStatement);
+    expect(node.children[0]!.kind).toBe(SyntaxKind.BreakKeyword);
+    expect(node.children[1]!.kind).toBe(SyntaxKind.NewlineToken);
+    expect(node.reconstruct()).toBe("break\n");
+    expect(context.draftDiagnostics()).toHaveLength(0);
+  });
+
+  test("break without trailing newline", () => {
+    const tokens = [makeToken(TokenKind.Break, "break", 0, 5), makeToken(TokenKind.Eof, "", 5, 5)];
+    const context = makeContext(tokens);
+    const node = parseBreakStatement(context);
+
+    expect(node.kind).toBe(SyntaxKind.BreakStatement);
+    expect(node.children[0]!.kind).toBe(SyntaxKind.BreakKeyword);
+    expect(node.reconstruct()).toBe("break");
+    expect(context.draftDiagnostics()).toHaveLength(0);
+  });
+
+  test("dispatches via parseStatement on BreakKeyword", () => {
+    const tokens = [
+      makeToken(TokenKind.Break, "break", 0, 5),
+      makeToken(TokenKind.Newline, "\n", 5, 6),
+      makeToken(TokenKind.Eof, "", 6, 6),
+    ];
+    const context = makeContext(tokens);
+    const node = parseStatement(context);
+
+    expect(node?.kind).toBe(SyntaxKind.BreakStatement);
+  });
+});
+
+describe("parseEnsureStatement", () => {
+  test("creates ensure statement node", () => {
+    const tokens = [
+      makeToken(TokenKind.Ensure, "ensure", 0, 6),
+      makeToken(TokenKind.Identifier, "ready", 6, 11),
+      makeToken(TokenKind.Newline, "\n", 11, 12),
+      makeToken(TokenKind.Eof, "", 12, 12),
+    ];
+    const context = makeContext(tokens);
+    const node = parseEnsureStatement(context);
+
+    expect(node.kind).toBe(SyntaxKind.EnsureStatement);
+    expect(node.children[0]!.kind).toBe(SyntaxKind.EnsureKeyword);
+    expect((node.children[1] as GreenNode).kind).toBe(SyntaxKind.NameExpression);
+    expect(node.children[2]!.kind).toBe(SyntaxKind.NewlineToken);
+    expect(node.reconstruct()).toBe("ensureready\n");
+    expect(context.draftDiagnostics()).toHaveLength(0);
+  });
+
+  test("ensure without trailing newline", () => {
+    const tokens = [
+      makeToken(TokenKind.Ensure, "ensure", 0, 6),
+      makeToken(TokenKind.Identifier, "ready", 6, 11),
+      makeToken(TokenKind.Eof, "", 11, 11),
+    ];
+    const context = makeContext(tokens);
+    const node = parseEnsureStatement(context);
+
+    expect(node.kind).toBe(SyntaxKind.EnsureStatement);
+    expect((node.children[1] as GreenNode).kind).toBe(SyntaxKind.NameExpression);
+    expect(node.reconstruct()).toBe("ensureready");
+    expect(context.draftDiagnostics()).toHaveLength(0);
+  });
+
+  test("dispatches via parseStatement on EnsureKeyword", () => {
+    const tokens = [
+      makeToken(TokenKind.Ensure, "ensure", 0, 6),
+      makeToken(TokenKind.Identifier, "ready", 6, 11),
+      makeToken(TokenKind.Newline, "\n", 11, 12),
+      makeToken(TokenKind.Eof, "", 12, 12),
+    ];
+    const context = makeContext(tokens);
+    const node = parseStatement(context);
+
+    expect(node?.kind).toBe(SyntaxKind.EnsureStatement);
+  });
+
+  test("malformed ensure reports expected expression", () => {
+    const tokens = [
+      makeToken(TokenKind.Ensure, "ensure", 0, 6),
+      makeToken(TokenKind.Newline, "\n", 6, 7),
+      makeToken(TokenKind.Eof, "", 7, 7),
+    ];
+    const context = makeContext(tokens);
+    const node = parseEnsureStatement(context);
+
+    expect(node.kind).toBe(SyntaxKind.EnsureStatement);
+    expect((node.children[1] as GreenNode).kind).toBe(SyntaxKind.MissingNode);
+    expect(context.draftDiagnostics().map((diagnostic) => diagnostic.code)).toContain(
+      "PARSE_EXPECTED_EXPRESSION",
+    );
   });
 });

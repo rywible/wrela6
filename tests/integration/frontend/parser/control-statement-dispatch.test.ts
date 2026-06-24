@@ -5,7 +5,7 @@ import { Lexer } from "../../../../src/frontend/lexer/lexer";
 import { SourceText } from "../../../../src/frontend/lexer/source-text";
 import { Parser } from "../../../../src/frontend/parser/parser";
 import { SyntaxKind } from "../../../../src/frontend/syntax/syntax-kind";
-import type { RedNode } from "../../../../src/frontend/syntax/red-node";
+import { RedNode } from "../../../../src/frontend/syntax/red-node";
 
 function createLexer(): Lexer {
   return new Lexer({
@@ -161,4 +161,82 @@ describe("Control statement dispatch (integration)", () => {
 
     expect(result.parserDiagnostics).toHaveLength(0);
   });
+
+  test("break statement round-trips inside loop body", () => {
+    const source = SourceText.from("test.wr", "fn main() -> Never:\n    loop:\n        break\n");
+    const lexResult = createLexer().lex(source);
+    const parser = new Parser();
+    const result = parser.parseLexResult({ lexResult });
+
+    expect(result.tree.reconstruct()).toBe(source.text);
+
+    const root = result.tree.root();
+    const breakNodes = collectByKind(root, SyntaxKind.BreakStatement);
+    expect(breakNodes).toHaveLength(1);
+    expect(breakNodes[0]!.children()[0]!.kind).toBe(SyntaxKind.BreakKeyword);
+    expect(result.parserDiagnostics).toHaveLength(0);
+  });
+
+  test("ensure statement round-trips inside block", () => {
+    const source = SourceText.from("test.wr", "fn main(x: bool) -> Never:\n    ensure x\n");
+    const lexResult = createLexer().lex(source);
+    const parser = new Parser();
+    const result = parser.parseLexResult({ lexResult });
+
+    expect(result.tree.reconstruct()).toBe(source.text);
+
+    const root = result.tree.root();
+    const ensureNodes = collectByKind(root, SyntaxKind.EnsureStatement);
+    expect(ensureNodes).toHaveLength(1);
+    const children = ensureNodes[0]!.children();
+    expect(children[0]!.kind).toBe(SyntaxKind.EnsureKeyword);
+    expect(children[1]!.kind).toBe(SyntaxKind.NameExpression);
+    expect(result.parserDiagnostics).toHaveLength(0);
+  });
+
+  test("break and ensure surface as statements in sequence", () => {
+    const source = SourceText.from(
+      "test.wr",
+      "fn main(x: bool) -> Never:\n    loop:\n        break\n    ensure x\n",
+    );
+    const lexResult = createLexer().lex(source);
+    const parser = new Parser();
+    const result = parser.parseLexResult({ lexResult });
+
+    expect(result.tree.reconstruct()).toBe(source.text);
+
+    const root = result.tree.root();
+    expect(collectByKind(root, SyntaxKind.BreakStatement)).toHaveLength(1);
+    expect(collectByKind(root, SyntaxKind.EnsureStatement)).toHaveLength(1);
+    expect(result.parserDiagnostics).toHaveLength(0);
+  });
+
+  test("malformed ensure recovery diagnostics sort deterministically", () => {
+    const source = SourceText.from("test.wr", "fn main() -> Never:\n    ensure\n    break\n");
+    const parser = new Parser();
+
+    const firstResult = parser.parseLexResult({ lexResult: createLexer().lex(source) });
+    const secondResult = parser.parseLexResult({ lexResult: createLexer().lex(source) });
+
+    expect(firstResult.parserDiagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+      secondResult.parserDiagnostics.map((diagnostic) => diagnostic.code),
+    );
+  });
 });
+
+function collectByKind(root: RedNode, kind: SyntaxKind): RedNode[] {
+  const matches: RedNode[] = [];
+  const stack: RedNode[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node.kind === kind) {
+      matches.push(node);
+    }
+    for (const child of node.children()) {
+      if (child instanceof RedNode) {
+        stack.push(child);
+      }
+    }
+  }
+  return matches;
+}

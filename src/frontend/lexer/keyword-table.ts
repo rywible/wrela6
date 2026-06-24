@@ -65,6 +65,8 @@ const DEFAULT_KEYWORD_MAP: ReadonlyMap<string, TokenKind> = new Map([
   ["return", TokenKind.Return],
   ["yield", TokenKind.Yield],
   ["continue", TokenKind.Continue],
+  ["break", TokenKind.Break],
+  ["ensure", TokenKind.Ensure],
   ["take", TokenKind.Take],
   ["as", TokenKind.As],
   ["with", TokenKind.With],

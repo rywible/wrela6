@@ -50,6 +50,8 @@ const TOKEN_KIND_TO_SYNTAX_KIND = {
   [TokenKind.Return]: SyntaxKind.ReturnKeyword,
   [TokenKind.Yield]: SyntaxKind.YieldKeyword,
   [TokenKind.Continue]: SyntaxKind.ContinueKeyword,
+  [TokenKind.Break]: SyntaxKind.BreakKeyword,
+  [TokenKind.Ensure]: SyntaxKind.EnsureKeyword,
   [TokenKind.Take]: SyntaxKind.TakeKeyword,
   [TokenKind.As]: SyntaxKind.AsKeyword,
   [TokenKind.With]: SyntaxKind.WithKeyword,
