@@ -45,6 +45,7 @@ export interface CheckedRequirementSurfacePlaceholder {
 export interface PlatformPrimitiveSpec {
   readonly primitiveId: PlatformPrimitiveId;
   readonly contractId: PlatformContractId;
+  readonly primitiveFamilyId?: PlatformPrimitiveFamilyId;
   readonly availability: TargetAvailability;
   readonly signature: TargetFunctionSignature;
   readonly proofContract: TargetProofContractSurface;
@@ -87,6 +88,7 @@ export interface ImageProfileSpec {
 export interface DeviceSurfaceSpec {
   readonly deviceSurfaceId: DeviceSurfaceId;
   readonly name: string;
+  readonly sourceTypeName: string;
   readonly availability: TargetAvailability;
   readonly resourceKind: ConcreteResourceKind;
   readonly uniqueEdgeRoots: readonly UniqueEdgeRootKey[];

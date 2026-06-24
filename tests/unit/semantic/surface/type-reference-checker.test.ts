@@ -17,7 +17,7 @@ test("builtin type reference checks to core checked type", () => {
   expect(result.diagnostics).toEqual([]);
 });
 
-test("function reference in type position is unresolved and produces invalid type reference", () => {
+test("function reference in type position follows resolved references", () => {
   const fixture = parseAndResolveSurfaceFixture([["main.wr", "fn Other()\nfn f(x: Other)\n"]]);
   const functions = fixture.index.functions();
   const fFunction = functions.find((func) => func.name === "f")!;
@@ -35,6 +35,7 @@ test("function reference in type position is unresolved and produces invalid typ
   expect(result.type.kind).toBe("error");
   const codes = result.diagnostics.map((diagnostic) => diagnostic.code);
   expect(codes).toContain("SURFACE_INVALID_TYPE_REFERENCE");
+  expect(codes).not.toContain("SURFACE_NON_TYPE_REFERENCE");
 });
 
 test("missing type reference produces invalid type reference diagnostic", () => {
@@ -65,4 +66,71 @@ test("undefined view returns error type without diagnostics", () => {
 
   expect(result.type.kind).toBe("error");
   expect(result.diagnostics).toEqual([]);
+});
+
+test("type argument count on a generic parameter is validated", () => {
+  const fixture = parseAndResolveSurfaceFixture([
+    ["main.wr", "dataclass Box[T]:\n    value: T[u32]\n"],
+  ]);
+  const field = fixture.index.fields()[0]!;
+  const item = fixture.index.item(field.ownerItemId)!;
+  const result = checkTypeReference({
+    moduleId: item.moduleId,
+    view: field.type,
+    index: fixture.index,
+    referenceLookup: fixture.referenceLookup,
+    coreTypes: fixture.coreTypes,
+  });
+
+  expect(result.type.kind).toBe("error");
+  const codes = result.diagnostics.map((diagnostic) => diagnostic.code);
+  expect(codes).toContain("SURFACE_WRONG_GENERIC_ARGUMENT_COUNT");
+});
+
+test("generic type arguments must satisfy constructor bounds", () => {
+  const fixture = parseAndResolveSurfaceFixture([
+    [
+      "main.wr",
+      "interface Reader:\n    fn read()\nclass NotReader:\nclass Box[T: Reader]:\n    value: T\nfn f(x: Box[NotReader])\n",
+    ],
+  ]);
+  const func = fixture.index.functions().find((record) => record.name === "f")!;
+  const param = fixture.index.parametersForFunction(func.id)[0]!;
+
+  const result = checkTypeReference({
+    moduleId: func.moduleId,
+    view: param.type,
+    index: fixture.index,
+    referenceLookup: fixture.referenceLookup,
+    coreTypes: fixture.coreTypes,
+  });
+
+  expect(result.type.kind).toBe("applied");
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+    "SURFACE_INVALID_INTERFACE_CONSTRAINT",
+  );
+});
+
+test("generic type argument bound checking does not recurse through cyclic function bounds", () => {
+  const fixture = parseAndResolveSurfaceFixture([
+    [
+      "main.wr",
+      "interface Reader:\n    fn read()\nclass Box[T: Reader]:\n    value: T\nfn f[U: U](x: Box[U])\n",
+    ],
+  ]);
+  const func = fixture.index.functions().find((record) => record.name === "f")!;
+  const param = fixture.index.parametersForFunction(func.id)[0]!;
+
+  const result = checkTypeReference({
+    moduleId: func.moduleId,
+    view: param.type,
+    index: fixture.index,
+    referenceLookup: fixture.referenceLookup,
+    coreTypes: fixture.coreTypes,
+  });
+
+  expect(result.type.kind).toBe("applied");
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+    "SURFACE_INVALID_INTERFACE_CONSTRAINT",
+  );
 });

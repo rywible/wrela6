@@ -5,28 +5,17 @@ import type { CoreTypeCatalog } from "../names/core-types";
 import { checkTypeReference } from "./type-reference-checker";
 import type { CheckedType } from "./type-model";
 import type { SemanticSurfaceDiagnostic } from "./diagnostics";
-import { duplicateGenericParameter, invalidGenericBound } from "./diagnostics";
-import type { ModuleId } from "../ids";
+import { duplicateGenericParameter, genericBoundCycle, invalidGenericBound } from "./diagnostics";
+import type { ItemId, ModuleId } from "../ids";
+import { moduleId } from "../ids";
+import type { SourceText } from "../../frontend";
 import { SourceSpan, presentTokenSpan } from "../../frontend";
-
-export interface CheckedGenericParameter {
-  readonly key: { owner: TypeParameterOwner; index: number };
-  readonly name: string;
-  readonly bounds: readonly CheckedInterfaceConstraint[];
-  readonly span: SourceSpan;
-}
-
-export interface CheckedInterfaceConstraint {
-  readonly interfaceType: CheckedType;
-  readonly arguments: readonly CheckedType[];
-  readonly span: SourceSpan;
-}
-
-export interface CheckedGenericSignature {
-  readonly owner: TypeParameterOwner;
-  readonly parameters: readonly CheckedGenericParameter[];
-  readonly constraints: readonly CheckedInterfaceConstraint[];
-}
+import type { RedToken } from "../../frontend/syntax";
+import type {
+  CheckedGenericParameter,
+  CheckedGenericSignature,
+  CheckedInterfaceConstraint,
+} from "./checked-program";
 
 export interface CheckGenericSignatureInput {
   readonly owner: TypeParameterOwner;
@@ -40,20 +29,20 @@ export interface CheckGenericSignatureResult {
   readonly diagnostics: readonly SemanticSurfaceDiagnostic[];
 }
 
-function resolveModuleId(owner: TypeParameterOwner, index: ItemIndex): ModuleId | undefined {
+function resolveOwnerModuleId(owner: TypeParameterOwner, index: ItemIndex): ModuleId | undefined {
   const itemRecord = index.item(owner.itemId);
   return itemRecord?.moduleId;
 }
 
-function resolveSource(owner: TypeParameterOwner, index: ItemIndex) {
-  const moduleId = resolveModuleId(owner, index);
-  if (moduleId === undefined) return undefined;
-  const moduleRecord = index.module(moduleId);
+function resolveSource(owner: TypeParameterOwner, index: ItemIndex): SourceText | undefined {
+  const modId = resolveOwnerModuleId(owner, index);
+  if (modId === undefined) return undefined;
+  const moduleRecord = index.module(modId);
   return moduleRecord?.source;
 }
 
 function boundSpan(boundView: {
-  qualifiedName(): { segments(): readonly any[] } | undefined;
+  qualifiedName(): { segments(): readonly RedToken[] } | undefined;
 }): SourceSpan | undefined {
   const qualifiedName = boundView.qualifiedName();
   if (qualifiedName === undefined) return undefined;
@@ -65,11 +54,11 @@ function boundSpan(boundView: {
   return SourceSpan.from(firstSpan.start, lastSpan.end);
 }
 
-function resolvedTypeItemId(type: CheckedType, index: ItemIndex): number | undefined {
-  if (type.kind === "source") return type.itemId as number;
+function resolvedTypeItemId(type: CheckedType, index: ItemIndex): ItemId | undefined {
+  if (type.kind === "source") return type.itemId;
   if (type.kind === "applied" && type.constructor.kind === "source") {
     const typeRecord = index.type(type.constructor.typeId);
-    return typeRecord?.itemId as number | undefined;
+    return typeRecord?.itemId;
   }
   return undefined;
 }
@@ -81,13 +70,16 @@ function checkBound(
 ): CheckedInterfaceConstraint | undefined {
   if (record.bound === undefined) return undefined;
 
-  const moduleId = resolveModuleId(input.owner, input.index);
+  const modId = resolveOwnerModuleId(input.owner, input.index);
+  if (modId === undefined) return undefined;
+  const source = resolveSource(input.owner, input.index);
   const typeResult = checkTypeReference({
-    moduleId: moduleId as any,
+    moduleId: modId,
     view: record.bound,
     index: input.index,
     referenceLookup: input.referenceLookup,
     coreTypes: input.coreTypes,
+    allowInterfaces: true,
   });
 
   diagnostics.push(...typeResult.diagnostics);
@@ -95,36 +87,120 @@ function checkBound(
   const checkedType = typeResult.type;
   if (checkedType.kind === "error") return undefined;
 
-  const boundTypeItemId = resolvedTypeItemId(checkedType, input.index);
-  const boundItem =
-    boundTypeItemId !== undefined ? input.index.item(boundTypeItemId as any) : undefined;
   const constraintSpan = boundSpan(record.bound) ?? record.nameSpan;
+
+  // Sibling generic parameter bounds are valid (used for cycle detection)
+  if (checkedType.kind === "genericParameter") {
+    const sameOwner =
+      input.owner.kind === checkedType.parameter.owner.kind &&
+      input.owner.kind === "item" &&
+      checkedType.parameter.owner.kind === "item"
+        ? input.owner.itemId === checkedType.parameter.owner.itemId
+        : input.owner.kind === "function" && checkedType.parameter.owner.kind === "function"
+          ? input.owner.functionId === checkedType.parameter.owner.functionId
+          : false;
+    if (sameOwner) {
+      return {
+        interfaceType: checkedType,
+        span: constraintSpan,
+      };
+    }
+    diagnostics.push(
+      invalidGenericBound(record.bound.qualifiedNameText() ?? record.name, constraintSpan, source, {
+        moduleId: modId,
+        span: constraintSpan,
+        codeTieBreaker: "generic",
+      }),
+    );
+    return undefined;
+  }
+
+  const boundTypeItemId = resolvedTypeItemId(checkedType, input.index);
+  const boundItem = boundTypeItemId !== undefined ? input.index.item(boundTypeItemId) : undefined;
 
   if (boundItem?.kind === "interface") {
     return {
       interfaceType: checkedType,
-      arguments: [],
       span: constraintSpan,
     };
   }
 
-  if (checkedType.kind !== "genericParameter") {
-    const source = resolveSource(input.owner, input.index);
-    diagnostics.push(
-      invalidGenericBound(
-        record.bound.qualifiedNameText() ?? record.name,
-        constraintSpan,
-        source as any,
-        {
-          moduleId: moduleId as any,
-          span: constraintSpan,
-          codeTieBreaker: "generic",
-        },
-      ),
-    );
+  diagnostics.push(
+    invalidGenericBound(record.bound.qualifiedNameText() ?? record.name, constraintSpan, source, {
+      moduleId: modId,
+      span: constraintSpan,
+      codeTieBreaker: "generic",
+    }),
+  );
+  return undefined;
+}
+
+function collectBoundDependencies(
+  bounds: readonly CheckedInterfaceConstraint[],
+  input: CheckGenericSignatureInput,
+): Set<number> {
+  const deps = new Set<number>();
+  for (const bound of bounds) {
+    const type = bound.interfaceType;
+    if (type.kind === "genericParameter") {
+      if (type.parameter.owner.kind !== input.owner.kind) continue;
+      const sameOwner =
+        input.owner.kind === "item"
+          ? type.parameter.owner.itemId === input.owner.itemId
+          : "functionId" in input.owner &&
+            "functionId" in type.parameter.owner &&
+            input.owner.functionId === type.parameter.owner.functionId;
+      if (sameOwner) {
+        deps.add(type.parameter.index);
+      }
+    }
+  }
+  return deps;
+}
+
+function detectBoundCycles(
+  parameters: readonly CheckedGenericParameter[],
+  input: CheckGenericSignatureInput,
+  diagnostics: SemanticSurfaceDiagnostic[],
+): void {
+  const edges = new Map<number, Set<number>>();
+  for (let paramIndex = 0; paramIndex < parameters.length; paramIndex++) {
+    edges.set(paramIndex, collectBoundDependencies(parameters[paramIndex]!.bounds, input));
   }
 
-  return undefined;
+  const reportedCycles = new Set<string>();
+
+  function dfs(current: number, path: number[]): void {
+    const cycleIndex = path.indexOf(current);
+    if (cycleIndex >= 0) {
+      const cyclePath = path.slice(cycleIndex);
+      const key = [...cyclePath].sort((left, right) => left - right).join(",");
+      if (reportedCycles.has(key)) return;
+      reportedCycles.add(key);
+      const cycleNames = cyclePath.map((idx) => parameters[idx]?.name ?? `#${idx}`);
+      const source = resolveSource(input.owner, input.index);
+      const modId = resolveOwnerModuleId(input.owner, input.index);
+      const cycleModuleId: ModuleId = modId ?? moduleId(0);
+      diagnostics.push(
+        genericBoundCycle(cycleNames.join(" -> "), parameters[cyclePath[0]!]!.span, source, {
+          moduleId: cycleModuleId,
+          span: parameters[cyclePath[0]!]!.span,
+          codeTieBreaker: "generic",
+        }),
+      );
+      return;
+    }
+    const deps = edges.get(current);
+    if (deps !== undefined) {
+      for (const dep of deps) {
+        dfs(dep, [...path, current]);
+      }
+    }
+  }
+
+  for (let start = 0; start < parameters.length; start++) {
+    dfs(start, []);
+  }
 }
 
 export function checkGenericSignature(
@@ -139,14 +215,14 @@ export function checkGenericSignature(
 
   const seenNames = new Map<string, TypeParameterRecord>();
   const source = resolveSource(input.owner, input.index);
-  const moduleId = resolveModuleId(input.owner, input.index);
+  const ownerModuleId: ModuleId | undefined = resolveOwnerModuleId(input.owner, input.index);
 
-  const parameters = records.map((record, index) => {
+  const parameters = records.map((record) => {
     const previous = seenNames.get(record.name);
     if (previous !== undefined) {
       diagnostics.push(
-        duplicateGenericParameter(record.name, record.nameSpan, source as any, {
-          moduleId: moduleId as any,
+        duplicateGenericParameter(record.name, record.nameSpan, source, {
+          moduleId: ownerModuleId ?? moduleId(0),
           span: record.nameSpan,
           codeTieBreaker: "generic",
         }),
@@ -161,12 +237,14 @@ export function checkGenericSignature(
     }
 
     return {
-      key: { owner: input.owner, index },
+      key: { owner: record.owner, index: record.index },
       name: record.name,
       bounds,
       span: SourceSpan.from(record.nameSpan.start, record.nameSpan.end),
     };
   });
 
-  return { signature: { owner: input.owner, parameters, constraints: [] }, diagnostics };
+  detectBoundCycles(parameters, input, diagnostics);
+
+  return { signature: { owner: input.owner, parameters }, diagnostics };
 }

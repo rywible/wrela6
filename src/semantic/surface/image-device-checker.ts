@@ -1,16 +1,20 @@
 import type { DeviceSurfaceId, FieldId, UniqueEdgeRootKey } from "../ids";
 import type { FieldRecord } from "../item-index";
 import type { ItemIndex } from "../item-index";
+import type { CheckedFieldTable } from "./checked-program";
 import type { CheckedImageRootSelection } from "./image-root-selection";
 import type { SemanticTargetSurface, DeviceSurfaceSpec } from "./platform-surface";
-import type { SurfaceReferenceLookup } from "./reference-lookup";
-import type { CoreTypeCatalog } from "../names/core-types";
-import { checkTypeReference } from "./type-reference-checker";
 import type { CheckedType } from "./type-model";
 import type { ResourceKindContext } from "./resource-kind-checker";
-import type { CheckedResourceKind } from "./resource-kind";
+import { resourceKindForType } from "./resource-kind-checker";
+import type { CheckedResourceKind, ConcreteResourceKind } from "./resource-kind";
+import { concreteKind } from "./resource-kind";
 import type { SemanticSurfaceDiagnostic } from "./diagnostics";
-import { duplicateUniqueEdgeRoot, targetUnavailableImageDevice } from "./diagnostics";
+import {
+  duplicateUniqueEdgeRoot,
+  invalidImageDeviceType,
+  targetUnavailableImageDevice,
+} from "./diagnostics";
 import type { SourceSpan } from "../../frontend";
 
 export interface CheckedImageDevice {
@@ -25,8 +29,7 @@ export interface CheckedImageDevice {
 export interface CheckImageDevicesInput {
   readonly selection: CheckedImageRootSelection;
   readonly index: ItemIndex;
-  readonly referenceLookup: SurfaceReferenceLookup;
-  readonly coreTypes: CoreTypeCatalog;
+  readonly checkedFields: CheckedFieldTable;
   readonly targetSurface: SemanticTargetSurface;
   readonly kindContext: ResourceKindContext;
 }
@@ -36,22 +39,44 @@ export interface CheckImageDevicesResult {
   readonly diagnostics: readonly SemanticSurfaceDiagnostic[];
 }
 
+function canonicalSourceTypeName(
+  checkedType: CheckedType & { kind: "source" },
+  index: ItemIndex,
+): string | undefined {
+  const typeRecord = index.type(checkedType.typeId);
+  if (typeRecord === undefined) return undefined;
+  const itemRecord = index.item(typeRecord.itemId);
+  return itemRecord?.name;
+}
+
 function findDeviceSurfaceForCheckedType(
   targetSurface: SemanticTargetSurface,
   checkedType: CheckedType,
-  fieldTypeView: any,
+  index: ItemIndex,
 ): DeviceSurfaceSpec | undefined {
-  if (checkedType.kind === "target") {
-    const targetIdStr = String(checkedType.targetTypeId);
-    return targetSurface.deviceSurfaces.find(
-      (device) => String(device.deviceSurfaceId) === targetIdStr,
-    );
-  }
   if (checkedType.kind === "source") {
-    const typeName = fieldTypeView?.qualifiedNameText?.() ?? String(checkedType.typeId);
-    return targetSurface.deviceSurfaces.find((device) => device.name === typeName);
+    const typeName = canonicalSourceTypeName(checkedType, index);
+    if (typeName === undefined) return undefined;
+    return targetSurface.deviceSurfaces.find((device) => device.sourceTypeName === typeName);
   }
   return undefined;
+}
+
+export function imageDeviceResourceKind(
+  deviceSurfaceKind: ConcreteResourceKind,
+): CheckedResourceKind {
+  return concreteKind(deviceSurfaceKind);
+}
+
+export function canMintUniqueEdgeRoot(input: {
+  readonly deviceSurfaceKind: ConcreteResourceKind;
+  readonly loweredResourceKind: CheckedResourceKind;
+}): boolean {
+  return (
+    input.deviceSurfaceKind === "UniqueEdgeRoot" ||
+    (input.loweredResourceKind.kind === "concrete" &&
+      input.loweredResourceKind.value === "UniqueEdgeRoot")
+  );
 }
 
 export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevicesResult {
@@ -65,19 +90,13 @@ export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevi
     const field = input.index.field(fieldId);
     if (field === undefined) continue;
 
-    const checkedType = checkTypeReference({
-      moduleId: imageRecord.moduleId,
-      view: field.type,
-      index: input.index,
-      referenceLookup: input.referenceLookup,
-      coreTypes: input.coreTypes,
-    });
-    diagnostics.push(...checkedType.diagnostics);
+    const checkedField = input.checkedFields.get(field.id);
+    if (checkedField === undefined) continue;
 
     const deviceSurface = findDeviceSurfaceForCheckedType(
       input.targetSurface,
-      checkedType.type,
-      field.type,
+      checkedField.type,
+      input.index,
     );
 
     if (deviceSurface === undefined) {
@@ -86,7 +105,7 @@ export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevi
           field.name,
           "No matching device surface in target catalog",
           field.span,
-          undefined as any,
+          undefined,
           { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
         ),
       );
@@ -100,7 +119,7 @@ export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevi
           field.name,
           "Device surface not available for selected image profile",
           field.span,
-          undefined as any,
+          undefined,
           { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
         ),
       );
@@ -113,7 +132,7 @@ export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevi
           field.name,
           "Device surface not available for selected target",
           field.span,
-          undefined as any,
+          undefined,
           { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
         ),
       );
@@ -125,12 +144,13 @@ export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevi
           field.name,
           "Device surface not available for selected profile",
           field.span,
-          undefined as any,
+          undefined,
           { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
         ),
       );
       continue;
     }
+    let missingFeature = false;
     for (const requiredFeature of deviceSurface.availability.features) {
       if (!input.selection.availability.features.includes(requiredFeature)) {
         diagnostics.push(
@@ -138,24 +158,47 @@ export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevi
             field.name,
             `Device surface requires feature '${requiredFeature}' which is not available`,
             field.span,
-            undefined as any,
+            undefined,
             { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
           ),
         );
-        continue;
+        missingFeature = true;
       }
     }
+    if (missingFeature) continue;
 
-    const deviceResourceKind: CheckedResourceKind = {
-      kind: "concrete",
-      value: deviceSurface.resourceKind,
-    };
+    const deviceResourceKind = imageDeviceResourceKind(deviceSurface.resourceKind);
+    const loweredResourceKind = resourceKindForType({
+      type: checkedField.type,
+      context: input.kindContext,
+    });
+
+    if (
+      !canMintUniqueEdgeRoot({
+        deviceSurfaceKind: deviceSurface.resourceKind,
+        loweredResourceKind,
+      })
+    ) {
+      diagnostics.push(
+        invalidImageDeviceType(
+          field.name,
+          `Resource kind '${deviceSurface.resourceKind}' does not lower to 'UniqueEdgeRoot'`,
+          field.span,
+          undefined,
+          { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
+        ),
+      );
+      continue;
+    }
 
     const checkedDevice: CheckedImageDevice = {
       fieldId: field.id,
       deviceSurfaceId: deviceSurface.deviceSurfaceId,
-      type: checkedType.type,
-      resourceKind: deviceResourceKind,
+      type: checkedField.type,
+      resourceKind:
+        loweredResourceKind.kind === "concrete" && loweredResourceKind.value === "UniqueEdgeRoot"
+          ? loweredResourceKind
+          : deviceResourceKind,
       uniqueEdgeRoots: deviceSurface.uniqueEdgeRoots,
       span: field.span,
     };
@@ -170,7 +213,7 @@ export function checkImageDevices(input: CheckImageDevicesInput): CheckImageDevi
             previous.name,
             field.span,
             previous.span,
-            undefined as any,
+            undefined,
             { moduleId: imageRecord.moduleId, span: field.span, codeTieBreaker: "device" },
           ),
         );

@@ -86,25 +86,33 @@ export function sortSemanticSurfaceDiagnostics(
 }
 
 export interface InvalidTypeReferenceInput {
-  readonly source: SourceText;
+  readonly source: SourceText | undefined;
   readonly span: SourceSpan;
   readonly order: SemanticSurfaceDiagnosticOrder;
   readonly typeName: string;
+  readonly relatedInformation?: readonly DiagnosticRelatedInformation[];
 }
 
 export function invalidTypeReference(input: InvalidTypeReferenceInput): SemanticSurfaceDiagnostic {
+  const message =
+    input.relatedInformation !== undefined && input.relatedInformation.length > 0
+      ? `Ambiguous type reference '${input.typeName}'.`
+      : `Invalid type reference '${input.typeName}'.`;
   return {
     code: "SURFACE_INVALID_TYPE_REFERENCE",
-    message: `Invalid type reference '${input.typeName}'.`,
+    message,
     severity: "error",
     source: input.source,
     span: input.span,
     order: input.order,
+    ...(input.relatedInformation !== undefined
+      ? { relatedInformation: input.relatedInformation }
+      : {}),
   };
 }
 
 export interface PlatformPrimitiveSignatureMismatchInput {
-  readonly source: SourceText;
+  readonly source: SourceText | undefined;
   readonly span: SourceSpan;
   readonly order: SemanticSurfaceDiagnosticOrder;
   readonly functionName: string;
@@ -127,7 +135,7 @@ export function platformPrimitiveSignatureMismatch(
 export function duplicateGenericParameter(
   name: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -143,7 +151,7 @@ export function duplicateGenericParameter(
 export function invalidGenericBound(
   boundName: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -159,7 +167,7 @@ export function invalidGenericBound(
 export function nonTypeReference(
   name: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -177,7 +185,7 @@ export function wrongGenericArgumentCount(
   expected: number,
   actual: number,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -193,7 +201,7 @@ export function wrongGenericArgumentCount(
 export function invalidInterfaceConstraint(
   name: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -209,7 +217,7 @@ export function invalidInterfaceConstraint(
 export function genericBoundCycle(
   name: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -226,7 +234,7 @@ export function resourceKindMismatch(
   expected: string,
   actual: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -242,7 +250,7 @@ export function resourceKindMismatch(
 export function invalidReceiver(
   details: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -259,7 +267,7 @@ export function invalidParameterMode(
   name: string,
   details: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -275,7 +283,7 @@ export function invalidParameterMode(
 export function invalidReturnType(
   details: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -291,7 +299,7 @@ export function invalidReturnType(
 export function illegalFunctionModifiers(
   details: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -307,7 +315,7 @@ export function illegalFunctionModifiers(
 export function illegalPlatformShape(
   details: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -323,7 +331,7 @@ export function illegalPlatformShape(
 export function missingPlatformBinding(
   functionName: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -340,7 +348,7 @@ export function platformPrimitiveCatalogEntryMissing(
   primitiveId: string,
   functionName: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -357,7 +365,7 @@ export function platformContractNotExact(
   functionName: string,
   details: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -374,7 +382,7 @@ export function targetUnavailablePlatformPrimitive(
   functionName: string,
   primitiveId: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -437,7 +445,7 @@ export function invalidImageRootSelection(
 export function malformedDevicesSection(
   details: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -454,7 +462,7 @@ export function invalidImageDeviceType(
   fieldName: string,
   details: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -473,7 +481,7 @@ export function duplicateUniqueEdgeRoot(
   previousFieldName: string,
   span: SourceSpan,
   previousSpan: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -493,7 +501,7 @@ export function targetUnavailableImageDevice(
   deviceName: string,
   details: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -526,7 +534,7 @@ export function invalidImageEntrySignature(
   functionName: string,
   details: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -542,7 +550,7 @@ export function invalidImageEntrySignature(
 export function unresolvedDeferredMember(
   memberName: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {
@@ -558,7 +566,7 @@ export function unresolvedDeferredMember(
 export function ambiguousDeferredMember(
   memberName: string,
   span: SourceSpan,
-  source: SourceText,
+  source: SourceText | undefined,
   order: SemanticSurfaceDiagnosticOrder,
 ): SemanticSurfaceDiagnostic {
   return {

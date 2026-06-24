@@ -144,3 +144,17 @@ test("proof-surface seeds accessible from checked program", () => {
   expect(Array.isArray(result.program.proofSurface.requirementSurfaces.entries())).toBe(true);
   expect(result.program.functions.entries().length).toBeGreaterThan(1);
 });
+
+test("proof surface preserves unique edge and private state source forms", () => {
+  const result = checkSemanticSurfaceForTest([
+    ["main.wr", "unique edge class NetworkDevice:\nprivate class RxBatchBuilder:\n"],
+  ]);
+
+  const resourceKinds = result.program.proofSurface.resourceKindByType
+    .entries()
+    .map((entry) => entry.resourceKind);
+
+  expect(resourceKinds).toContainEqual({ kind: "concrete", value: "UniqueEdgeRoot" });
+  expect(resourceKinds).toContainEqual({ kind: "concrete", value: "PrivateState" });
+  expect(result.program.proofSurface.privateStateSurfaces.entries()).toHaveLength(1);
+});

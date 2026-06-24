@@ -124,6 +124,7 @@ test("semantic target surface rejects duplicate device surface names", () => {
         {
           deviceSurfaceId: deviceSurfaceId("net0"),
           name: "net",
+          sourceTypeName: "NetDevice",
           availability: allProfilesAvailability(),
           resourceKind: "UniqueEdgeRoot",
           uniqueEdgeRoots: [uniqueEdgeRootKey("root1")],
@@ -131,6 +132,7 @@ test("semantic target surface rejects duplicate device surface names", () => {
         {
           deviceSurfaceId: deviceSurfaceId("net1"),
           name: "net",
+          sourceTypeName: "OtherNetDevice",
           availability: allProfilesAvailability(),
           resourceKind: "UniqueEdgeRoot",
           uniqueEdgeRoots: [uniqueEdgeRootKey("root2")],

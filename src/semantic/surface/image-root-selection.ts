@@ -35,6 +35,7 @@ export interface SelectImageRootInput {
   readonly index: ItemIndex;
   readonly targetSurface: SemanticTargetSurface;
   readonly imageRoot?: ImageRootSelection;
+  readonly enabledFeatures?: readonly string[];
 }
 
 export interface SelectImageRootResult {
@@ -99,7 +100,7 @@ function resolveSingleImage(
       availability: {
         targetId: input.targetSurface.targetId,
         profileId: profile.profileId,
-        features: [],
+        features: input.enabledFeatures ?? [],
       },
       image,
       profile,

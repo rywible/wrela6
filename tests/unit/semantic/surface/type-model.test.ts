@@ -10,7 +10,7 @@ import {
   sourceCheckedType,
   targetCheckedType,
 } from "../../../../src/semantic/surface/type-model";
-import { concreteKind } from "../../../../src/semantic/surface/resource-kind";
+import { concreteKind, derivedKind } from "../../../../src/semantic/surface/resource-kind";
 
 test("checked type fingerprints are deterministic", () => {
   const optionU8 = appliedType({
@@ -19,7 +19,7 @@ test("checked type fingerprints are deterministic", () => {
     resourceKind: concreteKind("Copy"),
   });
 
-  expect(checkedTypeFingerprint(optionU8)).toBe("applied:source:10<core:u8>:kind:concrete:Copy");
+  expect(checkedTypeFingerprint(optionU8)).toBe("applied:source:10:concrete:Copy<core:u8>");
 });
 
 test("source type stores item and type ids", () => {
@@ -58,7 +58,7 @@ test("error checked type is stable", () => {
   expect(err1).toEqual(err2);
 });
 
-test("applied type stores constructor, arguments, and resource kind", () => {
+test("applied type stores constructor and arguments", () => {
   const applied = appliedType({
     constructor: { kind: "core", coreTypeId: coreTypeId("u32") },
     arguments: [],
@@ -66,6 +66,7 @@ test("applied type stores constructor, arguments, and resource kind", () => {
   });
   if (applied.kind !== "applied") throw new Error("expected applied type");
   expect(applied.constructor).toEqual({ kind: "core", coreTypeId: coreTypeId("u32") });
+  expect(applied.arguments).toEqual([]);
   expect(applied.resourceKind).toEqual(concreteKind("Copy"));
 });
 
@@ -75,6 +76,21 @@ test("checkedTypesEqual compares by fingerprint", () => {
   const bool_ = coreCheckedType(coreTypeId("bool"));
   expect(checkedTypesEqual(u32a, u32b)).toBe(true);
   expect(checkedTypesEqual(u32a, bool_)).toBe(false);
+});
+
+test("applied fingerprints include full non-concrete resource kind fingerprint", () => {
+  const copyApplied = appliedType({
+    constructor: { kind: "source", typeId: typeId(10) },
+    arguments: [coreCheckedType(coreTypeId("u8"))],
+    resourceKind: derivedKind("join", [concreteKind("Copy")]),
+  });
+  const linearApplied = appliedType({
+    constructor: { kind: "source", typeId: typeId(10) },
+    arguments: [coreCheckedType(coreTypeId("u8"))],
+    resourceKind: derivedKind("join", [concreteKind("Linear")]),
+  });
+
+  expect(checkedTypesEqual(copyApplied, linearApplied)).toBe(false);
 });
 
 test("fingerprint of error type is stable", () => {

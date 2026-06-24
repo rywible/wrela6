@@ -61,3 +61,19 @@ test("function generic parameters are checked", () => {
   expect(result.signature.parameters).toHaveLength(1);
   expect(result.diagnostics).toEqual([]);
 });
+
+test("generic bound cycles are reported once per strongly connected group", () => {
+  const fixture = parseAndResolveSurfaceFixture([["main.wr", "class Box[T: U, U: T]\n"]]);
+  const item = fixture.index.items()[0]!;
+  const result = checkGenericSignature({
+    owner: { kind: "item", itemId: item.id },
+    index: fixture.index,
+    referenceLookup: fixture.referenceLookup,
+    coreTypes: fixture.coreTypes,
+  });
+
+  const cycleDiagnostics = result.diagnostics.filter(
+    (diagnostic) => diagnostic.code === "SURFACE_GENERIC_BOUND_CYCLE",
+  );
+  expect(cycleDiagnostics).toHaveLength(1);
+});

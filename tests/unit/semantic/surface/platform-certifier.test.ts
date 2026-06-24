@@ -17,16 +17,10 @@ import {
   targetId,
 } from "../../../../src/semantic/ids";
 import type { CheckedProofSurface } from "../../../../src/semantic/surface/proof-surface";
+import { checkedProofSurfaceEmpty } from "../../../../src/semantic/surface/proof-surface";
 
 function emptyProofSurface(): CheckedProofSurface {
-  return {
-    requirementSurfaces: { entries: () => [], get: () => undefined },
-    predicateFactSurfaces: { entries: () => [], get: () => undefined },
-    terminalSurfaces: { entries: () => [], get: () => undefined },
-    validationSurfaces: { entries: () => [] },
-    privateStateSurfaces: { entries: () => [] },
-    imageSurfaces: { entries: () => [] },
-  };
+  return checkedProofSurfaceEmpty();
 }
 
 const defaultAvailability = {

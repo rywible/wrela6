@@ -1,5 +1,6 @@
 import type { CoreTypeId, ItemId, TargetTypeId, TypeId } from "../ids";
-import type { CheckedResourceKind, TypeParameterKey } from "./resource-kind";
+import type { TypeParameterKey } from "./resource-kind";
+import type { CheckedResourceKind } from "./resource-kind";
 import { resourceKindFingerprint } from "./resource-kind";
 
 export type TypeConstructorId =
@@ -82,9 +83,9 @@ export function checkedTypeFingerprint(type: CheckedType): string {
           : type.parameter.owner.functionId
       }:${type.parameter.index}`;
     case "applied":
-      return `applied:${typeConstructorFingerprint(type.constructor)}<${type.arguments
+      return `applied:${typeConstructorFingerprint(type.constructor)}:${resourceKindFingerprint(type.resourceKind)}<${type.arguments
         .map(checkedTypeFingerprint)
-        .join(",")}>:kind:${resourceKindFingerprint(type.resourceKind)}`;
+        .join(",")}>`;
     case "target":
       return `target:${type.targetTypeId}`;
     case "error":

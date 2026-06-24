@@ -1,4 +1,4 @@
-import type { FunctionId, ItemId, TargetId } from "../ids";
+import type { FunctionId, ItemId, PlatformPrimitiveFamilyId, TargetId } from "../ids";
 import type { ItemIndex } from "../item-index";
 import type { ResolvedPlatformBindings, PlatformPrimitiveBinding } from "../names";
 import type {
@@ -17,7 +17,9 @@ import {
   checkedFunctionSignatureFingerprint,
 } from "./signature-checker";
 import type { CheckedProofSurface } from "./proof-surface";
+import type { CheckedRequirementSurface } from "./proof-surface";
 import type { TargetAvailabilityContext } from "./image-root-selection";
+import type { ModuleId } from "../ids";
 import type { SemanticSurfaceDiagnostic, SemanticSurfaceDiagnosticOrder } from "./diagnostics";
 import type { SourceSpan, SourceText } from "../../frontend";
 import {
@@ -37,6 +39,7 @@ export interface CertifyPlatformBindingsInput {
   readonly proofSurface: CheckedProofSurface;
   readonly targetSurface: SemanticTargetSurface;
   readonly availability?: TargetAvailabilityContext;
+  readonly availablePlatformFamilies?: readonly PlatformPrimitiveFamilyId[];
 }
 
 export interface CertifyPlatformBindingsResult {
@@ -47,9 +50,9 @@ export interface CertifyPlatformBindingsResult {
 function diagnosticSourceAndModuleId(
   index: ItemIndex,
   functionId: FunctionId,
-): { source: SourceText | undefined; moduleId: any } {
+): { source: SourceText | undefined; moduleId: ModuleId } {
   const funcRecord = index.function(functionId);
-  const moduleId = funcRecord?.moduleId ?? (0 as any);
+  const moduleId: ModuleId = funcRecord?.moduleId ?? (0 as ModuleId);
   let source: SourceText | undefined;
   if (funcRecord !== undefined) {
     const moduleRecord = index.module(funcRecord.moduleId);
@@ -59,7 +62,7 @@ function diagnosticSourceAndModuleId(
 }
 
 function diagnosticOrder(
-  moduleId: any,
+  moduleId: ModuleId,
   span: SourceSpan,
   codeTieBreaker: string,
 ): SemanticSurfaceDiagnosticOrder {
@@ -75,14 +78,14 @@ function checkPlatformShape(
   signature: CheckedFunctionSignature,
   diagnostics: SemanticSurfaceDiagnostic[],
   source: SourceText | undefined,
-  moduleId: any,
+  moduleId: ModuleId,
 ): boolean {
   if (signature.ownerItemId !== undefined) {
     diagnostics.push(
       illegalPlatformShape(
         "Platform functions must be freestanding, not methods",
         signature.sourceSpan,
-        source as any,
+        source,
         diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
       ),
     );
@@ -126,6 +129,18 @@ function targetAvailabilityAllows(
   return true;
 }
 
+function canonicalProofFactText(text: string): string {
+  return text.trim().replace(/\s+/g, " ");
+}
+
+function sourceRequirementFingerprint(requirement: CheckedRequirementSurface): string {
+  return `text:${canonicalProofFactText(requirement.expression.text)}`;
+}
+
+function targetRequirementFingerprint(text: string): string {
+  return `text:${canonicalProofFactText(text)}`;
+}
+
 export function certifyPlatformBindings(
   input: CertifyPlatformBindingsInput,
 ): CertifyPlatformBindingsResult {
@@ -146,7 +161,7 @@ export function certifyPlatformBindings(
         missingPlatformBinding(
           functionName,
           signature.sourceSpan,
-          source as any,
+          source,
           diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
         ),
       );
@@ -160,7 +175,7 @@ export function certifyPlatformBindings(
           binding.primitiveId,
           functionName,
           signature.sourceSpan,
-          source as any,
+          source,
           diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
         ),
       );
@@ -176,7 +191,25 @@ export function certifyPlatformBindings(
           functionName,
           binding.primitiveId,
           signature.sourceSpan,
-          source as any,
+          source,
+          diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
+        ),
+      );
+      continue;
+    }
+
+    if (
+      input.availablePlatformFamilies !== undefined &&
+      input.availablePlatformFamilies.length > 0 &&
+      primitive.primitiveFamilyId !== undefined &&
+      !input.availablePlatformFamilies.includes(primitive.primitiveFamilyId)
+    ) {
+      diagnostics.push(
+        targetUnavailablePlatformPrimitive(
+          functionName,
+          binding.primitiveId,
+          signature.sourceSpan,
+          source,
           diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
         ),
       );
@@ -186,7 +219,7 @@ export function certifyPlatformBindings(
     if (!targetSignatureExactlyMatches(signature, primitive.signature)) {
       diagnostics.push(
         platformPrimitiveSignatureMismatch({
-          source: source as any,
+          source,
           span: signature.sourceSpan,
           order: diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
           functionName,
@@ -203,7 +236,7 @@ export function certifyPlatformBindings(
           functionName,
           `expected ${primitive.proofContract.requiredFacts.length} requires, got ${sourceRequires.length}`,
           signature.sourceSpan,
-          source as any,
+          source,
           diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
         ),
       );
@@ -211,15 +244,17 @@ export function certifyPlatformBindings(
     }
     let contractExact = true;
     for (let requirementIndex = 0; requirementIndex < sourceRequires.length; requirementIndex++) {
-      const sourceText = sourceRequires[requirementIndex]!.expression.text;
-      const targetText = primitive.proofContract.requiredFacts[requirementIndex]!.text;
-      if (sourceText !== targetText) {
+      const sourceFingerprint = sourceRequirementFingerprint(sourceRequires[requirementIndex]!);
+      const targetFingerprint = targetRequirementFingerprint(
+        primitive.proofContract.requiredFacts[requirementIndex]!.text,
+      );
+      if (sourceFingerprint !== targetFingerprint) {
         diagnostics.push(
           platformContractNotExact(
             functionName,
-            `requires[${requirementIndex}] text mismatch: expected '${targetText}', got '${sourceText}'`,
+            `requires[${requirementIndex}] fingerprint mismatch`,
             signature.sourceSpan,
-            source as any,
+            source,
             diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
           ),
         );
@@ -233,7 +268,7 @@ export function certifyPlatformBindings(
           functionName,
           `target has ${primitive.proofContract.ensuredFacts.length} ensured facts, source cannot declare them`,
           signature.sourceSpan,
-          source as any,
+          source,
           diagnosticOrder(moduleId, signature.sourceSpan, "platform"),
         ),
       );
@@ -243,9 +278,13 @@ export function certifyPlatformBindings(
     if (!contractExact) continue;
 
     const sigFingerprint = checkedFunctionSignatureFingerprint(signature);
-    const sourceFacts = sourceRequires.map((req) => req.expression.text).join(",");
-    const targetFacts = primitive.proofContract.requiredFacts.map((fact) => fact.text).join(",");
-    const ensuredFacts = primitive.proofContract.ensuredFacts.map((fact) => fact.text).join(",");
+    const sourceFacts = sourceRequires.map(sourceRequirementFingerprint).join(",");
+    const targetFacts = primitive.proofContract.requiredFacts
+      .map((fact) => targetRequirementFingerprint(fact.text))
+      .join(",");
+    const ensuredFacts = primitive.proofContract.ensuredFacts
+      .map((fact) => targetRequirementFingerprint(fact.text))
+      .join(",");
     const proofContractFingerprint = `source:${sourceFacts}|target:${targetFacts}|ensured:${ensuredFacts}`;
 
     bindings.push(

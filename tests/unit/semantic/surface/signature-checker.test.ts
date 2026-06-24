@@ -171,7 +171,31 @@ test("targetSignatureExactlyMatches matches identical signatures", () => {
   expect(targetSignatureExactlyMatches(result.signature, target)).toBe(true);
 });
 
-test("function with no return type defaults to core Never", () => {
+test("targetSignatureExactlyMatches honors forbidden modifiers", () => {
+  const fixture = parseAndResolveSurfaceFixture([["main.wr", "fn f() -> Never\n"]]);
+  const func = fixture.index.functions()[0]!;
+  const result = checkFunctionSignature({
+    functionRecord: func,
+    index: fixture.index,
+    referenceLookup: fixture.referenceLookup,
+    coreTypes: fixture.coreTypes,
+    kindContext: fixture.kindContext,
+  });
+
+  const target: TargetFunctionSignature = {
+    genericArity: 0,
+    receiver: undefined,
+    parameters: [],
+    returnType: result.signature.returnType,
+    returnKind: result.signature.returnKind,
+    requiredModifiers: [],
+    forbiddenModifiers: ["private"],
+  };
+
+  expect(targetSignatureExactlyMatches(result.signature, target)).toBe(true);
+});
+
+test("ordinary function with no return type reports invalid return type", () => {
   const fixture = parseAndResolveSurfaceFixture([["main.wr", "fn nothing()\n"]]);
   const func = fixture.index.functions()[0]!;
   const result = checkFunctionSignature({
@@ -183,6 +207,26 @@ test("function with no return type defaults to core Never", () => {
   });
 
   expect(result.signature.returnType.kind).toBe("core");
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+    "SURFACE_INVALID_RETURN_TYPE",
+  );
+});
+
+test("terminal function with no return type defaults to core Never", () => {
+  const fixture = parseAndResolveSurfaceFixture([["main.wr", "terminal fn nothing()\n"]]);
+  const func = fixture.index.functions()[0]!;
+  const result = checkFunctionSignature({
+    functionRecord: func,
+    index: fixture.index,
+    referenceLookup: fixture.referenceLookup,
+    coreTypes: fixture.coreTypes,
+    kindContext: fixture.kindContext,
+  });
+
+  expect(result.signature.returnType.kind).toBe("core");
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+    "SURFACE_INVALID_RETURN_TYPE",
+  );
 });
 
 test("ownerItemId is set when function has parentItemId", () => {
@@ -200,6 +244,26 @@ test("ownerItemId is set when function has parentItemId", () => {
     });
     expect(result.signature.ownerItemId).toBe(method.parentItemId);
   }
+});
+
+test("unannotated method self receives the owner source type", () => {
+  const fixture = parseAndResolveSurfaceFixture([["main.wr", "class Foo:\n    fn method(self)\n"]]);
+  const method = fixture.index.functions().find((func) => func.parentItemId !== undefined)!;
+  const owner = fixture.index.item(method.parentItemId!)!;
+  if (owner.typeId === undefined) throw new Error("expected method owner to have a type id");
+  const result = checkFunctionSignature({
+    functionRecord: method,
+    index: fixture.index,
+    referenceLookup: fixture.referenceLookup,
+    coreTypes: fixture.coreTypes,
+    kindContext: fixture.kindContext,
+  });
+
+  expect(result.signature.receiver?.type).toEqual({
+    kind: "source",
+    itemId: owner.id,
+    typeId: owner.typeId,
+  });
 });
 
 test("function without parameters has empty parameters list", () => {

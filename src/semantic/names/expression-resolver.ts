@@ -168,13 +168,14 @@ function walkFunction(
 
   const funcCtx: ResolutionWalkContext = { ...context, scope: funcScope };
 
-  for (const reqSection of func.requiresSections()) {
-    walkRequiresSection(reqSection, funcCtx);
-  }
-
   const body = func.body();
   if (body !== undefined) {
     walkBlock(body, funcCtx);
+  }
+
+  const requiresSections = func.requiresSections();
+  for (const section of requiresSections) {
+    walkRequiresSection(section, funcCtx);
   }
 }
 
@@ -321,16 +322,6 @@ function walkStatement(node: RedNode, context: ResolutionWalkContext): void {
     case SyntaxKind.Block: {
       const innerBlock = BlockView.from(node);
       if (innerBlock !== undefined) walkBlock(innerBlock, context);
-      break;
-    }
-    case SyntaxKind.RequiresSection: {
-      const reqSection = RequiresSectionView.from(node);
-      if (reqSection !== undefined) walkRequiresSection(reqSection, context);
-      break;
-    }
-    case SyntaxKind.RequireSection: {
-      const reqSection = RequireSectionView.from(node);
-      if (reqSection !== undefined) walkRequiresSection(reqSection, context);
       break;
     }
   }

@@ -1,13 +1,26 @@
 import type { FunctionId } from "../ids";
+import type { SyntaxReferenceKey, ResolvedReference } from "../names/reference";
 
 import type { SourceSpan } from "../../frontend";
+import type { CheckedResourceKind } from "./resource-kind";
+import type { CheckedFunctionSignature, CertifiedPlatformBindingTable } from "./checked-program";
+import type { CheckedImageDevice } from "./image-device-checker";
 
 // ── CheckedProofSurface ─────────────────────────────────────
 
-export interface CheckedRequirementExpression {
-  readonly kind: "opaque";
-  readonly text: string;
+export interface CheckedRequirementReference {
+  readonly key: SyntaxReferenceKey;
+  readonly reference: ResolvedReference;
 }
+
+export type CheckedRequirementExpression =
+  | { readonly kind: "opaque"; readonly text: string }
+  | {
+      readonly kind: "checked";
+      readonly text: string;
+      readonly references: readonly CheckedRequirementReference[];
+      readonly completedMembers: readonly CheckedRequirementReference[];
+    };
 
 export interface CheckedRequirementSurface {
   readonly ownerFunctionId?: FunctionId;
@@ -30,50 +43,48 @@ export interface CheckedTerminalSurfaceTable {
   entries(): readonly CheckedTerminalSurface[];
 }
 
+export interface CheckedProofSeedTable<Entry> {
+  entries(): readonly Entry[];
+}
+
+export interface CheckedResourceKindByTypeSurface {
+  readonly fingerprint: string;
+  readonly resourceKind: CheckedResourceKind;
+  readonly span?: SourceSpan;
+}
+
+export interface CheckedSignatureModeSurface {
+  readonly functionId: FunctionId;
+  readonly signature: CheckedFunctionSignature;
+}
+
 export interface CheckedPredicateFactSurface {
   readonly functionId: FunctionId;
   readonly span: SourceSpan;
 }
 
-export interface CheckedPredicateFactSurfaceTable {
-  get(functionId: FunctionId): readonly CheckedPredicateFactSurface[] | undefined;
-  entries(): readonly CheckedPredicateFactSurface[];
-}
-
 export interface CheckedValidationSurface {
-  readonly functionId: FunctionId;
   readonly span: SourceSpan;
-}
-
-export interface CheckedValidationSurfaceTable {
-  entries(): readonly CheckedValidationSurface[];
 }
 
 export interface CheckedPrivateStateSurface {
-  readonly functionId: FunctionId;
   readonly span: SourceSpan;
-}
-
-export interface CheckedPrivateStateSurfaceTable {
-  entries(): readonly CheckedPrivateStateSurface[];
 }
 
 export interface CheckedImageSurface {
-  readonly functionId: FunctionId;
-  readonly span: SourceSpan;
-}
-
-export interface CheckedImageSurfaceTable {
-  entries(): readonly CheckedImageSurface[];
+  readonly device: CheckedImageDevice;
 }
 
 export interface CheckedProofSurface {
+  readonly resourceKindByType: CheckedProofSeedTable<CheckedResourceKindByTypeSurface>;
+  readonly signatureModes: CheckedProofSeedTable<CheckedSignatureModeSurface>;
   readonly requirementSurfaces: CheckedRequirementSurfaceTable;
+  readonly predicateFactSurfaces: CheckedProofSeedTable<CheckedPredicateFactSurface>;
   readonly terminalSurfaces: CheckedTerminalSurfaceTable;
-  readonly predicateFactSurfaces: CheckedPredicateFactSurfaceTable;
-  readonly validationSurfaces: CheckedValidationSurfaceTable;
-  readonly privateStateSurfaces: CheckedPrivateStateSurfaceTable;
-  readonly imageSurfaces: CheckedImageSurfaceTable;
+  readonly validationSurfaces: CheckedProofSeedTable<CheckedValidationSurface>;
+  readonly privateStateSurfaces: CheckedProofSeedTable<CheckedPrivateStateSurface>;
+  readonly imageSurfaces: CheckedProofSeedTable<CheckedImageSurface>;
+  readonly platformContracts: CertifiedPlatformBindingTable;
 }
 
 // ── Builders ────────────────────────────────────────────────
@@ -82,9 +93,9 @@ function checkedRequirementSurfaceTable(
   entries: readonly CheckedRequirementSurface[],
 ): CheckedRequirementSurfaceTable {
   const sorted = [...entries].sort((left, right) => {
-    const aId = left.ownerFunctionId ?? (0 as any);
-    const bId = right.ownerFunctionId ?? (0 as any);
-    return (aId as number) - (bId as number);
+    const aId = left.ownerFunctionId !== undefined ? (left.ownerFunctionId as number) : 0;
+    const bId = right.ownerFunctionId !== undefined ? (right.ownerFunctionId as number) : 0;
+    return aId - bId;
   });
   const byFunction = new Map<FunctionId, CheckedRequirementSurface[]>();
   for (const entry of sorted) {
@@ -96,7 +107,8 @@ function checkedRequirementSurfaceTable(
   }
   return {
     get(functionId) {
-      return byFunction.get(functionId);
+      const result = byFunction.get(functionId);
+      return result !== undefined ? [...result] : undefined;
     },
     entries: () => [...sorted],
   };
@@ -117,28 +129,20 @@ function checkedTerminalSurfaceTable(
   };
 }
 
-function checkedPredicateFactSurfaceTable(
-  entries: readonly CheckedPredicateFactSurface[],
-): CheckedPredicateFactSurfaceTable {
-  const sorted = [...entries].sort(
-    (left, right) => (left.functionId as number) - (right.functionId as number),
-  );
-  const byFunction = new Map<FunctionId, CheckedPredicateFactSurface[]>();
-  for (const entry of sorted) {
-    const list = byFunction.get(entry.functionId) ?? [];
-    list.push(entry);
-    byFunction.set(entry.functionId, list);
-  }
+function checkedProofSeedTable<Entry>(entries: readonly Entry[]): CheckedProofSeedTable<Entry> {
+  const stableEntries = [...entries];
   return {
-    get(functionId) {
-      return byFunction.get(functionId);
-    },
-    entries: () => [...sorted],
+    entries: () => [...stableEntries],
   };
 }
 
-function emptyReadonlyTable<TableEntry>(): { entries(): readonly TableEntry[] } {
-  return { entries: () => [] };
+function emptyCertifiedPlatformBindingTable(): CertifiedPlatformBindingTable {
+  return {
+    get() {
+      return undefined;
+    },
+    entries: () => [],
+  };
 }
 
 export function requirementSurface(input: {
@@ -163,16 +167,40 @@ export function terminalSurface(input: {
   };
 }
 
+export function checkedProofSurfaceEmpty(): CheckedProofSurface {
+  return {
+    resourceKindByType: checkedProofSeedTable([]),
+    signatureModes: checkedProofSeedTable([]),
+    requirementSurfaces: checkedRequirementSurfaceTable([]),
+    predicateFactSurfaces: checkedProofSeedTable([]),
+    terminalSurfaces: checkedTerminalSurfaceTable([]),
+    validationSurfaces: checkedProofSeedTable([]),
+    privateStateSurfaces: checkedProofSeedTable([]),
+    imageSurfaces: checkedProofSeedTable([]),
+    platformContracts: emptyCertifiedPlatformBindingTable(),
+  };
+}
+
 export function checkedProofSurface(input: {
+  readonly resourceKindByType?: readonly CheckedResourceKindByTypeSurface[];
+  readonly signatureModes?: readonly CheckedSignatureModeSurface[];
   readonly requirements?: readonly CheckedRequirementSurface[];
+  readonly predicateFactSurfaces?: readonly CheckedPredicateFactSurface[];
   readonly terminalSurfaces?: readonly CheckedTerminalSurface[];
+  readonly validationSurfaces?: readonly CheckedValidationSurface[];
+  readonly privateStateSurfaces?: readonly CheckedPrivateStateSurface[];
+  readonly imageSurfaces?: readonly CheckedImageSurface[];
+  readonly platformContracts?: CertifiedPlatformBindingTable;
 }): CheckedProofSurface {
   return {
+    resourceKindByType: checkedProofSeedTable(input.resourceKindByType ?? []),
+    signatureModes: checkedProofSeedTable(input.signatureModes ?? []),
     requirementSurfaces: checkedRequirementSurfaceTable(input.requirements ?? []),
-    predicateFactSurfaces: checkedPredicateFactSurfaceTable([]),
+    predicateFactSurfaces: checkedProofSeedTable(input.predicateFactSurfaces ?? []),
     terminalSurfaces: checkedTerminalSurfaceTable(input.terminalSurfaces ?? []),
-    validationSurfaces: emptyReadonlyTable(),
-    privateStateSurfaces: emptyReadonlyTable(),
-    imageSurfaces: emptyReadonlyTable(),
+    validationSurfaces: checkedProofSeedTable(input.validationSurfaces ?? []),
+    privateStateSurfaces: checkedProofSeedTable(input.privateStateSurfaces ?? []),
+    imageSurfaces: checkedProofSeedTable(input.imageSurfaces ?? []),
+    platformContracts: input.platformContracts ?? emptyCertifiedPlatformBindingTable(),
   };
 }

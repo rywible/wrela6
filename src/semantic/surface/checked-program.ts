@@ -12,7 +12,7 @@ import type { CheckedType } from "./type-model";
 import type { CheckedResourceKind, TypeParameterKey } from "./resource-kind";
 import type { TypeParameterOwner } from "../item-index/item-records";
 import type { CheckedProofSurface } from "./proof-surface";
-import { checkedProofSurface } from "./proof-surface";
+import { checkedProofSurfaceEmpty } from "./proof-surface";
 import type { ResolvedReference } from "../names/reference";
 import type { SyntaxReferenceKey } from "../names/reference";
 import type { SourceSpan } from "../../frontend";
@@ -46,7 +46,6 @@ function checkedTypeTable(records: readonly CheckedTypeRecord[]): CheckedTypeTab
 
 export interface CheckedInterfaceConstraint {
   readonly interfaceType: CheckedType;
-  readonly arguments: readonly CheckedType[];
   readonly span: SourceSpan;
 }
 
@@ -60,7 +59,6 @@ export interface CheckedGenericParameter {
 export interface CheckedGenericSignature {
   readonly owner: TypeParameterOwner;
   readonly parameters: readonly CheckedGenericParameter[];
-  readonly constraints: readonly CheckedInterfaceConstraint[];
 }
 
 export interface CheckedParameter {
@@ -69,13 +67,17 @@ export interface CheckedParameter {
   readonly type: CheckedType;
   readonly mode: "observe" | "consume";
   readonly resourceKind: CheckedResourceKind;
+  readonly referenceKey?: SyntaxReferenceKey;
   readonly sourceSpan: SourceSpan;
 }
 
 export interface CheckedReceiver {
   readonly parameterId: ParameterId;
   readonly ownerItemId: ItemId;
+  readonly type: CheckedType;
+  readonly resourceKind: CheckedResourceKind;
   readonly mode: "observe" | "consume";
+  readonly referenceKey?: SyntaxReferenceKey;
 }
 
 export interface CheckedFunctionModifiers {
@@ -152,6 +154,7 @@ export interface CheckedGenericParameterRecord {
   readonly key: TypeParameterKey;
   readonly name: string;
   readonly owner: TypeParameterOwner;
+  readonly bounds: readonly CheckedInterfaceConstraint[];
   readonly span: SourceSpan;
 }
 
@@ -170,9 +173,7 @@ function checkedGenericParameterTable(
   const sorted = [...records].sort((left, right) => {
     const aKey = `${left.owner.kind}:${ownerIdString(left.owner)}:${left.key.index}`;
     const bKey = `${right.owner.kind}:${ownerIdString(right.owner)}:${right.key.index}`;
-    if (aKey < bKey) return -1;
-    if (aKey > bKey) return 1;
-    return 0;
+    return compareCodeUnitStrings(aKey, bKey);
   });
   return {
     entries: () => [...sorted],
@@ -269,10 +270,7 @@ export class CheckedProgramBuilder {
   private readonly genericParamRecords: CheckedGenericParameterRecord[] = [];
   private readonly completedMemberEntries: CompletedMemberReference[] = [];
   private readonly platformBindingRecords: CertifiedPlatformBinding[] = [];
-  private proofSurfaceSeeds: {
-    requirements?: readonly import("./proof-surface").CheckedRequirementSurface[];
-    terminalSurfaces?: readonly import("./proof-surface").CheckedTerminalSurface[];
-  } = {};
+  private proofSurface: CheckedProofSurface | undefined;
 
   addType(record: CheckedTypeRecord): void {
     this.typeRecords.push(record);
@@ -298,11 +296,8 @@ export class CheckedProgramBuilder {
     this.platformBindingRecords.push(binding);
   }
 
-  setProofSurfaceSeeds(seeds: {
-    requirements?: readonly import("./proof-surface").CheckedRequirementSurface[];
-    terminalSurfaces?: readonly import("./proof-surface").CheckedTerminalSurface[];
-  }): void {
-    this.proofSurfaceSeeds = seeds;
+  setProofSurface(surface: CheckedProofSurface): void {
+    this.proofSurface = surface;
   }
 
   build(): CheckedSemanticProgram {
@@ -312,7 +307,7 @@ export class CheckedProgramBuilder {
       fields: checkedFieldTable(this.fieldRecords),
       genericParameters: checkedGenericParameterTable(this.genericParamRecords),
       completedMembers: completedMemberReferenceTable(this.completedMemberEntries),
-      proofSurface: checkedProofSurface(this.proofSurfaceSeeds),
+      proofSurface: this.proofSurface ?? checkedProofSurfaceEmpty(),
       certifiedPlatformBindings: certifiedPlatformBindingTable(this.platformBindingRecords),
     };
   }

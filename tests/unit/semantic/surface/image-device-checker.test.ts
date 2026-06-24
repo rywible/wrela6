@@ -7,6 +7,7 @@ import {
 } from "../../../support/semantic/semantic-surface-fakes";
 import { selectImageRoot } from "../../../../src/semantic/surface/image-root-selection";
 import { uniqueEdgeRootKey } from "../../../../src/semantic/ids";
+import { concreteKind } from "../../../../src/semantic/surface/resource-kind";
 
 function selectedBootImage(fixture: ReturnType<typeof parseAndResolveSurfaceFixture>) {
   const result = selectImageRoot({
@@ -26,8 +27,7 @@ test("image device fields are checked via type references", () => {
   const result = checkImageDevices({
     selection,
     index: fixture.index,
-    referenceLookup: fixture.referenceLookup,
-    coreTypes: fixture.coreTypes,
+    checkedFields: fixture.checkedFields,
     targetSurface: semanticTargetSurfaceFake({
       devices: [deviceSurfaceFake({ name: "NetDevice", uniqueEdgeRoots: ["net-root"] })],
     }),
@@ -55,8 +55,7 @@ test("duplicate unique edge root keys are rejected", () => {
   const result = checkImageDevices({
     selection,
     index: fixture.index,
-    referenceLookup: fixture.referenceLookup,
-    coreTypes: fixture.coreTypes,
+    checkedFields: fixture.checkedFields,
     targetSurface: semanticTargetSurfaceFake({
       devices: [deviceSurfaceFake({ name: "NetDevice", uniqueEdgeRoots: ["net-root"] })],
     }),
@@ -79,8 +78,7 @@ test("target unavailable device surface produces diagnostic", () => {
   const result = checkImageDevices({
     selection,
     index: fixture.index,
-    referenceLookup: fixture.referenceLookup,
-    coreTypes: fixture.coreTypes,
+    checkedFields: fixture.checkedFields,
     targetSurface: semanticTargetSurfaceFake({
       devices: [deviceSurfaceFake({ name: "NetDevice", uniqueEdgeRoots: [] })],
     }),
@@ -106,8 +104,7 @@ test("different device surface ids can conflict on same root key", () => {
   const result = checkImageDevices({
     selection,
     index: fixture.index,
-    referenceLookup: fixture.referenceLookup,
-    coreTypes: fixture.coreTypes,
+    checkedFields: fixture.checkedFields,
     targetSurface: semanticTargetSurfaceFake({
       devices: [
         deviceSurfaceFake({ name: "NetDeviceA", uniqueEdgeRoots: ["shared-root"] }),
@@ -123,6 +120,39 @@ test("different device surface ids can conflict on same root key", () => {
   expect(hasDuplicateRootDiagnostic).toBe(true);
 });
 
+test("device resource kind can lower to unique edge root through kind context", () => {
+  const fixture = parseAndResolveSurfaceFixture([
+    ["main.wr", "class NetDevice:\nuefi image Boot:\n    devices:\n        net0: NetDevice\n"],
+  ]);
+  const netDevice = fixture.index.types()[0]!;
+
+  const selection = selectedBootImage(fixture);
+  const result = checkImageDevices({
+    selection,
+    index: fixture.index,
+    checkedFields: fixture.checkedFields,
+    targetSurface: semanticTargetSurfaceFake({
+      devices: [
+        deviceSurfaceFake({
+          name: "NetDevice",
+          resourceKind: "Linear",
+          uniqueEdgeRoots: ["net-root"],
+        }),
+      ],
+    }),
+    kindContext: {
+      ...fixture.kindContext,
+      index: fixture.index,
+      sourceTypeKinds: new Map([[netDevice.id, concreteKind("UniqueEdgeRoot")]]),
+    },
+  });
+
+  expect(result.devices).toHaveLength(1);
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+    "SURFACE_INVALID_IMAGE_DEVICE_TYPE",
+  );
+});
+
 test("ordinary image fields are not treated as device root bindings", () => {
   const fixture = parseAndResolveSurfaceFixture([
     ["main.wr", "uefi image Boot:\n    flag: u32\n    devices:\n        net0: u32\n"],
@@ -132,8 +162,7 @@ test("ordinary image fields are not treated as device root bindings", () => {
   const result = checkImageDevices({
     selection,
     index: fixture.index,
-    referenceLookup: fixture.referenceLookup,
-    coreTypes: fixture.coreTypes,
+    checkedFields: fixture.checkedFields,
     targetSurface: semanticTargetSurfaceFake({
       devices: [],
     }),
@@ -151,6 +180,27 @@ test("ordinary image fields are not treated as device root bindings", () => {
   ).toBe(true);
 });
 
+test("device checking consumes checked field records without rechecking type references", () => {
+  const fixture = parseAndResolveSurfaceFixture([
+    ["main.wr", "uefi image Boot:\n    devices:\n        net0: MissingDevice\n"],
+  ]);
+
+  const selection = selectedBootImage(fixture);
+  const result = checkImageDevices({
+    selection,
+    index: fixture.index,
+    checkedFields: fixture.checkedFields,
+    targetSurface: semanticTargetSurfaceFake({
+      devices: [deviceSurfaceFake({ name: "NetDevice", uniqueEdgeRoots: ["net-root"] })],
+    }),
+    kindContext: fixture.kindContext,
+  });
+
+  expect(
+    result.diagnostics.filter((diagnostic) => diagnostic.code === "SURFACE_INVALID_TYPE_REFERENCE"),
+  ).toHaveLength(0);
+});
+
 test("check type reference uses SurfaceReferenceLookup not string lookup", () => {
   const fixture = parseAndResolveSurfaceFixture([
     ["main.wr", "class NetDevice:\nuefi image Boot:\n    devices:\n        net0: NetDevice\n"],
@@ -160,8 +210,7 @@ test("check type reference uses SurfaceReferenceLookup not string lookup", () =>
   const result = checkImageDevices({
     selection,
     index: fixture.index,
-    referenceLookup: fixture.referenceLookup,
-    coreTypes: fixture.coreTypes,
+    checkedFields: fixture.checkedFields,
     targetSurface: semanticTargetSurfaceFake({
       devices: [deviceSurfaceFake({ name: "NetDevice", uniqueEdgeRoots: ["net-root"] })],
     }),

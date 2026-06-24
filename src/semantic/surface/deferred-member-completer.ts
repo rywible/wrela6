@@ -16,12 +16,15 @@ import type { CheckedType } from "./type-model";
 import type { SemanticSurfaceDiagnostic } from "./diagnostics";
 import { unresolvedDeferredMember, ambiguousDeferredMember } from "./diagnostics";
 import { syntaxReferenceKeyToString } from "./reference-lookup";
+import { compareCodeUnitStrings } from "./deterministic-sort";
 
 export interface CompleteDeferredMembersInput {
   readonly index: ItemIndex;
   readonly references: ResolvedReferences;
   readonly memberNamespace: MemberNamespace;
-  readonly typedOwners: ReadonlyMap<ParameterId, ItemId>;
+  readonly typedOwners: ReadonlyMap<string, ItemId>;
+  readonly parameterOwners: ReadonlyMap<ParameterId, ItemId>;
+  readonly declarationKeys?: ReadonlySet<string>;
 }
 
 export interface CompleteDeferredMembersResult {
@@ -34,21 +37,36 @@ export interface CompleteDeferredMembersResult {
 export function deriveTypedOwnersFromSignatures(input: {
   readonly signatures: CheckedFunctionSignatureTable;
   readonly references: ResolvedReferences;
-}): ReadonlyMap<ParameterId, ItemId> {
-  const owners = new Map<ParameterId, ItemId>();
+  readonly index?: ItemIndex;
+}): {
+  byKey: ReadonlyMap<string, ItemId>;
+  byParameterId: ReadonlyMap<ParameterId, ItemId>;
+} {
+  const byKey = new Map<string, ItemId>();
+  const byParameterId = new Map<ParameterId, ItemId>();
   for (const signature of input.signatures.entries()) {
     for (const parameter of signature.parameters) {
-      const ownerItemId = ownerItemIdForCheckedType(parameter.type);
+      const ownerItemId = ownerItemIdForCheckedType(parameter.type, input.index);
       if (ownerItemId !== undefined) {
-        owners.set(parameter.parameterId, ownerItemId);
+        if (parameter.referenceKey !== undefined) {
+          byKey.set(syntaxReferenceKeyToString(parameter.referenceKey), ownerItemId);
+        }
+        byParameterId.set(parameter.parameterId, ownerItemId);
       }
     }
   }
-  return owners;
+  return { byKey, byParameterId };
 }
 
-export function ownerItemIdForCheckedType(type: CheckedType): ItemId | undefined {
+export function ownerItemIdForCheckedType(
+  type: CheckedType,
+  index?: ItemIndex,
+): ItemId | undefined {
   if (type.kind === "source") return type.itemId;
+  if (type.kind === "applied" && type.constructor.kind === "source" && index !== undefined) {
+    const typeRecord = index.type(type.constructor.typeId);
+    return typeRecord?.itemId;
+  }
   return undefined;
 }
 
@@ -65,29 +83,19 @@ function handleMemberResult(
     });
   } else if (result.kind === "unresolved") {
     diagnostics.push(
-      unresolvedDeferredMember(
-        deferredMember.memberName,
-        deferredMember.memberSpan,
-        undefined as any,
-        {
-          moduleId: deferredMember.key.moduleId,
-          span: deferredMember.memberSpan,
-          codeTieBreaker: "deferred",
-        },
-      ),
+      unresolvedDeferredMember(deferredMember.memberName, deferredMember.memberSpan, undefined, {
+        moduleId: deferredMember.key.moduleId,
+        span: deferredMember.memberSpan,
+        codeTieBreaker: "deferred",
+      }),
     );
   } else if (result.kind === "ambiguous") {
     diagnostics.push(
-      ambiguousDeferredMember(
-        deferredMember.memberName,
-        deferredMember.memberSpan,
-        undefined as any,
-        {
-          moduleId: deferredMember.key.moduleId,
-          span: deferredMember.memberSpan,
-          codeTieBreaker: "deferred",
-        },
-      ),
+      ambiguousDeferredMember(deferredMember.memberName, deferredMember.memberSpan, undefined, {
+        moduleId: deferredMember.key.moduleId,
+        span: deferredMember.memberSpan,
+        codeTieBreaker: "deferred",
+      }),
     );
   }
 }
@@ -106,21 +114,32 @@ export function completeDeferredMembers(
   }
 
   for (const deferredMember of input.references.deferredMembers()) {
-    const ownerKey = deferredMember.receiverExpressionKey ?? deferredMember.key;
-    const receiverRef = entriesByKey.get(syntaxReferenceKeyToString(ownerKey));
-    let ownerItemId: ItemId | undefined;
-
-    if (receiverRef?.kind === "parameter") {
-      ownerItemId = input.typedOwners.get(receiverRef.parameterId);
+    const memberKeyStr = syntaxReferenceKeyToString(deferredMember.key);
+    const isDeclarationScoped =
+      input.declarationKeys !== undefined && input.declarationKeys.has(memberKeyStr);
+    if (input.declarationKeys === undefined || !isDeclarationScoped) {
+      remaining.push(deferredMember);
+      continue;
     }
+    const ownerKey = deferredMember.receiverExpressionKey ?? deferredMember.key;
+    const ownerKeyStr = syntaxReferenceKeyToString(ownerKey);
+    let ownerItemId: ItemId | undefined = input.typedOwners.get(ownerKeyStr);
 
     if (ownerItemId === undefined) {
+      const receiverRef = entriesByKey.get(ownerKeyStr);
       if (receiverRef?.kind === "parameter") {
+        ownerItemId = input.parameterOwners.get(receiverRef.parameterId);
+        if (ownerItemId === undefined) {
+          failed.push(deferredMember);
+          continue;
+        }
+      } else if (isDeclarationScoped) {
         failed.push(deferredMember);
+        continue;
       } else {
         remaining.push(deferredMember);
+        continue;
       }
-      continue;
     }
 
     const resolveInput: ResolveMemberInput = {
@@ -140,9 +159,7 @@ export function completeDeferredMembers(
   const sorted = [...completed].sort((left, right) => {
     const leftKey = syntaxReferenceKeyToString(left.key);
     const rightKey = syntaxReferenceKeyToString(right.key);
-    if (leftKey < rightKey) return -1;
-    if (leftKey > rightKey) return 1;
-    return 0;
+    return compareCodeUnitStrings(leftKey, rightKey);
   });
   const completedTable: CompletedMemberReferenceTable = {
     get: (key) => completedByKey.get(syntaxReferenceKeyToString(key)),
