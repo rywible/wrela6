@@ -53,4 +53,22 @@ describe("source module collector", () => {
     expect(result.items[0]!.imageId).toBeDefined();
     expect(result.images).toHaveLength(1);
   });
+
+  test("sorts module paths by code unit ordering", () => {
+    const result = collectSourceModulesAndTopLevelItems([
+      parsedModuleForTest("zeta.wr", "fn z()\n"),
+      parsedModuleForTest("Alpha.wr", "fn a()\n"),
+    ]);
+
+    expect(result.modules.map((mod) => mod.pathKey)).toEqual(["Alpha.wr", "zeta.wr"]);
+  });
+
+  test("sorts module source text by code unit ordering when path equal", () => {
+    const result = collectSourceModulesAndTopLevelItems([
+      parsedModuleForTest("main.wr", "fn b()\n"),
+      parsedModuleForTest("main.wr", "fn B()\n"),
+    ]);
+
+    expect(result.items.map((item) => item.name)).toEqual(["B", "b"]);
+  });
 });

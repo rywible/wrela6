@@ -124,4 +124,65 @@ describe("item-index duplicate diagnostics", () => {
       true,
     );
   });
+
+  test("sorts diagnostics by source name using code unit ordering", () => {
+    const sourceUpper = SourceText.from("Alpha.wr", "class A:\nclass A:\n");
+    const sourceLower = SourceText.from("zeta.wr", "class z:\nclass z:\n");
+    const records: ItemIndexRecords = {
+      modules: [{ id: moduleId(0), pathKey: "zeta.wr", display: "zeta.wr", source: sourceLower }],
+      items: [
+        {
+          id: itemId(0),
+          kind: "class",
+          moduleId: moduleId(0),
+          name: "z",
+          modifiers: [],
+          nameSpan: SourceSpan.from(0, 1),
+          span: SourceSpan.from(0, 8),
+          declaration: { source: sourceLower } as SourceItemRecord["declaration"],
+        },
+        {
+          id: itemId(1),
+          kind: "class",
+          moduleId: moduleId(0),
+          name: "z",
+          modifiers: [],
+          nameSpan: SourceSpan.from(12, 13),
+          span: SourceSpan.from(10, 18),
+          declaration: { source: sourceLower } as SourceItemRecord["declaration"],
+        },
+        {
+          id: itemId(2),
+          kind: "class",
+          moduleId: moduleId(0),
+          name: "A",
+          modifiers: [],
+          nameSpan: SourceSpan.from(0, 1),
+          span: SourceSpan.from(0, 8),
+          declaration: { source: sourceUpper } as SourceItemRecord["declaration"],
+        },
+        {
+          id: itemId(3),
+          kind: "class",
+          moduleId: moduleId(0),
+          name: "A",
+          modifiers: [],
+          nameSpan: SourceSpan.from(12, 13),
+          span: SourceSpan.from(10, 18),
+          declaration: { source: sourceUpper } as SourceItemRecord["declaration"],
+        },
+      ],
+      types: [],
+      functions: [],
+      images: [],
+      fields: [],
+      typeParameters: [],
+      parameters: [],
+    };
+    const diagnostics = checkItemIndexDuplicates(records);
+    expect(diagnostics.map((diagnostic) => diagnostic.source.name)).toEqual([
+      "Alpha.wr",
+      "zeta.wr",
+    ]);
+  });
 });

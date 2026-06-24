@@ -187,4 +187,41 @@ describe("ResolvedPlatformBindingsBuilder", () => {
     expect(result2.get(functionId(1))?.primitiveId).toBe(platformPrimitiveId("load"));
     expect(result2.get(functionId(2))?.primitiveId).toBe(platformPrimitiveId("store"));
   });
+
+  test("resolved platform bindings sort primitive ids by code unit", () => {
+    const builder = new ResolvedPlatformBindingsBuilder();
+    builder.add({
+      itemId: itemId(0),
+      functionId: functionId(2),
+      primitiveId: platformPrimitiveId("z"),
+    });
+    builder.add({
+      itemId: itemId(0),
+      functionId: functionId(2),
+      primitiveId: platformPrimitiveId("A"),
+    });
+
+    expect(
+      builder
+        .build()
+        .entries()
+        .map((binding) => binding.primitiveId),
+    ).toEqual([platformPrimitiveId("A"), platformPrimitiveId("z")]);
+  });
+});
+
+describe("ResolvedReferencesBuilder kind ordering", () => {
+  test("entries sort kind by code unit comparison", () => {
+    const builder = new ResolvedReferencesBuilder();
+    builder.add(makeKey({ kind: "functionName", ordinal: 1 }), {
+      kind: "builtinType",
+      coreTypeId: coreTypeId("u32"),
+    });
+    builder.add(makeKey({ kind: "typeName", ordinal: 0 }), {
+      kind: "builtinType",
+      coreTypeId: coreTypeId("i32"),
+    });
+    const entries = builder.build().entries();
+    expect(entries.map((entry) => entry.key.kind)).toEqual(["functionName", "typeName"]);
+  });
 });

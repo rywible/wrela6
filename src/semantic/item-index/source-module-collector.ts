@@ -21,6 +21,7 @@ import type {
   TypeParameterRecord,
   TypeRecord,
 } from "./item-records";
+import { compareCodeUnitStrings } from "../surface/deterministic-sort";
 
 export interface SourceDeclarationWorkItem {
   readonly item: SourceItemRecord;
@@ -39,11 +40,11 @@ export interface SourceCollectionResult {
 
 function sortModules(modules: readonly ParsedModule[]): ParsedModule[] {
   return [...modules].sort((left, right) => {
-    const keyCmp = left.path.key.localeCompare(right.path.key);
+    const keyCmp = compareCodeUnitStrings(left.path.key, right.path.key);
     if (keyCmp !== 0) return keyCmp;
-    const nameCmp = left.source.name.localeCompare(right.source.name);
+    const nameCmp = compareCodeUnitStrings(left.source.name, right.source.name);
     if (nameCmp !== 0) return nameCmp;
-    return left.source.text.localeCompare(right.source.text);
+    return compareCodeUnitStrings(left.source.text, right.source.text);
   });
 }
 

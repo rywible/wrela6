@@ -1,4 +1,5 @@
 import { type PlatformPrimitiveId } from "../ids";
+import { compareCodeUnitStrings } from "../surface/deterministic-sort";
 
 const SIMPLE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -36,9 +37,9 @@ export function platformPrimitiveNameCatalog(
   }
 
   const sorted = [...primitives].sort((primA, primB) => {
-    const byName = primA.name.localeCompare(primB.name);
+    const byName = compareCodeUnitStrings(primA.name, primB.name);
     if (byName !== 0) return byName;
-    return String(primA.primitiveId).localeCompare(String(primB.primitiveId));
+    return compareCodeUnitStrings(String(primA.primitiveId), String(primB.primitiveId));
   });
 
   const nameIndex = new Map(sorted.map((primitive) => [primitive.name, primitive]));

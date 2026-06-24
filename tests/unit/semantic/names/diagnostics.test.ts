@@ -401,6 +401,38 @@ describe("sortNameResolutionDiagnostics", () => {
       "Unresolved name 'zzz'.",
     ]);
   });
+
+  test("sorts kind by code unit ordering", () => {
+    const diagnostics: NameResolutionDiagnostic[] = [
+      unresolvedName({
+        source,
+        span: source.span(0, 4),
+        order: {
+          moduleId: moduleId(0),
+          span: source.span(0, 4),
+          kind: "platformBinding",
+          ordinal: 0,
+        },
+        name: "a",
+      }),
+      unresolvedName({
+        source,
+        span: source.span(0, 4),
+        order: {
+          moduleId: moduleId(0),
+          span: source.span(0, 4),
+          kind: "declaration",
+          ordinal: 0,
+        },
+        name: "b",
+      }),
+    ];
+    const sorted = sortNameResolutionDiagnostics(diagnostics);
+    expect(sorted.map((diagnostic) => diagnostic.order.kind)).toEqual([
+      "declaration",
+      "platformBinding",
+    ]);
+  });
 });
 
 describe("candidateDisplayText", () => {
@@ -421,6 +453,15 @@ describe("candidateDisplayText", () => {
 
   test("returns empty string for empty candidates", () => {
     expect(candidateDisplayText([])).toBe("");
+  });
+
+  test("sorts modulePath by code unit ordering", () => {
+    const candidates: readonly CandidateDisplay[] = [
+      { modulePath: "zeta.wr", itemKind: "class", name: "A", denseId: 0 },
+      { modulePath: "Alpha.wr", itemKind: "class", name: "A", denseId: 0 },
+    ];
+
+    expect(candidateDisplayText(candidates)).toBe("Alpha.wr/class/A/0, zeta.wr/class/A/0");
   });
 });
 

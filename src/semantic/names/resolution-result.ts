@@ -6,6 +6,7 @@ import type {
   PlatformPrimitiveBinding,
 } from "./reference";
 import type { FunctionId } from "../ids";
+import { compareCodeUnitStrings } from "../surface/deterministic-sort";
 
 export interface ResolvedReferences {
   get(key: SyntaxReferenceKey): ResolvedReference | undefined;
@@ -68,7 +69,8 @@ function compareKeys(left: SyntaxReferenceKey, right: SyntaxReferenceKey): numbe
     return (left.moduleId as number) - (right.moduleId as number);
   if (left.span.start !== right.span.start) return left.span.start - right.span.start;
   if (left.span.end !== right.span.end) return left.span.end - right.span.end;
-  if (left.kind !== right.kind) return left.kind.localeCompare(right.kind);
+  const kindComparison = compareCodeUnitStrings(left.kind, right.kind);
+  if (kindComparison !== 0) return kindComparison;
   return left.ordinal - right.ordinal;
 }
 
@@ -95,7 +97,7 @@ export class ResolvedPlatformBindingsBuilder {
       if (left.functionId !== right.functionId)
         return (left.functionId as number) - (right.functionId as number);
       if (left.itemId !== right.itemId) return (left.itemId as number) - (right.itemId as number);
-      return left.primitiveId.localeCompare(right.primitiveId);
+      return compareCodeUnitStrings(left.primitiveId, right.primitiveId);
     });
     const map = new Map<FunctionId, PlatformPrimitiveBinding>();
     for (const binding of sorted) {

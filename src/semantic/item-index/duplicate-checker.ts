@@ -11,6 +11,7 @@ import type {
   TypeParameterRecord,
 } from "./item-records";
 import type { FunctionId, ItemId } from "../ids";
+import { compareCodeUnitStrings } from "../surface/deterministic-sort";
 
 function duplicateError(
   code: ItemIndexDiagnostic["code"],
@@ -296,12 +297,12 @@ export function checkItemIndexDuplicates(records: ItemIndexRecords): ItemIndexDi
   ];
 
   return diagnostics.sort((left, right) => {
-    const nameCmp = left.source.name.localeCompare(right.source.name);
+    const nameCmp = compareCodeUnitStrings(left.source.name, right.source.name);
     if (nameCmp !== 0) return nameCmp;
     const startCmp = left.span.start - right.span.start;
     if (startCmp !== 0) return startCmp;
     const endCmp = left.span.end - right.span.end;
     if (endCmp !== 0) return endCmp;
-    return left.code.localeCompare(right.code);
+    return compareCodeUnitStrings(left.code, right.code);
   });
 }

@@ -1,6 +1,7 @@
 import type { Diagnostic } from "../../shared/diagnostics";
 import type { SourceSpan, SourceText } from "../../shared";
 import type { ModuleId } from "../ids";
+import { compareCodeUnitStrings } from "../surface/deterministic-sort";
 
 export type NameReferenceKind =
   | "importModule"
@@ -53,11 +54,11 @@ export interface CandidateDisplay {
 
 export function candidateDisplayText(candidates: readonly CandidateDisplay[]): string {
   const sorted = [...candidates].sort((candA, candB) => {
-    const byModulePath = candA.modulePath.localeCompare(candB.modulePath);
+    const byModulePath = compareCodeUnitStrings(candA.modulePath, candB.modulePath);
     if (byModulePath !== 0) return byModulePath;
-    const byItemKind = candA.itemKind.localeCompare(candB.itemKind);
+    const byItemKind = compareCodeUnitStrings(candA.itemKind, candB.itemKind);
     if (byItemKind !== 0) return byItemKind;
-    const byName = candA.name.localeCompare(candB.name);
+    const byName = compareCodeUnitStrings(candA.name, candB.name);
     if (byName !== 0) return byName;
     return candA.denseId - candB.denseId;
   });
@@ -79,13 +80,13 @@ export function sortNameResolutionDiagnostics(
     if (byStart !== 0) return byStart;
     const byEnd = diagA.order.span.end - diagB.order.span.end;
     if (byEnd !== 0) return byEnd;
-    const byKind = diagA.order.kind.localeCompare(diagB.order.kind);
+    const byKind = compareCodeUnitStrings(diagA.order.kind, diagB.order.kind);
     if (byKind !== 0) return byKind;
     const byOrdinal = diagA.order.ordinal - diagB.order.ordinal;
     if (byOrdinal !== 0) return byOrdinal;
-    const byCode = diagA.code.localeCompare(diagB.code);
+    const byCode = compareCodeUnitStrings(diagA.code, diagB.code);
     if (byCode !== 0) return byCode;
-    return diagA.message.localeCompare(diagB.message);
+    return compareCodeUnitStrings(diagA.message, diagB.message);
   });
 }
 
