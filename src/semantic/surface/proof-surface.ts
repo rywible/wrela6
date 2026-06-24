@@ -5,6 +5,24 @@ import type { SourceSpan } from "../../frontend";
 import type { CheckedResourceKind } from "./resource-kind";
 import type { CheckedFunctionSignature, CertifiedPlatformBindingTable } from "./checked-program";
 import type { CheckedImageDevice } from "./image-device-checker";
+import type {
+  CheckedConstructibilitySurfaceTable,
+  CheckedTakeModeSurfaceTable,
+  CheckedValidationContractSurfaceTable,
+  CheckedAttemptContractSurfaceTable,
+  CheckedPrivateTransitionSurfaceTable,
+  CheckedPlatformEnsuredFactSurfaceTable,
+  CheckedMatchRefinementSurfaceTable,
+} from "./proof-contracts";
+import {
+  emptyCheckedConstructibilitySurfaceTable,
+  emptyCheckedTakeModeSurfaceTable,
+  emptyCheckedValidationContractSurfaceTable,
+  emptyCheckedAttemptContractSurfaceTable,
+  emptyCheckedPrivateTransitionSurfaceTable,
+  emptyCheckedPlatformEnsuredFactSurfaceTable,
+  emptyCheckedMatchRefinementSurfaceTable,
+} from "./proof-contracts";
 
 // ── CheckedProofSurface ─────────────────────────────────────
 
@@ -85,6 +103,13 @@ export interface CheckedProofSurface {
   readonly privateStateSurfaces: CheckedProofSeedTable<CheckedPrivateStateSurface>;
   readonly imageSurfaces: CheckedProofSeedTable<CheckedImageSurface>;
   readonly platformContracts: CertifiedPlatformBindingTable;
+  readonly constructibilitySurfaces: CheckedConstructibilitySurfaceTable;
+  readonly takeModeSurfaces: CheckedTakeModeSurfaceTable;
+  readonly validationContracts: CheckedValidationContractSurfaceTable;
+  readonly attemptContracts: CheckedAttemptContractSurfaceTable;
+  readonly privateTransitions: CheckedPrivateTransitionSurfaceTable;
+  readonly platformEnsuredFacts: CheckedPlatformEnsuredFactSurfaceTable;
+  readonly matchRefinements: CheckedMatchRefinementSurfaceTable;
 }
 
 // ── Builders ────────────────────────────────────────────────
@@ -178,6 +203,13 @@ export function checkedProofSurfaceEmpty(): CheckedProofSurface {
     privateStateSurfaces: checkedProofSeedTable([]),
     imageSurfaces: checkedProofSeedTable([]),
     platformContracts: emptyCertifiedPlatformBindingTable(),
+    constructibilitySurfaces: emptyCheckedConstructibilitySurfaceTable(),
+    takeModeSurfaces: emptyCheckedTakeModeSurfaceTable(),
+    validationContracts: emptyCheckedValidationContractSurfaceTable(),
+    attemptContracts: emptyCheckedAttemptContractSurfaceTable(),
+    privateTransitions: emptyCheckedPrivateTransitionSurfaceTable(),
+    platformEnsuredFacts: emptyCheckedPlatformEnsuredFactSurfaceTable(),
+    matchRefinements: emptyCheckedMatchRefinementSurfaceTable(),
   };
 }
 
@@ -191,6 +223,13 @@ export function checkedProofSurface(input: {
   readonly privateStateSurfaces?: readonly CheckedPrivateStateSurface[];
   readonly imageSurfaces?: readonly CheckedImageSurface[];
   readonly platformContracts?: CertifiedPlatformBindingTable;
+  readonly constructibilitySurfaces?: CheckedConstructibilitySurfaceTable;
+  readonly takeModeSurfaces?: CheckedTakeModeSurfaceTable;
+  readonly validationContracts?: CheckedValidationContractSurfaceTable;
+  readonly attemptContracts?: CheckedAttemptContractSurfaceTable;
+  readonly privateTransitions?: CheckedPrivateTransitionSurfaceTable;
+  readonly platformEnsuredFacts?: CheckedPlatformEnsuredFactSurfaceTable;
+  readonly matchRefinements?: CheckedMatchRefinementSurfaceTable;
 }): CheckedProofSurface {
   return {
     resourceKindByType: checkedProofSeedTable(input.resourceKindByType ?? []),
@@ -202,5 +241,14 @@ export function checkedProofSurface(input: {
     privateStateSurfaces: checkedProofSeedTable(input.privateStateSurfaces ?? []),
     imageSurfaces: checkedProofSeedTable(input.imageSurfaces ?? []),
     platformContracts: input.platformContracts ?? emptyCertifiedPlatformBindingTable(),
+    constructibilitySurfaces:
+      input.constructibilitySurfaces ?? emptyCheckedConstructibilitySurfaceTable(),
+    takeModeSurfaces: input.takeModeSurfaces ?? emptyCheckedTakeModeSurfaceTable(),
+    validationContracts: input.validationContracts ?? emptyCheckedValidationContractSurfaceTable(),
+    attemptContracts: input.attemptContracts ?? emptyCheckedAttemptContractSurfaceTable(),
+    privateTransitions: input.privateTransitions ?? emptyCheckedPrivateTransitionSurfaceTable(),
+    platformEnsuredFacts:
+      input.platformEnsuredFacts ?? emptyCheckedPlatformEnsuredFactSurfaceTable(),
+    matchRefinements: input.matchRefinements ?? emptyCheckedMatchRefinementSurfaceTable(),
   };
 }

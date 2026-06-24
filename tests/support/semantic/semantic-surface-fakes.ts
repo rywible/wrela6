@@ -1,4 +1,5 @@
 import type { ParsedModuleGraph } from "../../../src/frontend";
+import { SourceSpan } from "../../../src/frontend";
 import { buildItemIndex } from "../../../src/semantic/item-index";
 import { ItemIndex } from "../../../src/semantic/item-index";
 import { CoreTypeCatalog, resolveNames } from "../../../src/semantic/names";
@@ -38,12 +39,35 @@ import type { ImageRootSelection } from "../../../src/semantic/surface/image-roo
 import {
   coreTypeId,
   deviceSurfaceId,
+  functionId,
   imageProfileId,
   platformContractId,
   platformPrimitiveId,
   targetId,
+  typeId,
   uniqueEdgeRootKey,
 } from "../../../src/semantic/ids";
+import type {
+  FunctionId,
+  ParameterId,
+  PlatformContractId,
+  PlatformPrimitiveId,
+  TargetId,
+  TypeId,
+} from "../../../src/semantic/ids";
+import type { CheckedType } from "../../../src/semantic/surface/type-model";
+import type { CheckedResourceKind } from "../../../src/semantic/surface/resource-kind";
+import type {
+  CheckedAttemptContractSurface,
+  CheckedAttemptInputPosition,
+  CheckedConstructibilitySurface,
+  CheckedMatchRefinementSurface,
+  CheckedPlatformEnsuredFact,
+  CheckedPlatformEnsuredFactSurface,
+  CheckedPrivateTransitionSurface,
+  CheckedTakeModeSurface,
+  CheckedValidationContractSurface,
+} from "../../../src/semantic/surface/proof-contracts";
 
 // ── CoreTypeCatalog ─────────────────────────────────────────
 export function coreTypeCatalogDefault(): CoreTypeCatalog {
@@ -64,6 +88,18 @@ export function voidTargetSignature() {
     returnType: coreCheckedType(coreTypeId("void")),
     returnKind: concreteKind("Copy"),
     requiredModifiers: [] as const,
+    forbiddenModifiers: [] as const,
+  };
+}
+
+export function platformVoidTargetSignature() {
+  return {
+    genericArity: 0,
+    receiver: undefined,
+    parameters: [] as const,
+    returnType: coreCheckedType(coreTypeId("Never")),
+    returnKind: concreteKind("Never"),
+    requiredModifiers: ["platform"] as const,
     forbiddenModifiers: [] as const,
   };
 }
@@ -362,4 +398,154 @@ export function shuffledSemanticTargetSurfaceFake(seed: number): SemanticTargetS
     imageProfiles: profiles,
     deviceSurfaces: devices,
   });
+}
+
+// ── Proof-contract surface fakes ────────────────────────────
+
+const proofContractFakeSpan = SourceSpan.from(0, 6);
+
+export function constructibilitySurfaceFake(overrides?: {
+  readonly typeId?: TypeId;
+  readonly constructorFunctionId?: FunctionId;
+  readonly authorization?:
+    | "ordinary"
+    | "sealedPlatformTokenMint"
+    | "validatedBufferMint"
+    | "privateStateMint"
+    | "streamMint"
+    | "imageCapabilityMint"
+    | "edgeInternalTokenMint";
+  readonly sourceOrigin?: SourceSpan;
+}): CheckedConstructibilitySurface {
+  return {
+    typeId: overrides?.typeId ?? typeId(0),
+    constructorFunctionId: overrides?.constructorFunctionId,
+    authorization: overrides?.authorization ?? "ordinary",
+    sourceOrigin: overrides?.sourceOrigin ?? proofContractFakeSpan,
+  };
+}
+
+export function streamTakeModeSurfaceFake(overrides?: {
+  readonly producerFunctionId?: FunctionId;
+  readonly itemType?: CheckedType;
+  readonly itemResourceKind?: CheckedResourceKind;
+  readonly span?: SourceSpan;
+}): CheckedTakeModeSurface {
+  return {
+    kind: "stream",
+    producerFunctionId: overrides?.producerFunctionId ?? functionId(0),
+    itemType: overrides?.itemType ?? coreCheckedType(coreTypeId("u32")),
+    itemResourceKind: overrides?.itemResourceKind ?? concreteKind("Stream"),
+    span: overrides?.span ?? proofContractFakeSpan,
+  };
+}
+
+export function bufferTakeModeSurfaceFake(overrides?: {
+  readonly sourceTypeId?: TypeId;
+  readonly bufferResourceKind?: CheckedResourceKind;
+  readonly span?: SourceSpan;
+}): CheckedTakeModeSurface {
+  return {
+    kind: "buffer",
+    sourceTypeId: overrides?.sourceTypeId ?? typeId(0),
+    bufferResourceKind: overrides?.bufferResourceKind ?? concreteKind("ValidatedBuffer"),
+    span: overrides?.span ?? proofContractFakeSpan,
+  };
+}
+
+export function validatedBufferTakeModeSurfaceFake(overrides?: {
+  readonly validatedBufferTypeId?: TypeId;
+  readonly span?: SourceSpan;
+}): CheckedTakeModeSurface {
+  return {
+    kind: "validatedBuffer",
+    validatedBufferTypeId: overrides?.validatedBufferTypeId ?? typeId(0),
+    span: overrides?.span ?? proofContractFakeSpan,
+  };
+}
+
+export function attemptContractSurfaceFake(overrides?: {
+  readonly fallibleFunctionId?: FunctionId;
+  readonly resultType?: CheckedType;
+  readonly okType?: CheckedType;
+  readonly errType?: CheckedType;
+  readonly inputs?: readonly CheckedAttemptInputPosition[];
+  readonly span?: SourceSpan;
+}): CheckedAttemptContractSurface {
+  return {
+    fallibleFunctionId: overrides?.fallibleFunctionId ?? functionId(0),
+    resultType: overrides?.resultType ?? coreCheckedType(coreTypeId("u32")),
+    okType: overrides?.okType ?? coreCheckedType(coreTypeId("u32")),
+    errType: overrides?.errType ?? coreCheckedType(coreTypeId("u32")),
+    inputs: overrides?.inputs ?? [{ kind: "receiver" }],
+    span: overrides?.span ?? proofContractFakeSpan,
+  };
+}
+
+export function validationContractSurfaceFake(overrides?: {
+  readonly validatedBufferTypeId?: TypeId;
+  readonly resultType?: CheckedType;
+  readonly sourceType?: CheckedType;
+  readonly okPayloadType?: CheckedType;
+  readonly errPayloadType?: CheckedType;
+  readonly sourceParameterId?: ParameterId;
+  readonly span?: SourceSpan;
+}): CheckedValidationContractSurface {
+  return {
+    validatedBufferTypeId: overrides?.validatedBufferTypeId ?? typeId(0),
+    resultType: overrides?.resultType ?? coreCheckedType(coreTypeId("u32")),
+    sourceType: overrides?.sourceType ?? coreCheckedType(coreTypeId("u32")),
+    okPayloadType: overrides?.okPayloadType ?? coreCheckedType(coreTypeId("u32")),
+    errPayloadType: overrides?.errPayloadType ?? coreCheckedType(coreTypeId("u32")),
+    sourceParameterId: overrides?.sourceParameterId,
+    span: overrides?.span ?? proofContractFakeSpan,
+  };
+}
+
+export function privateTransitionSurfaceFake(overrides?: {
+  readonly functionId?: FunctionId;
+  readonly kind?: "predicate" | "advance" | "close" | "unknown";
+  readonly receiverParameterId?: ParameterId;
+  readonly span?: SourceSpan;
+}): CheckedPrivateTransitionSurface {
+  return {
+    functionId: overrides?.functionId ?? functionId(0),
+    kind: overrides?.kind ?? "advance",
+    receiverParameterId: overrides?.receiverParameterId,
+    span: overrides?.span ?? proofContractFakeSpan,
+  };
+}
+
+export function platformEnsuredFactSurfaceFake(overrides?: {
+  readonly sourceFunctionId?: FunctionId;
+  readonly primitiveId?: PlatformPrimitiveId;
+  readonly contractId?: PlatformContractId;
+  readonly targetId?: TargetId;
+  readonly fingerprint?: string;
+  readonly fact?: CheckedPlatformEnsuredFact;
+}): CheckedPlatformEnsuredFactSurface {
+  return {
+    sourceFunctionId: overrides?.sourceFunctionId ?? functionId(0),
+    primitiveId: overrides?.primitiveId ?? platformPrimitiveId("test_primitive"),
+    contractId: overrides?.contractId ?? platformContractId("test_primitive_contract"),
+    targetId: overrides?.targetId ?? targetId("uefi-aarch64"),
+    fingerprint: overrides?.fingerprint ?? "fp",
+    fact: overrides?.fact ?? { kind: "state", stateKind: "advanced", argumentBindings: [] },
+  };
+}
+
+export function matchRefinementSurfaceFake(overrides?: {
+  readonly matchStatementKey?: string;
+  readonly scrutineeKey?: string;
+  readonly variantReferenceKey?: string;
+  readonly fieldBindingKeys?: readonly string[];
+  readonly span?: SourceSpan;
+}): CheckedMatchRefinementSurface {
+  return {
+    matchStatementKey: overrides?.matchStatementKey ?? "match:0",
+    scrutineeKey: overrides?.scrutineeKey ?? "scrut:0",
+    variantReferenceKey: overrides?.variantReferenceKey ?? "variant:0",
+    fieldBindingKeys: overrides?.fieldBindingKeys ?? [],
+    span: overrides?.span ?? proofContractFakeSpan,
+  };
 }

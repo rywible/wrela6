@@ -36,3 +36,4 @@ export { platformPrimitiveCatalog, semanticTargetSurface } from "./platform-surf
 export type { ImageRootSelection } from "./image-root-selection";
 export type { CheckedImageDevice } from "./image-device-checker";
 export type { CheckedProofSurface } from "./proof-surface";
+export * from "./proof-contracts";

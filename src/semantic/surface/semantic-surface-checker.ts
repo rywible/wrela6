@@ -41,6 +41,15 @@ import type {
   CheckedRequirementReference,
   CheckedRequirementExpression,
 } from "./proof-surface";
+import {
+  CheckedConstructibilitySurfaceTableBuilder,
+  CheckedTakeModeSurfaceTableBuilder,
+  CheckedValidationContractSurfaceTableBuilder,
+  CheckedAttemptContractSurfaceTableBuilder,
+  CheckedPrivateTransitionSurfaceTableBuilder,
+  CheckedPlatformEnsuredFactSurfaceTableBuilder,
+  CheckedMatchRefinementSurfaceTableBuilder,
+} from "./proof-contracts";
 import type { CheckedType } from "./type-model";
 import { checkedTypeFingerprint, errorCheckedType } from "./type-model";
 import type { ImageId, ImageProfileId, FunctionId, ItemId, ModuleId, ParameterId } from "../ids";
@@ -394,7 +403,25 @@ function collectProofSurfaces(
     );
   }
 
-  return checkedProofSurface({ requirements: builtRequirements, terminalSurfaces });
+  const constructibilityBuilder = new CheckedConstructibilitySurfaceTableBuilder();
+  const takeModeBuilder = new CheckedTakeModeSurfaceTableBuilder();
+  const validationContractBuilder = new CheckedValidationContractSurfaceTableBuilder();
+  const attemptContractBuilder = new CheckedAttemptContractSurfaceTableBuilder();
+  const privateTransitionBuilder = new CheckedPrivateTransitionSurfaceTableBuilder();
+  const platformEnsuredFactBuilder = new CheckedPlatformEnsuredFactSurfaceTableBuilder();
+  const matchRefinementBuilder = new CheckedMatchRefinementSurfaceTableBuilder();
+
+  return checkedProofSurface({
+    requirements: builtRequirements,
+    terminalSurfaces,
+    constructibilitySurfaces: constructibilityBuilder.build(),
+    takeModeSurfaces: takeModeBuilder.build(),
+    validationContracts: validationContractBuilder.build(),
+    attemptContracts: attemptContractBuilder.build(),
+    privateTransitions: privateTransitionBuilder.build(),
+    platformEnsuredFacts: platformEnsuredFactBuilder.build(),
+    matchRefinements: matchRefinementBuilder.build(),
+  });
 }
 
 export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSemanticSurfaceResult {
@@ -568,6 +595,13 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
     privateStateSurfaces,
     imageSurfaces: devices.map((device) => ({ device })),
     platformContracts: certResult.bindings,
+    constructibilitySurfaces: declarationProofSurface.constructibilitySurfaces,
+    takeModeSurfaces: declarationProofSurface.takeModeSurfaces,
+    validationContracts: declarationProofSurface.validationContracts,
+    attemptContracts: declarationProofSurface.attemptContracts,
+    privateTransitions: declarationProofSurface.privateTransitions,
+    platformEnsuredFacts: declarationProofSurface.platformEnsuredFacts,
+    matchRefinements: declarationProofSurface.matchRefinements,
   });
   builder.setProofSurface(proofSurface);
   const program = builder.build();
