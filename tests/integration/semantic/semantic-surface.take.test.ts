@@ -1,7 +1,15 @@
 import { expect, test } from "bun:test";
-import { functionId, typeId, coreTypeId } from "../../../src/semantic/ids";
+import {
+  coreTypeId,
+  functionId,
+  imageProfileId,
+  platformContractId,
+  platformPrimitiveId,
+  targetId,
+  typeId,
+} from "../../../src/semantic/ids";
 import { SourceSpan } from "../../../src/frontend";
-import { coreCheckedType } from "../../../src/semantic/surface/type-model";
+import { coreCheckedType, sourceCheckedType } from "../../../src/semantic/surface/type-model";
 import { concreteKind } from "../../../src/semantic/surface/resource-kind";
 import {
   CheckedTakeModeSurfaceTableBuilder,
@@ -10,8 +18,14 @@ import {
 import type { TakeModePopulationContext } from "../../../src/semantic/surface/proof-contracts";
 import { checkedProofSurface } from "../../../src/semantic/surface/proof-surface";
 import {
+  platformPrimitiveCatalog,
+  semanticTargetSurface,
+} from "../../../src/semantic/surface/platform-surface";
+import { checkSemanticSurface } from "../../../src/semantic/surface/semantic-surface-checker";
+import {
   bufferTakeModeSurfaceFake,
   checkSemanticSurfaceForTest,
+  parseAndResolveSurfaceFixture,
   streamTakeModeSurfaceFake,
   validatedBufferTakeModeSurfaceFake,
 } from "../../support/semantic/semantic-surface-fakes";
@@ -24,18 +38,98 @@ const streamBufferValidatedSource =
   "edge class Frame:\n" +
   "stream Counter:\n" +
   "    field: u8\n" +
+  "fn produce() -> Counter\n" +
   "validated buffer FrameBuffer:\n" +
   "    params:\n" +
   "        size: u8\n" +
   "uefi image Boot:\n" +
   "    fn main() -> Never\n";
 
-test("real checker produces no take modes for stream/buffer/validated-buffer source", () => {
+test("real checker does not infer stream or buffer take modes from resource kind alone", () => {
   const result = checkSemanticSurfaceForTest([["main.wr", streamBufferValidatedSource]]);
 
   expect(result.diagnostics).toEqual([]);
   expect(result.program.types.entries().length).toBeGreaterThan(0);
-  expect(result.program.proofSurface.takeModeSurfaces.entries()).toEqual([]);
+  expect(result.program.proofSurface.takeModeSurfaces.entries().map((entry) => entry.kind)).toEqual(
+    ["validatedBuffer"],
+  );
+});
+
+test("real checker produces stream take modes only from explicit certified target contracts", () => {
+  const files: [string, string][] = [
+    [
+      "main.wr",
+      "stream Counter:\n    field: u8\nplatform fn produce() -> Counter\nuefi image Boot:\n    fn main() -> Never\n",
+    ],
+  ];
+  const fixture = parseAndResolveSurfaceFixture(files, { platformNames: ["produce"] });
+  const counterItem = fixture.index.items().find((item) => item.name === "Counter")!;
+  const counterType = sourceCheckedType({
+    itemId: counterItem.id,
+    typeId: counterItem.typeId!,
+  });
+  const targetSurface = semanticTargetSurface({
+    targetId: targetId("uefi-aarch64"),
+    platformPrimitives: platformPrimitiveCatalog([
+      {
+        primitiveId: platformPrimitiveId("produce"),
+        contractId: platformContractId("produce_contract"),
+        availability: {
+          targetId: targetId("uefi-aarch64"),
+          profiles: [imageProfileId("uefi")],
+          features: [],
+        },
+        signature: {
+          genericArity: 0,
+          receiver: undefined,
+          parameters: [],
+          returnType: counterType,
+          returnKind: concreteKind("Stream"),
+          requiredModifiers: ["platform"],
+          forbiddenModifiers: [],
+        },
+        proofContract: {
+          requiredFacts: [],
+          ensuredFacts: [],
+          takeModeContracts: [
+            {
+              kind: "stream",
+              itemType: coreCheckedType(coreTypeId("u8")),
+              itemResourceKind: concreteKind("Affine"),
+            },
+          ],
+        },
+      },
+    ]),
+    imageProfiles: [],
+    deviceSurfaces: [],
+  });
+
+  const result = checkSemanticSurface({
+    graph: fixture.graph,
+    index: fixture.index,
+    references: fixture.references,
+    platformBindings: fixture.platformBindings,
+    coreTypes: fixture.coreTypes,
+    targetSurface,
+  });
+
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+    "SURFACE_PLATFORM_SIGNATURE_MISMATCH",
+  );
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+    "SURFACE_PLATFORM_CONTRACT_NOT_EXACT",
+  );
+  const produceFunctionId = fixture.index.functions().find((entry) => entry.name === "produce")!.id;
+  const produceSignature = result.program.functions.get(produceFunctionId)!;
+  expect(result.program.proofSurface.takeModeSurfaces.entries()).toEqual([
+    streamTakeModeSurfaceFake({
+      producerFunctionId: produceFunctionId,
+      itemType: coreCheckedType(coreTypeId("u8")),
+      itemResourceKind: concreteKind("Affine"),
+      span: produceSignature.sourceSpan,
+    }),
+  ]);
 });
 
 test("fake checked context populates explicit, deterministic take-mode surfaces", () => {

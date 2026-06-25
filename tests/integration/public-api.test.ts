@@ -15,6 +15,7 @@ import {
   Trivia,
   TriviaKind,
 } from "../../src/lexer";
+import * as wrela from "../../src";
 
 describe("lexer public api", () => {
   test("lexes through the public barrel", () => {
@@ -41,5 +42,7 @@ describe("lexer public api", () => {
     expect(TokenStream).toBeDefined();
     expect(Trivia).toBeDefined();
     expect(TriviaKind).toBeDefined();
+    expect(wrela.hir).toBeDefined();
+    expect(typeof wrela.hir.lowerTypedHir).toBe("function");
   });
 });

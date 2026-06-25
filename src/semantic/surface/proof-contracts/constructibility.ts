@@ -1,5 +1,6 @@
 import type { FunctionId, TypeId } from "../../ids";
 import type { SourceSpan } from "../../../frontend";
+import type { CheckedResourceKind, ConcreteResourceKind } from "../resource-kind";
 import { compareCodeUnitStrings } from "../deterministic-sort";
 
 export interface CheckedConstructibilitySurface {
@@ -78,4 +79,75 @@ export function emptyCheckedConstructibilitySurfaceTable(): CheckedConstructibil
     get: () => [],
     entries: () => [],
   };
+}
+
+export type CheckedConstructibilityAuthorization = CheckedConstructibilitySurface["authorization"];
+
+export interface ConstructibilitySourceType {
+  readonly typeId: TypeId;
+  readonly resourceKind: CheckedResourceKind;
+  readonly span: SourceSpan;
+}
+
+export interface ConstructibilityConstructorAuthority {
+  readonly typeId: TypeId;
+  readonly constructorFunctionId?: FunctionId;
+  readonly authorization: Exclude<CheckedConstructibilityAuthorization, "ordinary">;
+  readonly span: SourceSpan;
+}
+
+export interface ConstructibilityPopulationContext {
+  readonly sourceTypes: readonly ConstructibilitySourceType[];
+  readonly constructors: readonly ConstructibilityConstructorAuthority[];
+  readonly validatedBuffers: readonly {
+    readonly typeId: TypeId;
+    readonly constructorFunctionId?: FunctionId;
+    readonly span: SourceSpan;
+  }[];
+  readonly explicitSpecialAuthorities: readonly ConstructibilityConstructorAuthority[];
+}
+
+const specialConstructibilityKinds: ReadonlySet<ConcreteResourceKind> = new Set([
+  "SealedPlatformToken",
+  "ValidatedBuffer",
+  "PrivateState",
+  "Stream",
+  "UniqueEdgeRoot",
+  "EdgePath",
+]);
+
+function isSpecialConstructibilityKind(kind: CheckedResourceKind): boolean {
+  return kind.kind === "concrete" && specialConstructibilityKinds.has(kind.value);
+}
+
+export function populateConstructibilitySurfaces(
+  builder: CheckedConstructibilitySurfaceTableBuilder,
+  context: ConstructibilityPopulationContext,
+): void {
+  for (const sourceType of context.sourceTypes) {
+    if (isSpecialConstructibilityKind(sourceType.resourceKind)) continue;
+    builder.add({
+      typeId: sourceType.typeId,
+      authorization: "ordinary",
+      sourceOrigin: sourceType.span,
+    });
+  }
+
+  for (const validatedBuffer of context.validatedBuffers) {
+    builder.add({
+      typeId: validatedBuffer.typeId,
+      constructorFunctionId: validatedBuffer.constructorFunctionId,
+      authorization: "validatedBufferMint",
+      sourceOrigin: validatedBuffer.span,
+    });
+  }
+
+  for (const authority of [...context.constructors, ...context.explicitSpecialAuthorities]) {
+    builder.add({
+      typeId: authority.typeId,
+      constructorFunctionId: authority.constructorFunctionId,
+      authorization: authority.authorization,
+      sourceOrigin: authority.span,
+    });
+  }
 }

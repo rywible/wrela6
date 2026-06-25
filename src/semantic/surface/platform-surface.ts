@@ -1,10 +1,13 @@
 import type {
   DeviceSurfaceId,
+  FunctionId,
   ImageProfileId,
+  ParameterId,
   PlatformContractId,
   PlatformPrimitiveFamilyId,
   PlatformPrimitiveId,
   TargetId,
+  TypeId,
   UniqueEdgeRootKey,
 } from "../ids";
 import type { CheckedType } from "./type-model";
@@ -35,11 +38,69 @@ export interface TargetFunctionSignature {
 
 export interface TargetProofContractSurface {
   readonly requiredFacts: readonly CheckedRequirementSurfacePlaceholder[];
-  readonly ensuredFacts: readonly CheckedRequirementSurfacePlaceholder[];
+  readonly ensuredFacts: readonly TargetEnsuredFactSurface[];
+  readonly takeModeContracts?: readonly TargetTakeModeContractSurface[];
+  readonly validationContracts?: readonly TargetValidationContractSurface[];
+  readonly attemptContracts?: readonly TargetAttemptContractSurface[];
 }
 
 export interface CheckedRequirementSurfacePlaceholder {
   readonly text: string;
+}
+
+export type TargetEnsuredFactSurface =
+  | {
+      readonly kind: "predicate";
+      readonly predicateFunctionId: FunctionId;
+      readonly argumentBindings: readonly TargetEnsuredFactArgument[];
+    }
+  | {
+      readonly kind: "state";
+      readonly stateKind: "advanced" | "closed" | "available";
+      readonly argumentBindings: readonly TargetEnsuredFactArgument[];
+    }
+  | {
+      readonly kind: "rawText";
+      readonly text: string;
+    };
+
+export interface TargetEnsuredFactArgument {
+  readonly kind: "receiver" | "parameter" | "constant";
+  readonly parameterId?: ParameterId;
+  readonly placeKey?: string;
+  readonly expressionText?: string;
+}
+
+export type TargetTakeModeContractSurface =
+  | {
+      readonly kind: "stream";
+      readonly itemType: CheckedType;
+      readonly itemResourceKind: CheckedResourceKind;
+    }
+  | {
+      readonly kind: "buffer";
+      readonly sourceTypeId: TypeId;
+      readonly bufferResourceKind: CheckedResourceKind;
+    };
+
+export interface TargetValidationContractSurface {
+  readonly validatedBufferTypeId: TypeId;
+  readonly resultType: CheckedType;
+  readonly sourceType: CheckedType;
+  readonly okPayloadType: CheckedType;
+  readonly errPayloadType: CheckedType;
+  readonly sourceParameterIndex: number;
+}
+
+export type TargetAttemptInputPosition =
+  | { readonly kind: "receiver" }
+  | { readonly kind: "parameter"; readonly parameterIndex: number };
+
+export interface TargetAttemptContractSurface {
+  readonly resultType: CheckedType;
+  readonly okType: CheckedType;
+  readonly errType: CheckedType;
+  readonly inputs: readonly TargetAttemptInputPosition[];
 }
 
 export interface PlatformPrimitiveSpec {

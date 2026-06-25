@@ -136,3 +136,40 @@ test("let locals do not produce unresolved diagnostics", () => {
   );
   expect(unresolvedNames).toEqual([]);
 });
+
+test("for binding locals do not produce unresolved diagnostics", () => {
+  const graph = parseModuleGraphForTest([
+    ["main.wr", "fn run(items: u32) -> u32:\n    for item in items:\n        return item\n"],
+  ]);
+  const indexResult = buildItemIndex({ graph });
+  const nameResult = resolveNames({
+    graph,
+    index: indexResult.index,
+    coreTypes: CoreTypeCatalog.default(),
+    platformPrimitiveNames: platformPrimitiveNameCatalog([]),
+  });
+  const unresolvedNames = nameResult.diagnostics.filter(
+    (diagnostic) => diagnostic.code === "NAME_UNRESOLVED_NAME",
+  );
+  expect(unresolvedNames).toEqual([]);
+});
+
+test("take aliases do not produce unresolved diagnostics", () => {
+  const graph = parseModuleGraphForTest([
+    [
+      "main.wr",
+      "fn source() -> u32\nfn run() -> u32:\n    take source() as item:\n        return item\n",
+    ],
+  ]);
+  const indexResult = buildItemIndex({ graph });
+  const nameResult = resolveNames({
+    graph,
+    index: indexResult.index,
+    coreTypes: CoreTypeCatalog.default(),
+    platformPrimitiveNames: platformPrimitiveNameCatalog([]),
+  });
+  const unresolvedNames = nameResult.diagnostics.filter(
+    (diagnostic) => diagnostic.code === "NAME_UNRESOLVED_NAME",
+  );
+  expect(unresolvedNames).toEqual([]);
+});

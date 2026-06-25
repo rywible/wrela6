@@ -17,6 +17,12 @@ import type { ResolvedReference } from "../names/reference";
 import type { SyntaxReferenceKey } from "../names/reference";
 import type { SourceSpan } from "../../frontend";
 import { compareCodeUnitStrings } from "./deterministic-sort";
+import type {
+  CheckedAttemptContractSurface,
+  CheckedPlatformEnsuredFact,
+  CheckedTakeModeSurface,
+  CheckedValidationContractSurface,
+} from "./proof-contracts";
 
 // ── Checked type table ──────────────────────────────────────
 
@@ -229,6 +235,13 @@ export interface CertifiedPlatformBinding {
   readonly contractId: PlatformContractId;
   readonly targetId: TargetId;
   readonly certificate: PlatformPrimitiveBindingCertificate;
+  readonly ensuredFacts?: readonly {
+    readonly fingerprint: string;
+    readonly fact: CheckedPlatformEnsuredFact;
+  }[];
+  readonly takeModeSurfaces?: readonly CheckedTakeModeSurface[];
+  readonly validationContracts?: readonly CheckedValidationContractSurface[];
+  readonly attemptContracts?: readonly CheckedAttemptContractSurface[];
 }
 
 export interface CertifiedPlatformBindingTable {

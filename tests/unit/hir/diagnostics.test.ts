@@ -9,8 +9,10 @@ import {
   type HirDiagnostic,
   type HirDiagnosticCode,
 } from "../../../src/hir/diagnostics";
+import { createHirOriginAllocator } from "../../../src/hir/origin";
 import { hirOriginId, type HirOriginId } from "../../../src/hir/ids";
 import { moduleId, type ModuleId } from "../../../src/semantic/ids";
+import { SourceSpan } from "../../../src/shared/source-span";
 
 function makeDiagnostic(input: {
   readonly code: HirDiagnosticCode;
@@ -343,5 +345,36 @@ describe("HirDiagnosticSink", () => {
       earlierDetail.order.tieBreaker,
       laterDetail.order.tieBreaker,
     ]);
+  });
+
+  test("report enriches origin-backed diagnostics with origin source order", () => {
+    const origins = createHirOriginAllocator();
+    const originId = origins.forSynthetic({
+      moduleId: moduleId(7),
+      span: SourceSpan.from(11, 17),
+      stableDetail: "condition",
+    });
+    const sink = new HirDiagnosticSink((id) => origins.get(id));
+
+    sink.report(
+      makeDiagnostic({
+        code: hirDiagnosticCode("HIR_CONDITION_NOT_BOOL"),
+        message: "Condition expression must be bool.",
+        moduleId: moduleId(0),
+        spanStart: 0,
+        spanEnd: 0,
+        ownerKey: "function:1",
+        originKey: `origin:${originId}`,
+        stableDetail: "condition",
+        originId,
+      }),
+    );
+
+    const diagnostic = sink.entries()[0]!;
+    expect(diagnostic.moduleId).toBe(moduleId(7));
+    expect(diagnostic.span).toEqual(SourceSpan.from(11, 17));
+    expect(diagnostic.order.moduleId).toBe(moduleId(7));
+    expect(diagnostic.order.spanStart).toBe(11);
+    expect(diagnostic.order.spanEnd).toBe(17);
   });
 });

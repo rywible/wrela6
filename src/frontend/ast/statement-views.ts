@@ -37,6 +37,11 @@ export class LetStatementView extends AstView {
     return node.kind === SyntaxKind.LetStatement ? new LetStatementView(node) : undefined;
   }
 
+  pattern(): PatternView | undefined {
+    const patternNode = childNode(this.node, SyntaxKind.Pattern);
+    return patternNode !== undefined ? PatternView.from(patternNode) : undefined;
+  }
+
   type(): TypeReferenceView | undefined {
     const typeNode = childNode(this.node, SyntaxKind.TypeReference);
     return typeNode !== undefined ? TypeReferenceView.from(typeNode) : undefined;
@@ -110,6 +115,11 @@ export class WhileStatementView extends AstView {
 export class ForStatementView extends AstView {
   static from(node: RedNode): ForStatementView | undefined {
     return node.kind === SyntaxKind.ForStatement ? new ForStatementView(node) : undefined;
+  }
+
+  pattern(): PatternView | undefined {
+    const patternNode = childNode(this.node, SyntaxKind.Pattern);
+    return patternNode !== undefined ? PatternView.from(patternNode) : undefined;
   }
 
   iterable(): ExpressionView | undefined {
@@ -187,13 +197,29 @@ export class MatchStatementView extends AstView {
     return condNode !== undefined ? ConditionView.from(condNode) : undefined;
   }
 
+  expression(): ExpressionView | undefined {
+    for (const child of this.node.children()) {
+      if (child instanceof RedNode) {
+        const view = expressionViewFrom(child);
+        if (view !== undefined) return view;
+      }
+    }
+    return undefined;
+  }
+
   arms(): MatchCaseView[] {
-    return this.node
-      .children()
-      .filter(
-        (child): child is RedNode =>
-          child instanceof RedNode && child.kind === SyntaxKind.MatchCase,
-      )
+    const block = childNode(this.node, SyntaxKind.Block);
+    const candidates =
+      block !== undefined
+        ? blockItems(block)
+        : this.node
+            .children()
+            .filter(
+              (child): child is RedNode =>
+                child instanceof RedNode && child.kind === SyntaxKind.MatchCase,
+            );
+    return candidates
+      .filter((child) => child.kind === SyntaxKind.MatchCase)
       .map((node) => MatchCaseView.from(node)!)
       .filter((view): view is MatchCaseView => view !== undefined);
   }
@@ -315,9 +341,19 @@ export class ConditionView extends AstView {
     return node.kind === SyntaxKind.Condition ? new ConditionView(node) : undefined;
   }
 
+  pattern(): PatternView | undefined {
+    const patternNode = childNode(this.node, SyntaxKind.Pattern);
+    return patternNode !== undefined ? PatternView.from(patternNode) : undefined;
+  }
+
   expression(): ExpressionView | undefined {
     return expressionViewFrom(
-      this.node.children().find((child): child is RedNode => child instanceof RedNode),
+      this.node
+        .children()
+        .find(
+          (child): child is RedNode =>
+            child instanceof RedNode && child.kind !== SyntaxKind.Pattern,
+        ),
     );
   }
 }

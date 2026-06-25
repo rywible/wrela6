@@ -1,5 +1,6 @@
 import type {
   FunctionId,
+  ModuleId,
   ParameterId,
   PlatformContractId,
   PlatformPrimitiveId,
@@ -49,6 +50,13 @@ export interface CheckedPlatformEnsuredFactSurface {
 }
 
 export interface CheckedPlatformEnsuredFactSurfaceTable {
+  getByFunction(functionId: FunctionId): readonly CheckedPlatformEnsuredFactSurface[];
+  getByBinding(input: {
+    readonly sourceFunctionId: FunctionId;
+    readonly primitiveId: PlatformPrimitiveId;
+    readonly contractId: PlatformContractId;
+    readonly targetId: TargetId;
+  }): readonly CheckedPlatformEnsuredFactSurface[];
   entries(): readonly CheckedPlatformEnsuredFactSurface[];
 }
 
@@ -62,6 +70,20 @@ export interface CheckedMatchRefinementSurface {
 
 export interface CheckedMatchRefinementSurfaceTable {
   entries(): readonly CheckedMatchRefinementSurface[];
+}
+
+export function matchRefinementMatchKey(input: {
+  readonly moduleId: ModuleId;
+  readonly span: SourceSpan;
+}): string {
+  return `module:${input.moduleId}:match:${input.span.start}:${input.span.end}`;
+}
+
+export function matchRefinementScrutineeKey(input: {
+  readonly moduleId: ModuleId;
+  readonly span: SourceSpan;
+}): string {
+  return `module:${input.moduleId}:scrutinee:${input.span.start}:${input.span.end}`;
 }
 
 function compareOptionalNumber(left: number | undefined, right: number | undefined): number {
@@ -107,6 +129,15 @@ function comparePlatformEnsuredFactSurfaces(
   const targetCmp = compareCodeUnitStrings(left.targetId, right.targetId);
   if (targetCmp !== 0) return targetCmp;
   return compareCodeUnitStrings(left.fingerprint, right.fingerprint);
+}
+
+function platformEnsuredFactBindingKey(input: {
+  readonly sourceFunctionId: FunctionId;
+  readonly primitiveId: PlatformPrimitiveId;
+  readonly contractId: PlatformContractId;
+  readonly targetId: TargetId;
+}): string {
+  return `${input.sourceFunctionId}:${input.primitiveId}:${input.contractId}:${input.targetId}`;
 }
 
 function compareMatchRefinementSurfaces(
@@ -163,7 +194,27 @@ export class CheckedPlatformEnsuredFactSurfaceTableBuilder {
 
   build(): CheckedPlatformEnsuredFactSurfaceTable {
     const sorted = [...this.surfaces].sort(comparePlatformEnsuredFactSurfaces);
+    const byFunction = new Map<FunctionId, CheckedPlatformEnsuredFactSurface[]>();
+    const byBinding = new Map<string, CheckedPlatformEnsuredFactSurface[]>();
+    for (const surface of sorted) {
+      const functionList = byFunction.get(surface.sourceFunctionId) ?? [];
+      functionList.push(surface);
+      byFunction.set(surface.sourceFunctionId, functionList);
+
+      const bindingKey = platformEnsuredFactBindingKey(surface);
+      const bindingList = byBinding.get(bindingKey) ?? [];
+      bindingList.push(surface);
+      byBinding.set(bindingKey, bindingList);
+    }
     return {
+      getByFunction: (functionId) => {
+        const result = byFunction.get(functionId);
+        return result !== undefined ? [...result] : [];
+      },
+      getByBinding: (input) => {
+        const result = byBinding.get(platformEnsuredFactBindingKey(input));
+        return result !== undefined ? [...result] : [];
+      },
       entries: () => [...sorted],
     };
   }
@@ -171,6 +222,8 @@ export class CheckedPlatformEnsuredFactSurfaceTableBuilder {
 
 export function emptyCheckedPlatformEnsuredFactSurfaceTable(): CheckedPlatformEnsuredFactSurfaceTable {
   return {
+    getByFunction: () => [],
+    getByBinding: () => [],
     entries: () => [],
   };
 }
@@ -194,4 +247,61 @@ export function emptyCheckedMatchRefinementSurfaceTable(): CheckedMatchRefinemen
   return {
     entries: () => [],
   };
+}
+
+export interface PrivateTransitionPopulationContext {
+  readonly transitions: readonly CheckedPrivateTransitionSurface[];
+}
+
+export interface PlatformEnsuredFactBinding {
+  readonly sourceFunctionId: FunctionId;
+  readonly primitiveId: PlatformPrimitiveId;
+  readonly contractId: PlatformContractId;
+  readonly targetId: TargetId;
+  readonly ensuredFacts: readonly {
+    readonly fingerprint: string;
+    readonly fact: CheckedPlatformEnsuredFact;
+  }[];
+}
+
+export interface PlatformEnsuredFactPopulationContext {
+  readonly certifiedBindings: readonly PlatformEnsuredFactBinding[];
+}
+
+export function populatePrivateTransitionSurfaces(
+  builder: CheckedPrivateTransitionSurfaceTableBuilder,
+  context: PrivateTransitionPopulationContext,
+): void {
+  for (const transition of context.transitions) {
+    builder.add(transition);
+  }
+}
+
+function isSupportedPlatformFactArgument(argument: CheckedPlatformFactArgument): boolean {
+  if (argument.kind === "receiver") return true;
+  if (argument.kind === "parameter") return argument.parameterId !== undefined;
+  return argument.expressionText !== undefined || argument.placeKey !== undefined;
+}
+
+function isSupportedPlatformEnsuredFact(fact: CheckedPlatformEnsuredFact): boolean {
+  return fact.argumentBindings.every(isSupportedPlatformFactArgument);
+}
+
+export function populatePlatformEnsuredFactSurfaces(
+  builder: CheckedPlatformEnsuredFactSurfaceTableBuilder,
+  context: PlatformEnsuredFactPopulationContext,
+): void {
+  for (const binding of context.certifiedBindings) {
+    for (const ensuredFact of binding.ensuredFacts) {
+      if (!isSupportedPlatformEnsuredFact(ensuredFact.fact)) continue;
+      builder.add({
+        sourceFunctionId: binding.sourceFunctionId,
+        primitiveId: binding.primitiveId,
+        contractId: binding.contractId,
+        targetId: binding.targetId,
+        fingerprint: ensuredFact.fingerprint,
+        fact: ensuredFact.fact,
+      });
+    }
+  }
 }

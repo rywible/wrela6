@@ -88,9 +88,23 @@ test("empty table factories return empty results", () => {
   expect(emptyCheckedTakeModeSurfaceTable().entries()).toEqual([]);
   expect(emptyCheckedAttemptContractSurfaceTable().get(functionId(0))).toEqual([]);
   expect(emptyCheckedAttemptContractSurfaceTable().entries()).toEqual([]);
+  expect(
+    emptyCheckedValidationContractSurfaceTable().getByResultType(
+      coreCheckedType(coreTypeId("u32")),
+    ),
+  ).toEqual([]);
   expect(emptyCheckedValidationContractSurfaceTable().entries()).toEqual([]);
   expect(emptyCheckedPrivateTransitionSurfaceTable().get(functionId(0))).toEqual([]);
   expect(emptyCheckedPrivateTransitionSurfaceTable().entries()).toEqual([]);
+  expect(emptyCheckedPlatformEnsuredFactSurfaceTable().getByFunction(functionId(0))).toEqual([]);
+  expect(
+    emptyCheckedPlatformEnsuredFactSurfaceTable().getByBinding({
+      sourceFunctionId: functionId(0),
+      primitiveId: platformPrimitiveId("primitive"),
+      contractId: platformContractId("contract"),
+      targetId: targetId("target"),
+    }),
+  ).toEqual([]);
   expect(emptyCheckedPlatformEnsuredFactSurfaceTable().entries()).toEqual([]);
   expect(emptyCheckedMatchRefinementSurfaceTable().entries()).toEqual([]);
 });
@@ -220,6 +234,11 @@ test("validation contract builder sorts by validatedBufferTypeId then sourcePara
 
   const entries = table.entries();
   expect(entries.map((entry) => entry.sourceParameterId)).toEqual([undefined, parameterId(4)]);
+  expect(table.getByResultType(coreCheckedType(coreTypeId("u32")))).toEqual([
+    withoutParam,
+    withParam,
+  ]);
+  expect(table.getByResultType(coreCheckedType(coreTypeId("bool")))).toEqual([]);
 });
 
 test("private transition builder sorts by functionId then kind and keys lookups", () => {
@@ -271,6 +290,24 @@ test("platform ensured fact builder sorts by sourceFunctionId then primitiveId",
     platformPrimitiveId("primitive_a"),
     platformPrimitiveId("primitive_b"),
   ]);
+  expect(table.getByFunction(functionId(1))).toEqual([aFact, bFact]);
+  expect(table.getByFunction(functionId(99))).toEqual([]);
+  expect(
+    table.getByBinding({
+      sourceFunctionId: functionId(1),
+      primitiveId: platformPrimitiveId("primitive_a"),
+      contractId: platformContractId("contract_a"),
+      targetId: targetId("target_a"),
+    }),
+  ).toEqual([aFact]);
+  expect(
+    table.getByBinding({
+      sourceFunctionId: functionId(1),
+      primitiveId: platformPrimitiveId("missing"),
+      contractId: platformContractId("contract_a"),
+      targetId: targetId("target_a"),
+    }),
+  ).toEqual([]);
 });
 
 test("match refinement builder sorts by matchStatementKey then scrutineeKey", () => {

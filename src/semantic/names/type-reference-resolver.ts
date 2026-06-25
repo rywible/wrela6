@@ -68,7 +68,7 @@ function chainScope(higher: Scope, lower: Scope): Scope {
   };
 }
 
-interface TypeResolutionContext {
+export interface TypeResolutionContext {
   readonly moduleId: ModuleId;
   readonly source: SourceText;
   readonly scope: Scope;
@@ -579,7 +579,10 @@ function walkValidatedBuffer(
   }
 }
 
-function resolveTypeReference(typeRef: TypeReferenceView, context: TypeResolutionContext): void {
+export function resolveTypeReference(
+  typeRef: TypeReferenceView,
+  context: TypeResolutionContext,
+): void {
   const qualifiedName = typeRef.qualifiedName();
   if (qualifiedName === undefined) return;
 

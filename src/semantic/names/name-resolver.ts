@@ -118,6 +118,7 @@ export function resolveNames(input: ResolveNamesInput): ResolveNamesResult {
   const expressionResult = resolveExpressions({
     graph,
     index,
+    coreTypes,
     moduleNamespace,
     memberNamespace,
     moduleContexts,

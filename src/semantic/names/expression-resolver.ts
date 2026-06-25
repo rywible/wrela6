@@ -8,28 +8,36 @@ import type { ExpressionView } from "../../frontend/ast/expression-views";
 import { PatternView } from "../../frontend/ast/pattern-views";
 import { RequiresSectionView, RequireSectionView } from "../../frontend/ast/requirement-views";
 import { presentTokenText, presentTokenSpan } from "../../frontend/ast/syntax-query";
-import { TypeReferenceView } from "../../frontend/ast/type-views";
+import type { TypeParameterView } from "../../frontend/ast/type-views";
 import { RedNode, SyntaxKind } from "../../frontend/syntax";
 import { SourceSpan, SourceText } from "../../frontend";
 import type { ItemIndex } from "../item-index";
 import type { ItemRecord } from "../item-index/item-records";
+import type { TypeParameterOwner } from "../item-index/item-records";
 import type { ModuleId, ItemId } from "../ids";
+import type { CoreTypeCatalog } from "./core-types";
 import type { ModuleNamespace } from "./module-namespace";
 import type { MemberNamespace } from "./member-namespace";
 import { ReferenceKeyBuilder } from "./reference-key";
 import { ResolvedReferencesBuilder } from "./resolution-result";
 import type { Scope } from "./scope";
-import { scopeBuilder, parameterCandidate, resolvedReferenceForItem } from "./scope";
+import {
+  scopeBuilder,
+  parameterCandidate,
+  resolvedReferenceForItem,
+  typeParameterCandidate,
+} from "./scope";
 import type { ScopeCandidate } from "./scope";
 import type { NameResolutionDiagnostic, NameReferenceKind } from "./diagnostics";
 import * as DiagnosticsModule from "./diagnostics";
-import type { ModuleResolutionContext } from "./type-reference-resolver";
+import { resolveTypeReference, type ModuleResolutionContext } from "./type-reference-resolver";
 import type { NameResolutionPartResult } from "./type-reference-resolver";
 import type { ResolvedReference } from "./reference";
 
 export interface ResolveExpressionsInput {
   readonly graph: ParsedModuleGraph;
   readonly index: ItemIndex;
+  readonly coreTypes: CoreTypeCatalog;
   readonly moduleNamespace: ModuleNamespace;
   readonly memberNamespace: MemberNamespace;
   readonly moduleContexts: readonly ModuleResolutionContext[];
@@ -40,7 +48,9 @@ interface ResolutionWalkContext {
   readonly moduleId: ModuleId;
   readonly source: SourceText;
   readonly scope: Scope;
+  readonly localNames: ReadonlySet<string>;
   readonly index: ItemIndex;
+  readonly coreTypes: CoreTypeCatalog;
   readonly moduleNamespace: ModuleNamespace;
   readonly memberNamespace: MemberNamespace;
   readonly referenceKeys: ReferenceKeyBuilder;
@@ -65,7 +75,15 @@ function chainScope(higher: Scope, lower: Scope): Scope {
 }
 
 export function resolveExpressions(input: ResolveExpressionsInput): NameResolutionPartResult {
-  const { graph, index, moduleNamespace, memberNamespace, moduleContexts, referenceKeys } = input;
+  const {
+    graph,
+    index,
+    coreTypes,
+    moduleNamespace,
+    memberNamespace,
+    moduleContexts,
+    referenceKeys,
+  } = input;
   const references = new ResolvedReferencesBuilder();
   const diagnostics: NameResolutionDiagnostic[] = [];
 
@@ -74,8 +92,9 @@ export function resolveExpressions(input: ResolveExpressionsInput): NameResoluti
     moduleByPathKey.set(mod.path.key, mod);
   }
 
-  const contextBase: Omit<ResolutionWalkContext, "scope" | "moduleId" | "source"> = {
+  const contextBase: Omit<ResolutionWalkContext, "scope" | "moduleId" | "source" | "localNames"> = {
     index,
+    coreTypes,
     moduleNamespace,
     memberNamespace,
     referenceKeys,
@@ -109,6 +128,7 @@ export function resolveExpressions(input: ResolveExpressionsInput): NameResoluti
         moduleId: context.moduleId,
         source: context.source,
         scope: context.scope,
+        localNames: new Set(),
       };
       walkDeclaration(decl, topItem, wCtx);
     }
@@ -145,12 +165,42 @@ function walkDeclaration(
   }
 }
 
+function buildTypeParamScopeCandidates(
+  typeParams: TypeParameterView[],
+  owner: TypeParameterOwner,
+): ReturnType<typeof typeParameterCandidate>[] {
+  return typeParams
+    .map((typeParam, index) => {
+      const name = typeParam.nameText();
+      if (name === undefined) return undefined;
+      return typeParameterCandidate(name, owner, index);
+    })
+    .filter(
+      (candidate): candidate is ReturnType<typeof typeParameterCandidate> =>
+        candidate !== undefined,
+    );
+}
+
 function walkFunction(
   func: FunctionDeclarationView,
   topItem: ItemRecord | undefined,
   context: ResolutionWalkContext,
 ): void {
   let funcScope = context.scope;
+  const typeParams = func.typeParameters();
+  let typeParamOwner: TypeParameterOwner | undefined;
+  if (topItem?.functionId !== undefined) {
+    typeParamOwner = { kind: "function", itemId: topItem.id, functionId: topItem.functionId };
+  } else if (topItem !== undefined) {
+    typeParamOwner = { kind: "item", itemId: topItem.id };
+  }
+  if (typeParams.length > 0 && typeParamOwner !== undefined) {
+    const typeParamScope = scopeBuilder()
+      .addTier("functionTypeParameters", buildTypeParamScopeCandidates(typeParams, typeParamOwner))
+      .build();
+    funcScope = chainScope(typeParamScope, funcScope);
+  }
+
   if (topItem?.functionId !== undefined) {
     const funcRecord = context.index.function(topItem.functionId);
     if (funcRecord !== undefined) {
@@ -161,12 +211,12 @@ function walkFunction(
       }
       if (paramCandidates.length > 0) {
         const paramScope = scopeBuilder().addTier("parameters", paramCandidates).build();
-        funcScope = chainScope(paramScope, context.scope);
+        funcScope = chainScope(paramScope, funcScope);
       }
     }
   }
 
-  const funcCtx: ResolutionWalkContext = { ...context, scope: funcScope };
+  const funcCtx: ResolutionWalkContext = { ...context, scope: funcScope, localNames: new Set() };
 
   const body = func.body();
   if (body !== undefined) {
@@ -192,36 +242,39 @@ function walkRequiresSection(
 }
 
 function walkBlock(block: BlockView, context: ResolutionWalkContext): void {
+  let blockContext = context;
   for (const item of block.items()) {
-    walkStatement(item, context);
+    blockContext = walkStatement(item, blockContext);
   }
 }
 
-function walkStatement(node: RedNode, context: ResolutionWalkContext): void {
+function walkStatement(node: RedNode, context: ResolutionWalkContext): ResolutionWalkContext {
   switch (node.kind) {
     case SyntaxKind.LetStatement: {
       const letStmt = stmtViews.LetStatementView.from(node);
       if (letStmt === undefined) break;
       const annotation = letStmt.type();
       if (annotation !== undefined) {
-        walkTypeReference(annotation, context);
+        resolveTypeReference(annotation, context);
       }
       const init = letStmt.value();
       if (init !== undefined) {
         resolveExpression(init, context);
       }
-      break;
+      return contextWithLocalPatternNames(context, letStmt.pattern());
     }
     case SyntaxKind.IfStatement: {
       const ifStmt = stmtViews.IfStatementView.from(node);
       if (ifStmt === undefined) break;
       const cond = ifStmt.condition();
+      let bodyContext = context;
       if (cond !== undefined) {
         const expr = cond.expression();
         if (expr !== undefined) resolveExpression(expr, context);
+        bodyContext = contextWithLocalPatternNames(context, cond.pattern());
       }
       const body = ifStmt.body();
-      if (body !== undefined) walkBlock(body, context);
+      if (body !== undefined) walkBlock(body, bodyContext);
       const elseClause = ifStmt.elseClause();
       if (elseClause !== undefined) {
         const elseBody = elseClause.body();
@@ -235,12 +288,14 @@ function walkStatement(node: RedNode, context: ResolutionWalkContext): void {
       const whileStmt = stmtViews.WhileStatementView.from(node);
       if (whileStmt === undefined) break;
       const cond = whileStmt.condition();
+      let bodyContext = context;
       if (cond !== undefined) {
         const expr = cond.expression();
         if (expr !== undefined) resolveExpression(expr, context);
+        bodyContext = contextWithLocalPatternNames(context, cond.pattern());
       }
       const body = whileStmt.body();
-      if (body !== undefined) walkBlock(body, context);
+      if (body !== undefined) walkBlock(body, bodyContext);
       break;
     }
     case SyntaxKind.ForStatement: {
@@ -248,8 +303,9 @@ function walkStatement(node: RedNode, context: ResolutionWalkContext): void {
       if (forStmt === undefined) break;
       const iterable = forStmt.iterable();
       if (iterable !== undefined) resolveExpression(iterable, context);
+      const bodyContext = contextWithLocalPatternNames(context, forStmt.pattern());
       const body = forStmt.body();
-      if (body !== undefined) walkBlock(body, context);
+      if (body !== undefined) walkBlock(body, bodyContext);
       break;
     }
     case SyntaxKind.LoopStatement: {
@@ -272,8 +328,9 @@ function walkStatement(node: RedNode, context: ResolutionWalkContext): void {
         if (pattern !== undefined) {
           resolvePattern(pattern, context);
         }
+        const armContext = contextWithLocalPatternNames(context, pattern);
         const armBody = arm.body();
-        if (armBody !== undefined) walkBlock(armBody, context);
+        if (armBody !== undefined) walkBlock(armBody, armContext);
       }
       break;
     }
@@ -306,8 +363,9 @@ function walkStatement(node: RedNode, context: ResolutionWalkContext): void {
       if (takeStmt === undefined) break;
       const expr = takeStmt.expression();
       if (expr !== undefined) resolveExpression(expr, context);
+      const bodyContext = contextWithLocalName(context, takeStmt.aliasText());
       const body = takeStmt.body();
-      if (body !== undefined) walkBlock(body, context);
+      if (body !== undefined) walkBlock(body, bodyContext);
       break;
     }
     case SyntaxKind.AssignmentStatement: {
@@ -332,6 +390,54 @@ function walkStatement(node: RedNode, context: ResolutionWalkContext): void {
       break;
     }
   }
+  return context;
+}
+
+function contextWithLocalPatternNames(
+  context: ResolutionWalkContext,
+  pattern: PatternView | undefined,
+): ResolutionWalkContext {
+  if (pattern === undefined) return context;
+
+  const names = collectLocalPatternNames(pattern);
+  if (names.length === 0) return context;
+
+  return contextWithLocalNames(context, names);
+}
+
+function contextWithLocalName(
+  context: ResolutionWalkContext,
+  name: string | undefined,
+): ResolutionWalkContext {
+  if (name === undefined) return context;
+  return contextWithLocalNames(context, [name]);
+}
+
+function contextWithLocalNames(
+  context: ResolutionWalkContext,
+  names: readonly string[],
+): ResolutionWalkContext {
+  const localNames = new Set(context.localNames);
+  for (const name of names) {
+    localNames.add(name);
+  }
+  return { ...context, localNames };
+}
+
+function collectLocalPatternNames(pattern: PatternView): string[] {
+  const patternList = pattern.patternList();
+  if (patternList !== undefined) {
+    return patternList.patterns().flatMap((child) => collectLocalPatternNames(child));
+  }
+
+  const qualifiedName = pattern.qualifiedName();
+  if (qualifiedName === undefined) return [];
+
+  const segments = qualifiedName.segments();
+  if (segments.length !== 1) return [];
+
+  const name = presentTokenText(segments[0]);
+  return name === undefined ? [] : [name];
 }
 
 function resolveExpression(expr: ExpressionView, context: ResolutionWalkContext): void {
@@ -345,7 +451,7 @@ function resolveExpression(expr: ExpressionView, context: ResolutionWalkContext)
     const subExpr = expr.expression();
     if (subExpr !== undefined) resolveExpression(subExpr, context);
     for (const typeArg of expr.typeArguments()) {
-      walkTypeReference(typeArg, context);
+      resolveTypeReference(typeArg, context);
     }
   } else if (expr instanceof exprViews.AttemptExpressionView) {
     const subExpr = expr.expression();
@@ -389,6 +495,7 @@ function resolveSimpleNameExpression(
 ): void {
   const name = expr.nameText();
   if (name === undefined) return;
+  if (name === "true" || name === "false") return;
   const nameToken = expr.nameToken();
   if (nameToken === undefined) return;
   const span = presentTokenSpan(nameToken);
@@ -403,6 +510,27 @@ function resolveSimpleNameExpression(
       kind,
     });
     context.references.add(key, scopeResult.reference);
+  } else if (context.localNames.has(name)) {
+    return;
+  } else {
+    const key = context.referenceKeys.next({
+      moduleId: context.moduleId,
+      span,
+      kind: "functionName",
+    });
+    context.diagnostics.push(
+      DiagnosticsModule.unresolvedName({
+        source: context.source,
+        span,
+        order: {
+          moduleId: context.moduleId,
+          span,
+          kind: "functionName",
+          ordinal: key.ordinal,
+        },
+        name,
+      }),
+    );
   }
 }
 
@@ -1008,7 +1136,13 @@ function resolvePattern(pattern: PatternView, context: ResolutionWalkContext): v
   const modulePrefixResult = context.moduleNamespace.resolveQualifiedPrefix(segTexts);
 
   if (modulePrefixResult.kind === "noModulePrefix") {
-    const ownerResult = context.scope.lookupValue(segTexts[0]!);
+    let ownerResult = context.scope.lookupValue(segTexts[0]!);
+    if (ownerResult.kind === "unresolved") {
+      const typeResult = context.scope.lookupType(segTexts[0]!);
+      if (typeResult.kind === "resolved" || typeResult.kind === "ambiguous") {
+        ownerResult = typeResult;
+      }
+    }
     if (ownerResult.kind === "resolved") {
       const ownerRef = ownerResult.reference;
       const ownerItemId = getOwnerItemId(ownerRef, context);
@@ -1143,37 +1277,6 @@ function resolvePattern(pattern: PatternView, context: ResolutionWalkContext): v
         context.references.add(memKey, memberResult.reference);
       }
     }
-  }
-}
-
-function walkTypeReference(typeRef: TypeReferenceView, context: ResolutionWalkContext): void {
-  const qname = typeRef.qualifiedName();
-  if (qname === undefined) return;
-  const segments = qname.segments();
-  if (segments.length === 0) return;
-
-  for (const segment of segments) {
-    const name = presentTokenText(segment);
-    const span = presentTokenSpan(segment);
-    if (name === undefined || span === undefined) continue;
-
-    let result = context.scope.lookupType(name);
-    if (result.kind === "unresolved") {
-      result = context.scope.lookupValue(name);
-    }
-    if (result.kind === "resolved") {
-      const kind = referenceKindFromResolved(result.reference, context);
-      const key = context.referenceKeys.next({
-        moduleId: context.moduleId,
-        span,
-        kind,
-      });
-      context.references.add(key, result.reference);
-    }
-  }
-
-  for (const typeArg of typeRef.typeArguments()) {
-    walkTypeReference(typeArg, context);
   }
 }
 

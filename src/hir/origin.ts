@@ -56,6 +56,10 @@ function ownerSegment(
   return `item:${ownerItemId ?? ""}|function:${ownerFunctionId ?? ""}`;
 }
 
+function sourceSegment(source: { readonly name?: string } | undefined): string {
+  return `source:${source?.name ?? ""}`;
+}
+
 export class HirOriginAllocatorImpl implements HirOriginAllocatorAndTable {
   private readonly records: HirOrigin[] = [];
   private readonly keyToIndex = new Map<string, number>();
@@ -67,7 +71,7 @@ export class HirOriginAllocatorImpl implements HirOriginAllocatorAndTable {
     readonly ownerFunctionId?: FunctionId;
   }): HirOriginId {
     const span = input.node.span;
-    const key = `syntax|module:${input.moduleId}|start:${span.start}|end:${span.end}|kind:${syntaxKindName(input.node.kind)}|${ownerSegment(input.ownerItemId, input.ownerFunctionId)}`;
+    const key = `syntax|module:${input.moduleId}|${sourceSegment(input.node.source)}|start:${span.start}|end:${span.end}|kind:${syntaxKindName(input.node.kind)}|offset:${input.node.offset}|child:${input.node.childIndex}|${ownerSegment(input.ownerItemId, input.ownerFunctionId)}`;
     return this.allocate(key, {
       moduleId: input.moduleId,
       span,
@@ -86,7 +90,7 @@ export class HirOriginAllocatorImpl implements HirOriginAllocatorAndTable {
   }): HirOriginId {
     const parentSpan = input.parent.span;
     const span = SourceSpan.from(parentSpan.start, parentSpan.start);
-    const key = `missing|module:${input.moduleId}|parentKind:${syntaxKindName(input.parent.kind)}|slot:${input.expectedSlotIndex}|${ownerSegment(input.ownerItemId, input.ownerFunctionId)}`;
+    const key = `missing|module:${input.moduleId}|${sourceSegment(input.parent.source)}|parentStart:${parentSpan.start}|parentEnd:${parentSpan.end}|parentKind:${syntaxKindName(input.parent.kind)}|parentOffset:${input.parent.offset}|parentChild:${input.parent.childIndex}|slot:${input.expectedSlotIndex}|${ownerSegment(input.ownerItemId, input.ownerFunctionId)}`;
     return this.allocate(key, {
       moduleId: input.moduleId,
       span,

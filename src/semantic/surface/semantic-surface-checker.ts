@@ -11,6 +11,7 @@ import { buildSurfaceReferenceLookup, syntaxReferenceKeyToString } from "./refer
 import { checkTypeReference } from "./type-reference-checker";
 import { CheckedProgramBuilder } from "./checked-program";
 import type {
+  CheckedFunctionSignature,
   CheckedFunctionSignatureTable,
   CheckedSemanticProgram,
   CompletedMemberReference,
@@ -33,7 +34,12 @@ import { checkImageEntry } from "./image-entry-checker";
 import { selectImageRoot } from "./image-root-selection";
 import type { ImageRootSelection } from "./image-root-selection";
 import { certifyPlatformBindings } from "./platform-certifier";
-import { checkedProofSurface, requirementSurface, terminalSurface } from "./proof-surface";
+import {
+  checkedProofSurface,
+  requirementSurface,
+  terminalSurface,
+  type CheckedPredicateFactSurface,
+} from "./proof-surface";
 import type {
   CheckedProofSurface,
   CheckedRequirementSurface,
@@ -43,23 +49,51 @@ import type {
 } from "./proof-surface";
 import {
   CheckedConstructibilitySurfaceTableBuilder,
+  CheckedMatchRefinementSurfaceTableBuilder,
   CheckedTakeModeSurfaceTableBuilder,
   CheckedValidationContractSurfaceTableBuilder,
   CheckedAttemptContractSurfaceTableBuilder,
   CheckedPrivateTransitionSurfaceTableBuilder,
   CheckedPlatformEnsuredFactSurfaceTableBuilder,
-  CheckedMatchRefinementSurfaceTableBuilder,
+  populateConstructibilitySurfaces,
+  populateTakeModeSurfaces,
+  populateValidationContractSurfaces,
+  populateAttemptContractSurfaces,
+  populatePrivateTransitionSurfaces,
+  populatePlatformEnsuredFactSurfaces,
+  matchRefinementMatchKey,
+  matchRefinementScrutineeKey,
+} from "./proof-contracts";
+import type {
+  CheckedAttemptContractSurface,
+  CheckedMatchRefinementSurface,
+  CheckedPrivateTransitionSurface,
+  CheckedValidationContractSurface,
+  ConstructibilityConstructorAuthority,
 } from "./proof-contracts";
 import type { CheckedType } from "./type-model";
-import { checkedTypeFingerprint, errorCheckedType } from "./type-model";
-import type { ImageId, ImageProfileId, FunctionId, ItemId, ModuleId, ParameterId } from "../ids";
+import { checkedTypeFingerprint, checkedTypesEqual, errorCheckedType } from "./type-model";
+import type {
+  ImageId,
+  ImageProfileId,
+  FunctionId,
+  ItemId,
+  ModuleId,
+  ParameterId,
+  TypeId,
+} from "../ids";
+import { coreTypeId } from "../ids";
 import { FunctionDeclarationView } from "../../frontend/ast/function-views";
 import type { ExpressionView } from "../../frontend/ast/expression-views";
 import {
   MemberAccessExpressionView,
   expressionViewFrom,
 } from "../../frontend/ast/expression-views";
-import { RedNode } from "../../frontend/syntax";
+import { MatchStatementView } from "../../frontend/ast/statement-views";
+import { descendants } from "../../frontend/ast/syntax-query";
+import type { PatternView } from "../../frontend/ast/pattern-views";
+import { RedNode, SyntaxKind } from "../../frontend/syntax";
+import type { ResolvedReference } from "../names/reference";
 
 export interface CheckSemanticSurfaceInput {
   readonly graph: ParsedModuleGraph;
@@ -319,15 +353,111 @@ function collectRequirementProofScopes(input: {
   return scopes;
 }
 
+function isEnumCaseReference(input: {
+  readonly reference: ResolvedReference;
+  readonly index: ItemIndex;
+}): boolean {
+  return (
+    input.reference.kind === "item" && input.index.item(input.reference.itemId)?.kind === "enumCase"
+  );
+}
+
+function enumCaseReferenceEntry(input: {
+  readonly pattern: PatternView;
+  readonly moduleId: ModuleId;
+  readonly referenceLookup: SurfaceReferenceLookup;
+  readonly index: ItemIndex;
+}): CheckedRequirementReference | undefined {
+  const segments = input.pattern.qualifiedName()?.segments() ?? [];
+  const lastSegment = segments[segments.length - 1];
+  const span = presentTokenSpan(lastSegment);
+  if (span === undefined) return undefined;
+
+  for (const kind of ["enumCase", "memberName"] as const) {
+    const result = input.referenceLookup.findOne({
+      moduleId: input.moduleId,
+      span,
+      kind,
+    });
+    if (
+      result.kind === "found" &&
+      isEnumCaseReference({ reference: result.entry.reference, index: input.index })
+    ) {
+      return { key: result.entry.key, reference: result.entry.reference };
+    }
+  }
+  return undefined;
+}
+
+function bindingKeysForPattern(input: {
+  readonly pattern: PatternView;
+  readonly moduleId: ModuleId;
+}): string[] {
+  const keys: string[] = [];
+  for (const nestedPattern of input.pattern.patternList()?.patterns() ?? []) {
+    const name = nestedPattern.qualifiedName()?.text();
+    if (name === undefined || name === "_") continue;
+    const segments = nestedPattern.qualifiedName()?.segments() ?? [];
+    const firstSpan = presentTokenSpan(segments[0]);
+    const lastSpan = presentTokenSpan(segments[segments.length - 1]);
+    if (firstSpan === undefined || lastSpan === undefined) continue;
+    keys.push(`binding:${input.moduleId}:${firstSpan.start}:${lastSpan.end}`);
+  }
+  return keys;
+}
+
+function matchRefinementSurfacesForFunction(input: {
+  readonly declaration: FunctionDeclarationView;
+  readonly moduleId: ModuleId;
+  readonly referenceLookup: SurfaceReferenceLookup;
+  readonly index: ItemIndex;
+}): CheckedMatchRefinementSurface[] {
+  const surfaces: CheckedMatchRefinementSurface[] = [];
+  for (const node of descendants(input.declaration.node, SyntaxKind.MatchStatement)) {
+    const match = MatchStatementView.from(node);
+    if (match === undefined) continue;
+    const scrutinee = match.condition()?.expression() ?? match.expression();
+    if (scrutinee === undefined) continue;
+    for (const arm of match.arms()) {
+      const pattern = arm.pattern();
+      if (pattern === undefined) continue;
+      const variant = enumCaseReferenceEntry({
+        pattern,
+        moduleId: input.moduleId,
+        referenceLookup: input.referenceLookup,
+        index: input.index,
+      });
+      if (variant === undefined) continue;
+      surfaces.push({
+        matchStatementKey: matchRefinementMatchKey({
+          moduleId: input.moduleId,
+          span: match.node.span,
+        }),
+        scrutineeKey: matchRefinementScrutineeKey({
+          moduleId: input.moduleId,
+          span: scrutinee.node.span,
+        }),
+        variantReferenceKey: syntaxReferenceKeyToString(variant.key),
+        fieldBindingKeys: bindingKeysForPattern({ pattern, moduleId: input.moduleId }),
+        span: match.node.span,
+      });
+    }
+  }
+  return surfaces;
+}
+
 function collectProofSurfaces(
   input: CheckSemanticSurfaceInput,
   builder: CheckedProgramBuilder,
   signaturesResult: { readonly signatures: CheckedFunctionSignatureTable },
+  referenceLookup: SurfaceReferenceLookup,
   typedOwners: ReadonlyMap<string, ItemId>,
   parameterOwners: ReadonlyMap<ParameterId, ItemId>,
   diagnostics: SemanticSurfaceDiagnostic[],
 ): CheckedProofSurface {
   const terminalSurfaces: CheckedTerminalSurface[] = [];
+  const predicateFactSurfaces: CheckedPredicateFactSurface[] = [];
+  const matchRefinementBuilder = new CheckedMatchRefinementSurfaceTableBuilder();
   const requirementScopes = collectRequirementProofScopes({
     surfaceInput: input,
     signatures: signaturesResult.signatures,
@@ -339,6 +469,24 @@ function collectProofSurfaces(
         terminalSurface({ functionId: signature.functionId, span: signature.sourceSpan }),
       );
     }
+    if (signature.modifiers.isPredicate) {
+      predicateFactSurfaces.push({
+        functionId: signature.functionId,
+        span: signature.sourceSpan,
+      });
+    }
+    const functionRecord = input.index.function(signature.functionId);
+    const item = input.index.item(signature.itemId);
+    if (functionRecord !== undefined && item?.declaration instanceof FunctionDeclarationView) {
+      for (const surface of matchRefinementSurfacesForFunction({
+        declaration: item.declaration,
+        moduleId: functionRecord.moduleId,
+        referenceLookup,
+        index: input.index,
+      })) {
+        matchRefinementBuilder.add(surface);
+      }
+    }
   }
 
   const declarationKeys = new Set<string>();
@@ -346,6 +494,9 @@ function collectProofSurfaces(
     for (const key of scope.deferredMemberKeys) {
       declarationKeys.add(key);
     }
+  }
+  for (const deferredMember of input.references.deferredMembers()) {
+    declarationKeys.add(syntaxReferenceKeyToString(deferredMember.key));
   }
 
   const deferredResult = completeDeferredMembers({
@@ -403,24 +554,323 @@ function collectProofSurfaces(
     );
   }
 
-  const constructibilityBuilder = new CheckedConstructibilitySurfaceTableBuilder();
-  const takeModeBuilder = new CheckedTakeModeSurfaceTableBuilder();
-  const validationContractBuilder = new CheckedValidationContractSurfaceTableBuilder();
-  const attemptContractBuilder = new CheckedAttemptContractSurfaceTableBuilder();
-  const privateTransitionBuilder = new CheckedPrivateTransitionSurfaceTableBuilder();
-  const platformEnsuredFactBuilder = new CheckedPlatformEnsuredFactSurfaceTableBuilder();
-  const matchRefinementBuilder = new CheckedMatchRefinementSurfaceTableBuilder();
-
   return checkedProofSurface({
     requirements: builtRequirements,
+    predicateFactSurfaces,
     terminalSurfaces,
-    constructibilitySurfaces: constructibilityBuilder.build(),
-    takeModeSurfaces: takeModeBuilder.build(),
-    validationContracts: validationContractBuilder.build(),
-    attemptContracts: attemptContractBuilder.build(),
-    privateTransitions: privateTransitionBuilder.build(),
-    platformEnsuredFacts: platformEnsuredFactBuilder.build(),
     matchRefinements: matchRefinementBuilder.build(),
+  });
+}
+
+function validatedBufferDeclarations(input: CheckSemanticSurfaceInput) {
+  return input.index
+    .items()
+    .filter((item) => item.kind === "validatedBuffer" && item.typeId !== undefined)
+    .map((item) => ({
+      typeId: item.typeId!,
+      validatedBufferTypeId: item.typeId!,
+      span: item.span,
+    }));
+}
+
+function isPrivateStateKind(kind: CheckedResourceKind): boolean {
+  return kind.kind === "concrete" && kind.value === "PrivateState";
+}
+
+function isNeverReturn(signature: import("./checked-program").CheckedFunctionSignature): boolean {
+  return (
+    (signature.returnKind.kind === "concrete" && signature.returnKind.value === "Never") ||
+    (signature.returnType.kind === "core" &&
+      signature.returnType.coreTypeId === coreTypeId("Never"))
+  );
+}
+
+function firstPrivateStateInput(signature: import("./checked-program").CheckedFunctionSignature):
+  | {
+      readonly parameterId: ParameterId;
+      readonly mode: "observe" | "consume";
+      readonly isReceiver: boolean;
+    }
+  | undefined {
+  if (signature.receiver !== undefined && isPrivateStateKind(signature.receiver.resourceKind)) {
+    return {
+      parameterId: signature.receiver.parameterId,
+      mode: signature.receiver.mode,
+      isReceiver: true,
+    };
+  }
+  const parameter = signature.parameters.find((candidate) =>
+    isPrivateStateKind(candidate.resourceKind),
+  );
+  return parameter !== undefined
+    ? {
+        parameterId: parameter.parameterId,
+        mode: parameter.mode,
+        isReceiver: false,
+      }
+    : undefined;
+}
+
+function privateTransitionsFromSignatures(input: {
+  readonly signatures: CheckedFunctionSignatureTable;
+}): CheckedPrivateTransitionSurface[] {
+  const transitions: CheckedPrivateTransitionSurface[] = [];
+  for (const signature of input.signatures.entries()) {
+    const privateInput = firstPrivateStateInput(signature);
+    if (privateInput === undefined) continue;
+    const kind: CheckedPrivateTransitionSurface["kind"] = signature.modifiers.isPredicate
+      ? "predicate"
+      : isNeverReturn(signature)
+        ? "close"
+        : privateInput.mode === "consume" || isPrivateStateKind(signature.returnKind)
+          ? "advance"
+          : "unknown";
+    transitions.push({
+      functionId: signature.functionId,
+      kind,
+      receiverParameterId: privateInput.parameterId,
+      span: signature.sourceSpan,
+    });
+  }
+  return transitions;
+}
+
+function appliedSourceConstructorName(type: CheckedType, index: ItemIndex): string | undefined {
+  if (type.kind !== "applied" || type.constructor.kind !== "source") return undefined;
+  return index.type(type.constructor.typeId)?.name;
+}
+
+function appliedSourceTypeNamed(input: {
+  readonly type: CheckedType;
+  readonly index: ItemIndex;
+  readonly name: string;
+}): import("./type-model").AppliedCheckedType | undefined {
+  if (input.type.kind !== "applied") return undefined;
+  return appliedSourceConstructorName(input.type, input.index) === input.name
+    ? input.type
+    : undefined;
+}
+
+function sourceConstructorTypeId(type: CheckedType): TypeId | undefined {
+  if (type.kind === "source") return type.typeId;
+  if (type.kind === "applied" && type.constructor.kind === "source") {
+    return type.constructor.typeId;
+  }
+  return undefined;
+}
+
+function validatedBufferTypeIdForPayload(input: {
+  readonly type: CheckedType;
+  readonly index: ItemIndex;
+}): TypeId | undefined {
+  const typeId = sourceConstructorTypeId(input.type);
+  if (typeId === undefined) return undefined;
+  const typeRecord = input.index.type(typeId);
+  if (typeRecord === undefined) return undefined;
+  const item = input.index.item(typeRecord.itemId);
+  return item?.kind === "validatedBuffer" ? typeId : undefined;
+}
+
+function matchingSourceParameter(input: {
+  readonly signature: CheckedFunctionSignature;
+  readonly type: CheckedType;
+}): ParameterId | undefined {
+  const matching = input.signature.parameters.filter((parameter) =>
+    checkedTypesEqual(parameter.type, input.type),
+  );
+  return matching.length === 1 ? matching[0]!.parameterId : undefined;
+}
+
+function matchingAttemptInput(input: {
+  readonly signature: CheckedFunctionSignature;
+  readonly type: CheckedType;
+}): CheckedAttemptContractSurface["inputs"][number] | undefined {
+  const matches: CheckedAttemptContractSurface["inputs"][number][] = [];
+  if (
+    input.signature.receiver !== undefined &&
+    checkedTypesEqual(input.signature.receiver.type, input.type)
+  ) {
+    matches.push({ kind: "receiver" });
+  }
+  for (const parameter of input.signature.parameters) {
+    if (checkedTypesEqual(parameter.type, input.type)) {
+      matches.push({ kind: "parameter", parameterId: parameter.parameterId });
+    }
+  }
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function attemptInputKey(input: CheckedAttemptContractSurface["inputs"][number]): string {
+  return input.kind === "receiver" ? "receiver" : `parameter:${input.parameterId}`;
+}
+
+function sourceValidationContractsFromSignatures(input: {
+  readonly signatures: CheckedFunctionSignatureTable;
+  readonly index: ItemIndex;
+}): CheckedValidationContractSurface[] {
+  const contracts: CheckedValidationContractSurface[] = [];
+  for (const signature of input.signatures.entries()) {
+    const resultType = appliedSourceTypeNamed({
+      type: signature.returnType,
+      index: input.index,
+      name: "Validation",
+    });
+    if (resultType === undefined || resultType.arguments.length < 3) continue;
+
+    const okPayloadType = resultType.arguments[0]!;
+    const errPayloadType = resultType.arguments[1]!;
+    const sourceType = resultType.arguments[2]!;
+    const validatedBufferTypeId = validatedBufferTypeIdForPayload({
+      type: okPayloadType,
+      index: input.index,
+    });
+    const sourceParameterId = matchingSourceParameter({ signature, type: sourceType });
+    if (validatedBufferTypeId === undefined || sourceParameterId === undefined) continue;
+
+    contracts.push({
+      validatedBufferTypeId,
+      resultType: signature.returnType,
+      sourceType,
+      okPayloadType,
+      errPayloadType,
+      sourceParameterId,
+      span: signature.sourceSpan,
+    });
+  }
+  return contracts;
+}
+
+function sourceAttemptContractsFromSignatures(input: {
+  readonly signatures: CheckedFunctionSignatureTable;
+  readonly index: ItemIndex;
+}): CheckedAttemptContractSurface[] {
+  const contracts: CheckedAttemptContractSurface[] = [];
+  for (const signature of input.signatures.entries()) {
+    const resultType = appliedSourceTypeNamed({
+      type: signature.returnType,
+      index: input.index,
+      name: "Attempt",
+    });
+    if (resultType === undefined || resultType.arguments.length < 3) continue;
+
+    const inputs: CheckedAttemptContractSurface["inputs"][number][] = [];
+    let allInputsMapped = true;
+    for (const inputType of resultType.arguments.slice(2)) {
+      const position = matchingAttemptInput({ signature, type: inputType });
+      if (position === undefined) {
+        allInputsMapped = false;
+        break;
+      }
+      inputs.push(position);
+    }
+    if (!allInputsMapped || inputs.length === 0) continue;
+
+    const uniqueInputKeys = new Set(inputs.map(attemptInputKey));
+    if (uniqueInputKeys.size !== inputs.length) continue;
+
+    contracts.push({
+      fallibleFunctionId: signature.functionId,
+      resultType: signature.returnType,
+      okType: resultType.arguments[0]!,
+      errType: resultType.arguments[1]!,
+      inputs,
+      span: signature.sourceSpan,
+    });
+  }
+  return contracts;
+}
+
+function sourceTypeId(type: CheckedType): TypeId | undefined {
+  return type.kind === "source" ? type.typeId : undefined;
+}
+
+function constructibilityAuthorizationForKind(
+  resourceKind: CheckedResourceKind,
+): ConstructibilityConstructorAuthority["authorization"] | undefined {
+  if (resourceKind.kind !== "concrete") return undefined;
+  switch (resourceKind.value) {
+    case "PrivateState":
+      return "privateStateMint";
+    case "Stream":
+      return "streamMint";
+    case "SealedPlatformToken":
+      return "sealedPlatformTokenMint";
+    case "UniqueEdgeRoot":
+    case "EdgePath":
+      return "edgeInternalTokenMint";
+    case "ValidatedBuffer":
+      return "validatedBufferMint";
+    default:
+      return undefined;
+  }
+}
+
+function constructibilityDeclarationAuthorities(input: {
+  readonly sourceTypes: readonly {
+    readonly typeId: TypeId;
+    readonly resourceKind: CheckedResourceKind;
+    readonly span: SourceSpan;
+  }[];
+}): ConstructibilityConstructorAuthority[] {
+  return input.sourceTypes.flatMap((sourceType) => {
+    const authorization = constructibilityAuthorizationForKind(sourceType.resourceKind);
+    if (authorization === undefined || authorization === "validatedBufferMint") return [];
+    return [{ typeId: sourceType.typeId, authorization, span: sourceType.span }];
+  });
+}
+
+function constructibilityConstructorAuthorities(input: {
+  readonly signatures: CheckedFunctionSignatureTable;
+}): ConstructibilityConstructorAuthority[] {
+  return input.signatures.entries().flatMap((signature) => {
+    if (!signature.modifiers.isConstructor) return [];
+    const typeId = sourceTypeId(signature.returnType);
+    const authorization = constructibilityAuthorizationForKind(signature.returnKind);
+    if (typeId === undefined || authorization === undefined) return [];
+    return [
+      {
+        typeId,
+        constructorFunctionId: signature.functionId,
+        authorization,
+        span: signature.sourceSpan,
+      },
+    ];
+  });
+}
+
+function constructibilityImageAuthorities(
+  devices: readonly CheckedImageDevice[],
+): ConstructibilityConstructorAuthority[] {
+  return devices.flatMap((device) => {
+    const typeId = sourceTypeId(device.type);
+    if (typeId === undefined) return [];
+    return [
+      {
+        typeId,
+        authorization: "imageCapabilityMint",
+        span: device.span,
+      },
+    ];
+  });
+}
+
+function constructibilityPlatformAuthorities(input: {
+  readonly program: CheckedSemanticProgram;
+}): ConstructibilityConstructorAuthority[] {
+  return input.program.certifiedPlatformBindings.entries().flatMap((binding) => {
+    const signature = input.program.functions.get(binding.functionId);
+    if (signature === undefined) return [];
+    const typeId = sourceTypeId(signature.returnType);
+    const authorization = constructibilityAuthorizationForKind(signature.returnKind);
+    if (typeId === undefined || authorization !== "sealedPlatformTokenMint") return [];
+    return [
+      {
+        typeId,
+        constructorFunctionId: binding.functionId,
+        authorization,
+        span: signature.sourceSpan,
+      },
+    ];
   });
 }
 
@@ -493,6 +943,7 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
     input,
     builder,
     signaturesResult,
+    referenceLookup,
     typedOwners,
     parameterOwners,
     diagnostics,
@@ -584,6 +1035,105 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
     .filter((item) => item.kind === "class" && item.modifiers.includes("private"))
     .map((item) => ({ span: item.span }));
 
+  const validatedBuffers = validatedBufferDeclarations(input);
+  const constructibilitySourceTypes = checkedProgramBeforeProof.types
+    .entries()
+    .flatMap((typeRecord) => {
+      const item = input.index.item(typeRecord.itemId);
+      if (item === undefined) return [];
+      return [
+        {
+          typeId: typeRecord.typeId,
+          resourceKind: resourceKindForType({ type: typeRecord.type, context: kindContext }),
+          span: item.span,
+        },
+      ];
+    });
+  const constructibilityBuilder = new CheckedConstructibilitySurfaceTableBuilder();
+  populateConstructibilitySurfaces(constructibilityBuilder, {
+    sourceTypes: constructibilitySourceTypes,
+    constructors: constructibilityConstructorAuthorities({
+      signatures: signaturesResult.signatures,
+    }),
+    validatedBuffers,
+    explicitSpecialAuthorities: [
+      ...constructibilityDeclarationAuthorities({ sourceTypes: constructibilitySourceTypes }),
+      ...constructibilityImageAuthorities(devices),
+      ...constructibilityPlatformAuthorities({ program: checkedProgramBeforeProof }),
+    ],
+  });
+
+  const takeModeBuilder = new CheckedTakeModeSurfaceTableBuilder();
+  const certifiedTakeModeSurfaces = certResult.bindings
+    .entries()
+    .flatMap((binding) => binding.takeModeSurfaces ?? []);
+  populateTakeModeSurfaces(takeModeBuilder, {
+    streamProducers: certifiedTakeModeSurfaces.flatMap((surface) =>
+      surface.kind === "stream"
+        ? [
+            {
+              producerFunctionId: surface.producerFunctionId,
+              itemType: surface.itemType,
+              itemResourceKind: surface.itemResourceKind,
+              takeOnlyStream: true,
+              span: surface.span,
+            },
+          ]
+        : [],
+    ),
+    bufferSources: certifiedTakeModeSurfaces.flatMap((surface) =>
+      surface.kind === "buffer"
+        ? [
+            {
+              sourceTypeId: surface.sourceTypeId,
+              bufferResourceKind: surface.bufferResourceKind,
+              bufferObligation: true,
+              span: surface.span,
+            },
+          ]
+        : [],
+    ),
+    validatedBuffers,
+  });
+
+  const validationContractBuilder = new CheckedValidationContractSurfaceTableBuilder();
+  populateValidationContractSurfaces(validationContractBuilder, {
+    contracts: [
+      ...sourceValidationContractsFromSignatures({
+        signatures: signaturesResult.signatures,
+        index: input.index,
+      }),
+      ...certResult.bindings.entries().flatMap((binding) => binding.validationContracts ?? []),
+    ],
+  });
+
+  const attemptContractBuilder = new CheckedAttemptContractSurfaceTableBuilder();
+  populateAttemptContractSurfaces(attemptContractBuilder, {
+    contracts: [
+      ...sourceAttemptContractsFromSignatures({
+        signatures: signaturesResult.signatures,
+        index: input.index,
+      }),
+      ...certResult.bindings.entries().flatMap((binding) => binding.attemptContracts ?? []),
+    ],
+  });
+
+  const privateTransitionBuilder = new CheckedPrivateTransitionSurfaceTableBuilder();
+  populatePrivateTransitionSurfaces(privateTransitionBuilder, {
+    transitions: privateTransitionsFromSignatures({ signatures: signaturesResult.signatures }),
+  });
+
+  const platformEnsuredFactBuilder = new CheckedPlatformEnsuredFactSurfaceTableBuilder();
+  populatePlatformEnsuredFactSurfaces(platformEnsuredFactBuilder, {
+    certifiedBindings: certResult.bindings.entries().map((binding) => ({
+      sourceFunctionId: binding.functionId,
+      primitiveId: binding.primitiveId,
+      contractId: binding.contractId,
+      targetId: binding.targetId,
+      ensuredFacts: binding.ensuredFacts ?? [],
+    })),
+  });
+
   const proofSurface = checkedProofSurface({
     resourceKindByType: [...typeResourceKindSurfaces, ...fieldResourceKindSurfaces],
     signatureModes: signaturesResult.signatures.entries().map((signature) => ({
@@ -591,16 +1141,17 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
       signature,
     })),
     requirements: declarationProofSurface.requirementSurfaces.entries(),
+    predicateFactSurfaces: declarationProofSurface.predicateFactSurfaces.entries(),
     terminalSurfaces: declarationProofSurface.terminalSurfaces.entries(),
     privateStateSurfaces,
     imageSurfaces: devices.map((device) => ({ device })),
     platformContracts: certResult.bindings,
-    constructibilitySurfaces: declarationProofSurface.constructibilitySurfaces,
-    takeModeSurfaces: declarationProofSurface.takeModeSurfaces,
-    validationContracts: declarationProofSurface.validationContracts,
-    attemptContracts: declarationProofSurface.attemptContracts,
-    privateTransitions: declarationProofSurface.privateTransitions,
-    platformEnsuredFacts: declarationProofSurface.platformEnsuredFacts,
+    constructibilitySurfaces: constructibilityBuilder.build(),
+    takeModeSurfaces: takeModeBuilder.build(),
+    validationContracts: validationContractBuilder.build(),
+    attemptContracts: attemptContractBuilder.build(),
+    privateTransitions: privateTransitionBuilder.build(),
+    platformEnsuredFacts: platformEnsuredFactBuilder.build(),
     matchRefinements: declarationProofSurface.matchRefinements,
   });
   builder.setProofSurface(proofSurface);

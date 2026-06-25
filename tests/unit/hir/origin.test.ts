@@ -83,6 +83,19 @@ describe("HirOriginAllocator", () => {
     expect(first).not.toBe(second);
   });
 
+  test("forSyntax distinguishes same-span nodes with different red source ordinals", () => {
+    const allocator = createHirOriginAllocator();
+    const green = nameExpression("x");
+    const source = SourceText.from("test", green.reconstruct());
+    const firstNode = new RedNode(green, undefined, 0, source, 0);
+    const secondNode = new RedNode(green, undefined, 0, source, 1);
+
+    const first = allocator.forSyntax({ moduleId: moduleId(0), node: firstNode });
+    const second = allocator.forSyntax({ moduleId: moduleId(0), node: secondNode });
+
+    expect(first).not.toBe(second);
+  });
+
   test("forMissingSyntax is deterministic by parent kind and slot", () => {
     const allocator = createHirOriginAllocator();
     const parent = redNode(
@@ -158,6 +171,37 @@ describe("HirOriginAllocator", () => {
       parent: memberParent,
       expectedSlotIndex: 0,
     });
+    expect(first).not.toBe(second);
+  });
+
+  test("forMissingSyntax distinguishes same-kind parents at different source spans", () => {
+    const allocator = createHirOriginAllocator();
+    const parentA = redNode(
+      new GreenNode({
+        kind: SyntaxKind.CallExpression,
+        children: [token(SyntaxKind.IdentifierToken, "x")],
+      }),
+      0,
+    );
+    const parentB = redNode(
+      new GreenNode({
+        kind: SyntaxKind.CallExpression,
+        children: [token(SyntaxKind.IdentifierToken, "x")],
+      }),
+      8,
+    );
+
+    const first = allocator.forMissingSyntax({
+      moduleId: moduleId(0),
+      parent: parentA,
+      expectedSlotIndex: 0,
+    });
+    const second = allocator.forMissingSyntax({
+      moduleId: moduleId(0),
+      parent: parentB,
+      expectedSlotIndex: 0,
+    });
+
     expect(first).not.toBe(second);
   });
 

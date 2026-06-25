@@ -1,6 +1,6 @@
 import type { FunctionId, ParameterId, TypeId } from "../../ids";
 import type { SourceSpan } from "../../../frontend";
-import type { CheckedType } from "../type-model";
+import { checkedTypeFingerprint, type CheckedType } from "../type-model";
 import { compareCodeUnitStrings } from "../deterministic-sort";
 
 export type CheckedAttemptInputPosition =
@@ -32,6 +32,7 @@ export interface CheckedAttemptContractSurfaceTable {
 }
 
 export interface CheckedValidationContractSurfaceTable {
+  getByResultType(resultType: CheckedType): readonly CheckedValidationContractSurface[];
   entries(): readonly CheckedValidationContractSurface[];
 }
 
@@ -121,7 +122,18 @@ export class CheckedValidationContractSurfaceTableBuilder {
 
   build(): CheckedValidationContractSurfaceTable {
     const sorted = [...this.surfaces].sort(compareValidationContractSurfaces);
+    const byResultType = new Map<string, CheckedValidationContractSurface[]>();
+    for (const surface of sorted) {
+      const key = checkedTypeFingerprint(surface.resultType);
+      const list = byResultType.get(key) ?? [];
+      list.push(surface);
+      byResultType.set(key, list);
+    }
     return {
+      getByResultType: (resultType) => {
+        const result = byResultType.get(checkedTypeFingerprint(resultType));
+        return result !== undefined ? [...result] : [];
+      },
       entries: () => [...sorted],
     };
   }
@@ -129,6 +141,35 @@ export class CheckedValidationContractSurfaceTableBuilder {
 
 export function emptyCheckedValidationContractSurfaceTable(): CheckedValidationContractSurfaceTable {
   return {
+    getByResultType: () => [],
     entries: () => [],
   };
+}
+
+export interface AttemptContractPopulationContext {
+  readonly contracts: readonly CheckedAttemptContractSurface[];
+}
+
+export interface ValidationContractPopulationContext {
+  readonly contracts: readonly CheckedValidationContractSurface[];
+}
+
+export function populateAttemptContractSurfaces(
+  builder: CheckedAttemptContractSurfaceTableBuilder,
+  context: AttemptContractPopulationContext,
+): void {
+  for (const contract of context.contracts) {
+    if (contract.inputs.length === 0) continue;
+    builder.add(contract);
+  }
+}
+
+export function populateValidationContractSurfaces(
+  builder: CheckedValidationContractSurfaceTableBuilder,
+  context: ValidationContractPopulationContext,
+): void {
+  for (const contract of context.contracts) {
+    if (contract.sourceParameterId === undefined) continue;
+    builder.add(contract);
+  }
 }

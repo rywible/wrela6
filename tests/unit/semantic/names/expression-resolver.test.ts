@@ -16,6 +16,7 @@ import {
   resolvedReferenceForItem,
 } from "../../../../src/semantic/names/scope";
 import type { ScopeCandidate } from "../../../../src/semantic/names/scope";
+import type { ResolvedReferenceEntry } from "../../../../src/semantic/names";
 import { SourceText } from "../../../../src/frontend";
 import type { ItemIndex } from "../../../../src/semantic/item-index";
 import { CoreTypeCatalog } from "../../../../src/semantic/names/core-types";
@@ -117,6 +118,7 @@ describe("resolveExpressions", () => {
     const result = resolveExpressions({
       graph,
       index,
+      coreTypes: CoreTypeCatalog.default(),
       moduleNamespace,
       memberNamespace,
       moduleContexts,
@@ -128,6 +130,99 @@ describe("resolveExpressions", () => {
       .filter((entry) => entry.reference.kind === "function");
 
     expect(fnRefs.length).toBeGreaterThan(0);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test("resolves explicit call type arguments as type references", () => {
+    const graph = parseModuleGraphForTest([
+      ["app/main.wr", "fn identity[T](value: T) -> T\n\nfn test():\n    identity[u32](1)\n"],
+    ]);
+    const { index } = buildItemIndex({ graph });
+    const moduleNamespace = buildModuleNamespace(index);
+    const memberNamespace = buildMemberNamespace(index);
+    const referenceKeys = new ReferenceKeyBuilder();
+    const coreTypes = CoreTypeCatalog.default();
+    const importResult = resolveImports({ graph, index, moduleNamespace, referenceKeys });
+    const moduleContexts = buildModuleContexts(index, importResult.importedScopes);
+
+    resolveTypeReferences({
+      graph,
+      index,
+      coreTypes,
+      moduleNamespace,
+      memberNamespace,
+      moduleContexts,
+      referenceKeys,
+    });
+
+    const result = resolveExpressions({
+      graph,
+      index,
+      coreTypes,
+      moduleNamespace,
+      memberNamespace,
+      moduleContexts,
+      referenceKeys,
+    });
+
+    const builtinTypeRefs = result.references
+      .entries()
+      .filter(
+        (
+          entry,
+        ): entry is ResolvedReferenceEntry & {
+          readonly reference: Extract<ResolvedReferenceEntry["reference"], { kind: "builtinType" }>;
+        } => entry.reference.kind === "builtinType",
+      )
+      .map((entry) => String(entry.reference.coreTypeId));
+
+    expect(builtinTypeRefs).toContain("u32");
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test("resolves function type parameters after parameter scope is added", () => {
+    const graph = parseModuleGraphForTest([
+      [
+        "app/main.wr",
+        "fn identity[T](value: T) -> T\n\nfn test[T](value: T):\n    identity[T](value)\n",
+      ],
+    ]);
+    const { index } = buildItemIndex({ graph });
+    const moduleNamespace = buildModuleNamespace(index);
+    const memberNamespace = buildMemberNamespace(index);
+    const referenceKeys = new ReferenceKeyBuilder();
+    const coreTypes = CoreTypeCatalog.default();
+    const importResult = resolveImports({ graph, index, moduleNamespace, referenceKeys });
+    const moduleContexts = buildModuleContexts(index, importResult.importedScopes);
+
+    resolveTypeReferences({
+      graph,
+      index,
+      coreTypes,
+      moduleNamespace,
+      memberNamespace,
+      moduleContexts,
+      referenceKeys,
+    });
+
+    const result = resolveExpressions({
+      graph,
+      index,
+      coreTypes,
+      moduleNamespace,
+      memberNamespace,
+      moduleContexts,
+      referenceKeys,
+    });
+
+    const functionTypeParameterRefs = result.references
+      .entries()
+      .filter(
+        (entry) =>
+          entry.reference.kind === "typeParameter" && entry.reference.owner.kind === "function",
+      );
+
+    expect(functionTypeParameterRefs.length).toBeGreaterThan(0);
     expect(result.diagnostics).toEqual([]);
   });
 
@@ -153,6 +248,7 @@ describe("resolveExpressions", () => {
     const result = resolveExpressions({
       graph,
       index,
+      coreTypes: CoreTypeCatalog.default(),
       moduleNamespace,
       memberNamespace,
       moduleContexts,
@@ -166,7 +262,7 @@ describe("resolveExpressions", () => {
     expect(unresolvedDiag!.message).toContain("unknownFunc");
   });
 
-  test("non-callee unresolved name does not emit diagnostic", () => {
+  test("non-callee unresolved name emits NAME_UNRESOLVED_NAME", () => {
     const graph = parseModuleGraphForTest([["app/main.wr", "fn test():\n    someLocal\n"]]);
     const { index } = buildItemIndex({ graph });
     const moduleNamespace = buildModuleNamespace(index);
@@ -188,13 +284,18 @@ describe("resolveExpressions", () => {
     const result = resolveExpressions({
       graph,
       index,
+      coreTypes: CoreTypeCatalog.default(),
       moduleNamespace,
       memberNamespace,
       moduleContexts,
       referenceKeys,
     });
 
-    expect(result.diagnostics).toEqual([]);
+    const unresolvedDiag = result.diagnostics.find(
+      (diagnostic) => diagnostic.code === "NAME_UNRESOLVED_NAME",
+    );
+    expect(unresolvedDiag).toBeDefined();
+    expect(unresolvedDiag!.message).toContain("someLocal");
   });
 
   test("resolves parameter reference inside function body", () => {
@@ -219,6 +320,7 @@ describe("resolveExpressions", () => {
     const result = resolveExpressions({
       graph,
       index,
+      coreTypes: CoreTypeCatalog.default(),
       moduleNamespace,
       memberNamespace,
       moduleContexts,
@@ -260,6 +362,7 @@ describe("resolveExpressions", () => {
     const result = resolveExpressions({
       graph,
       index,
+      coreTypes: CoreTypeCatalog.default(),
       moduleNamespace,
       memberNamespace,
       moduleContexts,
@@ -301,6 +404,7 @@ describe("resolveExpressions", () => {
     const result = resolveExpressions({
       graph,
       index,
+      coreTypes: CoreTypeCatalog.default(),
       moduleNamespace,
       memberNamespace,
       moduleContexts,
@@ -338,6 +442,7 @@ describe("resolveExpressions", () => {
     const result = resolveExpressions({
       graph,
       index,
+      coreTypes: CoreTypeCatalog.default(),
       moduleNamespace,
       memberNamespace,
       moduleContexts,
@@ -375,6 +480,7 @@ describe("resolveExpressions", () => {
     const result = resolveExpressions({
       graph,
       index,
+      coreTypes: CoreTypeCatalog.default(),
       moduleNamespace,
       memberNamespace,
       moduleContexts,
@@ -410,6 +516,7 @@ describe("resolveExpressions", () => {
     const result = resolveExpressions({
       graph,
       index,
+      coreTypes: CoreTypeCatalog.default(),
       moduleNamespace,
       memberNamespace,
       moduleContexts,
@@ -446,6 +553,7 @@ describe("resolveExpressions", () => {
     const result = resolveExpressions({
       graph,
       index,
+      coreTypes: CoreTypeCatalog.default(),
       moduleNamespace,
       memberNamespace,
       moduleContexts,
@@ -483,6 +591,7 @@ describe("resolveExpressions", () => {
     const result = resolveExpressions({
       graph,
       index,
+      coreTypes: CoreTypeCatalog.default(),
       moduleNamespace,
       memberNamespace,
       moduleContexts,
@@ -520,6 +629,7 @@ describe("resolveExpressions", () => {
     const result = resolveExpressions({
       graph,
       index,
+      coreTypes: CoreTypeCatalog.default(),
       moduleNamespace,
       memberNamespace,
       moduleContexts,
@@ -565,6 +675,7 @@ describe("resolveExpressions", () => {
     const result = resolveExpressions({
       graph,
       index,
+      coreTypes: CoreTypeCatalog.default(),
       moduleNamespace,
       memberNamespace,
       moduleContexts,

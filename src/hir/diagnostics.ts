@@ -21,6 +21,7 @@ export const HIR_DIAGNOSTIC_CODES = [
   "HIR_YIELD_TYPE_MISMATCH",
   "HIR_CALL_CALLEE_NOT_FUNCTION",
   "HIR_CALL_ARGUMENT_MISMATCH",
+  "HIR_EXPLICIT_TYPE_ARGUMENT_NOT_TYPE",
   "HIR_WRONG_GENERIC_ARGUMENT_COUNT",
   "HIR_UNRESOLVED_GENERIC_ARGUMENT",
   "HIR_CONFLICTING_GENERIC_ARGUMENT",
@@ -33,6 +34,7 @@ export const HIR_DIAGNOSTIC_CODES = [
   "HIR_TAKE_ONLY_CALL_REQUIRED",
   "HIR_UNLINKED_VALIDATION_MATCH",
   "HIR_AMBIGUOUS_VALIDATION_MATCH",
+  "HIR_UNLINKED_ATTEMPT_CONTRACT",
   "HIR_ATTEMPT_INPUT_NOT_PLACE",
   "HIR_PROOF_RELEVANT_KIND_NOT_CONCRETE",
   "HIR_PLATFORM_ENSURE_NOT_CERTIFIED",
@@ -75,6 +77,7 @@ export const HIR_DIAGNOSTIC_FIRST_EMITTER = {
   HIR_YIELD_TYPE_MISMATCH: "Task 18",
   HIR_CALL_CALLEE_NOT_FUNCTION: "Task 17",
   HIR_CALL_ARGUMENT_MISMATCH: "Task 17",
+  HIR_EXPLICIT_TYPE_ARGUMENT_NOT_TYPE: "Task 16",
   HIR_WRONG_GENERIC_ARGUMENT_COUNT: "Task 16",
   HIR_UNRESOLVED_GENERIC_ARGUMENT: "Task 16",
   HIR_CONFLICTING_GENERIC_ARGUMENT: "Task 16",
@@ -87,6 +90,7 @@ export const HIR_DIAGNOSTIC_FIRST_EMITTER = {
   HIR_TAKE_ONLY_CALL_REQUIRED: "Task 22",
   HIR_UNLINKED_VALIDATION_MATCH: "Task 23",
   HIR_AMBIGUOUS_VALIDATION_MATCH: "Task 23",
+  HIR_UNLINKED_ATTEMPT_CONTRACT: "Task 23",
   HIR_ATTEMPT_INPUT_NOT_PLACE: "Task 23",
   HIR_PROOF_RELEVANT_KIND_NOT_CONCRETE: "Task 22",
   HIR_PLATFORM_ENSURE_NOT_CERTIFIED: "Task 24",
@@ -168,8 +172,14 @@ export function sortHirDiagnostics(diagnostics: readonly HirDiagnostic[]): HirDi
 export class HirDiagnosticSink {
   private readonly collected: HirDiagnostic[] = [];
 
+  constructor(
+    private readonly originLookup?: (
+      originId: HirOriginId,
+    ) => { readonly moduleId: ModuleId; readonly span: SourceSpan } | undefined,
+  ) {}
+
   report(diagnostic: HirDiagnostic): void {
-    this.collected.push(diagnostic);
+    this.collected.push(this.withOriginSourceOrder(diagnostic));
   }
 
   entries(): readonly HirDiagnostic[] {
@@ -178,5 +188,23 @@ export class HirDiagnosticSink {
 
   sorted(): HirDiagnostic[] {
     return sortHirDiagnostics(this.collected);
+  }
+
+  private withOriginSourceOrder(diagnostic: HirDiagnostic): HirDiagnostic {
+    const originId = diagnostic.originId ?? diagnostic.order.originId;
+    if (originId === undefined || this.originLookup === undefined) return diagnostic;
+    const origin = this.originLookup(originId);
+    if (origin === undefined) return diagnostic;
+    return {
+      ...diagnostic,
+      moduleId: origin.moduleId,
+      span: origin.span,
+      order: {
+        ...diagnostic.order,
+        moduleId: origin.moduleId,
+        spanStart: origin.span.start,
+        spanEnd: origin.span.end,
+      },
+    };
   }
 }
