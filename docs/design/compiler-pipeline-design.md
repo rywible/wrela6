@@ -867,6 +867,11 @@ ABI parameter and return shapes
 target pointer width and alignment
 ```
 
+Validated-buffer wire layout also depends on source-level `le` and `be`
+markers on multi-byte layout fields, for example `size: le U16 @ 0`. Parser,
+AST, semantic surface, HIR, and monomorphization must preserve the checked wire
+encoding before this phase computes layout facts.
+
 Proof MIR consumes these facts. This ordering is important for validated-buffer
 requirements such as `layout.fits`, derived field offsets, and ABI-sensitive
 platform calls. A proof that depends on concrete representation should not run
@@ -1176,6 +1181,7 @@ Output: closed monomorphized HIR plus reachable platform primitive IDs.
 - field offsets
 - enum representations
 - validated-buffer layout offsets
+- validated-buffer wire scalar encodings from `le` and `be` layout markers
 - ABI parameter and return shapes
 - target pointer width and alignment facts
 

@@ -432,7 +432,8 @@ and the CST node it should produce.
 | Devices section              | `devices`                                                                                  | `devices ":" Newline Indent FieldDeclaration+ Dedent`                                        | `Dedent`, declaration starter                   | `DevicesSection`             |
 | Params section               | `params`                                                                                   | `params ":" Newline Indent FieldDeclaration+ Dedent`                                         | `Dedent`, validated-buffer section starter      | `ParamsSection`              |
 | Layout section               | `layout`                                                                                   | `layout ":" Newline Indent LayoutField+ Dedent`                                              | `Dedent`, validated-buffer section starter      | `LayoutSection`              |
-| Layout field                 | identifier                                                                                 | `Identifier ":" TypeReference at Expression (len Expression)? Newline`                       | `Newline`, `Dedent`                             | `LayoutField`                |
+| Layout field                 | identifier                                                                                 | `Identifier ":" WireLayoutTypeReference at Expression (len Expression)? Newline`             | `Newline`, `Dedent`                             | `LayoutField`                |
+| Wire layout type reference   | type reference or contextual endian marker                                                 | `("le" or "be")? TypeReference`                                                              | `at`, `Newline`                                 | `WireLayoutTypeReference`    |
 | Derive section               | `derive`                                                                                   | `derive ":" Newline Indent DerivedField+ Dedent`                                             | `Dedent`, validated-buffer section starter      | `DeriveSection`              |
 | Derived field                | identifier                                                                                 | `Identifier ":" TypeReference from Expression ":" Newline Indent DeriveCase+ Dedent`         | `Dedent`, derive section starter                | `DerivedField`               |
 | Derive case                  | expression or `otherwise`                                                                  | `Expression => Expression Newline` or `otherwise => Expression Newline`                      | `Newline`, `Dedent`                             | `DeriveCase`                 |
@@ -468,6 +469,10 @@ Notes:
 - Member names after `.` must accept keyword tokens as name tokens. Examples
   include `source.len`, `layout.fits`, and layout fields using `at` and `len` in
   section-specific roles.
+- `le` and `be` are contextual wire-endian markers only in validated-buffer
+  layout field type position. They are not global keywords. Semantic checking
+  requires one of them for multi-byte integer layout fields and rejects them for
+  single-byte or opaque byte fields where byte order has no meaning.
 - Function declarations may be bodyless when they describe platform or interface
   signatures.
 - Delimited lists such as parameter lists, call arguments, object fields, type

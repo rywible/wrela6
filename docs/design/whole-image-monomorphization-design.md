@@ -438,9 +438,27 @@ export interface MonomorphizedHirProgram {
   readonly functions: MonoHirFunctionTable;
   readonly types: MonoHirTypeTable;
   readonly validatedBuffers: MonoHirValidatedBufferTable;
+  readonly layoutTypeResolutions: MonoLayoutTypeResolutionTable;
   readonly proofMetadata: MonoProofMetadata;
   readonly instantiationGraph: MonoInstantiationGraph;
   readonly origins: HirOriginTable;
+}
+
+export type MonoPublishedLayoutTypeKey =
+  | { readonly kind: "source"; readonly instanceId: MonoInstanceId }
+  | { readonly kind: "core"; readonly coreTypeId: CoreTypeId }
+  | { readonly kind: "target"; readonly targetTypeId: TargetTypeId };
+
+export interface MonoLayoutTypeResolution {
+  readonly checkedTypeFingerprint: string;
+  readonly type: MonoCheckedType;
+  readonly key: MonoPublishedLayoutTypeKey;
+  readonly sourceOrigin: HirOriginId;
+}
+
+export interface MonoLayoutTypeResolutionTable {
+  getByFingerprint(fingerprint: string): MonoLayoutTypeResolution | undefined;
+  entries(): readonly MonoLayoutTypeResolution[];
 }
 ```
 
@@ -448,6 +466,12 @@ In `InstantiatedProofId`, `hirId` is the bare ID value such as
 `ObligationId`, `ResourcePlaceId`, or `HirRequirementId`, not a
 `HirOwnedId<T>`. When source HIR stores `HirOwnedId<T>`, mono splits it into
 `hirOwner` and `hirId` before pairing it with `instanceId`.
+
+`layoutTypeResolutions` is published by mono because mono owns canonical source
+type instance keys. The key type is mono-owned or dependency-neutral;
+`src/mono` must not import layout module types to populate it.
+Representation/layout validates this table and translates the published key
+into its local `LayoutTypeKey`.
 
 Each function instance records its source function and concrete type
 substitution. Methods and constructors also record the concrete owner type
@@ -497,6 +521,16 @@ validated-buffer table key is the validated buffer's `MonoInstanceId`; the
 corresponding `MonoTypeInstance` remains the canonical type identity. Divergence
 between the two tables is inconsistent mono construction and must be rejected in
 tests.
+
+Validated-buffer layout fields also carry checked wire scalar encodings chosen
+by source syntax. The parser accepts contextual `le` and `be` markers in layout
+field type position, for example `size: le U16 @ 0` and
+`ethertype: be U16 @ 12`. Semantic checking rejects multi-byte integer layout
+fields without an explicit marker and rejects markers where byte order has no
+meaning. Monomorphization substitutes the field type but preserves the checked
+wire encoding and finite integer range metadata exactly, so
+representation/layout facts never recover byte order or invent range bounds
+from AST, item-index data, or the selected target's native endianness.
 
 The output should retain enough source identity for later diagnostics to say
 "this concrete instance came from `foo[T]` instantiated at this call site"
@@ -723,6 +757,15 @@ not allocated from discovery order. Function instance IDs use the canonical
 function key, type instance IDs use the canonical type key, and image-owned
 metadata uses an image-root key. They must use deterministic code-unit ordering
 and must not use `localeCompare`.
+
+The `MonoInstanceId` namespace is collision-free across function, type, image,
+validated-buffer, and image-device uses. Canonical IDs must include a
+kind-prefixed root segment such as `fn:`, `type:`, or `image:` before any
+source ID or type-argument payload. A string that is valid for a function
+instance must not also be valid for a type, image, validated-buffer, or device
+instance. Layout and Proof MIR may therefore use `MonoInstanceId` in different
+tables without adding a second namespace discriminator, while still preserving
+the table's own key kind in diagnostics.
 
 Examples:
 

@@ -403,7 +403,9 @@ This table should preserve:
 - terminal modifiers and terminal entry/call-surface declarations, without
   proving terminal reachability
 - validated-buffer section identities, source relationships, and requirement
-  declarations, without layout-derived facts
+  declarations, including checked finite integer ranges and checked wire scalar
+  encodings from `le` and `be` layout-field markers, without layout-derived
+  facts
 - validation and attempt source origins that HIR will turn into obligation
   seeds
 - private-state type identities and transition signatures, without path
@@ -417,6 +419,16 @@ resource-place, call-site requirement, private-state transition, validation,
 attempt, and fact-origin IDs. Monomorphization later instantiates those IDs for
 the closed image. Layout adds representation facts for validated buffers and
 ABI-sensitive calls. Proof MIR proves the path-sensitive obligations.
+
+Validated-buffer layout field syntax uses contextual wire-endian markers in
+type position, for example `size: le U16 @ 0` or
+`ethertype: be U16 @ 12`. Semantic surface checking normalizes those markers
+into checked wire scalar encodings, rejects multi-byte integer layout fields
+that omit them, and rejects markers on single-byte or opaque byte fields where
+byte order has no meaning. It also records finite integer ranges for checked
+integer, boolean, and enum values that can feed validated-buffer layout
+arithmetic. Later phases consume the checked encoding and ranges; they must not
+infer byte order from target endianness or invent range bounds.
 
 The checker must not erase proof-relevant language constructs into ordinary
 calls, fields, or booleans. For example, a certified platform function is not

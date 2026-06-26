@@ -1866,13 +1866,27 @@ signature modifier and terminal metadata, not by absence of a HIR body.
 Validated-buffer declarations lower to typed HIR declarations that preserve:
 
 - parameter fields and their checked resource kinds
-- layout fields and source order
+- layout fields, source order, and explicit wire scalar encoding from
+  validated-buffer syntax
 - derived fields and source origins
 - require sections and requirement expressions
 - validation source/output relationships used by validation HIR nodes
 
 HIR does not compute offsets, dynamic payload ends, or `layout.fits` facts.
 Layout and Proof MIR own those facts after monomorphization.
+
+The parser and AST views must expose layout field type references in the form
+`le U16`, `be U16`, or bare single-byte/opaque byte types. Semantic checking
+normalizes `le` and `be` into a checked wire scalar encoding on each
+validated-buffer layout field. Multi-byte integer layout fields without an
+explicit marker are rejected before HIR lowering; HIR must not recover byte
+order from source text, target endianness, or later layout policy.
+
+HIR must also preserve checked finite integer ranges for validated-buffer
+parameter fields, decoded layout field values, derived fields, and `source.len`
+terms that can participate in layout arithmetic. Layout may refine those ranges
+with wire encoding and target object-size facts, but it must not invent a range
+for a term whose upstream checked surface did not provide one.
 
 Validated-buffer field access should still preserve enough origin data for
 later diagnostics to say which field read required which layout fact.

@@ -485,6 +485,10 @@ binding, certification, and declaration-legality diagnostics.
 `FieldDeclarationView` wraps ordinary `FieldDeclaration` nodes and is reused by
 classes, dataclasses, images, image devices, and validated-buffer params.
 `LayoutFieldView` wraps `LayoutField` nodes in validated-buffer layout sections.
+Validated-buffer layout fields may include a contextual wire-endian marker
+before the type reference, such as `le U16` or `be U16`; the AST view exposes
+that marker as syntax and does not interpret whether it is required or legal for
+the referenced type.
 The item index records the owning declaration and a source-shaped field role:
 
 ```ts
@@ -503,6 +507,7 @@ export class FieldDeclarationView extends AstView implements NamedDeclarationVie
 }
 
 export class LayoutFieldView extends AstView implements NamedDeclarationView {
+  wireEndianMarker(): "le" | "be" | undefined;
   type(): TypeReferenceView | undefined;
   offsetExpression(): ExpressionView | undefined;
   lengthExpression(): ExpressionView | undefined;
