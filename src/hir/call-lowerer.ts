@@ -179,6 +179,32 @@ function reportCallTypeMismatch(input: {
   );
 }
 
+function ownerTypeIdForItemId(
+  context: HirLoweringContext,
+  itemId: import("../semantic/ids").ItemId | undefined,
+): TypeId | undefined {
+  if (itemId === undefined) return undefined;
+  return context.index.item(itemId)?.typeId;
+}
+
+function extractOwnerInfoFromType(type: CheckedType):
+  | {
+      readonly ownerTypeId: TypeId;
+      readonly ownerTypeArguments: readonly CheckedType[];
+    }
+  | undefined {
+  if (type.kind === "source") {
+    return { ownerTypeId: type.typeId, ownerTypeArguments: [] };
+  }
+  if (type.kind === "applied" && type.constructor.kind === "source") {
+    return {
+      ownerTypeId: type.constructor.typeId,
+      ownerTypeArguments: type.arguments,
+    };
+  }
+  return undefined;
+}
+
 function containsErrorType(type: CheckedType): boolean {
   if (type.kind === "error") return true;
   if (type.kind !== "applied") return false;
@@ -510,9 +536,65 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
         })
       : true;
 
+  let ownerTypeId: TypeId | undefined;
+  let ownerTypeArguments: readonly CheckedType[] = [];
+  let ownerTypeArgumentSource: HirCallExpression["ownerTypeArgumentSource"] = "none";
+  let ownerArgumentDerivationFailed = false;
+  if (originalSignature?.modifiers.isConstructor === true) {
+    const returnOwnerInfo = extractOwnerInfoFromType(
+      signature?.returnType ?? originalSignature.returnType,
+    );
+    const expectedOwnerInfo =
+      input.expectedType !== undefined ? extractOwnerInfoFromType(input.expectedType) : undefined;
+    const ownerInfo =
+      expectedOwnerInfo !== undefined &&
+      (returnOwnerInfo === undefined ||
+        expectedOwnerInfo.ownerTypeId === returnOwnerInfo.ownerTypeId)
+        ? expectedOwnerInfo
+        : returnOwnerInfo;
+    if (ownerInfo !== undefined) {
+      ownerTypeId = ownerInfo.ownerTypeId;
+      ownerTypeArguments = ownerInfo.ownerTypeArguments;
+      ownerTypeArgumentSource = "constructorExpectedType";
+    } else {
+      ownerTypeArgumentSource = "error";
+      ownerArgumentDerivationFailed = true;
+    }
+  } else if (resolvedCallee.receiver !== undefined) {
+    const ownerInfo = extractOwnerInfoFromType(resolvedCallee.receiver.type);
+    if (ownerInfo !== undefined) {
+      ownerTypeId = ownerInfo.ownerTypeId;
+      ownerTypeArguments = ownerInfo.ownerTypeArguments;
+      ownerTypeArgumentSource = "receiverType";
+    } else {
+      const receiverDerivedOwner = ownerTypeIdForItemId(
+        input.context,
+        originalSignature?.ownerItemId,
+      );
+      if (receiverDerivedOwner !== undefined) {
+        ownerTypeId = receiverDerivedOwner;
+        ownerTypeArguments = [];
+        ownerTypeArgumentSource = "receiverType";
+      } else {
+        ownerTypeArgumentSource = "error";
+        ownerArgumentDerivationFailed = true;
+      }
+    }
+  } else if (originalSignature?.ownerItemId !== undefined) {
+    const freeOwner = ownerTypeIdForItemId(input.context, originalSignature.ownerItemId);
+    if (freeOwner !== undefined) {
+      ownerTypeId = freeOwner;
+      ownerTypeArguments = [];
+      ownerTypeArgumentSource = "receiverType";
+    }
+  }
+
   const call: HirCallExpression = {
     callee: calleeExpression(input.view, input.context, resolvedCallee),
     ...(calleeFunctionId !== undefined ? { calleeFunctionId } : {}),
+    ...(ownerTypeId !== undefined ? { ownerTypeId } : {}),
+    ownerTypeArguments,
+    ownerTypeArgumentSource,
     arguments: orderedArguments,
     typeArguments,
     ...(resolvedCallee.receiver !== undefined ? { receiver: resolvedCallee.receiver } : {}),
@@ -522,7 +604,8 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
       signature === undefined ||
       hasGenericMismatch ||
       hasArgumentMismatch ||
-      !hasConstructibilityAuthority,
+      !hasConstructibilityAuthority ||
+      ownerArgumentDerivationFailed,
   };
 
   const expression: HirExpression = {

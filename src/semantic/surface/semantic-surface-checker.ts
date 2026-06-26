@@ -73,6 +73,7 @@ import type {
 } from "./proof-contracts";
 import type { CheckedType } from "./type-model";
 import { checkedTypeFingerprint, checkedTypesEqual, errorCheckedType } from "./type-model";
+import { buildSemanticMonoClosureFacts, targetResourceKindContext } from "./mono-closure-builder";
 import type {
   ImageId,
   ImageProfileId,
@@ -153,6 +154,7 @@ function checkFieldTypesAndBuildKinds(
 
   let sourceTypeKinds = new Map<import("../ids").TypeId, CheckedResourceKind>();
   let prevFingerprint = "";
+  const targetTypeKindContext = targetResourceKindContext(input.targetSurface);
   const emptyCtx = emptyKindContext(input.coreTypes, input.index);
   const maxIters = Math.max(1, input.index.types().length + 1);
   for (let iter = 0; iter < maxIters; iter++) {
@@ -162,7 +164,7 @@ function checkFieldTypesAndBuildKinds(
         type,
         context: {
           ...emptyCtx,
-          targetTypeKinds: new Map(),
+          targetTypeKinds: targetTypeKindContext,
           sourceTypeKinds,
         },
       });
@@ -189,7 +191,7 @@ function checkFieldTypesAndBuildKinds(
     coreTypes: input.coreTypes,
     index: input.index,
     sourceTypeKinds,
-    targetTypeKinds: new Map(),
+    targetTypeKinds: targetTypeKindContext,
   };
 
   for (const { field, item, type } of fieldEntries) {
@@ -1155,10 +1157,20 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
     matchRefinements: declarationProofSurface.matchRefinements,
   });
   builder.setProofSurface(proofSurface);
-  const program = builder.build();
+  builder.build();
+
+  const monoClosureFacts = buildSemanticMonoClosureFacts({
+    index: input.index,
+    kindContext,
+    targetSurface: input.targetSurface,
+    image,
+    program: checkedProgramBeforeProof,
+  });
+  builder.setMonoClosureFacts(monoClosureFacts);
+  const programWithMonoClosure = builder.build();
 
   return {
-    program,
+    program: programWithMonoClosure,
     image,
     diagnostics: sortSemanticSurfaceDiagnostics(diagnostics),
   };

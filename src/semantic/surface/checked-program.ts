@@ -23,6 +23,8 @@ import type {
   CheckedTakeModeSurface,
   CheckedValidationContractSurface,
 } from "./proof-contracts";
+import type { CheckedMonoClosureFacts } from "./mono-closure";
+import { checkedMonoClosureFactsEmpty } from "./mono-closure";
 
 // ── Checked type table ──────────────────────────────────────
 
@@ -272,6 +274,7 @@ export interface CheckedSemanticProgram {
   readonly completedMembers: CompletedMemberReferenceTable;
   readonly proofSurface: CheckedProofSurface;
   readonly certifiedPlatformBindings: CertifiedPlatformBindingTable;
+  readonly monoClosureFacts: CheckedMonoClosureFacts;
 }
 
 // ── CheckedProgramBuilder ───────────────────────────────────
@@ -284,6 +287,7 @@ export class CheckedProgramBuilder {
   private readonly completedMemberEntries: CompletedMemberReference[] = [];
   private readonly platformBindingRecords: CertifiedPlatformBinding[] = [];
   private proofSurface: CheckedProofSurface | undefined;
+  private monoClosureFacts: CheckedMonoClosureFacts | undefined;
 
   addType(record: CheckedTypeRecord): void {
     this.typeRecords.push(record);
@@ -313,6 +317,10 @@ export class CheckedProgramBuilder {
     this.proofSurface = surface;
   }
 
+  setMonoClosureFacts(facts: CheckedMonoClosureFacts): void {
+    this.monoClosureFacts = facts;
+  }
+
   build(): CheckedSemanticProgram {
     return {
       types: checkedTypeTable(this.typeRecords),
@@ -322,6 +330,7 @@ export class CheckedProgramBuilder {
       completedMembers: completedMemberReferenceTable(this.completedMemberEntries),
       proofSurface: this.proofSurface ?? checkedProofSurfaceEmpty(),
       certifiedPlatformBindings: certifiedPlatformBindingTable(this.platformBindingRecords),
+      monoClosureFacts: this.monoClosureFacts ?? checkedMonoClosureFactsEmpty(),
     };
   }
 }

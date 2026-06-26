@@ -6,6 +6,7 @@ import type {
   HirImageOrigin,
   HirObligation,
   HirPlatformContractEdge,
+  HirPlatformContractEdgeLookupKey,
   HirPrivateStateTransition,
   HirResourcePlace,
   HirSession,
@@ -32,6 +33,7 @@ import type {
   ValidationId,
 } from "./ids";
 import { hirTable, type HirTable } from "./hir-table";
+import { compareCodeUnitStrings } from "./deterministic-sort";
 
 function ownerSortKey(owner: HirOwnedId<unknown>["owner"]): string {
   switch (owner.kind) {
@@ -46,6 +48,47 @@ function ownerSortKey(owner: HirOwnedId<unknown>["owner"]): string {
 
 function metadataIdKey<IdValue>(id: HirOwnedId<IdValue>, family: string): string {
   return `${ownerSortKey(id.owner)}/${family}:${String(id.id).padStart(12, "0")}`;
+}
+
+function platformContractEdgeLookupKeyString(key: HirPlatformContractEdgeLookupKey): string {
+  return `${ownerSortKey(key.owner)}/${String(key.callExpressionId).padStart(12, "0")}/${String(key.calleeFunctionId).padStart(12, "0")}`;
+}
+
+export interface HirPlatformContractEdgeByCallTable {
+  get(key: HirPlatformContractEdgeLookupKey): readonly HirPlatformContractEdge[];
+}
+
+function buildPlatformContractEdgeByCallTable(
+  edges: readonly HirPlatformContractEdge[],
+): HirPlatformContractEdgeByCallTable {
+  const buckets = new Map<string, HirPlatformContractEdge[]>();
+  for (const edge of edges) {
+    if (edge.callExpressionId === undefined) continue;
+    const key = platformContractEdgeLookupKeyString({
+      owner: edge.edgeId.owner,
+      callExpressionId: edge.callExpressionId,
+      calleeFunctionId: edge.sourceFunctionId,
+    });
+    const bucket = buckets.get(key);
+    if (bucket === undefined) {
+      buckets.set(key, [edge]);
+    } else {
+      bucket.push(edge);
+    }
+  }
+  for (const bucket of buckets.values()) {
+    bucket.sort((left, right) =>
+      compareCodeUnitStrings(
+        metadataIdKey(left.edgeId, "platformContractEdge"),
+        metadataIdKey(right.edgeId, "platformContractEdge"),
+      ),
+    );
+  }
+  return {
+    get(key: HirPlatformContractEdgeLookupKey): readonly HirPlatformContractEdge[] {
+      return buckets.get(platformContractEdgeLookupKeyString(key)) ?? [];
+    },
+  };
 }
 
 export interface HirProofMetadata {
@@ -69,6 +112,7 @@ export interface HirProofMetadata {
     HirOwnedId<HirPlatformContractEdgeId>,
     HirPlatformContractEdge
   >;
+  readonly platformContractEdgesByCall: HirPlatformContractEdgeByCallTable;
   readonly imageOrigins: HirTable<HirOwnedId<HirImageOriginId>, HirImageOrigin>;
 }
 
@@ -136,6 +180,7 @@ function buildMetadata(input: {
       "platformContractEdge",
       (entry) => entry.edgeId,
     ),
+    platformContractEdgesByCall: buildPlatformContractEdgeByCallTable(input.platformContractEdges),
     imageOrigins: tableFor(input.imageOrigins, "imageOrigin", (entry) => entry.imageOriginId),
   };
 }
@@ -206,6 +251,9 @@ export class HirProofMetadataBuilder implements HirProofMetadataBuilderApi {
   private stagedPrivateStateTransitions: HirProofMetadata["privateStateTransitions"] | undefined;
   private stagedFactOrigins: HirProofMetadata["factOrigins"] | undefined;
   private stagedPlatformContractEdges: HirProofMetadata["platformContractEdges"] | undefined;
+  private stagedPlatformContractEdgesByCall:
+    | HirProofMetadata["platformContractEdgesByCall"]
+    | undefined;
   private stagedImageOrigins: HirProofMetadata["imageOrigins"] | undefined;
   private readonly brandCountByFunction = new Map<FunctionId, number>();
   private readonly transitionCountByPlace = new Map<string, number>();
@@ -291,6 +339,12 @@ export class HirProofMetadataBuilder implements HirProofMetadataBuilderApi {
       this.platformContractEdgeRecords,
       "platformContractEdge",
       (entry) => entry.edgeId,
+    ));
+  }
+
+  get platformContractEdgesByCall(): HirProofMetadata["platformContractEdgesByCall"] {
+    return (this.stagedPlatformContractEdgesByCall ??= buildPlatformContractEdgeByCallTable(
+      this.platformContractEdgeRecords,
     ));
   }
 
@@ -447,6 +501,7 @@ export class HirProofMetadataBuilder implements HirProofMetadataBuilderApi {
   addPlatformContractEdge(edge: HirPlatformContractEdge): this {
     this.platformContractEdgeRecords.push(edge);
     this.stagedPlatformContractEdges = undefined;
+    this.stagedPlatformContractEdgesByCall = undefined;
     return this;
   }
 
@@ -473,6 +528,7 @@ export class HirProofMetadataBuilder implements HirProofMetadataBuilderApi {
       privateStateTransitions: this.privateStateTransitions,
       factOrigins: this.factOrigins,
       platformContractEdges: this.platformContractEdges,
+      platformContractEdgesByCall: this.platformContractEdgesByCall,
       imageOrigins: this.imageOrigins,
     };
   }

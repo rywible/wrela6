@@ -52,3 +52,38 @@ test("HIR fakes expose named proof-surface helpers", () => {
   });
   expect(localFake({ name: "value", type: coreCheckedType(coreTypeId("u32")) }).name).toBe("value");
 });
+
+test("typed HIR records source types, fields, and ordered type parameters", () => {
+  const result = lowerTypedHirForTest([
+    [
+      "main.wr",
+      `
+class Box[T]:
+    value: T
+
+fn id[U](value: U) -> U:
+    return value
+`,
+    ],
+  ]);
+
+  const typeRecord = result.program.types.entries()[0]!;
+  const fieldRecord = result.program.fields.entries()[0]!;
+  const functionRecord = result.program.functions
+    .entries()
+    .find((entry) => entry.declaredTypeParameters.length === 1)!;
+
+  expect(typeRecord.sourceKind).toBe("class");
+  expect(typeRecord.declaredTypeParameters.map((parameter) => parameter.index)).toEqual([0]);
+  expect(typeRecord.fieldIds).toEqual([fieldRecord.fieldId]);
+  expect(fieldRecord.ownerTypeId).toBe(typeRecord.typeId);
+  expect(functionRecord.declaredTypeParameters.map((parameter) => parameter.index)).toEqual([0]);
+});
+
+test("typed HIR source type kinds do not become error for fieldless proof-relevant types", () => {
+  const result = lowerTypedHirForTest([["main.wr", "interface Capability:\n"]]);
+
+  const typeKind = result.program.monoClosure.sourceTypeKinds.entries()[0];
+
+  expect(typeKind?.kind).toEqual({ kind: "concrete", value: "Copy" });
+});

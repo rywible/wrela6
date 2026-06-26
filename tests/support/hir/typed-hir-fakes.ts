@@ -203,6 +203,8 @@ export function successfulCallFake(input: {
   return {
     callee: nameExpressionFake(input.calleeFunctionId),
     calleeFunctionId: input.calleeFunctionId,
+    ownerTypeArguments: [],
+    ownerTypeArgumentSource: "none",
     arguments: input.arguments ?? [],
     typeArguments: [],
     sourceOrigin: hirOriginId(0),

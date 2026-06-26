@@ -1,15 +1,20 @@
 import { SourceSpan } from "../shared/source-span";
 import { FunctionDeclarationView } from "../frontend/ast/function-views";
 import type { RedNode } from "../frontend/syntax/red-node";
-import type { FunctionId, ItemId, ModuleId } from "../semantic/ids";
-import { errorKind } from "../semantic/surface/resource-kind";
+import type { FieldId, FunctionId, ItemId, ModuleId, TypeId } from "../semantic/ids";
+import { concreteKind, errorKind, joinResourceKinds } from "../semantic/surface/resource-kind";
+import type { TypeParameterKey } from "../semantic/surface/resource-kind";
 import { errorCheckedType } from "../semantic/surface/type-model";
 import type { CheckedFunctionSignature } from "../semantic/surface/checked-program";
 import type {
   HirDeclaration,
+  HirFieldRecord,
+  HirFieldTable,
   HirFunction,
   HirImage,
   HirLocal,
+  HirTypeRecord,
+  HirTypeTable,
   HirValidatedBuffer,
   TypedHirProgram,
 } from "./hir";
@@ -27,6 +32,7 @@ import { sortHirDiagnostics } from "./diagnostics";
 import type { HirDiagnostic } from "./diagnostics";
 import type { HirOriginId } from "./ids";
 import { lowerRequirementSurface } from "./requirement-lowerer";
+import { lowerMonoClosureSurface } from "./mono-closure-lowerer";
 
 export type { LowerTypedHirInput } from "./lowering-context";
 
@@ -139,6 +145,123 @@ function imageTable(entries: readonly HirImage[]) {
   });
 }
 
+function typeTable(entries: readonly HirTypeRecord[]): HirTypeTable {
+  return hirTable({
+    entries,
+    keyOf: (entry) => String(entry.typeId).padStart(12, "0"),
+    lookupKeyOf: (id) => String(id).padStart(12, "0"),
+  });
+}
+
+function fieldTable(entries: readonly HirFieldRecord[]): HirFieldTable {
+  return hirTable({
+    entries,
+    keyOf: (entry) => String(entry.fieldId).padStart(12, "0"),
+    lookupKeyOf: (id) => String(id).padStart(12, "0"),
+  });
+}
+
+function declaredTypeParametersForItem(input: {
+  readonly context: HirLoweringContext;
+  readonly itemId: ItemId;
+}): readonly TypeParameterKey[] {
+  return [...input.context.index.typeParametersForItem(input.itemId)]
+    .sort((left, right) => left.index - right.index)
+    .map((parameter) => ({
+      owner: { kind: "item", itemId: input.itemId },
+      index: parameter.index,
+    }));
+}
+
+function declaredTypeParametersForFunction(input: {
+  readonly context: HirLoweringContext;
+  readonly functionId: FunctionId;
+  readonly itemId: ItemId;
+}): readonly TypeParameterKey[] {
+  return [...input.context.index.typeParametersForFunction(input.functionId)]
+    .sort((left, right) => left.index - right.index)
+    .map((parameter) => ({
+      owner: { kind: "function", itemId: input.itemId, functionId: input.functionId },
+      index: parameter.index,
+    }));
+}
+
+function ownerTypeIdForFunction(input: {
+  readonly context: HirLoweringContext;
+  readonly signature: CheckedFunctionSignature;
+}): TypeId | undefined {
+  if (input.signature.ownerItemId === undefined) return undefined;
+  const ownerItem = input.context.index.item(input.signature.ownerItemId);
+  return ownerItem?.typeId;
+}
+
+function typeIdForItem(input: {
+  readonly context: HirLoweringContext;
+  readonly itemId: ItemId;
+}): TypeId | undefined {
+  return input.context.index.item(input.itemId)?.typeId;
+}
+
+function fieldIdsForTypeItem(input: {
+  readonly context: HirLoweringContext;
+  readonly itemId: ItemId;
+}): readonly FieldId[] {
+  return input.context.index
+    .fieldsForItem(input.itemId)
+    .filter((field) => field.role === "field")
+    .map((field) => field.id);
+}
+
+function lowerTypeRecord(input: {
+  readonly context: HirLoweringContext;
+  readonly typeId: TypeId;
+  readonly itemId: ItemId;
+  readonly sourceOrigin: HirOriginId;
+}): HirTypeRecord | undefined {
+  const item = input.context.index.item(input.itemId);
+  if (item === undefined) return undefined;
+  return {
+    typeId: input.typeId,
+    itemId: input.itemId,
+    sourceKind: item.kind,
+    declaredTypeParameters: declaredTypeParametersForItem({
+      context: input.context,
+      itemId: input.itemId,
+    }),
+    fieldIds: fieldIdsForTypeItem({ context: input.context, itemId: input.itemId }),
+    resourceKind: joinFieldResourceKinds({
+      context: input.context,
+      itemId: input.itemId,
+    }),
+    sourceOrigin: input.sourceOrigin,
+  };
+}
+
+function joinFieldResourceKinds(input: {
+  readonly context: HirLoweringContext;
+  readonly itemId: ItemId;
+}) {
+  const item = input.context.index.item(input.itemId);
+  const typeId = item?.typeId;
+  if (typeId !== undefined) {
+    const constructorRule = input.context.program.monoClosureFacts.constructorKindRules.get({
+      kind: "source",
+      typeId,
+    });
+    if (constructorRule?.resultKind !== undefined) {
+      return constructorRule.resultKind;
+    }
+  }
+  const fieldRecords = input.context.index
+    .fieldsForItem(input.itemId)
+    .filter((field) => field.role === "field")
+    .map((field) => input.context.program.fields.get(field.id))
+    .filter((record): record is NonNullable<typeof record> => record !== undefined)
+    .map((record) => record.resourceKind);
+  if (fieldRecords.length === 0) return concreteKind("Copy");
+  return joinResourceKinds(fieldRecords);
+}
+
 function recoverySignature(input: {
   readonly functionId: FunctionId;
   readonly itemId: ItemId;
@@ -164,6 +287,8 @@ function recoverySignature(input: {
 export class TypedHirBuilder {
   private readonly context: HirLoweringContext;
   private readonly declarations: HirDeclaration[] = [];
+  private readonly typeRecords: HirTypeRecord[] = [];
+  private readonly fieldRecords: HirFieldRecord[] = [];
   private readonly functions: HirFunction[] = [];
   private readonly validatedBuffers: HirValidatedBuffer[] = [];
   private readonly images: HirImage[] = [];
@@ -193,7 +318,52 @@ export class TypedHirBuilder {
         ...(item.imageId !== undefined ? { imageId: item.imageId } : {}),
       });
     }
+    this.lowerTypeAndFieldRecords();
     this.validatedBuffers.push(...lowerValidatedBuffers({ context: this.context }));
+  }
+
+  private lowerTypeAndFieldRecords(): void {
+    for (const typeRecord of this.context.index.types()) {
+      const item = this.context.index.item(typeRecord.itemId);
+      if (item === undefined) continue;
+      const sourceOrigin = this.context.origins.forSynthetic({
+        moduleId: typeRecord.moduleId,
+        span: item.span,
+        stableDetail: `type:${typeRecord.id}`,
+        ownerItemId: typeRecord.itemId,
+      });
+      const lowered = lowerTypeRecord({
+        context: this.context,
+        typeId: typeRecord.id,
+        itemId: typeRecord.itemId,
+        sourceOrigin,
+      });
+      if (lowered !== undefined) this.typeRecords.push(lowered);
+    }
+    for (const field of this.context.index.fields()) {
+      if (field.role !== "field") continue;
+      const checkedField = this.context.program.fields.get(field.id);
+      if (checkedField === undefined) continue;
+      const ownerTypeId = typeIdForItem({
+        context: this.context,
+        itemId: field.ownerItemId,
+      });
+      if (ownerTypeId === undefined) continue;
+      const sourceOrigin = this.context.origins.forSynthetic({
+        moduleId: this.context.index.item(field.ownerItemId)?.moduleId ?? (0 as ModuleId),
+        span: field.span,
+        stableDetail: `field:${field.id}`,
+        ownerItemId: field.ownerItemId,
+      });
+      this.fieldRecords.push({
+        fieldId: field.id,
+        ownerTypeId,
+        name: field.name,
+        type: checkedField.type,
+        resourceKind: checkedField.resourceKind,
+        sourceOrigin,
+      });
+    }
   }
 
   lowerFunctionShells(): void {
@@ -235,7 +405,23 @@ export class TypedHirBuilder {
       this.functions.push({
         functionId: functionRecord.id,
         itemId: functionRecord.itemId,
+        ...(ownerTypeIdForFunction({
+          context: this.context,
+          signature,
+        }) !== undefined
+          ? {
+              ownerTypeId: ownerTypeIdForFunction({
+                context: this.context,
+                signature,
+              })!,
+            }
+          : {}),
         signature,
+        declaredTypeParameters: declaredTypeParametersForFunction({
+          context: this.context,
+          functionId: functionRecord.id,
+          itemId: functionRecord.itemId,
+        }),
         bodyStatus: "bodylessRecovery",
         locals: emptyLocalTable(),
         declaredRequirements: [],
@@ -251,10 +437,16 @@ export class TypedHirBuilder {
   build(): LowerTypedHirResult {
     const program: TypedHirProgram = {
       declarations: emptyDeclarationTable(this.declarations),
+      types: typeTable(this.typeRecords),
+      fields: fieldTable(this.fieldRecords),
       functions: functionTable(this.functions),
       validatedBuffers: validatedBufferTable(this.validatedBuffers),
       images: imageTable(this.images),
       proofMetadata: this.context.proofMetadata.build(),
+      monoClosure: lowerMonoClosureSurface({
+        context: this.context,
+        typeRecords: this.typeRecords,
+      }),
       origins: this.context.origins,
     };
     return {
@@ -322,11 +514,21 @@ export class TypedHirBuilder {
     for (const place of functionContext.places.entries()) {
       this.context.proofMetadata.addResourcePlace(place);
     }
+    const ownerTypeId = ownerTypeIdForFunction({
+      context: this.context,
+      signature,
+    });
 
     return {
       functionId: signature.functionId,
       itemId: signature.itemId,
+      ...(ownerTypeId !== undefined ? { ownerTypeId } : {}),
       signature,
+      declaredTypeParameters: declaredTypeParametersForFunction({
+        context: this.context,
+        functionId: signature.functionId,
+        itemId: signature.itemId,
+      }),
       bodyStatus,
       locals: emptyLocalTable(functionContext.locals.locals()),
       ...(body !== undefined && bodyIndex !== undefined ? { body, bodyIndex } : {}),

@@ -19,7 +19,11 @@ import {
 } from "../../../../src/semantic/surface/resource-kind";
 import { CoreTypeCatalog } from "../../../../src/semantic/names";
 import { ItemIndex } from "../../../../src/semantic/item-index";
-import { parseAndResolveSurfaceFixture } from "../../../support/semantic/semantic-surface-fakes";
+import {
+  parseAndResolveSurfaceFixture,
+  semanticTargetSurfaceFake,
+} from "../../../support/semantic/semantic-surface-fakes";
+import { semanticSurfaceForHirTest } from "../../../support/hir/typed-hir-fixtures";
 
 const defaultContext = emptyKindContext(
   CoreTypeCatalog.default(),
@@ -131,4 +135,71 @@ test("target type returns copy by default", () => {
       context: defaultContext,
     }),
   ).toEqual(concreteKind("Copy"));
+});
+
+test("target type kind context overrides copy default", () => {
+  const handleTypeId = targetTypeId("FirmwareHandle");
+  expect(
+    resourceKindForType({
+      type: targetCheckedType(handleTypeId),
+      context: {
+        ...defaultContext,
+        targetTypeKinds: new Map([[handleTypeId, concreteKind("Linear")]]),
+      },
+    }),
+  ).toEqual(concreteKind("Linear"));
+});
+
+test("validated buffer constructor rule preserves proof-relevant kind", () => {
+  const source = `
+validated buffer Packet[T]:
+    param value: T
+    layout raw: u8
+`;
+  const surface = semanticSurfaceForHirTest([["main.wr", source]]);
+  const rule = surface.program.monoClosureFacts.constructorKindRules
+    .entries()
+    .find(
+      (entry) =>
+        entry.resultKind?.kind === "concrete" && entry.resultKind.value === "ValidatedBuffer",
+    );
+
+  expect(rule?.rule).toBe("appliedConstructor");
+  expect(rule?.resultKind).toEqual(concreteKind("ValidatedBuffer"));
+});
+
+test("target type kinds are deterministic when target surface order changes", () => {
+  const first = semanticSurfaceForHirTest([["main.wr", "fn main() -> Never:\n    return\n"]], {
+    targetSurface: semanticTargetSurfaceFake({
+      targetTypeKinds: [
+        { targetTypeId: targetTypeId("Z"), kind: "Linear" },
+        { targetTypeId: targetTypeId("A"), kind: "Copy" },
+      ],
+    }),
+  });
+  const fingerprints = first.program.monoClosureFacts.targetTypeKinds
+    .entries()
+    .map((entry) => `${entry.targetTypeId}:${entry.kind}`);
+
+  expect(fingerprints).toEqual(["A:Copy", "Z:Linear"]);
+});
+
+test("mono closure includes core join and target declared constructor rules", () => {
+  const surface = semanticSurfaceForHirTest([["main.wr", "fn main() -> Never:\n    return\n"]], {
+    targetSurface: semanticTargetSurfaceFake({
+      targetTypeKinds: [{ targetTypeId: targetTypeId("MmioRegister"), kind: "Linear" }],
+    }),
+  });
+
+  const coreRule = surface.program.monoClosureFacts.constructorKindRules.get({
+    kind: "core",
+    coreTypeId: coreTypeId("u32"),
+  });
+  const targetRule = surface.program.monoClosureFacts.constructorKindRules.get({
+    kind: "target",
+    targetTypeId: targetTypeId("MmioRegister"),
+  });
+
+  expect(coreRule?.rule).toBe("join");
+  expect(targetRule?.rule).toBe("targetDeclared");
 });

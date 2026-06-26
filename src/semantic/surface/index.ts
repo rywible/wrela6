@@ -31,9 +31,24 @@ export type {
   TargetFunctionSignature,
   TargetParameterSpec,
   TargetProofContractSurface,
+  TargetTypeKindSpec,
 } from "./platform-surface";
 export { platformPrimitiveCatalog, semanticTargetSurface } from "./platform-surface";
 export type { ImageRootSelection } from "./image-root-selection";
 export type { CheckedImageDevice } from "./image-device-checker";
 export type { CheckedProofSurface } from "./proof-surface";
 export * from "./proof-contracts";
+export type {
+  CheckedMonoClosureFacts,
+  CheckedTargetTypeKind,
+  CheckedTargetTypeKindTable,
+  CheckedConstructorKindRule,
+  CheckedConstructorKindRuleTable,
+  CheckedInstanceEligibilityRule,
+  CheckedInstanceEligibilityRuleTable,
+  CheckedInstanceEligibilityOwner,
+  CheckedExternalEntryRoot,
+  CheckedExternalEntryRootTable,
+  CheckedExternalEntryRootReason,
+} from "./mono-closure";
+export { checkedMonoClosureFactsEmpty } from "./mono-closure";

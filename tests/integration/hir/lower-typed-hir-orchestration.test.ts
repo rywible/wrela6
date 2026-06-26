@@ -11,9 +11,15 @@ import {
   CheckedTakeModeSurfaceTableBuilder,
   CheckedValidationContractSurfaceTableBuilder,
 } from "../../../src/semantic/surface/proof-contracts";
-import { coreTypeId, typeId, type FunctionId } from "../../../src/semantic/ids";
+import { coreTypeId, targetTypeId, typeId, type FunctionId } from "../../../src/semantic/ids";
 import { concreteKind } from "../../../src/semantic/surface/resource-kind";
 import { coreCheckedType } from "../../../src/semantic/surface/type-model";
+import {
+  checkedConstructorKindRuleTableFromRecords,
+  checkedExternalEntryRootTableFromRecords,
+  checkedMonoClosureFactsFromTables,
+  checkedTargetTypeKindTableFromSpecs,
+} from "../../../src/semantic/surface/mono-closure";
 import {
   parseAndResolveSurfaceFixture,
   primitiveSpecFake,
@@ -632,4 +638,226 @@ test("orchestration reports yield type mismatches from checked function signatur
   expect(result.diagnostics.map((diagnostic) => String(diagnostic.code))).toContain(
     "HIR_YIELD_TYPE_MISMATCH",
   );
+});
+
+test("typed HIR exposes mono closure surface for selected image", () => {
+  const result = lowerTypedHirForTest([
+    ["main.wr", "fn main() -> Never:\n    return\nuefi image Boot:\n    fn main() -> Never\n"],
+  ]);
+
+  expect(result.program.monoClosure.externalEntryRoots.map((root) => root.reason)).toEqual([
+    "imageEntry",
+  ]);
+  expect(result.program.monoClosure.sourceTypeKinds.entries()).toEqual([]);
+  expect(result.program.monoClosure.certifiedPlatformBindings.entries()).toEqual([]);
+});
+
+test("typed HIR preserves semantic external entry roots in mono closure surface", () => {
+  const files: [string, string][] = [
+    [
+      "main.wr",
+      [
+        "fn callback() -> Never:",
+        "    return",
+        "uefi image Boot:",
+        "    fn main() -> Never:",
+        "        return",
+      ].join("\n"),
+    ],
+  ];
+  const fixture = parseAndResolveSurfaceFixture(files);
+  const surface = checkSemanticSurface({
+    graph: fixture.graph,
+    index: fixture.index,
+    references: fixture.references,
+    platformBindings: fixture.platformBindings,
+    coreTypes: fixture.coreTypes,
+    targetSurface: fixture.targetSurface,
+  });
+  const callbackFunctionId = functionIdByName(fixture, "callback");
+  const result = lowerTypedHir({
+    graph: fixture.graph,
+    index: fixture.index,
+    references: fixture.references,
+    coreTypes: fixture.coreTypes,
+    program: {
+      ...surface.program,
+      monoClosureFacts: checkedMonoClosureFactsFromTables({
+        targetTypeKinds: surface.program.monoClosureFacts.targetTypeKinds,
+        constructorKindRules: surface.program.monoClosureFacts.constructorKindRules,
+        instanceEligibilityRules: surface.program.monoClosureFacts.instanceEligibilityRules,
+        externalEntryRoots: checkedExternalEntryRootTableFromRecords([
+          {
+            functionId: callbackFunctionId,
+            itemId: callbackFunctionId as unknown as import("../../../src/semantic/ids").ItemId,
+            ownerTypeArguments: [],
+            functionTypeArguments: [],
+            reason: "manualOverride",
+          },
+        ]),
+      }),
+    },
+    image: surface.image,
+  });
+
+  expect(result.program.monoClosure.externalEntryRoots.map((root) => root.reason)).toEqual([
+    "imageEntry",
+    "targetRequired",
+  ]);
+  expect(result.program.monoClosure.externalEntryRoots.map((root) => root.functionId)).toContain(
+    callbackFunctionId,
+  );
+});
+
+test("typed HIR preserves semantic external entry root owner arguments", () => {
+  const files: [string, string][] = [
+    [
+      "main.wr",
+      [
+        "class Box[T]:",
+        "    value: T",
+        "    fn tag(self) -> u8:",
+        "        return 0",
+        "uefi image Boot:",
+        "    fn main() -> Never:",
+        "        return",
+      ].join("\n"),
+    ],
+  ];
+  const fixture = parseAndResolveSurfaceFixture(files);
+  const surface = checkSemanticSurface({
+    graph: fixture.graph,
+    index: fixture.index,
+    references: fixture.references,
+    platformBindings: fixture.platformBindings,
+    coreTypes: fixture.coreTypes,
+    targetSurface: fixture.targetSurface,
+  });
+  const tagFunctionId = functionIdByName(fixture, "tag");
+  const tagSignature = surface.program.functions.get(tagFunctionId);
+  if (tagSignature === undefined || tagSignature.ownerItemId === undefined) {
+    throw new Error("Expected tag method signature with owner item");
+  }
+  const ownerTypeId = fixture.index.item(tagSignature.ownerItemId)?.typeId;
+  if (ownerTypeId === undefined) throw new Error("Expected owner type id");
+
+  const result = lowerTypedHir({
+    graph: fixture.graph,
+    index: fixture.index,
+    references: fixture.references,
+    coreTypes: fixture.coreTypes,
+    program: {
+      ...surface.program,
+      monoClosureFacts: checkedMonoClosureFactsFromTables({
+        targetTypeKinds: surface.program.monoClosureFacts.targetTypeKinds,
+        constructorKindRules: surface.program.monoClosureFacts.constructorKindRules,
+        instanceEligibilityRules: surface.program.monoClosureFacts.instanceEligibilityRules,
+        externalEntryRoots: checkedExternalEntryRootTableFromRecords([
+          {
+            functionId: tagFunctionId,
+            itemId: tagSignature.itemId,
+            ownerTypeId,
+            ownerTypeArguments: [coreCheckedType(coreTypeId("u8"))],
+            functionTypeArguments: [],
+            reason: "manualOverride",
+          },
+        ]),
+      }),
+    },
+    image: surface.image,
+  });
+
+  const root = result.program.monoClosure.externalEntryRoots.find(
+    (entry) => entry.functionId === tagFunctionId,
+  );
+  expect(root?.ownerTypeArguments.map((argument) => argument.kind)).toEqual(["core"]);
+});
+
+test("typed HIR copies concrete semantic target type kind facts", () => {
+  const fixture = parseAndResolveSurfaceFixture([["main.wr", "fn main() -> Never:\n    return"]]);
+  const surface = checkSemanticSurface({
+    graph: fixture.graph,
+    index: fixture.index,
+    references: fixture.references,
+    platformBindings: fixture.platformBindings,
+    coreTypes: fixture.coreTypes,
+    targetSurface: fixture.targetSurface,
+  });
+  const registerTypeId = targetTypeId("MmioRegister");
+  const kind = "Linear";
+
+  const result = lowerTypedHir({
+    graph: fixture.graph,
+    index: fixture.index,
+    references: fixture.references,
+    coreTypes: fixture.coreTypes,
+    program: {
+      ...surface.program,
+      monoClosureFacts: checkedMonoClosureFactsFromTables({
+        targetTypeKinds: checkedTargetTypeKindTableFromSpecs([
+          { targetTypeId: registerTypeId, kind },
+        ]),
+        constructorKindRules: surface.program.monoClosureFacts.constructorKindRules,
+        instanceEligibilityRules: surface.program.monoClosureFacts.instanceEligibilityRules,
+        externalEntryRoots: surface.program.monoClosureFacts.externalEntryRoots,
+      }),
+    },
+    image: surface.image,
+  });
+
+  expect(result.program.monoClosure.targetTypeKinds.get(registerTypeId)?.kind).toEqual(kind);
+});
+
+test("typed HIR constructor rules sort source constructors by fixed-width ids", () => {
+  const fixture = parseAndResolveSurfaceFixture([["main.wr", "fn main() -> Never:\n    return"]]);
+  const surface = checkSemanticSurface({
+    graph: fixture.graph,
+    index: fixture.index,
+    references: fixture.references,
+    platformBindings: fixture.platformBindings,
+    coreTypes: fixture.coreTypes,
+    targetSurface: fixture.targetSurface,
+  });
+  const result = lowerTypedHir({
+    graph: fixture.graph,
+    index: fixture.index,
+    references: fixture.references,
+    coreTypes: fixture.coreTypes,
+    program: {
+      ...surface.program,
+      monoClosureFacts: checkedMonoClosureFactsFromTables({
+        targetTypeKinds: surface.program.monoClosureFacts.targetTypeKinds,
+        constructorKindRules: checkedConstructorKindRuleTableFromRecords([
+          {
+            constructor: { kind: "source", typeId: typeId(10) },
+            rule: "fieldAggregation",
+          },
+          {
+            constructor: { kind: "source", typeId: typeId(2) },
+            rule: "fieldAggregation",
+          },
+        ]),
+        instanceEligibilityRules: surface.program.monoClosureFacts.instanceEligibilityRules,
+        externalEntryRoots: surface.program.monoClosureFacts.externalEntryRoots,
+      }),
+    },
+    image: surface.image,
+  });
+
+  expect(
+    result.program.monoClosure.constructorKindRules.entries().map((entry) => entry.constructor),
+  ).toEqual([
+    { kind: "source", typeId: typeId(2) },
+    { kind: "source", typeId: typeId(10) },
+  ]);
+});
+
+test("generic image entry root carries error-shaped closure arguments", () => {
+  const result = lowerTypedHirForTest([
+    ["main.wr", "uefi image Boot:\n    fn main[T]() -> Never\n"],
+  ]);
+  const root = result.program.monoClosure.externalEntryRoots[0]!;
+
+  expect(root.reason).toBe("imageEntry");
+  expect(root.functionTypeArguments.map((type) => type.kind)).toContain("error");
 });

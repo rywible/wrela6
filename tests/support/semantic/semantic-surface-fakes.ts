@@ -13,6 +13,7 @@ import type {
   ImageProfileSpec,
   PlatformPrimitiveSpec,
   SemanticTargetSurface,
+  TargetTypeKindSpec,
 } from "../../../src/semantic/surface/platform-surface";
 import {
   platformPrimitiveCatalog,
@@ -53,6 +54,7 @@ import type {
   PlatformContractId,
   PlatformPrimitiveId,
   TargetId,
+  TargetTypeId,
   TypeId,
 } from "../../../src/semantic/ids";
 import type { CheckedType } from "../../../src/semantic/surface/type-model";
@@ -170,12 +172,14 @@ export function semanticTargetSurfaceFake(input?: {
   readonly primitives?: readonly PlatformPrimitiveSpec[];
   readonly devices?: readonly DeviceSurfaceSpec[];
   readonly profiles?: readonly ImageProfileSpec[];
+  readonly targetTypeKinds?: readonly TargetTypeKindSpec[];
 }): SemanticTargetSurface {
   return semanticTargetSurface({
     targetId: targetId("uefi-aarch64"),
     platformPrimitives: platformPrimitiveCatalog(input?.primitives ?? []),
     imageProfiles: input?.profiles ?? [uefiImageProfileFake()],
     deviceSurfaces: input?.devices ?? [],
+    ...(input?.targetTypeKinds !== undefined ? { targetTypeKinds: input.targetTypeKinds } : {}),
   });
 }
 
@@ -225,8 +229,12 @@ function checkedFieldTableForFixture(input: {
   readonly index: ItemIndex;
   readonly referenceLookup: SurfaceReferenceLookup;
   readonly coreTypes: CoreTypeCatalog;
+  readonly targetSurface: SemanticTargetSurface;
 }): CheckedFieldTable {
-  const context = surfaceEmptyKindContext(input.coreTypes, input.index);
+  const context = {
+    ...surfaceEmptyKindContext(input.coreTypes, input.index),
+    targetTypeKinds: targetKindContextForFixture(input.targetSurface),
+  };
   const records: CheckedFieldRecord[] = [];
   for (const item of input.index.items()) {
     for (const field of input.index.fieldsForItem(item.id)) {
@@ -278,10 +286,12 @@ export function parseAndResolveSurfaceFixture(
   });
 
   const referenceLookup = buildSurfaceReferenceLookup(names.references);
+  const targetSurface = options?.targetSurface ?? semanticTargetSurfaceFake();
   const checkedFields = checkedFieldTableForFixture({
     index: itemIndexResult.index,
     referenceLookup,
     coreTypes,
+    targetSurface,
   });
 
   return {
@@ -291,11 +301,22 @@ export function parseAndResolveSurfaceFixture(
     referenceLookup,
     platformBindings: names.platformBindings,
     coreTypes,
-    targetSurface: options?.targetSurface ?? semanticTargetSurfaceFake(),
+    targetSurface,
     checkedFields,
-    kindContext: emptyKindContext(coreTypes),
+    kindContext: {
+      ...emptyKindContext(coreTypes),
+      targetTypeKinds: targetKindContextForFixture(targetSurface),
+    },
     diagnostics: [...itemIndexResult.diagnostics, ...names.diagnostics],
   };
+}
+
+function targetKindContextForFixture(
+  targetSurface: SemanticTargetSurface,
+): ReadonlyMap<TargetTypeId, CheckedResourceKind> {
+  return new Map(
+    targetSurface.targetTypeKinds.map((kind) => [kind.targetTypeId, concreteKind(kind.kind)]),
+  );
 }
 
 // ── Summary serializers ─────────────────────────────────────

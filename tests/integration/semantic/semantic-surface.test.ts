@@ -28,6 +28,20 @@ test("valid uefi image produces checked program and image seed", () => {
   expect(result.program.functions.entries().length).toBeGreaterThan(0);
 });
 
+test("semantic image external root records the entry function item id", () => {
+  const result = checkSemanticSurfaceForTest([
+    ["main.wr", "uefi image Boot:\n    fn main() -> Never\n"],
+  ]);
+  const entryFunctionId = result.image?.entryFunctionId;
+  expect(entryFunctionId).toBeDefined();
+  if (entryFunctionId === undefined) return;
+  const signature = result.program.functions.get(entryFunctionId);
+  const root = result.program.monoClosureFacts.externalEntryRoots.get(entryFunctionId);
+
+  expect(signature).toBeDefined();
+  expect(root?.itemId).toBe(signature?.itemId);
+});
+
 test("multiple images require explicit root selection", () => {
   const result = checkSemanticSurfaceForTest([
     [

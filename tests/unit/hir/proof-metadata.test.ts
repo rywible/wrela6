@@ -16,6 +16,7 @@ import {
   hirExpressionId,
   hirLocalId,
   hirOriginId,
+  hirPlatformContractEdgeId,
   ownedBrandId,
   ownedFactOriginId,
   ownedHirPlatformContractEdgeId,
@@ -56,6 +57,13 @@ describe("HIR proof metadata", () => {
     expect(metadata.factOrigins.entries()).toEqual([]);
     expect(metadata.platformContractEdges.entries()).toEqual([]);
     expect(metadata.imageOrigins.entries()).toEqual([]);
+    expect(
+      metadata.platformContractEdgesByCall.get({
+        owner: functionOwner,
+        callExpressionId: hirExpressionId(0),
+        calleeFunctionId: functionId(0),
+      }),
+    ).toEqual([]);
   });
 
   test("builder appends records, exposes staged tables, and builds metadata", () => {
@@ -206,6 +214,86 @@ describe("HIR proof metadata", () => {
     expect(builder.findValidationByPendingResultPlaceKey("pending-place")).toEqual(validation);
     expect(builder.hasValidationPendingResultType(u32Type)).toBe(true);
     expect(builder.hasValidationPendingResultType(coreCheckedType(coreTypeId("bool")))).toBe(false);
+  });
+
+  test("platform contract edges can be looked up by caller call and callee", () => {
+    const owner = { kind: "function" as const, functionId: functionId(1) };
+    const builder = new HirProofMetadataBuilder().addPlatformContractEdge({
+      edgeId: ownedHirPlatformContractEdgeId(owner, 0),
+      sourceFunctionId: functionId(2),
+      primitiveId: platformPrimitiveId("print"),
+      contractId: platformContractId("print_contract"),
+      targetId: targetId("uefi-aarch64"),
+      callExpressionId: hirExpressionId(4),
+      ensuredFacts: [],
+      sourceOrigin: hirOriginId(0),
+    });
+
+    const metadata = builder.build();
+    expect(
+      metadata.platformContractEdgesByCall.get({
+        owner,
+        callExpressionId: hirExpressionId(4),
+        calleeFunctionId: functionId(2),
+      }).length,
+    ).toBe(1);
+  });
+
+  test("platform contract edges lookup returns all matching edges sorted by edge id", () => {
+    const owner = { kind: "function" as const, functionId: functionId(1) };
+    const later: HirPlatformContractEdge = {
+      edgeId: ownedHirPlatformContractEdgeId(owner, 7),
+      sourceFunctionId: functionId(2),
+      primitiveId: platformPrimitiveId("print"),
+      contractId: platformContractId("print_contract"),
+      targetId: targetId("uefi-aarch64"),
+      callExpressionId: hirExpressionId(4),
+      ensuredFacts: [],
+      sourceOrigin: hirOriginId(0),
+    };
+    const earlier: HirPlatformContractEdge = {
+      ...later,
+      edgeId: ownedHirPlatformContractEdgeId(owner, 3),
+    };
+
+    const metadata = new HirProofMetadataBuilder()
+      .addPlatformContractEdge(later)
+      .addPlatformContractEdge(earlier)
+      .build();
+
+    const bucket = metadata.platformContractEdgesByCall.get({
+      owner,
+      callExpressionId: hirExpressionId(4),
+      calleeFunctionId: functionId(2),
+    });
+    expect(bucket.map((edge) => edge.edgeId.id)).toEqual([
+      hirPlatformContractEdgeId(3),
+      hirPlatformContractEdgeId(7),
+    ]);
+  });
+
+  test("platform contract edges lookup returns empty for unmatched keys", () => {
+    const owner = { kind: "function" as const, functionId: functionId(1) };
+    const metadata = new HirProofMetadataBuilder()
+      .addPlatformContractEdge({
+        edgeId: ownedHirPlatformContractEdgeId(owner, 0),
+        sourceFunctionId: functionId(2),
+        primitiveId: platformPrimitiveId("print"),
+        contractId: platformContractId("print_contract"),
+        targetId: targetId("uefi-aarch64"),
+        callExpressionId: hirExpressionId(4),
+        ensuredFacts: [],
+        sourceOrigin: hirOriginId(0),
+      })
+      .build();
+
+    expect(
+      metadata.platformContractEdgesByCall.get({
+        owner,
+        callExpressionId: hirExpressionId(99),
+        calleeFunctionId: functionId(2),
+      }),
+    ).toEqual([]);
   });
 
   test("brand registry deterministically allocates global and function brands", () => {

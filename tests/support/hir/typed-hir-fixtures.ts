@@ -140,9 +140,22 @@ export function typedHirSummary(result: LowerTypedHirResult): string {
       end: diagnostic.span?.end ?? null,
       tieBreaker: diagnostic.order.tieBreaker,
     })),
+    types: result.program.types.entries().map((typeRecord) => ({
+      typeId: typeRecord.typeId,
+      sourceKind: typeRecord.sourceKind,
+      declaredTypeParameters: typeRecord.declaredTypeParameters.map((parameter) => parameter.index),
+      fieldIds: typeRecord.fieldIds,
+    })),
+    fields: result.program.fields.entries().map((fieldRecord) => ({
+      fieldId: fieldRecord.fieldId,
+      ownerTypeId: fieldRecord.ownerTypeId,
+      name: fieldRecord.name,
+    })),
     functions: result.program.functions.entries().map((func) => ({
       functionId: func.functionId,
       bodyStatus: func.bodyStatus,
+      ownerTypeId: func.ownerTypeId,
+      declaredTypeParameters: func.declaredTypeParameters.map((parameter) => parameter.index),
       locals: func.locals.entries().map((local) => local.localId),
     })),
     origins: result.program.origins.originRecords().map((origin) => ({
@@ -169,6 +182,16 @@ export function typedHirSummary(result: LowerTypedHirResult): string {
       imageId: image.imageId,
       devices: image.devices.map((device) => device.fieldId),
     })),
+    monoClosure: {
+      sourceTypeKinds: result.program.monoClosure.sourceTypeKinds.entries().length,
+      targetTypeKinds: result.program.monoClosure.targetTypeKinds.entries().length,
+      constructorKindRules: result.program.monoClosure.constructorKindRules.entries().length,
+      instanceEligibilityRules:
+        result.program.monoClosure.instanceEligibilityRules.entries().length,
+      certifiedPlatformBindings:
+        result.program.monoClosure.certifiedPlatformBindings.entries().length,
+      externalEntryRoots: result.program.monoClosure.externalEntryRoots.length,
+    },
   });
 }
 

@@ -7,6 +7,7 @@ import type {
   PlatformPrimitiveFamilyId,
   PlatformPrimitiveId,
   TargetId,
+  TargetTypeId,
   TypeId,
   UniqueEdgeRootKey,
 } from "../ids";
@@ -155,11 +156,17 @@ export interface DeviceSurfaceSpec {
   readonly uniqueEdgeRoots: readonly UniqueEdgeRootKey[];
 }
 
+export interface TargetTypeKindSpec {
+  readonly targetTypeId: TargetTypeId;
+  readonly kind: ConcreteResourceKind;
+}
+
 export interface SemanticTargetSurface {
   readonly targetId: TargetId;
   readonly platformPrimitives: PlatformPrimitiveCatalog;
   readonly imageProfiles: readonly ImageProfileSpec[];
   readonly deviceSurfaces: readonly DeviceSurfaceSpec[];
+  readonly targetTypeKinds: readonly TargetTypeKindSpec[];
 }
 
 function sortedImageProfiles(profiles: readonly ImageProfileSpec[]): readonly ImageProfileSpec[] {
@@ -170,11 +177,20 @@ function sortedDeviceSurfaces(devices: readonly DeviceSurfaceSpec[]): readonly D
   return [...devices].sort((left, right) => compareCodeUnitStrings(left.name, right.name));
 }
 
+function sortedTargetTypeKinds(
+  kinds: readonly TargetTypeKindSpec[],
+): readonly TargetTypeKindSpec[] {
+  return [...kinds].sort((left, right) =>
+    compareCodeUnitStrings(String(left.targetTypeId), String(right.targetTypeId)),
+  );
+}
+
 export function semanticTargetSurface(input: {
   readonly targetId: TargetId;
   readonly platformPrimitives: PlatformPrimitiveCatalog;
   readonly imageProfiles: readonly ImageProfileSpec[];
   readonly deviceSurfaces: readonly DeviceSurfaceSpec[];
+  readonly targetTypeKinds?: readonly TargetTypeKindSpec[];
 }): SemanticTargetSurface {
   const profiles = sortedImageProfiles(input.imageProfiles);
   const profileNames = new Set<string>();
@@ -204,10 +220,20 @@ export function semanticTargetSurface(input: {
     deviceIds.add(device.deviceSurfaceId);
   }
 
+  const targetTypeKinds = sortedTargetTypeKinds(input.targetTypeKinds ?? []);
+  const targetKindIds = new Set<string>();
+  for (const kindSpec of targetTypeKinds) {
+    if (targetKindIds.has(String(kindSpec.targetTypeId))) {
+      throw new RangeError(`Duplicate target type kind id '${kindSpec.targetTypeId}'.`);
+    }
+    targetKindIds.add(String(kindSpec.targetTypeId));
+  }
+
   return {
     targetId: input.targetId,
     platformPrimitives: input.platformPrimitives,
     imageProfiles: profiles,
     deviceSurfaces: devices,
+    targetTypeKinds,
   };
 }

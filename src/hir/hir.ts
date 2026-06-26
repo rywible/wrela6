@@ -8,15 +8,22 @@ import type {
   PlatformContractId,
   PlatformPrimitiveId,
   TargetId,
+  TargetTypeId,
   TypeId,
   UniqueEdgeRootKey,
 } from "../semantic/ids";
+import type { SourceItemKind } from "../semantic/item-index/item-records";
 import type {
   CheckedFunctionSignature,
   CertifiedPlatformBinding,
 } from "../semantic/surface/checked-program";
-import type { CheckedResourceKind } from "../semantic/surface/resource-kind";
-import type { CheckedType } from "../semantic/surface/type-model";
+import type {
+  CheckedResourceKind,
+  ConcreteResourceKind,
+  ResourceKindDerivationRule,
+  TypeParameterKey,
+} from "../semantic/surface/resource-kind";
+import type { CheckedType, TypeConstructorId } from "../semantic/surface/type-model";
 import type {
   CheckedPlatformEnsuredFact,
   CheckedPlatformEnsuredFactSurface,
@@ -33,6 +40,7 @@ import type {
   HirOwnedId,
   HirPlatformContractEdgeId,
   HirProofExpressionId,
+  HirProofOwner,
   HirRequirementId,
   HirStatementId,
   HirTerminalCallId,
@@ -97,7 +105,9 @@ export interface HirBlock {
 export interface HirFunction {
   readonly functionId: FunctionId;
   readonly itemId: ItemId;
+  readonly ownerTypeId?: TypeId;
   readonly signature: CheckedFunctionSignature;
+  readonly declaredTypeParameters: readonly TypeParameterKey[];
   readonly bodyStatus: "sourceBody" | "certifiedPlatform" | "bodylessRecovery";
   readonly locals: HirLocalTable;
   readonly body?: HirBlock;
@@ -156,6 +166,14 @@ export interface HirCallArgument {
 export interface HirCallExpression {
   readonly callee: HirExpression;
   readonly calleeFunctionId?: FunctionId;
+  readonly ownerTypeId?: TypeId;
+  readonly ownerTypeArguments: readonly CheckedType[];
+  readonly ownerTypeArgumentSource:
+    | "none"
+    | "receiverType"
+    | "constructorExpectedType"
+    | "completedMemberReference"
+    | "error";
   readonly arguments: readonly HirCallArgument[];
   readonly typeArguments: readonly CheckedType[];
   readonly receiver?: HirExpression;
@@ -649,11 +667,98 @@ export interface HirValidatedBuffer {
 
 export type HirValidatedBufferTable = HirTable<TypeId, HirValidatedBuffer>;
 
+export interface HirTypeRecord {
+  readonly typeId: TypeId;
+  readonly itemId: ItemId;
+  readonly sourceKind: SourceItemKind;
+  readonly declaredTypeParameters: readonly TypeParameterKey[];
+  readonly fieldIds: readonly FieldId[];
+  readonly resourceKind: CheckedResourceKind;
+  readonly sourceOrigin: HirOriginId;
+}
+
+export type HirTypeTable = HirTable<TypeId, HirTypeRecord>;
+
+export interface HirFieldRecord {
+  readonly fieldId: FieldId;
+  readonly ownerTypeId: TypeId;
+  readonly name: string;
+  readonly type: CheckedType;
+  readonly resourceKind: CheckedResourceKind;
+  readonly sourceOrigin: HirOriginId;
+}
+
+export type HirFieldTable = HirTable<FieldId, HirFieldRecord>;
+
+export interface HirPlatformContractEdgeLookupKey {
+  readonly owner: HirProofOwner;
+  readonly callExpressionId: HirExpressionId;
+  readonly calleeFunctionId: FunctionId;
+}
+
+export interface HirSourceTypeKindRecord {
+  readonly typeId: TypeId;
+  readonly kind: CheckedResourceKind;
+  readonly sourceOrigin: HirOriginId;
+}
+
+export type HirSourceTypeKindTable = HirTable<TypeId, HirSourceTypeKindRecord>;
+
+export interface HirTargetTypeKindRecord {
+  readonly targetTypeId: TargetTypeId;
+  readonly kind: ConcreteResourceKind;
+  readonly sourceOrigin: HirOriginId;
+}
+
+export type HirTargetTypeKindTable = HirTable<TargetTypeId, HirTargetTypeKindRecord>;
+
+export interface HirConstructorKindRuleRecord {
+  readonly constructor: TypeConstructorId;
+  readonly rule: ResourceKindDerivationRule;
+  readonly resultKind?: CheckedResourceKind;
+  readonly sourceOrigin: HirOriginId;
+}
+
+export type HirConstructorKindRuleTable = HirTable<TypeConstructorId, HirConstructorKindRuleRecord>;
+
+export interface HirInstanceEligibilityRuleRecord {
+  readonly owner:
+    | { readonly kind: "function"; readonly functionId: FunctionId }
+    | { readonly kind: "type"; readonly typeId: TypeId };
+  readonly parameter: TypeParameterKey;
+  readonly allowedConcreteKinds: readonly ConcreteResourceKind[];
+  readonly sourceOrigin: HirOriginId;
+}
+
+export type HirInstanceEligibilityRuleTable = HirTable<string, HirInstanceEligibilityRuleRecord>;
+
+export interface HirExternalEntryRootRecord {
+  readonly functionId: FunctionId;
+  readonly ownerTypeArguments: readonly CheckedType[];
+  readonly functionTypeArguments: readonly CheckedType[];
+  readonly reason: "imageEntry" | "deviceHandler" | "hardwareCallback" | "targetRequired";
+  readonly sourceOrigin: HirOriginId;
+}
+
+export type HirCertifiedPlatformBindingTable = HirTable<FunctionId, CertifiedPlatformBinding>;
+
+export interface HirMonoClosureSurface {
+  readonly sourceTypeKinds: HirSourceTypeKindTable;
+  readonly targetTypeKinds: HirTargetTypeKindTable;
+  readonly constructorKindRules: HirConstructorKindRuleTable;
+  readonly instanceEligibilityRules: HirInstanceEligibilityRuleTable;
+  readonly certifiedPlatformBindings: HirCertifiedPlatformBindingTable;
+  readonly externalEntryRoots: readonly HirExternalEntryRootRecord[];
+}
+
 export interface TypedHirProgram {
   readonly declarations: HirDeclarationTable;
+  readonly types: HirTypeTable;
+  readonly fields: HirFieldTable;
   readonly functions: HirFunctionTable;
   readonly validatedBuffers: HirValidatedBufferTable;
   readonly images: HirImageTable;
   readonly proofMetadata: HirProofMetadata;
+  readonly monoClosure: HirMonoClosureSurface;
   readonly origins: HirOriginTable;
 }

@@ -6,10 +6,17 @@ import {
 } from "../../support/hir/typed-hir-fixtures";
 import { lowerCallExpression } from "../../../src/hir/call-lowerer";
 import { CallExpressionView } from "../../../src/frontend/ast/expression-views";
-import { checkedTypeFingerprint } from "../../../src/semantic/surface/type-model";
+import {
+  appliedType,
+  checkedTypeFingerprint,
+  coreCheckedType,
+  genericParameterCheckedType,
+} from "../../../src/semantic/surface/type-model";
+import { concreteKind } from "../../../src/semantic/surface/resource-kind";
 import { checkedProofSurface } from "../../../src/semantic/surface/proof-surface";
 import { CheckedPlatformEnsuredFactSurfaceTableBuilder } from "../../../src/semantic/surface/proof-contracts";
 import { platformEnsuredFactSurfaceFake } from "../../support/semantic/semantic-surface-fakes";
+import { coreTypeId } from "../../../src/semantic/ids";
 
 test("named arguments lower in checked parameter order", () => {
   const context = createHirUnitContext(
@@ -127,6 +134,108 @@ test("call callee expression is allocated in the function body index", () => {
 
   expect(indexedCalleeExpression?.kind.kind).toBe("name");
   expect(new Set(indexedExpressionIds).size).toBe(indexedExpressionIds.length);
+});
+
+test("method call records owner type arguments from receiver type", () => {
+  const result = lowerTypedHirForTest([
+    [
+      "main.wr",
+      `
+class Box[T]:
+    value: T
+    fn get(self) -> T:
+        return self.value
+
+fn main(box: Box[u8]) -> u8:
+    return box.get()
+`,
+    ],
+  ]);
+
+  const callExpressions = result.program.functions
+    .entries()
+    .flatMap((func) => func.bodyIndex?.expressions.entries() ?? [])
+    .filter((expression) => expression.kind.kind === "call");
+  const methodCall = callExpressions.at(-1)!;
+
+  expect(methodCall.kind.kind).toBe("call");
+  if (methodCall.kind.kind === "call") {
+    expect(methodCall.kind.call.ownerTypeArgumentSource).toBe("receiverType");
+    expect(methodCall.kind.call.ownerTypeArguments.map((type) => type.kind)).toEqual(["core"]);
+  }
+});
+
+test("constructor call records owner type arguments from the expected constructed type", () => {
+  const context = createHirUnitContext(
+    [
+      "class Box[T]:",
+      "    value: T",
+      "fn make() -> Never",
+      "fn caller() -> Never:",
+      "    make()",
+    ].join("\n"),
+  );
+  const boxType = context.index.types().find((type) => type.name === "Box");
+  const makeFunction = context.index.functions().find((func) => func.name === "make");
+  if (boxType === undefined || makeFunction === undefined) {
+    throw new Error("expected Box type and make function");
+  }
+  const existingSignature = context.program.functions.get(makeFunction.id);
+  if (existingSignature === undefined) throw new Error("expected make signature");
+  const ownerParameter = {
+    owner: { kind: "item" as const, itemId: boxType.itemId },
+    index: 0,
+  };
+  const constructorSignature = {
+    ...existingSignature,
+    ownerItemId: boxType.itemId,
+    returnType: appliedType({
+      constructor: { kind: "source", typeId: boxType.id },
+      arguments: [genericParameterCheckedType(ownerParameter)],
+      resourceKind: concreteKind("Copy"),
+    }),
+    returnKind: concreteKind("Copy"),
+    modifiers: { ...existingSignature.modifiers, isConstructor: true },
+  };
+  const contextWithConstructor = {
+    ...context,
+    program: {
+      ...context.program,
+      functions: {
+        get: (functionId: typeof makeFunction.id) =>
+          functionId === makeFunction.id
+            ? constructorSignature
+            : context.program.functions.get(functionId),
+        entries: () =>
+          context.program.functions
+            .entries()
+            .map((signature) =>
+              signature.functionId === makeFunction.id ? constructorSignature : signature,
+            ),
+      },
+    },
+  };
+  const expression = firstExpressionView(context.graph);
+  const callView = CallExpressionView.from(expression.node)!;
+  const expectedType = appliedType({
+    constructor: { kind: "source", typeId: boxType.id },
+    arguments: [coreCheckedType(coreTypeId("u8"))],
+    resourceKind: concreteKind("Copy"),
+  });
+
+  const callExpression = lowerCallExpression({
+    view: callView,
+    context: contextWithConstructor,
+    expectedType,
+  });
+
+  expect(callExpression.kind.kind).toBe("call");
+  if (callExpression.kind.kind === "call") {
+    expect(callExpression.kind.call.ownerTypeArgumentSource).toBe("constructorExpectedType");
+    expect(callExpression.kind.call.ownerTypeArguments).toEqual([
+      coreCheckedType(coreTypeId("u8")),
+    ]);
+  }
 });
 
 test("member call lowers receiver and resolved method callee", () => {
