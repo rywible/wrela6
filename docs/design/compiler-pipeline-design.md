@@ -31,21 +31,24 @@ selection, linking, relocation emission, and final PE/COFF image writing.
   image writing.
 - Keep compiler back-end layers independent from language concepts such as
   `take`, `requires`, unique edge roots, or validated-buffer syntax.
-- Make early binary milestones possible before the full language checker is
-  complete.
+- Keep the binary spine independently testable while requiring the production
+  compiler to pass the full semantic and proof pipeline before emitting trusted
+  artifacts.
 
 ## Non-Goals
 
 - The compiler does not call a platform C compiler, C linker, libc, CRT, or
   GNU-EFI-style support library.
-- The compiler does not initially need incremental compilation.
-- The compiler does not initially need to emit reusable object files, although
-  it should have an internal object model.
+- Incremental compilation is outside this design.
+- Reusable object-file emission is outside the required `.efi` pipeline,
+  although the compiler should have an internal object model.
 - The compiler does not give its shipped standard library private capabilities,
   hidden lowerings, or bypasses around ordinary checks.
-- The first AArch64 backend does not need aggressive optimization.
-- The first proof engine does not need a general SMT solver. Structural facts
-  and interval/comparison reasoning are enough to start.
+- The AArch64 backend does not treat aggressive optimization as a correctness
+  boundary.
+- The proof engine should use a deterministic, bounded entailment model.
+  Structural facts and interval/comparison reasoning are required; any solver
+  extension must preserve deterministic certificates and diagnostics.
 
 ## Risk Register
 
@@ -92,8 +95,8 @@ Source files and package roots
   -> representation and layout facts
   -> proof MIR / SSA
   -> proof and resource checks
-  -> checked MIR
-  -> low-level IR
+  -> checked MIR with certified facts
+  -> AArch64 machine IR
   -> AArch64 machine code
   -> internal object model
   -> internal linker
@@ -106,6 +109,12 @@ required information is clearest. HIR keeps source intent. Monomorphization and
 layout make image-specific types and representation facts concrete. Proof MIR
 gives a CFG, dominance, explicit values, and explicit exits. Later codegen
 layers should see only already-proven executable behavior.
+
+A separate target-independent low-level IR is optional, not mandatory. Checked
+MIR is the important proof boundary. For an AArch64-only compiler, the next
+lowering may go directly from checked MIR and its certified fact tables to an
+AArch64-owned machine IR. A generic LIR should exist only when multiple
+backends need a shared target-independent lowering point.
 
 The standard library participates in this shape as source. The module graph may
 load a default vendored stdlib, a user fork, or no stdlib at all. After module
@@ -183,12 +192,10 @@ src/
     reachable-program.ts
     monomorphizer.ts
 
-  lir/
-    lir.ts
-    lower-mir.ts
-
   codegen/
     aarch64/
+      machine-ir.ts
+      lower-checked-mir.ts
       abi.ts
       instruction.ts
       instruction-selector.ts
@@ -397,7 +404,7 @@ and proof contract. Every call to a certified platform function should be
 checked as a normal call with an explicit obligation edge into Proof MIR, using
 the catalog contract as the authority.
 
-The first implementation should use exact certification:
+Platform primitive certification is exact by default:
 
 ```text
 source platform function
@@ -407,17 +414,18 @@ source platform function
   consumed and produced capabilities match the catalog proof contract
 ```
 
-A later implementation may allow source to state a provably stronger contract,
-but source must never weaken a primitive precondition, hide a consumed
-capability, invent a produced capability, or override the lowering contract.
-If a source declaration is wrong, the compiler rejects that declaration before
-HIR construction; it does not reinterpret source text as the authority.
+Source may state a provably stronger contract only if certification can prove
+the stronger contract implies the target catalog contract. Source must never
+weaken a primitive precondition, hide a consumed capability, invent a produced
+capability, or override the lowering contract. If a source declaration is
+wrong, the compiler rejects that declaration before HIR construction; it does
+not reinterpret source text as the authority.
 
 Freestanding platform declarations may appear in any source module, including a
 replacement stdlib or a no-stdlib project module. Multiple source declarations
 may bind the same primitive if each independently certifies against the same
-catalog entry. Methods do not bind directly to target primitives in v1. They
-should wrap freestanding platform functions as ordinary checked source:
+catalog entry. Methods do not bind directly to target primitives; they wrap
+freestanding platform functions as ordinary checked source:
 
 ```wr
 class Register32:
@@ -434,7 +442,7 @@ a freestanding primitive call with `self` as the first argument. Target
 primitive names remain globally unique simple identifiers, not dotted names and
 not method-local names.
 
-Useful initial platform primitive families:
+Target platform primitive families:
 
 ```text
 memory
@@ -489,7 +497,7 @@ names, target catalogs, source declaration shape, and early proof-surface seeds:
 - type-reference validity and type-kind assignment
 - validated-buffer section shape
 - platform surface declaration rules, including freestanding-only primitive
-  bindings in v1
+  bindings
 - platform binding certification before HIR accepts primitive contract edges
 - source-level diagnostics that benefit from CST child identity
 
@@ -519,7 +527,8 @@ HIR should make these proof-relevant concepts explicit:
 
 This makes HIR a proof-aware semantic surface, not a proof checker. Whole-image
 monomorphization instantiates this metadata, layout adds representation facts,
-and Proof MIR performs the path-sensitive checks on explicit control flow.
+and the Proof MIR checker performs the path-sensitive checks on explicit
+control flow.
 
 ```text
 HirFunction
@@ -566,9 +575,9 @@ Example:
 
 ```text
 block entry:
-  v0 = field source.len
-  v1 = ge v0, 2
-  branch v1, ok, reject
+  source_len = field source.len
+  has_two_bytes = ge source_len, 2
+  branch has_two_bytes, ok, reject
 
 block ok:
   facts:
@@ -593,8 +602,8 @@ Typed HIR and proof-relevant surface
   -> representation and layout facts
   -> Proof MIR / SSA
   -> proof and resource checks
-  -> Checked MIR
-  -> codegen-oriented MIR/LIR
+  -> Checked MIR with certified facts
+  -> AArch64 target lowering
 ```
 
 Proof MIR keeps:
@@ -610,9 +619,27 @@ Proof MIR keeps:
 - representation and layout facts needed by proof checks
 - explicit exit edges
 
-Proof MIR may be in SSA form for scalar values while keeping memory, resources,
-loans, and obligations as explicit flow facts. Full memory SSA is not required
-initially.
+Proof MIR is in SSA form for scalar runtime values where dominance and def-use
+matter, while memory, resources, loans, and obligations remain explicit flow
+facts. Full memory SSA is a derived optimization analysis, not the semantic
+proof representation.
+
+Checked MIR should preserve scalar SSA where it helps optimization and codegen,
+but it should not require full SSA for memory, resources, loans, or obligations
+as a condition of correctness. Proof checking turns those proof-rich flows into
+certified fact tables and executable effects. The target lowering can consume
+the facts without carrying the full proof calculus forward as SSA.
+
+Proof MIR should also be designed to produce post-check optimization facts, not
+only an accept/reject answer. After proof checking, proof-only operations may be
+erased, but the compiler should keep a checked fact packet for later lowering
+and optimization. That packet should include ownership and alias facts, erased
+proof-value facts, validated-buffer bounds and packet/source relationships,
+private-state generation facts, platform primitive effect and capability facts,
+terminal/exit closure facts, concrete layout and ABI facts, and origin maps back
+to source/HIR/proof nodes. These facts are the main place where Wrela-specific
+optimizations become available without making the back end understand the full
+proof language.
 
 ```text
 MirFunction
@@ -620,6 +647,7 @@ MirFunction
   parameters
   locals
   blocks
+  edges
   sourceOrigin
 
 MirBlock
@@ -627,16 +655,19 @@ MirBlock
   parameters
   statements
   terminator
-  incomingFacts
+  incomingEdges
 
 MirStatement
-  Assign
+  Store
+  Load
   Move
   Consume
   Call
   OpenObligation
   DischargeObligation
-  AssertFact
+  RecordFactEvidence
+  RequireFact
+  BindLayoutTerm
 
 MirTerminator
   Branch
@@ -645,6 +676,13 @@ MirTerminator
   Yield
   Continue
   Unreachable
+
+MirControlEdge
+  fromBlock
+  toBlock
+  facts
+  effects
+  crossedScopes
 ```
 
 ## Check Placement
@@ -652,31 +690,31 @@ MirTerminator
 The split should stay flexible. A check belongs at the layer where it is easiest
 to make correct and easiest to diagnose.
 
-| Check                                     | Preferred Layer     | Reason                                           |
-| ----------------------------------------- | ------------------- | ------------------------------------------------ |
-| package root selection                    | compiler edge       | filesystem/package config concern                |
-| tokenization, grammar, recovery           | frontend            | source preservation                              |
-| declaration legality                      | HIR / semantic      | depends on source declarations                   |
-| name resolution                           | semantic            | builds stable references                         |
-| type references and generic bounds        | semantic surface    | source-level types and declarations              |
-| platform primitive signature availability | semantic surface    | compiler-owned target contracts                  |
-| platform binding certification            | semantic surface    | source handles must exactly match target catalog |
-| image device section shape                | semantic surface    | image-specific language meaning                  |
-| ABI shape of public/platform functions    | layout / target     | target-specific representation                   |
-| monomorphization completeness             | mono                | whole-image reachability                         |
-| validated-buffer layout shape             | HIR / layout        | declaration structure and concrete offsets       |
-| layout-derived proof facts                | layout -> Proof MIR | proof checks need concrete representation facts  |
-| use after move                            | Proof MIR           | path-sensitive resource flow                     |
-| consume exactly once                      | Proof MIR           | path-sensitive resource flow                     |
-| take-session closure                      | Proof MIR           | all exit paths are explicit                      |
-| `?` crossing obligations                  | Proof MIR           | exceptional/control exits are explicit           |
-| predicate fact availability               | Proof MIR / SSA     | dominance and fact propagation                   |
-| `requires` call-site discharge            | Proof MIR           | facts are attached to values and blocks          |
-| platform primitive call preconditions     | Proof MIR           | checked like ordinary call obligations           |
-| terminal function closure                 | Proof MIR           | graph reachability over exits/calls              |
-| validated-buffer requirement proofs       | Proof MIR           | path facts plus layout-derived facts             |
-| stack frame correctness                   | codegen/layout      | target ABI                                       |
-| relocation correctness                    | object/linker       | binary layout                                    |
+| Check                                     | Preferred Layer             | Reason                                           |
+| ----------------------------------------- | --------------------------- | ------------------------------------------------ |
+| package root selection                    | compiler edge               | filesystem/package config concern                |
+| tokenization, grammar, recovery           | frontend                    | source preservation                              |
+| declaration legality                      | HIR / semantic              | depends on source declarations                   |
+| name resolution                           | semantic                    | builds stable references                         |
+| type references and generic bounds        | semantic surface            | source-level types and declarations              |
+| platform primitive signature availability | semantic surface            | compiler-owned target contracts                  |
+| platform binding certification            | semantic surface            | source handles must exactly match target catalog |
+| image device section shape                | semantic surface            | image-specific language meaning                  |
+| ABI shape of public/platform functions    | layout / target             | target-specific representation                   |
+| monomorphization completeness             | mono                        | whole-image reachability                         |
+| validated-buffer layout shape             | HIR / layout                | declaration structure and concrete offsets       |
+| layout-derived proof facts                | layout -> Proof MIR checker | proof checks need concrete representation facts  |
+| use after move                            | Proof MIR checker           | path-sensitive resource flow                     |
+| consume exactly once                      | Proof MIR checker           | path-sensitive resource flow                     |
+| take-session closure                      | Proof MIR checker           | all exit paths are explicit                      |
+| `?` crossing obligations                  | Proof MIR checker           | exceptional/control exits are explicit           |
+| predicate fact availability               | Proof MIR checker / SSA     | dominance and fact propagation                   |
+| `requires` call-site discharge            | Proof MIR checker           | facts are attached to values and CFG edges       |
+| platform primitive call preconditions     | Proof MIR checker           | checked like ordinary call obligations           |
+| terminal function closure                 | Proof MIR checker           | graph reachability over exits/calls              |
+| validated-buffer requirement proofs       | Proof MIR checker           | path facts plus layout-derived facts             |
+| stack frame correctness                   | codegen/layout              | target ABI                                       |
+| relocation correctness                    | object/linker               | binary layout                                    |
 
 If a HIR check starts building its own CFG, it probably belongs in MIR. If a MIR
 check starts asking "what syntax form was this," HIR probably needs to attach a
@@ -698,14 +736,18 @@ companion design that specifies:
 - proof-failure diagnostics, including counterexample path reporting
 
 That companion design is not a pipeline phase with its own compiler artifact.
-It does not need to be mechanized before implementation, but HIR and Proof MIR
-should not be treated as settled until it is precise enough that a reference
-checker and a production checker can disagree meaningfully in tests.
+It does not have to be fully mechanized as a prerequisite for implementation,
+but HIR and Proof MIR should not be treated as settled until it is precise
+enough that a reference checker and a production checker can disagree
+meaningfully in tests.
 
 The current Lean-derived compiler invariants are captured in
 `docs/design/proof-derived-compiler-invariants.md`. Treat that document as the
 minimum proof-relevant contract for future HIR, layout, Proof MIR, checker, and
 diagnostic work.
+
+The detailed Proof MIR builder contract is in
+`docs/design/proof-mir-builder-design.md`.
 
 Core scalar/control-flow type names such as `bool`, `u8`, `u16`, `u32`, `u64`,
 `usize`, and `Never` are language builtins. They are resolved from a small core
@@ -886,19 +928,22 @@ explicit branches, joins, and exits.
 
 ### SSA Builder
 
-SSA should initially cover scalar values and facts. It does not need to model
-every memory cell. Resource tokens can be explicit values with move/consume
-operations.
+SSA covers scalar runtime values and proof facts where dominance and def-use
+matter. Memory-cell SSA is not the semantic form. Resource tokens remain
+explicit values or place operations with move/consume records.
 
 ### Fact Engine
 
-Facts should start simple:
+Facts should have explicit roles and provenance:
 
-- equality and inequality between values and constants
-- bounds facts such as `source.len >= 2`
-- enum/match refinement
-- predicate-call facts
-- validated-buffer layout facts such as `layout.fits`
+- evidence facts produced by structural splits, match arms, validation results,
+  and checker-accepted source constructs
+- requirement facts demanded by calls, validation, terminal discharge, and
+  target contracts
+- trusted axioms imported only from certified platform or runtime catalogs
+- candidate facts from source assertions, predicate calls, and syntactic
+  comparisons awaiting proof-checker acceptance
+- layout-backed facts such as validated-buffer bounds and `layout.fits`
 
 Facts are scoped by dominance and invalidated by state-token advancement when
 needed.
@@ -918,21 +963,32 @@ The engine checks every exit edge from a block/function.
 ### Requirement Checker
 
 Requirement checking runs at call sites. It asks whether facts available at the
-call imply the callee's `requires` clauses. The first implementation can use
-structural matching and interval facts before introducing a general solver.
+call imply the callee's `requires` clauses. The production checker should prefer
+structural matching and interval facts; any general solver must extend the same
+certificate model rather than replace it.
 
 ## Lowering After Checks
 
-Once Proof MIR is checked, lower to codegen-oriented MIR/LIR:
+Once Proof MIR is checked, lower to the target backend's machine IR:
 
-- remove proof-only facts
+- remove proof-only operations while preserving checked optimization facts in
+  side tables
 - lower high-level calls to concrete function IDs
 - lower validated-buffer field access to loads with checked offsets
 - lower enum cases to concrete representations
 - lower resource operations to ordinary value movement or no-ops as appropriate
 - preserve debug/source origin tables for diagnostics and future tooling
+- lower directly to AArch64 machine IR when AArch64 is the only backend;
+  introduce a shared target-independent LIR only when multiple backends need it
 
-Back-end layers should not need to know why a move was legal.
+Back-end layers should not need to know why a move was legal, but they should be
+able to consume certified facts such as noalias regions, field-disjointness,
+zero-sized proof/resource values, proven validated-buffer bounds, platform
+primitive effects, ABI classifications, and concrete layout records. This keeps
+Proof MIR checker-first while still allowing later passes to perform Wrela-only
+optimizations such as move elision, in-place updates, scalar replacement,
+bounds-check elimination, zero-copy packet views, wrapper elimination, direct
+primitive lowering, cleanup-path pruning, aggregate flattening, and unboxing.
 
 ## Runtime Support
 
@@ -940,12 +996,12 @@ Runtime support operations are compiler-owned. They are not source-facing
 intrinsic functions, an implicit standard library, or source modules with
 special privileges. They may be emitted as:
 
-- inline MIR/LIR expansions
+- inline checked-MIR or AArch64 machine-IR expansions
 - compiler-generated functions
 - target-specific instruction sequences
 - generated data or symbol references owned by the compiler
 
-Initial runtime candidates:
+Runtime support operation families:
 
 - memory copy / memory set if not inlined
 - checked arithmetic helpers
@@ -972,13 +1028,13 @@ The AArch64 backend owns:
 - instruction encoding
 - relocation generation
 
-The first backend can be deliberately modest:
+The AArch64 backend can be deliberately conservative:
 
 - no global optimization
 - simple linear-scan or local register allocation
 - conservative stack slots
 - direct calls and indirect calls
-- integer/pointer operations first
+- integer/pointer operations before richer target-specific selection
 
 UEFI firmware calls are indirect calls through loaded function pointers. The
 compiler emits the call sequence according to the target ABI.
@@ -1150,6 +1206,8 @@ root/reachability seed.
 - lower AST views to typed, source-origin-preserving HIR
 - preserve proof-relevant constructs such as `take`, `requires`, validation,
   attempt, terminal calls, private state transitions, and image/device origins
+- preserve external entry roots with root reason, owner/function type arguments,
+  and HIR origin
 - assign stable obligation, session, brand, resource-place, and call-site
   requirement IDs
 - retain resource kinds, parameter modes, receiver modes, certified platform
@@ -1170,10 +1228,19 @@ that later phases instantiate and check.
 - instantiate proof-relevant HIR metadata such as resource kinds, obligation
   IDs, session/brand IDs, call-site requirements, and platform primitive contract
   edges
+- retain instantiated external roots as `MonomorphizedHirProgram.externalRoots`
+  with function instance ID, reason, and origin
+- retain concrete resolved call targets on mono call expressions
+- retain instantiated owner/function type arguments, or a canonical monomorphic
+  edge key, on platform contract edges
+- retain concurrency/cross-core proof metadata before exposing reachable
+  cross-core constructs to Proof MIR
 - retain reachable platform primitive IDs through platform function bindings
 - reject unresolved polymorphism at the whole-image boundary
 
-Output: closed monomorphized HIR plus reachable platform primitive IDs.
+Output: closed monomorphized HIR plus reachable platform primitive IDs,
+instantiated external roots, concrete call targets, and proof metadata needed by
+Proof MIR.
 
 ### 7. Representation And Layout Facts
 
@@ -1182,6 +1249,7 @@ Output: closed monomorphized HIR plus reachable platform primitive IDs.
 - enum representations
 - validated-buffer layout offsets
 - validated-buffer wire scalar encodings from `le` and `be` layout markers
+- deterministic `readRequires`, derived-field case order, and layout-term arrays
 - ABI parameter and return shapes
 - target pointer width and alignment facts
 
@@ -1191,9 +1259,20 @@ Output: concrete layout and ABI facts for the closed program.
 
 - lower monomorphized HIR to CFG blocks
 - represent scalar values in SSA where useful
+- lower into canonical-keyed draft records, then assign dense IDs in a final
+  canonicalization pass
 - preserve source origins, HIR origins, type IDs, resource kind IDs, obligation
   IDs, borrow/session IDs, and layout facts
+- consume the selected target feature set and closed compiler-runtime catalog as
+  explicit input, not host environment state
 - make all exits explicit
+- record explicit regions, edge effects, operand roles, and boundary-resource
+  sets without running checker-owned resource-flow analysis
+- keep enough value, place, block, and origin identity for proof checking to
+  emit checked optimization facts after acceptance
+- reject semantics-gated constructs when their proof-semantics rules or mono
+  metadata are not yet available; gated yield, stream, and cross-core records are
+  extension contracts, not always-on core unions
 
 Output: Proof MIR for each monomorphized function.
 
@@ -1208,19 +1287,60 @@ Output: Proof MIR for each monomorphized function.
 - terminal closure
 - private state threading
 - field-sensitive place and loan tracking
+- deterministic loop convergence, enabled-extension safety, fact entailment,
+  terminal closure, and cross-core ownership judgments from the proof-semantics
+  companion
 - proof-failure diagnostics with counterexample paths
+- emit a checked fact packet on success, including ownership/noalias facts,
+  field-disjointness, erased proof/resource values, validated-buffer bounds,
+  packet/source relationships, private-state generation facts, platform
+  primitive effects and capability flow, terminal/exit closure facts, concrete
+  layout/ABI facts, and origin mappings
 
-Output: checked MIR or proof diagnostics.
+Output: checked MIR with certified optimization facts, or proof diagnostics.
 
-### 10. Codegen MIR And LIR Lowering
+### 10. Checked MIR To AArch64 Target Lowering
 
-- erase proof-only facts
+- erase proof-only operations, not the certified facts that later optimizers and
+  code generation can safely consume
 - lower resource operations to executable effects or no-ops
 - lower field access, enum cases, calls, branches, and constants
 - preserve debug/source origin tables
-- lower to target-independent low-level IR
+- consume checked facts for Wrela-specific optimizations such as move elision,
+  in-place updates, scalar replacement, zero-copy validated-buffer reads,
+  bounds-check elimination, wrapper elimination, direct platform primitive
+  lowering, cleanup-path pruning, aggregate flattening, and unboxing
+- lower directly to an AArch64-owned machine IR with virtual registers, frame
+  objects, ABI locations, concrete calls, branches, constants, and relocation
+  references
+- defer a shared target-independent LIR until there is a second backend or a
+  clear repeated lowering abstraction
 
-Output: LIR with symbols, sections, and relocations.
+Output: AArch64 machine IR with symbols, frame objects, and relocation
+references.
+
+### Proof MIR Pipeline Extension Gates
+
+The Proof MIR builder should not be implemented against guessed upstream data.
+Before a production Proof MIR builder can accept the full language surface, the
+existing pipeline must expose these contracts:
+
+| Pipeline area             | Required extension                                                                                          |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| HIR mono-closure surface  | External entry roots preserve reason, type arguments, and origin                                            |
+| Whole-image mono output   | `externalRoots` table with instantiated function instance IDs and root reasons                              |
+| Whole-image mono output   | Concrete resolved call targets on every mono call expression                                                |
+| Platform contract edges   | Instantiated owner/function type arguments or canonical monomorphic edge keys                               |
+| Mono proof metadata       | Concurrency/cross-core operation metadata before cross-core constructs are accepted                         |
+| Layout facts              | Deterministic `readRequires`, derived case order, and canonical layout-term arrays                          |
+| Target/runtime selection  | Explicit target feature set plus closed runtime catalog from target/runtime authority passed into Proof MIR |
+| Proof-semantics companion | Loop convergence, yield safety, fact entailment, terminal closure, and cross-core ownership rules           |
+| Checked MIR fact packet   | Certified facts schema consumed by optimizers and AArch64 lowering                                          |
+
+If any row is missing for a reachable construct, the owning earlier phase
+should reject before Proof MIR when possible. If the missing contract is only
+observable at the Proof MIR boundary, the builder emits a construction
+diagnostic and returns `kind: "error"`.
 
 ### 11. AArch64 Backend
 
@@ -1352,7 +1472,9 @@ ReferenceResourceState
   privateStates: Map<StateTokenId, CurrentGeneration>
 ```
 
-This checker does not need SSA cleverness. It should prefer clarity over speed.
+This checker should be direct and deterministic. It validates reference
+semantics over small programs rather than reusing optimizer-oriented SSA
+machinery.
 
 ### Interpreter Differential Tests
 
@@ -1421,8 +1543,8 @@ LayoutTrace
   alignment
 ```
 
-Trace validation should be optional and test-only at first. The production
-compiler should not depend on trace generation for correctness.
+Trace validation is optional and test-only. The production compiler must not
+depend on trace generation for correctness.
 
 ### Reference Checker Placement Rules
 
@@ -1458,7 +1580,7 @@ it before a bad `.efi` is emitted.
 - Negative tests proving stdlib modules cannot bypass platform primitive
   preconditions, resource checks, target availability, or layout obligations.
 - Negative tests proving source `platform fn` declarations cannot weaken target
-  primitive contracts or bind as methods in v1.
+  primitive contracts or bind as methods.
 - Targeted differential tests for Proof MIR facts/resource flow, requirement
   entailment, layout, MIR lowering on small pure programs, linker layout, and PE
   validation.
@@ -1475,7 +1597,7 @@ No source module can redefine a target primitive contract; it can only declare a
 matching `platform fn` binding.
 Source `platform fn` declarations are untrusted handles until certified against
 the selected target primitive catalog.
-Methods wrap certified freestanding platform functions in v1; they do not bind
+Methods wrap certified freestanding platform functions; they do not bind
 directly to target primitives.
 MIR blocks have valid terminators.
 SSA values have one definition.
@@ -1492,15 +1614,17 @@ Repeated builds produce identical bytes for identical inputs.
 - Move checks to Proof MIR when control flow, dominance, or path sensitivity is
   the core problem.
 - Keep proof MIR before destructive lowering.
+- Preserve checked proof-derived facts after proof-only operations are erased.
 - Keep the back end ignorant of language obligations.
 - Treat the standard library as source, not compiler authority.
 - Make platform primitive contracts explicit, target-gated, certified before
   HIR, and checked at every call site.
-- Keep target-bound `platform fn` declarations freestanding in v1; use ordinary
+- Keep target-bound `platform fn` declarations freestanding; use ordinary
   source methods as wrappers.
 - Resolve source paths at compiler edges and keep filesystem access out of
   semantic layers.
-- Build the binary spine early, even before the full semantic checker exists.
+- Keep the binary spine independently testable, while production artifact
+  emission remains gated on the full semantic and proof pipeline.
 - Prefer small target-owned ABI abstractions over scattered target constants.
 - Treat the robust test suite as the main correctness mechanism.
 - Add reference checkers only for high-risk algorithmic boundaries where they
