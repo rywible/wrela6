@@ -64,3 +64,32 @@ test("raw target proof text never becomes platformEnsure metadata", () => {
       .filter((fact) => fact.fact?.kind === "platformEnsure"),
   ).toEqual([]);
 });
+
+test("typed HIR preserves validated-buffer layout surface end to end", () => {
+  const result = lowerTypedHirForTest([
+    [
+      "main.wr",
+      [
+        "validated buffer Packet:",
+        "    params:",
+        "        expected_len: u16",
+        "    layout:",
+        "        size: be u16 @ 0",
+        "        payload: u8 @ 2 len expected_len",
+      ].join("\n"),
+    ],
+  ]);
+
+  const buffer = result.program.validatedBuffers.entries()[0]!;
+  expect(buffer.layoutFields).toHaveLength(2);
+  const size = buffer.layoutFields[0]!;
+  const payload = buffer.layoutFields[1]!;
+
+  expect(size.field.name).toBe("size");
+  expect(size.layoutWireEndian).toBe("big");
+  expect(payload.length?.kind).toBe("fieldValue");
+  expect(size.field.name).toBe("size");
+  expect(payload.field.name).toBe("payload");
+  expect(result.program.fields.get(size.field.fieldId)).toBeUndefined();
+  expect(result.program.fields.get(payload.field.fieldId)).toBeUndefined();
+});

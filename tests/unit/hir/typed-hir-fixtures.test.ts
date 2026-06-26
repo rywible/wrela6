@@ -87,3 +87,36 @@ test("typed HIR source type kinds do not become error for fieldless proof-releva
 
   expect(typeKind?.kind).toEqual({ kind: "concrete", value: "Copy" });
 });
+
+test("typed HIR non-enum type records contain empty enumCases", () => {
+  const result = lowerTypedHirForTest([
+    [
+      "main.wr",
+      `
+class Box[T]:
+    value: T
+`,
+    ],
+  ]);
+
+  for (const typeRecord of result.program.types.entries()) {
+    expect(typeRecord.enumCases).toEqual([]);
+  }
+});
+
+test("typed HIR enum type records contain cases sorted by source ordinal", () => {
+  const result = lowerTypedHirForTest([
+    ["main.wr", "enum PacketKind:\n    Arp\n    Ipv4\n    Ipv6\n"],
+  ]);
+  const enumRecord = result.program.types.entries().find((record) => record.sourceKind === "enum");
+
+  expect(enumRecord?.enumCases.map((caseRecord) => caseRecord.name)).toEqual([
+    "Arp",
+    "Ipv4",
+    "Ipv6",
+  ]);
+  expect(enumRecord?.enumCases.map((caseRecord) => caseRecord.ordinal)).toEqual([0, 1, 2]);
+  expect(
+    enumRecord?.enumCases.every((caseRecord) => caseRecord.enumTypeId === enumRecord?.typeId),
+  ).toBe(true);
+});

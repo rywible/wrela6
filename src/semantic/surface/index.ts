@@ -19,6 +19,12 @@ export type {
   CheckedTypeRecord,
   CheckedTypeTable,
 } from "./checked-program";
+export type {
+  ValidatedBufferFieldModel,
+  ValidatedBufferFieldDescriptor,
+  ValidatedBufferFieldModelTable,
+} from "./validated-buffer-field-model";
+export { buildValidatedBufferFieldModels } from "./validated-buffer-field-model";
 export type { CheckedType, AppliedCheckedType, TypeConstructorId } from "./type-model";
 export type { CheckedResourceKind, ConcreteResourceKind, TypeParameterKey } from "./resource-kind";
 export type {

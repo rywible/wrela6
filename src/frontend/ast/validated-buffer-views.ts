@@ -115,4 +115,12 @@ export class ValidatedBufferDeclarationView extends AstView {
   layoutFields(): LayoutFieldView[] {
     return this.layoutSections().flatMap((section) => section.fields());
   }
+
+  derivedFields(): DerivedFieldView[] {
+    return this.deriveSections().flatMap((section) => section.fields());
+  }
+
+  bodySections(): readonly RedNode[] {
+    return this.bodyItems();
+  }
 }

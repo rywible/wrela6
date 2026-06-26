@@ -1,7 +1,25 @@
+import type { WireEndian } from "../../shared/wire-layout";
 import { AstView } from "./ast-view";
 import { childNode, childTokens, presentTokenText, presentTokenSpan } from "./syntax-query";
 import { QualifiedNameView } from "./name-views";
 import { RedNode, RedToken, SyntaxKind } from "../syntax";
+
+export type { WireEndian };
+
+export function wireEndianFromMarkerToken(token: RedToken | undefined): WireEndian | undefined {
+  if (token === undefined) {
+    return undefined;
+  }
+
+  switch (token.kind) {
+    case SyntaxKind.LeMarkerToken:
+      return "little";
+    case SyntaxKind.BeMarkerToken:
+      return "big";
+    default:
+      return undefined;
+  }
+}
 
 export class TypeReferenceView extends AstView {
   static from(node: RedNode): TypeReferenceView | undefined {

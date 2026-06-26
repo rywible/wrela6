@@ -88,4 +88,28 @@ describe("source member collector", () => {
     expect(typeParams[0]!.owner.kind).toBe("item");
     expect(typeParams[2]!.owner.kind).toBe("function");
   });
+
+  test("image device fields are indexed when enum is declared before the image", () => {
+    const index = collectSourceIndexForTest(
+      "main.wr",
+      [
+        "enum PacketKind:",
+        "    Arp",
+        "",
+        "class SerialDevice:",
+        "",
+        "uefi image Boot:",
+        "    devices:",
+        "        serial: SerialDevice",
+        "    fn main() -> Never:",
+        "        return",
+      ].join("\n"),
+    );
+
+    const image = index.images()[0];
+    const serialField = index.fields().find((field) => field.name === "serial");
+    expect(serialField?.role).toBe("imageDevice");
+    expect(serialField).toBeDefined();
+    expect(image?.deviceFieldIds).toEqual([serialField!.id]);
+  });
 });

@@ -1,4 +1,5 @@
 import type { TypeReferenceView } from "../../frontend/ast/type-views";
+import type { WireEndian } from "../../shared/wire-layout";
 import type { FunctionId, ImageId, ItemId, ModuleId, ParameterId, TypeId, FieldId } from "../ids";
 import type { SourceSpan } from "../../frontend";
 
@@ -50,7 +51,9 @@ export interface SourceItemRecord {
 
 export type ItemRecord = SourceItemRecord;
 
-export type FieldRole = "field" | "imageDevice" | "validatedParam" | "layoutField";
+export type FieldRole = "field" | "imageDevice" | "validatedParam" | "layoutField" | "derivedField";
+
+export type ValidatedBufferSection = "params" | "layout" | "derive";
 
 export interface FieldRecord {
   readonly id: FieldId;
@@ -60,6 +63,12 @@ export interface FieldRecord {
   readonly nameSpan: SourceSpan;
   readonly span: SourceSpan;
   readonly type?: TypeReferenceView;
+  readonly layoutWireEndian?: WireEndian;
+  /** Present for validated-buffer body fields: declaration order across params/layout/derive sections. */
+  readonly validatedBufferBodyOrdinal?: number;
+  /** Present for validated-buffer body fields: index within the flattened section view list. */
+  readonly validatedBufferSurfaceOrdinal?: number;
+  readonly validatedBufferSection?: ValidatedBufferSection;
 }
 
 export interface TypeRecord {

@@ -273,11 +273,9 @@ function deviceTypeRootWorkItems(input: {
   const items: MonoRootWorkItem[] = [];
   const diagnostics: MonoDiagnostic[] = [];
   for (const device of input.image.devices) {
-    const field = input.program.fields.get(device.fieldId);
-    if (field === undefined) continue;
     const typeRoot = sourceTypeRootFromCheckedType({
       program: input.program,
-      type: field.type,
+      type: device.place.type,
     });
     if (typeRoot.kind === "ok") {
       items.push(typeRoot.item);

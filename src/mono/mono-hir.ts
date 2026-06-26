@@ -36,6 +36,7 @@ import type {
   TypeId,
   UniqueEdgeRootKey,
 } from "../semantic/ids";
+import type { WireEndian, WireScalarEncoding } from "../shared/wire-layout";
 import type { SourceItemKind } from "../semantic/item-index/item-records";
 import type { SyntaxReferenceKey } from "../semantic/names/reference";
 import type { CheckedFunctionModifiers } from "../semantic/surface/checked-program";
@@ -601,6 +602,78 @@ export interface MonoFieldRecord {
   readonly sourceOrigin: string;
 }
 
+export interface MonoEnumCaseRecord {
+  readonly enumTypeInstanceId: MonoInstanceId;
+  readonly caseItemId: ItemId;
+  readonly name: string;
+  readonly ordinal: number;
+  readonly sourceOrigin: string;
+}
+
+export type MonoLayoutIntegerWidth =
+  | { readonly kind: "targetSize" }
+  | { readonly kind: "type"; readonly type: MonoCheckedType };
+
+export interface MonoLayoutIntegerRange {
+  readonly minimum: bigint;
+  readonly maximum: bigint;
+  readonly provenance:
+    | "checkedType"
+    | "wireEncoding"
+    | "sourceLength"
+    | "derivedCases"
+    | "arithmetic";
+}
+
+export type MonoLayoutExpression =
+  | {
+      readonly kind: "integerLiteral";
+      readonly value: bigint;
+      readonly width: MonoLayoutIntegerWidth;
+      readonly sourceOrigin: string;
+    }
+  | {
+      readonly kind: "sourceLength";
+      readonly width: { readonly kind: "targetSize" };
+      readonly sourceOrigin: string;
+    }
+  | {
+      readonly kind: "fieldValue";
+      readonly fieldId: FieldId;
+      readonly fieldKind: "parameter" | "layout" | "derived";
+      readonly type: MonoCheckedType;
+      readonly sourceOrigin: string;
+    }
+  | {
+      readonly kind: "add" | "subtract" | "multiply";
+      readonly left: MonoLayoutExpression;
+      readonly right: MonoLayoutExpression;
+      readonly width: MonoLayoutIntegerWidth;
+      readonly sourceOrigin: string;
+    };
+
+export interface MonoDerivedFieldCase {
+  readonly condition: MonoLayoutExpression | { readonly kind: "otherwise" };
+  readonly result: MonoLayoutExpression;
+  readonly sourceOrigin: string;
+}
+
+export interface MonoValidatedBufferLayoutField {
+  readonly field: MonoFieldRecord;
+  readonly offset: MonoLayoutExpression;
+  readonly length?: MonoLayoutExpression;
+  readonly layoutWireEndian?: WireEndian;
+  readonly wireEncoding?: WireScalarEncoding;
+  readonly sourceOrigin: string;
+}
+
+export interface MonoValidatedBufferDerivedField {
+  readonly field: MonoFieldRecord;
+  readonly source: MonoLayoutExpression;
+  readonly cases: readonly MonoDerivedFieldCase[];
+  readonly sourceOrigin: string;
+}
+
 export interface MonoTypeInstance {
   readonly instanceId: MonoInstanceId;
   readonly sourceTypeId: TypeId;
@@ -608,6 +681,7 @@ export interface MonoTypeInstance {
   readonly sourceKind: SourceItemKind;
   readonly typeArguments: readonly MonoCheckedType[];
   readonly fields: readonly MonoFieldRecord[];
+  readonly enumCases: readonly MonoEnumCaseRecord[];
   readonly resourceKind: ConcreteResourceKind;
   readonly sourceOrigin: string;
 }
@@ -619,8 +693,9 @@ export interface MonoValidatedBuffer {
   readonly typeId: TypeId;
   readonly itemId: ItemId;
   readonly parameterFields: readonly MonoFieldRecord[];
-  readonly layoutFields: readonly MonoFieldRecord[];
-  readonly derivedFields: readonly MonoFieldRecord[];
+  readonly layoutDerivedFieldOrder: readonly FieldId[];
+  readonly layoutFields: readonly MonoValidatedBufferLayoutField[];
+  readonly derivedFields: readonly MonoValidatedBufferDerivedField[];
   readonly requirements: readonly MonoRequirement[];
   readonly sourceOrigin: string;
 }

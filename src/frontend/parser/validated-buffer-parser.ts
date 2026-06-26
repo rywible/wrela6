@@ -5,7 +5,7 @@ import type { ParserContext } from "./parser-context";
 import { parseBlock } from "./block-parser";
 import { validatedBufferSectionStarterKinds, blockItemRecoveryKinds } from "./parser-recovery";
 import { parseFieldDeclaration } from "./class-declaration-parser";
-import { parseTypeReference } from "./type-parser";
+import { parseLayoutFieldType } from "./type-parser";
 import { parseExpression } from "./expression-parser";
 import { parseDeriveSection, parseRequireSection } from "./validated-buffer-section-parser";
 import { nodeFromMark } from "./node-claim";
@@ -104,7 +104,7 @@ export function parseLayoutField(context: ParserContext): GreenNode | undefined 
 
   children.push(context.consume());
   children.push(context.expect(SyntaxKind.ColonToken));
-  children.push(parseTypeReference(context));
+  children.push(...parseLayoutFieldType(context));
   children.push(context.expect(SyntaxKind.AtKeyword));
   children.push(parseExpression(context));
 

@@ -99,6 +99,7 @@ function invalidUnusedRootArgumentProgramForMonoTest(): TypedHirProgram {
     sourceKind: "class",
     declaredTypeParameters: [],
     fieldIds: [],
+    enumCases: [],
     resourceKind: concreteKind("Copy"),
     sourceOrigin: hirOriginId(0),
   };

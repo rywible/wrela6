@@ -137,8 +137,8 @@ function scanValidatedBuffer(input: {
   };
   for (const field of [
     ...input.buffer.parameterFields,
-    ...input.buffer.layoutFields,
-    ...input.buffer.derivedFields,
+    ...input.buffer.layoutFields.map((layoutField) => layoutField.field),
+    ...input.buffer.derivedFields.map((derivedField) => derivedField.field),
   ]) {
     scanCheckedType({
       type: field.type,

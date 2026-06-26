@@ -31,7 +31,8 @@ export type SemanticSurfaceDiagnosticCode =
   | "SURFACE_INVALID_IMAGE_ENTRY_SHAPE"
   | "SURFACE_INVALID_IMAGE_ENTRY_SIGNATURE"
   | "SURFACE_UNRESOLVED_DEFERRED_MEMBER"
-  | "SURFACE_AMBIGUOUS_DEFERRED_MEMBER";
+  | "SURFACE_AMBIGUOUS_DEFERRED_MEMBER"
+  | "SURFACE_INVALID_WIRE_ENCODING";
 
 export interface DiagnosticRelatedInformation {
   readonly message: string;
@@ -572,6 +573,23 @@ export function ambiguousDeferredMember(
   return {
     code: "SURFACE_AMBIGUOUS_DEFERRED_MEMBER",
     message: `Ambiguous deferred member '${memberName}'.`,
+    severity: "error",
+    source,
+    span,
+    order,
+  };
+}
+
+export function invalidWireEncoding(
+  fieldName: string,
+  details: string,
+  span: SourceSpan,
+  source: SourceText | undefined,
+  order: SemanticSurfaceDiagnosticOrder,
+): SemanticSurfaceDiagnostic {
+  return {
+    code: "SURFACE_INVALID_WIRE_ENCODING",
+    message: `Invalid wire encoding for layout field '${fieldName}': ${details}.`,
     severity: "error",
     source,
     span,

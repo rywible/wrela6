@@ -137,6 +137,46 @@ export function minimalClosedProgramForMonoTest(): TypedHirProgram {
   return result.program;
 }
 
+export function genericPacketProgramForMonoTest(): TypedHirProgram {
+  const source = [
+    "enum PacketKind:",
+    "    Arp",
+    "    Ipv4",
+    "",
+    "class Packet:",
+    "    kind: PacketKind",
+    "    size: u32",
+    "    fn sizeValue(self) -> u32:",
+    "        return 0",
+    "",
+    "uefi image Boot:",
+    "    fn main() -> Never:",
+    "        return",
+  ].join("\n");
+  const base = lowerTypedHirForTest([["main.wr", source]]).program;
+  const packetType = base.types.entries().find((record) => record.sourceKind === "class");
+  const method = base.functions.entries().find((func) => func.ownerTypeId === packetType?.typeId);
+  if (packetType === undefined || method === undefined) {
+    throw new Error("Expected Packet class and sizeValue method in generic packet fixture.");
+  }
+  return {
+    ...base,
+    monoClosure: {
+      ...base.monoClosure,
+      externalEntryRoots: [
+        ...base.monoClosure.externalEntryRoots,
+        {
+          functionId: method.functionId,
+          ownerTypeArguments: [],
+          functionTypeArguments: [],
+          reason: "targetRequired",
+          sourceOrigin: method.sourceOrigin,
+        },
+      ],
+    },
+  };
+}
+
 export function imageDeviceProgramForMonoTest(): TypedHirProgram {
   const source = [
     "class SerialDevice:",
@@ -173,6 +213,7 @@ export function functionSignatureSourceTypeClosureProgramForMonoTest(): TypedHir
     sourceKind: "class",
     declaredTypeParameters: [],
     fieldIds: [innerFieldId],
+    enumCases: [],
     resourceKind: concreteKind("Copy"),
     sourceOrigin: hirOriginId(0),
   };
@@ -182,6 +223,7 @@ export function functionSignatureSourceTypeClosureProgramForMonoTest(): TypedHir
     sourceKind: "class",
     declaredTypeParameters: [],
     fieldIds: [],
+    enumCases: [],
     resourceKind: concreteKind("UniqueEdgeRoot"),
     sourceOrigin: hirOriginId(0),
   };
@@ -899,6 +941,7 @@ export function programWithDanglingTypeFieldForMonoTest(): TypedHirProgram {
     sourceKind: "class",
     declaredTypeParameters: [],
     fieldIds: [999 as never],
+    enumCases: [],
     resourceKind: errorKind(),
     sourceOrigin: hirOriginId(0),
   };
@@ -929,6 +972,7 @@ export function genericValidatedBufferProgramForMonoTest(): TypedHirProgram {
     sourceKind: "validatedBuffer",
     declaredTypeParameters: [tParameter],
     fieldIds: [fieldIdValue],
+    enumCases: [],
     resourceKind: concreteKind("ValidatedBuffer"),
     sourceOrigin: hirOriginId(0),
   };
@@ -936,6 +980,7 @@ export function genericValidatedBufferProgramForMonoTest(): TypedHirProgram {
     typeId: typeId(10),
     itemId: 10 as ItemId,
     parameterFields: [fieldIdValue],
+    layoutDerivedFieldOrder: [],
     layoutFields: [],
     derivedFields: [],
     requirements: [],

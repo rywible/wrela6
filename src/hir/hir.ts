@@ -50,6 +50,7 @@ import type {
   SessionId,
   ValidationId,
 } from "./ids";
+import type { WireEndian, WireScalarEncoding } from "../shared/wire-layout";
 import type { HirOriginTable } from "./origin";
 import type { HirTable } from "./hir-table";
 import type { HirProofMetadata } from "./proof-metadata";
@@ -655,17 +656,68 @@ export interface HirImage {
 
 export type HirImageTable = HirTable<ImageId, HirImage>;
 
+export type HirLayoutExpression =
+  | {
+      readonly kind: "integerLiteral";
+      readonly value: bigint;
+      readonly sourceOrigin: HirOriginId;
+    }
+  | { readonly kind: "sourceLength"; readonly sourceOrigin: HirOriginId }
+  | {
+      readonly kind: "fieldValue";
+      readonly fieldId: FieldId;
+      readonly fieldKind: "parameter" | "layout" | "derived";
+      readonly sourceOrigin: HirOriginId;
+    }
+  | {
+      readonly kind: "add" | "subtract" | "multiply";
+      readonly left: HirLayoutExpression;
+      readonly right: HirLayoutExpression;
+      readonly sourceOrigin: HirOriginId;
+    };
+
+export interface HirDerivedFieldCase {
+  readonly condition: HirLayoutExpression | { readonly kind: "otherwise" };
+  readonly result: HirLayoutExpression;
+  readonly sourceOrigin: HirOriginId;
+}
+
+export interface HirValidatedBufferLayoutField {
+  readonly field: HirFieldRecord;
+  readonly offset: HirLayoutExpression;
+  readonly length?: HirLayoutExpression;
+  readonly layoutWireEndian?: WireEndian;
+  readonly wireEncoding?: WireScalarEncoding;
+  readonly sourceOrigin: HirOriginId;
+}
+
+export interface HirValidatedBufferDerivedField {
+  readonly field: HirFieldRecord;
+  readonly source: HirLayoutExpression;
+  readonly cases: readonly HirDerivedFieldCase[];
+  readonly sourceOrigin: HirOriginId;
+}
+
 export interface HirValidatedBuffer {
   readonly typeId: TypeId;
   readonly itemId: ItemId;
   readonly parameterFields: readonly FieldId[];
-  readonly layoutFields: readonly FieldId[];
-  readonly derivedFields: readonly FieldId[];
+  readonly layoutDerivedFieldOrder: readonly FieldId[];
+  readonly layoutFields: readonly HirValidatedBufferLayoutField[];
+  readonly derivedFields: readonly HirValidatedBufferDerivedField[];
   readonly requirements: readonly HirRequirement[];
   readonly sourceOrigin: HirOriginId;
 }
 
 export type HirValidatedBufferTable = HirTable<TypeId, HirValidatedBuffer>;
+
+export interface HirEnumCaseRecord {
+  readonly enumTypeId: TypeId;
+  readonly caseItemId: ItemId;
+  readonly name: string;
+  readonly ordinal: number;
+  readonly sourceOrigin: HirOriginId;
+}
 
 export interface HirTypeRecord {
   readonly typeId: TypeId;
@@ -673,6 +725,7 @@ export interface HirTypeRecord {
   readonly sourceKind: SourceItemKind;
   readonly declaredTypeParameters: readonly TypeParameterKey[];
   readonly fieldIds: readonly FieldId[];
+  readonly enumCases: readonly HirEnumCaseRecord[];
   readonly resourceKind: CheckedResourceKind;
   readonly sourceOrigin: HirOriginId;
 }

@@ -145,6 +145,10 @@ export function typedHirSummary(result: LowerTypedHirResult): string {
       sourceKind: typeRecord.sourceKind,
       declaredTypeParameters: typeRecord.declaredTypeParameters.map((parameter) => parameter.index),
       fieldIds: typeRecord.fieldIds,
+      enumCases: typeRecord.enumCases.map((caseRecord) => ({
+        name: caseRecord.name,
+        ordinal: caseRecord.ordinal,
+      })),
     })),
     fields: result.program.fields.entries().map((fieldRecord) => ({
       fieldId: fieldRecord.fieldId,

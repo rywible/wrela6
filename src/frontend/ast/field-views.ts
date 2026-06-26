@@ -6,7 +6,8 @@ import {
   presentTokenText,
   presentTokenSpan,
 } from "./syntax-query";
-import { TypeReferenceView } from "./type-views";
+import { TypeReferenceView, wireEndianFromMarkerToken } from "./type-views";
+import type { WireEndian } from "../../shared/wire-layout";
 import { expressionViewFrom, type ExpressionView } from "./expression-views";
 import { RedNode, RedToken, SyntaxKind } from "../syntax";
 
@@ -53,6 +54,13 @@ export class LayoutFieldView extends AstView {
   type(): TypeReferenceView | undefined {
     const typeNode = childNode(this.node, SyntaxKind.TypeReference);
     return typeNode !== undefined ? TypeReferenceView.from(typeNode) : undefined;
+  }
+
+  wireEndian(): WireEndian | undefined {
+    const marker =
+      childTokens(this.node, SyntaxKind.LeMarkerToken)[0] ??
+      childTokens(this.node, SyntaxKind.BeMarkerToken)[0];
+    return wireEndianFromMarkerToken(marker);
   }
 
   offsetExpression(): ExpressionView | undefined {

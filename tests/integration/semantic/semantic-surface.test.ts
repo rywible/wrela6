@@ -172,3 +172,50 @@ test("proof surface preserves unique edge and private state source forms", () =>
   expect(resourceKinds).toContainEqual({ kind: "concrete", value: "PrivateState" });
   expect(result.program.proofSurface.privateStateSurfaces.entries()).toHaveLength(1);
 });
+
+test("integration stores checked wire marker for validated-buffer layout fields", () => {
+  const result = checkSemanticSurfaceForTest([
+    [
+      "main.wr",
+      [
+        "validated buffer Packet:",
+        "    layout:",
+        "        size: be u16 @ 0",
+        "        payload: u8 @ 2",
+        "uefi image Boot:",
+        "    fn main() -> Never",
+      ].join("\n"),
+    ],
+  ]);
+
+  const sizeField = result.program.fields.entries().find((field) => field.name === "size");
+  const payloadField = result.program.fields.entries().find((field) => field.name === "payload");
+
+  expect(sizeField?.layoutWireEndian).toBe("big");
+  expect(payloadField?.layoutWireEndian).toBeUndefined();
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+    "SURFACE_INVALID_WIRE_ENCODING",
+  );
+});
+
+test("integration reports wire encoding errors for invalid layout fields", () => {
+  const result = checkSemanticSurfaceForTest([
+    [
+      "main.wr",
+      [
+        "validated buffer Packet:",
+        "    layout:",
+        "        size: u16 @ 0",
+        "        flag: le bool @ 2",
+        "uefi image Boot:",
+        "    fn main() -> Never",
+      ].join("\n"),
+    ],
+  ]);
+
+  const wireDiagnostics = result.diagnostics.filter(
+    (diagnostic) => diagnostic.code === "SURFACE_INVALID_WIRE_ENCODING",
+  );
+  expect(wireDiagnostics.length).toBeGreaterThanOrEqual(2);
+  expect(wireDiagnostics[0]?.span?.start).toBeLessThan(wireDiagnostics[1]?.span?.start ?? 0);
+});

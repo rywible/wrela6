@@ -255,6 +255,7 @@ function checkedFieldTableForFixture(input: {
         type: result.type,
         resourceKind: resourceKindForType({ type: result.type, context }),
         sourceSpan: field.span,
+        fieldRole: field.role,
       });
     }
   }

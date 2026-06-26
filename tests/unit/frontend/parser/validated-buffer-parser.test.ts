@@ -393,4 +393,42 @@ describe("parseLayoutField", () => {
 
     expect(result).toBeUndefined();
   });
+
+  test("parseLayoutField preserves contextual little-endian marker before type", () => {
+    const tokens = [
+      makeToken(TokenKind.Identifier, "size", 0, 4),
+      makeToken(TokenKind.Colon, ":", 4, 5, " "),
+      makeToken(TokenKind.Identifier, "le", 6, 8, " "),
+      makeToken(TokenKind.Identifier, "u16", 9, 12, " "),
+      makeToken(TokenKind.At, "@", 13, 14, " "),
+      makeToken(TokenKind.IntegerLiteral, "0", 15, 16),
+      makeToken(TokenKind.Eof, "", 16, 16),
+    ];
+    const context = makeContext(tokens);
+    const node = parseLayoutField(context);
+
+    expect(node?.kind).toBe(SyntaxKind.LayoutField);
+    expect(node?.reconstruct()).toBe("size: le u16 @ 0");
+    expect(context.draftDiagnostics()).toHaveLength(0);
+  });
+
+  test("parseLayoutField preserves contextual big-endian marker before type", () => {
+    const tokens = [
+      makeToken(TokenKind.Identifier, "size", 0, 4),
+      makeToken(TokenKind.Colon, ":", 4, 5, " "),
+      makeToken(TokenKind.Identifier, "be", 6, 8, " "),
+      makeToken(TokenKind.Identifier, "u32", 9, 12, " "),
+      makeToken(TokenKind.At, "@", 13, 14, " "),
+      makeToken(TokenKind.IntegerLiteral, "0", 15, 16),
+      makeToken(TokenKind.Eof, "", 16, 16),
+    ];
+    const context = makeContext(tokens);
+    const node = parseLayoutField(context);
+
+    expect(node?.kind).toBe(SyntaxKind.LayoutField);
+    expect((node!.children[2] as GreenToken).kind).toBe(SyntaxKind.BeMarkerToken);
+    expect(node!.children[3]!.kind).toBe(SyntaxKind.TypeReference);
+    expect(node?.reconstruct()).toBe("size: be u32 @ 0");
+    expect(context.draftDiagnostics()).toHaveLength(0);
+  });
 });

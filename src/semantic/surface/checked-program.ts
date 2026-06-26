@@ -16,7 +16,13 @@ import { checkedProofSurfaceEmpty } from "./proof-surface";
 import type { ResolvedReference } from "../names/reference";
 import type { SyntaxReferenceKey } from "../names/reference";
 import type { SourceSpan } from "../../frontend";
+import type { WireEndian, WireScalarEncoding } from "../../shared/wire-layout";
+import type { FieldRole } from "../item-index";
 import { compareCodeUnitStrings } from "./deterministic-sort";
+import type {
+  ValidatedBufferFieldModel,
+  ValidatedBufferFieldModelTable,
+} from "./validated-buffer-field-model";
 import type {
   CheckedAttemptContractSurface,
   CheckedPlatformEnsuredFact,
@@ -136,6 +142,9 @@ export interface CheckedFieldRecord {
   readonly type: CheckedType;
   readonly resourceKind: CheckedResourceKind;
   readonly sourceSpan: SourceSpan;
+  readonly fieldRole: FieldRole;
+  readonly layoutWireEndian?: WireEndian;
+  readonly wireEncoding?: WireScalarEncoding;
 }
 
 export interface CheckedFieldTable {
@@ -264,6 +273,19 @@ function certifiedPlatformBindingTable(
   };
 }
 
+function validatedBufferFieldModelTable(
+  models: readonly ValidatedBufferFieldModel[],
+): ValidatedBufferFieldModelTable {
+  const sorted = [...models].sort(
+    (left, right) => (left.typeId as number) - (right.typeId as number),
+  );
+  const byTypeId = new Map(sorted.map((model) => [model.typeId, model]));
+  return {
+    get: (typeId) => byTypeId.get(typeId),
+    entries: () => [...sorted],
+  };
+}
+
 // ── CheckedSemanticProgram ─────────────────────────────────
 
 export interface CheckedSemanticProgram {
@@ -275,6 +297,7 @@ export interface CheckedSemanticProgram {
   readonly proofSurface: CheckedProofSurface;
   readonly certifiedPlatformBindings: CertifiedPlatformBindingTable;
   readonly monoClosureFacts: CheckedMonoClosureFacts;
+  readonly validatedBufferFields: ValidatedBufferFieldModelTable;
 }
 
 // ── CheckedProgramBuilder ───────────────────────────────────
@@ -288,6 +311,7 @@ export class CheckedProgramBuilder {
   private readonly platformBindingRecords: CertifiedPlatformBinding[] = [];
   private proofSurface: CheckedProofSurface | undefined;
   private monoClosureFacts: CheckedMonoClosureFacts | undefined;
+  private validatedBufferFieldModels: ValidatedBufferFieldModel[] = [];
 
   addType(record: CheckedTypeRecord): void {
     this.typeRecords.push(record);
@@ -321,6 +345,10 @@ export class CheckedProgramBuilder {
     this.monoClosureFacts = facts;
   }
 
+  setValidatedBufferFieldModels(models: readonly ValidatedBufferFieldModel[]): void {
+    this.validatedBufferFieldModels = [...models];
+  }
+
   build(): CheckedSemanticProgram {
     return {
       types: checkedTypeTable(this.typeRecords),
@@ -331,6 +359,7 @@ export class CheckedProgramBuilder {
       proofSurface: this.proofSurface ?? checkedProofSurfaceEmpty(),
       certifiedPlatformBindings: certifiedPlatformBindingTable(this.platformBindingRecords),
       monoClosureFacts: this.monoClosureFacts ?? checkedMonoClosureFactsEmpty(),
+      validatedBufferFields: validatedBufferFieldModelTable(this.validatedBufferFieldModels),
     };
   }
 }

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { buildLayoutTypeResolutionTable } from "../../../src/layout/layout-type-resolution";
 import {
   monomorphizeWholeImage,
   seedMonoRootWork,
@@ -7,6 +8,7 @@ import {
 import { monoDiagnosticCode } from "../../../src/mono/diagnostics";
 import { functionId } from "../../../src/semantic/ids";
 import {
+  genericPacketProgramForMonoTest,
   minimalClosedProgramForMonoTest,
   minimalSelectedImageProgramForMonoTest,
   packageModuleReachabilityProgramForMonoTest,
@@ -85,5 +87,24 @@ test("project function reaches package module declaration through ordinary HIR g
     expect(result.program.functions.entries().map((entry) => entry.sourceFunctionId)).toContain(
       functionId(720),
     );
+  }
+});
+
+test("layout computes type resolutions for reachable source and core types", () => {
+  const program = genericPacketProgramForMonoTest();
+  const result = monomorphizeWholeImage({ program });
+
+  expect(result.kind).toBe("ok");
+  if (result.kind !== "ok") return;
+
+  const entries = buildLayoutTypeResolutionTable(result.program).table.entries();
+  expect(entries.some((entry) => entry.key.kind === "source")).toBe(true);
+  expect(entries.some((entry) => entry.key.kind === "core")).toBe(true);
+  for (const entry of entries) {
+    expect(
+      buildLayoutTypeResolutionTable(result.program).table.getByFingerprint(
+        entry.checkedTypeFingerprint,
+      ),
+    ).toEqual(entry);
   }
 });

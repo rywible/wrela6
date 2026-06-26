@@ -30,6 +30,8 @@ export enum SyntaxKind {
   RequireKeyword,
   AtKeyword,
   LenKeyword,
+  LeMarkerToken,
+  BeMarkerToken,
   ElseKeyword,
   OtherwiseKeyword,
   LetKeyword,

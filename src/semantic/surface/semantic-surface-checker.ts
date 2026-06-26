@@ -1,7 +1,6 @@
 import type { ParsedModuleGraph } from "../../frontend";
 import { SourceSpan, presentTokenSpan } from "../../frontend";
-import type { FieldRecord, ItemRecord } from "../item-index";
-import type { ItemIndex } from "../item-index";
+import type { FieldRecord, ItemIndex } from "../item-index";
 import type { ResolvedPlatformBindings, ResolvedReferences } from "../names";
 import { buildMemberNamespace } from "../names/member-namespace";
 import type { CoreTypeCatalog } from "../names/core-types";
@@ -10,6 +9,7 @@ import type { SurfaceReferenceLookup } from "./reference-lookup";
 import { buildSurfaceReferenceLookup, syntaxReferenceKeyToString } from "./reference-lookup";
 import { checkTypeReference } from "./type-reference-checker";
 import { CheckedProgramBuilder } from "./checked-program";
+import { buildValidatedBufferFieldModels } from "./validated-buffer-field-model";
 import type {
   CheckedFunctionSignature,
   CheckedFunctionSignatureTable,
@@ -17,7 +17,11 @@ import type {
   CompletedMemberReference,
 } from "./checked-program";
 import type { SemanticSurfaceDiagnostic } from "./diagnostics";
-import { sortSemanticSurfaceDiagnostics, unresolvedDeferredMember } from "./diagnostics";
+import {
+  invalidWireEncoding,
+  sortSemanticSurfaceDiagnostics,
+  unresolvedDeferredMember,
+} from "./diagnostics";
 import { checkAllFunctionSignatures } from "./signature-checker";
 import { checkGenericSignature } from "./generic-checker";
 import { emptyKindContext, resourceKindForType } from "./resource-kind-checker";
@@ -84,6 +88,8 @@ import type {
   TypeId,
 } from "../ids";
 import { coreTypeId } from "../ids";
+import type { WireScalarEncoding } from "../../shared/wire-layout";
+import { layoutFieldWireSurfaceForCheckedType } from "./layout-field-wire-surface";
 import { FunctionDeclarationView } from "../../frontend/ast/function-views";
 import type { ExpressionView } from "../../frontend/ast/expression-views";
 import {
@@ -131,7 +137,7 @@ function checkFieldTypesAndBuildKinds(
 ): ResourceKindContext {
   interface FieldEntry {
     readonly field: FieldRecord;
-    readonly item: ItemRecord;
+    readonly item: import("../item-index").ItemRecord;
     readonly type: CheckedType;
   }
   const fieldEntries: FieldEntry[] = [];
@@ -196,6 +202,24 @@ function checkFieldTypesAndBuildKinds(
 
   for (const { field, item, type } of fieldEntries) {
     const finalKind = resourceKindForType({ type, context: kindContext });
+    let layoutWireEncoding: WireScalarEncoding | undefined;
+    if (field.role === "layoutField" && type.kind !== "error") {
+      const wireSurface = layoutFieldWireSurfaceForCheckedType({
+        type,
+        layoutWireEndian: field.layoutWireEndian,
+      });
+      if (wireSurface.validationDetails !== undefined) {
+        const source = input.index.module(item.moduleId)?.source;
+        diagnostics.push(
+          invalidWireEncoding(field.name, wireSurface.validationDetails, field.span, source, {
+            moduleId: item.moduleId,
+            span: field.span,
+            codeTieBreaker: "wire-encoding",
+          }),
+        );
+      }
+      layoutWireEncoding = wireSurface.wireEncoding;
+    }
     builder.addField({
       fieldId: field.id,
       itemId: item.id,
@@ -203,6 +227,13 @@ function checkFieldTypesAndBuildKinds(
       type,
       resourceKind: finalKind,
       sourceSpan: field.span,
+      fieldRole: field.role,
+      ...(field.role === "layoutField" && field.layoutWireEndian !== undefined
+        ? { layoutWireEndian: field.layoutWireEndian }
+        : {}),
+      ...(field.role === "layoutField" && layoutWireEncoding !== undefined
+        ? { wireEncoding: layoutWireEncoding }
+        : {}),
     });
   }
   return kindContext;
@@ -908,6 +939,7 @@ export function checkSemanticSurface(input: CheckSemanticSurfaceInput): CheckSem
 
   // Phase 2: field type checking + resource-kind fixpoint
   const kindContext = checkFieldTypesAndBuildKinds(input, builder, referenceLookup, diagnostics);
+  builder.setValidatedBufferFieldModels(buildValidatedBufferFieldModels(input.index).entries());
 
   // Phase 3: function signature checking with populated kind context
   const signaturesResult = checkAllFunctionSignatures({

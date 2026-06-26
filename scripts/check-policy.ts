@@ -104,6 +104,37 @@ function checkIdentifiers(filePath: string, sourceText: string): PolicyViolation
   return violations;
 }
 
+const layoutImportForbiddenPatterns = [
+  /from\s+["'][^"']*\/frontend\//,
+  /from\s+["'][^"']*\/parser\//,
+  /from\s+["'][^"']*\/proof\//,
+  /from\s+["'][^"']*\/codegen\//,
+  /from\s+["'][^"']*\/linker\//,
+  /from\s+["'][^"']*pe-coff/i,
+] as const;
+
+function checkLayoutImportBoundary(filePath: string, sourceText: string): PolicyViolation[] {
+  const normalizedPath = normalizePath(filePath);
+  if (!normalizedPath.startsWith("src/layout/")) {
+    return [];
+  }
+
+  const violations: PolicyViolation[] = [];
+  for (const pattern of layoutImportForbiddenPatterns) {
+    if (pattern.test(sourceText)) {
+      violations.push({
+        filePath,
+        line: 1,
+        column: 1,
+        message:
+          "src/layout must not import parser, AST, Proof-MIR, codegen, linker, or PE-COFF modules.",
+      });
+      break;
+    }
+  }
+  return violations;
+}
+
 function checkTextPolicies(filePath: string, sourceText: string): PolicyViolation[] {
   const violations: PolicyViolation[] = [];
   const normalizedPath = normalizePath(filePath);
@@ -160,6 +191,7 @@ async function main(): Promise<void> {
   for (const filePath of files) {
     const sourceText = await readText(filePath);
     violations.push(...checkIdentifiers(filePath, sourceText));
+    violations.push(...checkLayoutImportBoundary(filePath, sourceText));
     violations.push(...checkTextPolicies(filePath, sourceText));
   }
 

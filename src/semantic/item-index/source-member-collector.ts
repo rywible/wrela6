@@ -8,7 +8,12 @@ import type {
 } from "../../frontend/ast/declaration-views";
 import type { TypeParameterView } from "../../frontend/ast/type-views";
 import type { ImageDeclarationView } from "../../frontend/ast/image-views";
-import type { ValidatedBufferDeclarationView } from "../../frontend/ast/validated-buffer-views";
+import {
+  DeriveSectionView,
+  LayoutSectionView,
+  ParamsSectionView,
+  type ValidatedBufferDeclarationView,
+} from "../../frontend/ast/validated-buffer-views";
 import { FunctionDeclarationView } from "../../frontend/ast/function-views";
 import { BlockView } from "../../frontend/ast/statement-views";
 import { childNode, blockItems } from "../../frontend/ast/syntax-query";
@@ -33,6 +38,7 @@ import type {
   SourceItemRecord,
   TypeParameterRecord,
   TypeRecord,
+  ValidatedBufferSection,
 } from "./item-records";
 import type { SourceCollectionResult, SourceDeclarationWorkItem } from "./source-module-collector";
 
@@ -362,7 +368,10 @@ function collectImageDeclaration(
   collectFields(context, item, source.deviceFields(), "imageDevice");
   collectMemberFunctions(context, item, source.memberFunctions());
 
-  const imageRecIdx = context.images.findIndex((img) => img.itemId === item.id);
+  const imageRecIdx =
+    item.imageId !== undefined
+      ? context.images.findIndex((image) => image.id === item.imageId)
+      : context.images.findIndex((image) => image.itemId === item.id);
   if (imageRecIdx >= 0) {
     const fieldIds = context.fields
       .filter((field) => field.ownerItemId === item.id && field.role === "field")
@@ -420,20 +429,74 @@ function collectDeclarationLocalRecords(
       collectImageDeclaration(context, item, declaration as unknown as ImageDeclarationView);
       break;
 
-    case SyntaxKind.ValidatedBufferDeclaration:
-      collectFields(
-        context,
-        item,
-        (declaration as unknown as ValidatedBufferDeclarationView).paramFields(),
-        "validatedParam",
-      );
-      collectLayoutFields(
-        context,
-        item,
-        (declaration as unknown as ValidatedBufferDeclarationView).layoutFields(),
-        "layoutField",
-      );
+    case SyntaxKind.ValidatedBufferDeclaration: {
+      const validatedBufferView = declaration as unknown as ValidatedBufferDeclarationView;
+      let bodyOrdinal = 0;
+      let paramsSurfaceOrdinal = 0;
+      let layoutSurfaceOrdinal = 0;
+      let deriveSurfaceOrdinal = 0;
+      for (const sectionNode of validatedBufferView.bodySections()) {
+        switch (sectionNode.kind) {
+          case SyntaxKind.ParamsSection:
+            bodyOrdinal = collectFields(
+              context,
+              item,
+              ParamsSectionView.from(sectionNode)?.fields() ?? [],
+              "validatedParam",
+              {
+                validatedBufferSection: "params",
+                nextBodyOrdinal: bodyOrdinal,
+                nextSurfaceOrdinal: paramsSurfaceOrdinal,
+              },
+            );
+            paramsSurfaceOrdinal = countValidatedBufferSectionFields(
+              context.fields,
+              item.id,
+              "params",
+            );
+            break;
+          case SyntaxKind.LayoutSection:
+            bodyOrdinal = collectLayoutFields(
+              context,
+              item,
+              LayoutSectionView.from(sectionNode)?.fields() ?? [],
+              "layoutField",
+              {
+                validatedBufferSection: "layout",
+                nextBodyOrdinal: bodyOrdinal,
+                nextSurfaceOrdinal: layoutSurfaceOrdinal,
+              },
+            );
+            layoutSurfaceOrdinal = countValidatedBufferSectionFields(
+              context.fields,
+              item.id,
+              "layout",
+            );
+            break;
+          case SyntaxKind.DeriveSection:
+            bodyOrdinal = collectDerivedFields(
+              context,
+              item,
+              DeriveSectionView.from(sectionNode)?.fields() ?? [],
+              {
+                nextBodyOrdinal: bodyOrdinal,
+                nextSurfaceOrdinal: deriveSurfaceOrdinal,
+              },
+            );
+            deriveSurfaceOrdinal = countValidatedBufferSectionFields(
+              context.fields,
+              item.id,
+              "derive",
+            );
+            break;
+          case SyntaxKind.RequireSection:
+            break;
+          default:
+            break;
+        }
+      }
       break;
+    }
 
     case SyntaxKind.FunctionDeclaration:
       collectFunctionItemDeclaration(context, item, declaration as FunctionDeclarationView);
@@ -441,12 +504,31 @@ function collectDeclarationLocalRecords(
   }
 }
 
+function countValidatedBufferSectionFields(
+  fields: readonly FieldRecord[],
+  ownerItemId: ItemId,
+  section: ValidatedBufferSection,
+): number {
+  return fields.filter(
+    (field) => field.ownerItemId === ownerItemId && field.validatedBufferSection === section,
+  ).length;
+}
+
+interface ValidatedBufferFieldCollectionContext {
+  readonly validatedBufferSection: ValidatedBufferSection;
+  readonly nextBodyOrdinal: number;
+  readonly nextSurfaceOrdinal: number;
+}
+
 function collectFields(
   context: SourceMemberCollectionContext,
   item: SourceItemRecord,
   fieldViews: readonly import("../../frontend/ast/field-views").FieldDeclarationView[],
   role: FieldRole,
-): void {
+  validatedBuffer?: ValidatedBufferFieldCollectionContext,
+): number {
+  let bodyOrdinal = validatedBuffer?.nextBodyOrdinal ?? 0;
+  let surfaceOrdinal = validatedBuffer?.nextSurfaceOrdinal ?? 0;
   for (const fieldView of fieldViews) {
     const name = fieldView.nameText();
     const nameSpan = fieldView.nameSpan();
@@ -460,8 +542,18 @@ function collectFields(
       nameSpan,
       span: fieldView.span,
       type: fieldView.type(),
+      ...(validatedBuffer !== undefined
+        ? {
+            validatedBufferSection: validatedBuffer.validatedBufferSection,
+            validatedBufferBodyOrdinal: bodyOrdinal,
+            validatedBufferSurfaceOrdinal: surfaceOrdinal,
+          }
+        : {}),
     });
+    bodyOrdinal += 1;
+    surfaceOrdinal += 1;
   }
+  return bodyOrdinal;
 }
 
 function collectLayoutFields(
@@ -469,7 +561,10 @@ function collectLayoutFields(
   item: SourceItemRecord,
   fieldViews: readonly import("../../frontend/ast/field-views").LayoutFieldView[],
   role: FieldRole,
-): void {
+  validatedBuffer: ValidatedBufferFieldCollectionContext,
+): number {
+  let bodyOrdinal = validatedBuffer.nextBodyOrdinal;
+  let surfaceOrdinal = validatedBuffer.nextSurfaceOrdinal;
   for (const fieldView of fieldViews) {
     const name = fieldView.nameText();
     const nameSpan = fieldView.nameSpan();
@@ -483,8 +578,46 @@ function collectLayoutFields(
       nameSpan,
       span: fieldView.span,
       type: fieldView.type(),
+      layoutWireEndian: fieldView.wireEndian(),
+      validatedBufferSection: validatedBuffer.validatedBufferSection,
+      validatedBufferBodyOrdinal: bodyOrdinal,
+      validatedBufferSurfaceOrdinal: surfaceOrdinal,
     });
+    bodyOrdinal += 1;
+    surfaceOrdinal += 1;
   }
+  return bodyOrdinal;
+}
+
+function collectDerivedFields(
+  context: SourceMemberCollectionContext,
+  item: SourceItemRecord,
+  fieldViews: readonly import("../../frontend/ast/field-views").DerivedFieldView[],
+  validatedBuffer: Omit<ValidatedBufferFieldCollectionContext, "validatedBufferSection">,
+): number {
+  let bodyOrdinal = validatedBuffer.nextBodyOrdinal;
+  let surfaceOrdinal = validatedBuffer.nextSurfaceOrdinal;
+  for (const fieldView of fieldViews) {
+    const name = fieldView.nameText();
+    const nameSpan = fieldView.nameSpan();
+    if (name === undefined || nameSpan === undefined) continue;
+
+    addField(context, {
+      id: fieldId(context.fields.length),
+      ownerItemId: item.id,
+      role: "derivedField",
+      name,
+      nameSpan,
+      span: fieldView.span,
+      type: fieldView.type(),
+      validatedBufferSection: "derive",
+      validatedBufferBodyOrdinal: bodyOrdinal,
+      validatedBufferSurfaceOrdinal: surfaceOrdinal,
+    });
+    bodyOrdinal += 1;
+    surfaceOrdinal += 1;
+  }
+  return bodyOrdinal;
 }
 
 function collectMemberFunctions(

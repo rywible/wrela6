@@ -8,6 +8,7 @@ import { errorCheckedType } from "../semantic/surface/type-model";
 import type { CheckedFunctionSignature } from "../semantic/surface/checked-program";
 import type {
   HirDeclaration,
+  HirEnumCaseRecord,
   HirFieldRecord,
   HirFieldTable,
   HirFunction,
@@ -212,10 +213,64 @@ function fieldIdsForTypeItem(input: {
     .map((field) => field.id);
 }
 
+function originForEnumCase(input: {
+  readonly context: HirLoweringContext;
+  readonly caseItemId: ItemId;
+  readonly moduleId: ModuleId;
+  readonly ownerItemId: ItemId;
+  readonly span: SourceSpan;
+  readonly declaration: object;
+}): HirOriginId {
+  const node = declarationNode(input.declaration);
+  if (node !== undefined) {
+    return input.context.origins.forSyntax({
+      moduleId: input.moduleId,
+      node,
+      ownerItemId: input.ownerItemId,
+    });
+  }
+  return input.context.origins.forSynthetic({
+    moduleId: input.moduleId,
+    span: input.span,
+    stableDetail: `enumCase:${input.caseItemId}`,
+    ownerItemId: input.ownerItemId,
+  });
+}
+
+function enumCasesForTypeItem(input: {
+  readonly context: HirLoweringContext;
+  readonly typeId: TypeId;
+  readonly itemId: ItemId;
+  readonly moduleId: ModuleId;
+}): readonly HirEnumCaseRecord[] {
+  const item = input.context.index.item(input.itemId);
+  if (item?.kind !== "enum") return [];
+
+  const enumCaseItems = input.context.index
+    .items()
+    .filter((caseItem) => caseItem.kind === "enumCase" && caseItem.parentItemId === input.itemId);
+
+  return enumCaseItems.map((caseItem, ordinal) => ({
+    enumTypeId: input.typeId,
+    caseItemId: caseItem.id,
+    name: caseItem.name,
+    ordinal,
+    sourceOrigin: originForEnumCase({
+      context: input.context,
+      caseItemId: caseItem.id,
+      moduleId: input.moduleId,
+      ownerItemId: input.itemId,
+      span: caseItem.span,
+      declaration: caseItem.declaration,
+    }),
+  }));
+}
+
 function lowerTypeRecord(input: {
   readonly context: HirLoweringContext;
   readonly typeId: TypeId;
   readonly itemId: ItemId;
+  readonly moduleId: ModuleId;
   readonly sourceOrigin: HirOriginId;
 }): HirTypeRecord | undefined {
   const item = input.context.index.item(input.itemId);
@@ -229,6 +284,12 @@ function lowerTypeRecord(input: {
       itemId: input.itemId,
     }),
     fieldIds: fieldIdsForTypeItem({ context: input.context, itemId: input.itemId }),
+    enumCases: enumCasesForTypeItem({
+      context: input.context,
+      typeId: input.typeId,
+      itemId: input.itemId,
+      moduleId: input.moduleId,
+    }),
     resourceKind: joinFieldResourceKinds({
       context: input.context,
       itemId: input.itemId,
@@ -336,12 +397,15 @@ export class TypedHirBuilder {
         context: this.context,
         typeId: typeRecord.id,
         itemId: typeRecord.itemId,
+        moduleId: typeRecord.moduleId,
         sourceOrigin,
       });
       if (lowered !== undefined) this.typeRecords.push(lowered);
     }
     for (const field of this.context.index.fields()) {
-      if (field.role !== "field") continue;
+      if (field.role !== "field" && field.role !== "validatedParam") {
+        continue;
+      }
       const checkedField = this.context.program.fields.get(field.id);
       if (checkedField === undefined) continue;
       const ownerTypeId = typeIdForItem({

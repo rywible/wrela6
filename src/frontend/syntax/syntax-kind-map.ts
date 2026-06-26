@@ -91,8 +91,13 @@ export function syntaxKindFromTokenKind(kind: TokenKind): SyntaxKind {
 
 const TOKEN_SYNTAX_KINDS: Set<SyntaxKind> = new Set(Object.values(TOKEN_KIND_TO_SYNTAX_KIND));
 
+const CONTEXTUAL_MARKER_TOKEN_SYNTAX_KINDS: ReadonlySet<SyntaxKind> = new Set([
+  SyntaxKind.LeMarkerToken,
+  SyntaxKind.BeMarkerToken,
+]);
+
 export function isTokenSyntaxKind(kind: SyntaxKind): boolean {
-  return TOKEN_SYNTAX_KINDS.has(kind);
+  return TOKEN_SYNTAX_KINDS.has(kind) || CONTEXTUAL_MARKER_TOKEN_SYNTAX_KINDS.has(kind);
 }
 
 export function isNodeSyntaxKind(kind: SyntaxKind): boolean {

@@ -220,3 +220,9 @@ function serializeTypeList(types: readonly MonoCheckedType[]): string {
   });
   return `<${parts.join(",")}>`;
 }
+
+export function monoAppliedArgumentTypes(
+  type: MonoCheckedType & { readonly kind: "applied" },
+): readonly MonoCheckedType[] {
+  return type.arguments.map((argument) => argument as MonoCheckedType);
+}

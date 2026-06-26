@@ -1,5 +1,6 @@
 import type { GreenElement } from "../syntax/green-node";
 import { GreenNode } from "../syntax/green-node";
+import { GreenToken } from "../syntax/green-token";
 import { SyntaxKind } from "../syntax/syntax-kind";
 import type { ParserContext } from "./parser-context";
 import { isNameTokenSyntaxKind, parseDelimitedList } from "./parser-utils";
@@ -43,6 +44,42 @@ export function parseQualifiedName(context: ParserContext): GreenNode {
     kind: SyntaxKind.QualifiedName,
     children,
   });
+}
+
+function remapTokenKind(token: GreenToken, kind: SyntaxKind): GreenToken {
+  return new GreenToken(
+    kind,
+    token.lexeme,
+    [...token.leadingTrivia],
+    [...token.trailingTrivia],
+    token.isMissing,
+  );
+}
+
+export function parseOptionalWireEndianMarker(context: ParserContext): GreenToken | undefined {
+  if (context.currentSyntaxKind() !== SyntaxKind.IdentifierToken) {
+    return undefined;
+  }
+
+  const lexeme = context.peek(0).lexeme;
+  if (lexeme === "le") {
+    return remapTokenKind(context.consume(), SyntaxKind.LeMarkerToken);
+  }
+  if (lexeme === "be") {
+    return remapTokenKind(context.consume(), SyntaxKind.BeMarkerToken);
+  }
+
+  return undefined;
+}
+
+export function parseLayoutFieldType(context: ParserContext): GreenElement[] {
+  const elements: GreenElement[] = [];
+  const marker = parseOptionalWireEndianMarker(context);
+  if (marker !== undefined) {
+    elements.push(marker);
+  }
+  elements.push(parseTypeReference(context));
+  return elements;
 }
 
 export function parseTypeReference(context: ParserContext): GreenNode {

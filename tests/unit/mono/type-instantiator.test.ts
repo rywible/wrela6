@@ -20,6 +20,7 @@ import {
   monoTypeKeyForTest,
   programWithDanglingTypeFieldForMonoTest,
 } from "../../support/mono/monomorphization-fixtures";
+import { lowerTypedHirForTest } from "../../support/hir/typed-hir-fixtures";
 import { hirOriginId } from "../../../src/hir/ids";
 
 function constructorKey(constructor: TypeConstructorId): string {
@@ -254,5 +255,105 @@ test("fieldless proof-relevant source types retain their source resource kind", 
   if (result.kind === "ok") {
     expect(result.instance.fields).toEqual([]);
     expect(result.instance.resourceKind).toBe("UniqueEdgeRoot");
+  }
+});
+
+test("enum source type instantiates enumCases in source order", () => {
+  const program = lowerTypedHirForTest([
+    ["main.wr", "enum PacketKind:\n    Arp\n    Ipv4\n"],
+  ]).program;
+  const enumType = program.types.entries().find((record) => record.sourceKind === "enum");
+  if (enumType === undefined) throw new Error("expected enum type");
+
+  const result = instantiateMonoType({
+    program,
+    key: monoTypeKeyForTest({ typeId: enumType.typeId, typeArguments: [] }),
+    source: { kind: "image", imageId: imageId(1) },
+    ancestry: emptyMonoAncestryForTest(),
+  });
+
+  expect(result.kind).toBe("ok");
+  if (result.kind === "ok") {
+    expect(result.instance.enumCases.map((caseRecord) => caseRecord.name)).toEqual(["Arp", "Ipv4"]);
+    expect(result.instance.enumCases.map((caseRecord) => caseRecord.ordinal)).toEqual([0, 1]);
+  }
+});
+
+test("validated buffer layout fields with usize wire markers instantiate successfully", () => {
+  const program = lowerTypedHirForTest([
+    [
+      "main.wr",
+      [
+        "validated buffer Packet:",
+        "    layout:",
+        "        length: le usize @ 0",
+        "        payload: u8 @ 8 len length",
+      ].join("\n"),
+    ],
+  ]).program;
+  const bufferType = program.types
+    .entries()
+    .find((record) => record.sourceKind === "validatedBuffer");
+  if (bufferType === undefined) throw new Error("expected validated buffer type");
+
+  const result = instantiateMonoType({
+    program,
+    key: monoTypeKeyForTest({ typeId: bufferType.typeId, typeArguments: [] }),
+    source: { kind: "image", imageId: imageId(1) },
+    ancestry: emptyMonoAncestryForTest(),
+  });
+
+  expect(result.kind).toBe("ok");
+  if (result.kind === "ok") {
+    const lengthField = result.validatedBuffer?.layoutFields.find(
+      (field) => field.field.name === "length",
+    );
+    const payloadField = result.validatedBuffer?.layoutFields.find(
+      (field) => field.field.name === "payload",
+    );
+    expect(lengthField?.layoutWireEndian).toBe("little");
+    expect(payloadField?.length?.kind).toBe("fieldValue");
+    if (payloadField?.length?.kind === "fieldValue") {
+      expect(payloadField.length.fieldKind).toBe("layout");
+    }
+  }
+});
+
+test("validated buffer layout fields carry substituted layout expressions", () => {
+  const program = lowerTypedHirForTest([
+    [
+      "main.wr",
+      [
+        "validated buffer Packet:",
+        "    params:",
+        "        expected_len: u16",
+        "    layout:",
+        "        payload: u8 @ 3 len expected_len",
+      ].join("\n"),
+    ],
+  ]).program;
+  const bufferType = program.types
+    .entries()
+    .find((record) => record.sourceKind === "validatedBuffer");
+  if (bufferType === undefined) throw new Error("expected validated buffer type");
+
+  const result = instantiateMonoType({
+    program,
+    key: monoTypeKeyForTest({ typeId: bufferType.typeId, typeArguments: [] }),
+    source: { kind: "image", imageId: imageId(1) },
+    ancestry: emptyMonoAncestryForTest(),
+  });
+
+  expect(result.kind).toBe("ok");
+  if (result.kind === "ok") {
+    const payload = result.validatedBuffer?.layoutFields[0];
+    expect(payload?.field.name).toBe("payload");
+    expect(payload?.offset.kind).toBe("integerLiteral");
+    expect(payload?.offset.kind === "integerLiteral" ? payload.offset.value : undefined).toBe(3n);
+    expect(payload?.length?.kind).toBe("fieldValue");
+    expect(payload?.layoutWireEndian).toBeUndefined();
+    if (payload?.length?.kind === "fieldValue") {
+      expect(payload.length.fieldKind).toBe("parameter");
+    }
   }
 });
