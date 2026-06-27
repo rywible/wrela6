@@ -3,6 +3,8 @@ export * from "./diagnostics";
 export * from "./ids";
 export * from "./mono-hir";
 export {
+  buildMonoExternalRoots,
+  functionInstanceIdForExternalEntryRoot,
   monomorphizeWholeImage,
   type MonomorphizeWholeImageInput,
   type MonomorphizeWholeImageResult,

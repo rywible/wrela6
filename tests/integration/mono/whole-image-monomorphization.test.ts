@@ -1,12 +1,14 @@
 import { expect, test } from "bun:test";
 import { buildLayoutTypeResolutionTable } from "../../../src/layout/layout-type-resolution";
+import type { HirImage } from "../../../src/hir/hir";
+import { hirOriginId } from "../../../src/hir/ids";
 import {
   monomorphizeWholeImage,
   seedMonoRootWork,
   selectMonoImageRoot,
 } from "../../../src/mono/monomorphizer";
 import { monoDiagnosticCode } from "../../../src/mono/diagnostics";
-import { functionId } from "../../../src/semantic/ids";
+import { functionId, imageId, itemId } from "../../../src/semantic/ids";
 import {
   genericPacketProgramForMonoTest,
   minimalClosedProgramForMonoTest,
@@ -15,6 +17,15 @@ import {
   replacementStdlibReachabilityProgramForMonoTest,
   vendoredStdlibReachabilityProgramForMonoTest,
 } from "../../support/mono/monomorphization-fixtures";
+
+function imageWithoutEntry(): HirImage {
+  return {
+    imageId: imageId(1),
+    itemId: itemId(0),
+    devices: [],
+    sourceOrigin: hirOriginId(0),
+  };
+}
 
 test("monomorphizer reports missing selected image before graph work", () => {
   const program = minimalSelectedImageProgramForMonoTest({ images: [] });
@@ -87,6 +98,39 @@ test("project function reaches package module declaration through ordinary HIR g
     expect(result.program.functions.entries().map((entry) => entry.sourceFunctionId)).toContain(
       functionId(720),
     );
+  }
+});
+
+test("monomorphization preserves instantiated external roots", () => {
+  const program = genericPacketProgramForMonoTest();
+  const result = monomorphizeWholeImage({ program });
+
+  expect(result.kind).toBe("ok");
+  if (result.kind !== "ok") return;
+
+  expect(result.program.externalRoots.map((root) => root.reason)).toEqual([
+    "imageEntry",
+    "targetRequired",
+  ]);
+  expect(result.program.externalRoots.every((root) => root.functionInstanceId.length > 0)).toBe(
+    true,
+  );
+  expect(
+    result.program.externalRoots.find((root) => root.reason === "imageEntry")?.functionInstanceId,
+  ).toBe(result.program.image.entryFunctionInstanceId);
+});
+
+test("missing selected image entry is diagnosed before producing external roots", () => {
+  const program = minimalSelectedImageProgramForMonoTest({
+    images: [imageWithoutEntry()],
+  });
+  const result = monomorphizeWholeImage({ program });
+
+  expect(result.kind).toBe("error");
+  if (result.kind === "error") {
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      monoDiagnosticCode("MONO_SELECTED_IMAGE_ENTRY_MISSING"),
+    ]);
   }
 });
 

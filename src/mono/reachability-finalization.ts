@@ -18,7 +18,6 @@ import type {
   MonomorphizedHirProgram,
   MonoPlaceProjection,
   MonoPlaceRoot,
-  MonoPlatformContractEdge,
   MonoProofMetadata,
   MonoProofOwner,
   MonoResourcePlace,
@@ -29,6 +28,9 @@ import type {
 } from "./mono-hir";
 import { collectReachablePlatformPrimitiveIds } from "./platform-primitives";
 import { instantiateMonoProofMetadata } from "./proof-metadata-instantiator";
+import { buildMonoExternalRoots } from "./mono-external-roots";
+import { buildMonoResolvedCallTargetTable } from "./resolved-call-targets";
+import { buildMonoTable, proofMetadataIdKey } from "./proof-metadata-tables";
 import {
   createReachabilityNormalizationContext,
   type ReachabilityResult,
@@ -43,6 +45,7 @@ import { monoTypeAncestry, recursiveFieldKindProvider } from "./type-instantiato
 
 export function finalizeReachability(state: ReachabilityState): ReachabilityResult {
   const sortedFunctions = sortFunctionInstances(state.functionInstances);
+  const resolvedCallTargets = buildMonoResolvedCallTargetTable(state);
   const sortedTypes = sortTypeInstances(state.typeInstances);
   const entryInstanceId = entryFunctionInstanceIdFor({ state, image: state.image });
   const sortedEdges = sortInstantiationEdges(state.graphEdges);
@@ -62,7 +65,6 @@ export function finalizeReachability(state: ReachabilityState): ReachabilityResu
     imageInstanceId: state.imageInstanceId,
     source: { kind: "image", imageId: state.image.imageId },
     canonicalInstanceKeys: state.canonicalInstanceKeys,
-    reachablePlatformEdgeKeys: new Set(state.platformContractEdges.map(monoPlatformEdgeKey)),
   });
   if (proofMetadataResult.kind === "error") {
     state.diagnostics.push(...proofMetadataResult.diagnostics);
@@ -71,15 +73,29 @@ export function finalizeReachability(state: ReachabilityState): ReachabilityResu
     proofMetadataResult.kind === "ok"
       ? proofMetadataResult.proofMetadata
       : emptyMonoProofMetadata();
-  const proofMetadata = mergePlatformContractEdges(baseProofMetadata, state.platformContractEdges);
+  const proofMetadata: MonoProofMetadata = {
+    ...baseProofMetadata,
+    platformContractEdges: buildMonoTable(
+      state.platformContractEdges,
+      (entry) => proofMetadataIdKey(entry.edgeId),
+      (id) => proofMetadataIdKey(id),
+    ),
+  };
+  const externalRoots = buildMonoExternalRoots({
+    program: state.program,
+    functionTableLookup: state.functionTableLookup,
+    diagnostics: state.diagnostics,
+  });
   const programWithoutPrimitiveIds: MonomorphizedHirProgram = {
     image: imageRecord,
+    externalRoots,
     functions: buildMonoFunctionTable(sortedFunctions),
     types: buildMonoTypeTable(sortedTypes),
     validatedBuffers: buildMonoValidatedBufferTable(state.validatedBuffers),
     proofMetadata,
     instantiationGraph: { edges: sortedEdges },
     origins: state.program.origins,
+    resolvedCallTargets,
     reachablePlatformPrimitiveIds: [],
   };
   const reachablePlatformPrimitiveIds = collectReachablePlatformPrimitiveIds(
@@ -264,41 +280,6 @@ function imageResourceKindContext(state: ReachabilityState): MonoResourceKindCon
     }),
     canonicalInstanceKey: String(state.imageInstanceId),
   };
-}
-
-function mergePlatformContractEdges(
-  base: MonoProofMetadata,
-  additional: readonly MonoPlatformContractEdge[],
-): MonoProofMetadata {
-  if (additional.length === 0) return base;
-  const byEdgeId = new Map<string, MonoPlatformContractEdge>();
-  for (const edge of base.platformContractEdges.entries()) {
-    byEdgeId.set(monoPlatformEdgeKey(edge), edge);
-  }
-  for (const edge of additional) {
-    byEdgeId.set(monoPlatformEdgeKey(edge), edge);
-  }
-  const combined: MonoPlatformContractEdge[] = [...byEdgeId.values()].sort((left, right) =>
-    monoPlatformEdgeKey(left) < monoPlatformEdgeKey(right)
-      ? -1
-      : monoPlatformEdgeKey(left) > monoPlatformEdgeKey(right)
-        ? 1
-        : 0,
-  );
-  const platformContractEdges: MonoProofMetadata["platformContractEdges"] = {
-    get: (id) =>
-      combined.find(
-        (entry) =>
-          `${String(entry.edgeId.instanceId)}:${String(entry.edgeId.hirId)}` ===
-          `${String(id.instanceId)}:${String(id.hirId)}`,
-      ),
-    entries: () => combined,
-  };
-  return { ...base, platformContractEdges };
-}
-
-function monoPlatformEdgeKey(edge: MonoPlatformContractEdge): string {
-  return `${String(edge.edgeId.instanceId)}:${String(edge.edgeId.hirId)}`;
 }
 
 function assertReachablePlatformPrimitiveIdsConsistent(input: {

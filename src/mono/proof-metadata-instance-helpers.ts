@@ -3,7 +3,6 @@ import type {
   HirFactContent,
   HirPlaceProjection,
   HirPlaceRoot,
-  HirPlatformContractEdge,
   HirResourcePlace,
 } from "../hir/hir";
 import type { HirExpressionId, HirLocalId, HirProofOwner } from "../hir/ids";
@@ -45,27 +44,6 @@ import {
   type MonoSubstitution,
 } from "./substitution";
 import { monoTypeAncestry, recursiveFieldKindProvider } from "./type-instantiator";
-
-export function shouldInstantiatePlatformEdge(input: {
-  readonly record: HirPlatformContractEdge;
-  readonly instance: ProofOwnerInstance;
-  readonly reachablePlatformEdgeKeys?: ReadonlySet<string>;
-}): boolean {
-  if (input.reachablePlatformEdgeKeys === undefined) return true;
-  return input.reachablePlatformEdgeKeys.has(
-    platformEdgeInstanceKey({
-      instanceId: input.instance.instanceId,
-      hirId: input.record.edgeId.id,
-    }),
-  );
-}
-
-function platformEdgeInstanceKey(input: {
-  readonly instanceId: MonoInstanceId;
-  readonly hirId: import("../hir/ids").HirPlatformContractEdgeId;
-}): string {
-  return `${String(input.instanceId)}:${String(input.hirId)}`;
-}
 
 export type ProofOwnerInstance =
   | MonoFunctionInstance

@@ -299,6 +299,9 @@ function operandForExpression(input: {
       return {
         kind: "takeOnlyCall",
         call: input.expression.kind.call,
+        callExpressionId: input.expression.expressionId,
+        resultType: input.expression.type,
+        resultResourceKind: input.expression.resourceKind,
         resultPlace,
       };
     }

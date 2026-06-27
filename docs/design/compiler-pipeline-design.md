@@ -31,6 +31,14 @@ selection, linking, relocation emission, and final PE/COFF image writing.
   image writing.
 - Keep compiler back-end layers independent from language concepts such as
   `take`, `requires`, unique edge roots, or validated-buffer syntax.
+- Use proof acceptance to create optimization authority: checked MIR plus a
+  certified fact packet should lower into a separate OptIR designed for
+  aggressive whole-image optimization.
+- Use bounded, fact-aware local optimization policies in the production
+  compiler instead of a global compile-time cost oracle.
+- Keep optimization scoring as an opt-in test/development scorecard that audits
+  OptIR and register-selection policy quality without participating in ordinary
+  compile-time accept/reject decisions.
 - Keep the binary spine independently testable while requiring the production
   compiler to pass the full semantic and proof pipeline before emitting trusted
   artifacts.
@@ -46,6 +54,13 @@ selection, linking, relocation emission, and final PE/COFF image writing.
   hidden lowerings, or bypasses around ordinary checks.
 - The AArch64 backend does not treat aggressive optimization as a correctness
   boundary.
+- The compiler does not lower the whole image for every optimization candidate
+  and use a global score as the normal accept/reject rule.
+- The optimization scorecard is not public runtime gas, not an exact cycle
+  predictor, and not a production compile-time decision engine.
+- The compiler does not require a generic target-independent LIR while AArch64
+  is the only backend. OptIR is the optimization workbench; AArch64 machine IR
+  is the target-lowering workbench.
 - The proof engine should use a deterministic, bounded entailment model.
   Structural facts and interval/comparison reasoning are required; any solver
   extension must preserve deterministic certificates and diagnostics.
@@ -74,11 +89,26 @@ Load-bearing risks:
   facts exist
 - the platform primitive boundary must be small and explicit enough that a
   replacement standard library cannot accidentally rely on compiler magic
+- OptIR optimizations must preserve the authority of the checked fact packet;
+  an optimization pass must not silently assume proof facts that were not
+  certified or derived from certified facts by a checked pass invariant
+- compile-time optimization policies must stay local and bounded; they must not
+  grow into hidden whole-pipeline search
+- local optimization heuristics can drift away from the offline scorecard unless
+  debug/scorecard runs record decision logs and score bucket movement
+- scorecard metrics can be overfit by pass-order search, threshold search, or
+  ML-guided proposals unless reports include held-out cases, worst-regression
+  gates, benchmark anchors when available, and human review
 
 This document is the pipeline roadmap. It does not fully define the proof
 calculus. A companion proof-semantics design should define the core resource
 state, checking judgments, fact language, trusted axioms, and failure diagnostic
 model before the production checker is treated as settled.
+
+The optimization scorecard is defined separately in
+`docs/design/opt-ir-cost-semantics-design.md`. This pipeline design treats that
+scorecard as a development and test subsystem, not as part of production
+compilation authority.
 
 ## End-To-End Shape
 
@@ -96,6 +126,8 @@ Source files and package roots
   -> proof MIR / SSA
   -> proof and resource checks
   -> checked MIR with certified facts
+  -> OptIR construction
+  -> OptIR optimization
   -> AArch64 machine IR
   -> AArch64 machine code
   -> internal object model
@@ -104,22 +136,45 @@ Source files and package roots
   -> one .efi file
 ```
 
+Opt-in development tooling observes selected pipeline boundaries:
+
+```text
+representative optimization fixtures
+  -> capture pre/post OptIR or register-selection artifacts
+  -> OptimizationScorecard
+  -> score reports, baselines, ablations, and policy-search recommendations
+```
+
+The scorecard is deliberately not in the production artifact path.
+
 The important design rule is that checks should run at the layer where the
 required information is clearest. HIR keeps source intent. Monomorphization and
 layout make image-specific types and representation facts concrete. Proof MIR
 gives a CFG, dominance, explicit values, and explicit exits. Later codegen
 layers should see only already-proven executable behavior.
 
-A separate target-independent low-level IR is optional, not mandatory. Checked
-MIR is the important proof boundary. For an AArch64-only compiler, the next
-lowering may go directly from checked MIR and its certified fact tables to an
-AArch64-owned machine IR. A generic LIR should exist only when multiple
-backends need a shared target-independent lowering point.
+Checked MIR is the important proof boundary, not the optimizer's ideal working
+format. After proof acceptance, the compiler lowers checked MIR plus its
+certified fact packet into OptIR: a separate, rewrite-friendly representation
+for whole-image optimization. OptIR may be target-selected and layout-aware, but
+it should remain above physical registers, stack slots, instruction encodings,
+and AArch64 calling-convention placement. For an AArch64-only compiler, OptIR
+can lower directly to an AArch64-owned machine IR. A generic LIR should exist
+only when multiple backends need a shared target-independent lowering point
+below OptIR.
 
 The standard library participates in this shape as source. The module graph may
 load a default vendored stdlib, a user fork, or no stdlib at all. After module
 loading, stdlib modules and project modules follow the same frontend, semantic,
 HIR, proof, and codegen path.
+
+Production optimization is driven by approved local policies. Those policies
+may use certified bounds, noalias, layout, branch, effect, hotness, and local
+register-pressure facts to choose among bounded alternatives. They must not
+consult the offline scorecard, scorecard baselines, or benchmark data during
+ordinary compilation. In debug and scorecard runs, policies should emit
+decision logs so the scorecard can audit whether policy choices and score
+bucket movement agree.
 
 ## Repository Shape
 
@@ -183,6 +238,12 @@ src/
     validation.ts
     terminal.ts
 
+  checked-mir/
+    index.ts
+    checked-mir.ts
+    certified-facts.ts
+    checker-output.ts
+
   layout/
     type-layout.ts
     abi-layout.ts
@@ -192,10 +253,28 @@ src/
     reachable-program.ts
     monomorphizer.ts
 
+  opt-ir/
+    index.ts
+    program.ts
+    cfg.ts
+    values.ts
+    regions.ts
+    effects.ts
+    certified-facts.ts
+    vector-types.ts
+    lower-checked-mir.ts
+    passes/
+      pipeline.ts
+      proof-erasure.ts
+      inlining.ts
+      scalar-simplification.ts
+      memory-optimization.ts
+      vectorization.ts
+
   codegen/
     aarch64/
       machine-ir.ts
-      lower-checked-mir.ts
+      lower-opt-ir.ts
       abi.ts
       instruction.ts
       instruction-selector.ts
@@ -241,6 +320,9 @@ src/
     compile-image.ts
     pipeline.ts
 
+scripts/
+  optimization-score.ts
+
 stdlib/
   wrela-std/
     core/
@@ -257,6 +339,16 @@ tests/
       reference-linker.ts
       reference-mir-interpreter.ts
       reference-pe-reader.ts
+  optimization/
+    scorecard/
+      optimization-score-runner.ts
+      optimization-score-profile.ts
+      score-number.ts
+      score-report.ts
+      opt-ir/
+      register/
+      fixtures/
+      baselines/
 ```
 
 ## Standard Library And Platform Primitive Boundary
@@ -603,6 +695,8 @@ Typed HIR and proof-relevant surface
   -> Proof MIR / SSA
   -> proof and resource checks
   -> Checked MIR with certified facts
+  -> OptIR
+  -> optimized OptIR
   -> AArch64 target lowering
 ```
 
@@ -640,6 +734,15 @@ terminal/exit closure facts, concrete layout and ABI facts, and origin maps back
 to source/HIR/proof nodes. These facts are the main place where Wrela-specific
 optimizations become available without making the back end understand the full
 proof language.
+
+Checked MIR and the certified fact packet are still not the optimization data
+structure. Checked MIR is the certificate-carrying source of truth: it preserves
+the accepted executable graph, proof-derived IDs, origins, and fact authority.
+The optimizer should work on OptIR, a separate data structure derived from
+checked MIR plus the fact packet. OptIR may discard proof-only operations,
+normalize operations, choose explicit regions, introduce memory/effect SSA, and
+reshape the graph aggressively, but every fact it exploits must be certified or
+derived from certified facts by a checked pass invariant.
 
 ```text
 MirFunction
@@ -967,28 +1070,203 @@ call imply the callee's `requires` clauses. The production checker should prefer
 structural matching and interval facts; any general solver must extend the same
 certificate model rather than replace it.
 
-## Lowering After Checks
+## OptIR After Checks
 
-Once Proof MIR is checked, lower to the target backend's machine IR:
+Once Proof MIR is checked, lower checked MIR plus the certified fact packet into
+OptIR. OptIR is the optimization workbench. It is not proof MIR, checked MIR, or
+machine IR. Its job is to make both ordinary compiler optimizations and
+Wrela-specific proof-powered optimizations easy to express and validate.
 
-- remove proof-only operations while preserving checked optimization facts in
-  side tables
-- lower high-level calls to concrete function IDs
-- lower validated-buffer field access to loads with checked offsets
-- lower enum cases to concrete representations
-- lower resource operations to ordinary value movement or no-ops as appropriate
-- preserve debug/source origin tables for diagnostics and future tooling
-- lower directly to AArch64 machine IR when AArch64 is the only backend;
-  introduce a shared target-independent LIR only when multiple backends need it
+OptIR should contain:
 
-Back-end layers should not need to know why a move was legal, but they should be
-able to consume certified facts such as noalias regions, field-disjointness,
-zero-sized proof/resource values, proven validated-buffer bounds, platform
-primitive effects, ABI classifications, and concrete layout records. This keeps
-Proof MIR checker-first while still allowing later passes to perform Wrela-only
-optimizations such as move elision, in-place updates, scalar replacement,
-bounds-check elimination, zero-copy packet views, wrapper elimination, direct
-primitive lowering, cleanup-path pruning, aggregate flattening, and unboxing.
+- SSA runtime values with block arguments for scalar joins
+- explicit memory regions, such as packet source, validated packet payload,
+  stack local, image device, firmware table, runtime-owned memory, and constant
+  data
+- per-region memory SSA or effect tokens where they make reordering, forwarding,
+  and dead-store elimination precise
+- structured certified fact attachments imported from the checked fact packet
+- canonical low-level operations: load, store, address arithmetic, field
+  extraction/insertion, integer arithmetic, comparisons, calls, branches,
+  switches, returns, panics, and traps
+- layout-aware addresses with concrete offsets, sizes, alignments, endian
+  conversions, ABI classifications, and field paths
+- call effect summaries for source, runtime, and certified platform calls
+- first-class vector types and vector operations, even before the vectorizer is
+  implemented
+- provenance links back to checked MIR, Proof MIR, HIR origins, layout facts,
+  and source spans
+
+Certified facts should be exposed through queryable pass APIs, not scattered as
+opaque comments on operations. A pass should be able to ask whether two regions
+alias, whether a byte range is proven in bounds, whether a load is volatile,
+whether a platform call can write a region, whether a function is terminal, or
+whether a proof-only value has no runtime representation.
+
+The first OptIR lowering should erase proof-only operations only after proof
+acceptance. It should preserve the facts that make erasure and optimization
+valid:
+
+- ownership, noalias, and field-disjointness
+- zero-sized proof/resource values
+- validated-buffer bounds and packet/source relationships
+- concrete layout offsets, sizes, alignments, and endian markers
+- private-state generation facts
+- platform primitive preconditions, postconditions, and effect summaries
+- terminal and `Never` reachability facts
+- ABI classifications and call lowering constraints
+- origin mappings for diagnostics, debug info, and optimization explanations
+
+This gives later passes unusual authority. For example, a validated-buffer read
+can lower to an ordinary load from a packet-source region with a certified
+byte-range fact. A platform abstraction wrapper can inline away when its
+contract says the effect boundary is unchanged. A move/copy helper can vanish
+when ownership facts prove the transfer has no runtime work.
+
+OptIR passes may contain local compile-time policies. A policy is allowed to
+choose among a finite set of alternatives the pass already produced, such as:
+
+- inline or keep a known call
+- choose one unroll factor from a small set
+- retain a branch or lower it to conditional dataflow
+- hoist, remove, or retain a runtime check
+- materialize a derived value or recompute it later
+
+Those decisions may use certified facts and local estimates, but they are not a
+global score search. They must not run the whole optimizer recursively, consult
+scorecard baselines, or use host benchmark data during production compilation.
+In debug or scorecard runs, an OptIR policy should emit a compact decision log:
+
+```text
+decision kind
+chosen alternative
+rejected alternatives
+certified facts used
+local feature vector
+short explanation
+```
+
+The scorecard consumes those logs offline to audit whether policy choices
+actually move the expected score buckets.
+
+### OptIR Pass Pipeline
+
+The initial pass order should be staged rather than all-at-once:
+
+```text
+Checked MIR + certified fact packet
+  -> OptIR construction
+  -> proof erasure and canonicalization
+  -> mandatory semantic inlining
+  -> cleanup
+  -> budgeted whole-program inlining
+  -> scalar simplification
+  -> memory and region optimization
+  -> vectorization and idiom lowering
+  -> final cleanup
+  -> AArch64 machine IR lowering
+```
+
+Mandatory semantic inlining should run early for abstractions that are expected
+to disappear after proof acceptance:
+
+- proof-only wrappers after obligations are discharged
+- tiny validation and accessor helpers
+- monomorphized generic wrappers
+- newtype and resource wrapper shims
+- functions whose only runtime purpose was to carry proof contracts
+- single-call internal thunks
+- platform abstraction wrappers whose certified effects match the wrapped
+  primitive
+
+Budgeted whole-program inlining should run after that cleanup. The image is
+closed and monomorphized, so the inliner can use the whole call graph, but it
+must still respect code size, recursive SCCs, loop nesting, cold paths, external
+entry roots, device handlers, hardware callbacks, and platform/runtime effect
+boundaries.
+
+Inlining, vectorization, unrolling, and branch-lowering thresholds are ordinary
+local policy inputs. Their values are reviewed compiler policy, not derived
+from scorecard state during production compilation. Scorecard ablation and
+search runs may recommend changes to those policies for human review.
+
+Well-trod OptIR optimizations should include:
+
+- constant folding and algebraic simplification
+- sparse conditional constant propagation
+- dead code and dead block elimination
+- copy propagation
+- global value numbering and common subexpression elimination
+- branch and switch simplification
+- loop invariant code motion
+- dead store elimination
+- load/store forwarding
+- scalar replacement of aggregates
+- stack promotion and mem2reg-style promotion
+- escape analysis
+- tail-position cleanup where ABI lowering permits it
+
+Wrela-specific OptIR optimizations should include:
+
+- proof erasure with no runtime trace
+- bounds-check elimination from certified validated-buffer facts
+- zero-copy packet and validated-buffer field views
+- endian-aware field-load folding
+- field-disjoint noalias from structured places
+- ownership-proven move and copy elimination
+- wrapper elimination after proof obligation discharge
+- platform call specialization from certified preconditions
+- terminal and `Never` reachability pruning
+- private-state, session, and borrow artifacts erased into region facts
+- firmware table access optimized through certified layout and provenance
+- validated parser pipelines collapsed into direct loads, comparisons, and
+  branches
+- noalias-driven load/store motion across calls that ordinary C-style compilers
+  would need to treat conservatively
+
+### Auto-Vectorization
+
+OptIR should be vectorization-ready from the start, but vectorization should be
+a later optimization pass after scalar OptIR is stable. The first useful
+vectorizer is likely SLP vectorization over straight-line packet and layout
+code. Loop vectorization can come later.
+
+Vectorization requires:
+
+- vector value types such as `vector<u8, 16>` and `vector<u32, 4>`
+- canonical loops with induction variables, trip counts, exits, and loop-carried
+  values
+- region-aware loads and stores
+- per-load facts for bounds, alignment, aliasing, endian conversion, volatility,
+  and provenance
+- call and platform effect summaries
+- target feature gates such as `aarch64.neon`, and later SVE only if the target
+  profile supports it
+- scalar epilogues, masked operations, or exact-multiple facts for tails
+
+Vectorization must never rewrite volatile, MMIO, image-device, or firmware-table
+access unless a platform contract explicitly permits that access pattern. It is
+most natural for packet-source memory, validated-buffer payloads, stack regions,
+runtime-owned memory, constants, checksums, byte scans, fixed-width arrays,
+record validation, signature comparisons, and repeated scalar layout checks.
+
+### AArch64 Lowering Boundary
+
+OptIR lowers directly to AArch64 machine IR while AArch64 is the only backend.
+The AArch64 backend owns physical target choices:
+
+- register classes and virtual registers
+- ABI argument and return locations
+- stack frame objects
+- instruction selection
+- target-specific addressing modes
+- vector instruction selection
+- relocation references
+
+Back-end layers should not need to know why a move was legal or why a bounds
+check disappeared. They consume optimized OptIR plus preserved certified facts
+and emit target-owned machine IR. A shared target-independent LIR should be
+introduced only if a second backend creates repeated lowering logic below OptIR.
 
 ## Runtime Support
 
@@ -996,7 +1274,7 @@ Runtime support operations are compiler-owned. They are not source-facing
 intrinsic functions, an implicit standard library, or source modules with
 special privileges. They may be emitted as:
 
-- inline checked-MIR or AArch64 machine-IR expansions
+- inline OptIR or AArch64 machine-IR expansions
 - compiler-generated functions
 - target-specific instruction sequences
 - generated data or symbol references owned by the compiler
@@ -1030,7 +1308,8 @@ The AArch64 backend owns:
 
 The AArch64 backend can be deliberately conservative:
 
-- no global optimization
+- no global optimization in the backend; whole-image optimization belongs in
+  OptIR
 - simple linear-scan or local register allocation
 - conservative stack slots
 - direct calls and indirect calls
@@ -1038,6 +1317,21 @@ The AArch64 backend can be deliberately conservative:
 
 UEFI firmware calls are indirect calls through loaded function pointers. The
 compiler emits the call sequence according to the target ABI.
+
+Register selection still needs local policy decisions. Examples include:
+
+- coalesce or preserve a copy boundary
+- split a live range at a local boundary
+- spill, rematerialize, or keep a value live
+- prefer caller-save or callee-save pressure near a call-heavy region
+- choose one legal instruction form among a few AArch64 encodings
+
+These are bounded production decisions, not scorecard queries. The register
+pipeline should be deterministic, use stable tie-breakers, and expose
+debug/scorecard logs for physical-register assignments, spill slots, live-range
+split points, callee-save choices, copies, rematerializations, and allocation
+churn. The optimization scorecard uses those logs to compare register-policy
+variants offline and to flag fragile wins caused by allocation instability.
 
 ## Internal Object Model
 
@@ -1299,25 +1593,54 @@ Output: Proof MIR for each monomorphized function.
 
 Output: checked MIR with certified optimization facts, or proof diagnostics.
 
-### 10. Checked MIR To AArch64 Target Lowering
+### 10. OptIR Construction And Optimization
 
-- erase proof-only operations, not the certified facts that later optimizers and
-  code generation can safely consume
-- lower resource operations to executable effects or no-ops
-- lower field access, enum cases, calls, branches, and constants
-- preserve debug/source origin tables
-- consume checked facts for Wrela-specific optimizations such as move elision,
-  in-place updates, scalar replacement, zero-copy validated-buffer reads,
-  bounds-check elimination, wrapper elimination, direct platform primitive
-  lowering, cleanup-path pruning, aggregate flattening, and unboxing
-- lower directly to an AArch64-owned machine IR with virtual registers, frame
-  objects, ABI locations, concrete calls, branches, constants, and relocation
-  references
+- lower checked MIR plus the certified fact packet into a separate OptIR data
+  structure designed for rewrites
+- erase proof-only operations only after preserving the certified facts that
+  make erasure safe
+- normalize field access, enum cases, calls, branches, constants, layout terms,
+  and validated-buffer reads into canonical OptIR operations
+- model runtime values in SSA with block arguments
+- model memory through explicit regions and, where useful, memory SSA or
+  per-region effect tokens
+- expose ownership/noalias, field-disjointness, bounds, layout, endian,
+  volatility, terminal, platform-effect, and ABI facts through pass APIs
+- preserve source, HIR, Proof MIR, checked MIR, and layout provenance for
+  diagnostics, debugging, and optimization explanations
+- run mandatory semantic inlining for proof wrappers, validation helpers,
+  monomorphized generic shims, resource wrappers, single-call thunks, and
+  contract-preserving platform wrappers
+- run budgeted whole-program inlining over the closed monomorphized call graph,
+  with special handling for recursive SCCs, code size, cold paths, loop nesting,
+  external roots, callbacks, and platform/runtime effect boundaries
+- run ordinary scalar and memory optimizations: constant folding, SCCP, DCE,
+  GVN/CSE, copy propagation, branch simplification, LICM, dead-store
+  elimination, load/store forwarding, scalar replacement, stack promotion, and
+  escape analysis
+- run Wrela-specific optimizations: move/copy elision from ownership facts,
+  zero-copy validated-buffer reads, bounds-check elimination, endian-aware field
+  load folding, parser pipeline collapse, terminal cleanup pruning, wrapper
+  elimination, and platform call specialization
+- keep vector-capable types and operations in OptIR, with SLP vectorization as
+  the first likely vector pass and loop vectorization later
+
+Output: optimized OptIR plus preserved certified facts and provenance.
+
+### 11. OptIR To AArch64 Machine IR
+
+- lower optimized OptIR operations to target-owned AArch64 machine IR
+- select AArch64 scalar and vector instruction patterns from optimized OptIR
+- lower ABI parameter and return handling into target-owned ABI locations
+- lower optimized memory regions to stack frame objects, global symbols,
+  firmware-table accesses, runtime-owned memory, or packet/source addresses
+- preserve relocation references, symbol references, debug/source origins, and
+  any certified facts still needed by late target passes
 - defer a shared target-independent LIR until there is a second backend or a
-  clear repeated lowering abstraction
+  clear repeated lowering abstraction below OptIR
 
-Output: AArch64 machine IR with symbols, frame objects, and relocation
-references.
+Output: AArch64 machine IR with virtual registers, symbols, frame objects, ABI
+locations, concrete calls, branches, constants, and relocation references.
 
 ### Proof MIR Pipeline Extension Gates
 
@@ -1335,14 +1658,14 @@ existing pipeline must expose these contracts:
 | Layout facts              | Deterministic `readRequires`, derived case order, and canonical layout-term arrays                          |
 | Target/runtime selection  | Explicit target feature set plus closed runtime catalog from target/runtime authority passed into Proof MIR |
 | Proof-semantics companion | Loop convergence, yield safety, fact entailment, terminal closure, and cross-core ownership rules           |
-| Checked MIR fact packet   | Certified facts schema consumed by optimizers and AArch64 lowering                                          |
+| Checked MIR fact packet   | Certified facts schema consumed by OptIR and AArch64 lowering                                               |
 
 If any row is missing for a reachable construct, the owning earlier phase
 should reject before Proof MIR when possible. If the missing contract is only
 observable at the Proof MIR boundary, the builder emits a construction
 diagnostic and returns `kind: "error"`.
 
-### 11. AArch64 Backend
+### 12. AArch64 Backend
 
 - ABI classification
 - instruction selection
@@ -1353,7 +1676,7 @@ diagnostic and returns `kind: "error"`.
 
 Output: internal object code for AArch64.
 
-### 12. Internal Object Model And Linker
+### 13. Internal Object Model And Linker
 
 - sections
 - symbols
@@ -1365,7 +1688,7 @@ Output: internal object code for AArch64.
 
 Output: linked image layout.
 
-### 13. PE/COFF EFI Writer
+### 14. PE/COFF EFI Writer
 
 - PE32+ headers
 - AArch64 COFF machine type
@@ -1377,7 +1700,7 @@ Output: linked image layout.
 
 Output: one `.efi` file.
 
-### 14. UEFI AArch64 Target Driver
+### 15. UEFI AArch64 Target Driver
 
 - compiler-owned UEFI entry thunk
 - firmware ABI lowering
@@ -1387,7 +1710,34 @@ Output: one `.efi` file.
 
 Output: a UEFI AArch64 image that can be run under firmware.
 
-### 15. Full Image Validation
+### 16. Optimization Scorecard And Policy Auditing
+
+- add opt-in `optimization:score` development command outside the default
+  `agent:check` path
+- capture representative pre/post OptIR artifacts and pre/post register
+  selection artifacts
+- implement deterministic `OptIrScore` and `RegisterScore` vectors in the test
+  and development suite
+- record local policy decision logs in debug and scorecard runs, including
+  alternatives, certified facts used, local features, and explanations
+- define representative input shapes for input-sensitive fixtures instead of
+  hiding all behavior inside one averaged case
+- compare score buckets against local policy concordance declarations so policy
+  internals and scorecard vocabulary do not drift
+- track allocation churn and register-score stability for register-policy
+  comparisons
+- keep score baselines versioned by score schema, feature extractor, and score
+  profile
+- support ablation, threshold sweep, pairwise interaction, and pass-order
+  comparison runs as offline recommendations only
+- report worst-case regressions, expectation failures, code-size movement,
+  compile-time movement, and benchmark anchors when available
+
+Output: opt-in optimization score reports, baselines, and policy-audit data
+that inform human-reviewed compiler policy changes without becoming production
+compile-time authority.
+
+### 17. Full Image Validation
 
 - compile representative `uefi image` programs
 - compile with the default vendored stdlib
@@ -1395,7 +1745,7 @@ Output: a UEFI AArch64 image that can be run under firmware.
   platform primitives
 - compile a no-stdlib program that declares required `platform fn` boundaries
   directly where allowed
-- run parser/semantic/proof/codegen integration tests
+- run parser/semantic/proof/OptIR/codegen integration tests
 - run binary structure checks
 - run QEMU/OVMF smoke tests
 - compare selected high-risk subsystems against reference checkers
@@ -1434,6 +1784,7 @@ the test suite or by an optional debug-check mode.
 | requirement checks                   | fact entailment engine       | structural matcher over available facts and intervals      | expected-output tests are too sparse              |
 | layout                               | cached layout engine         | direct recursive size/alignment calculator                 | catches ABI/layout drift                          |
 | MIR lowering for small pure programs | lowering pass                | HIR/MIR interpreter comparison                             | catches semantic-preservation bugs                |
+| OptIR lowering and optimization      | OptIR pass pipeline          | checked-MIR/OptIR interpreter comparison on small programs | catches invalid proof-powered rewrites            |
 | AArch64 encoding                     | encoder                      | golden tables and decode/round-trip checks where practical | byte encoding mistakes are easy to miss           |
 | linker layout                        | linker                       | slow section/symbol/relocation validator                   | catches address and relocation bugs               |
 | PE writer                            | PE writer                    | independent PE reader and structural validator             | catches malformed `.efi` headers                  |
@@ -1483,6 +1834,7 @@ levels:
 
 - HIR or typed HIR interpreter for pure/source-shaped fragments
 - MIR interpreter for checked MIR
+- OptIR interpreter for optimized pure fragments and fakeable runtime effects
 
 For snippets without firmware effects, both interpreters should produce the
 same result. For UEFI-oriented snippets, tests can provide a fake firmware table
@@ -1492,6 +1844,7 @@ with deterministic function pointers and observable calls.
 source snippet
   -> typed HIR interpreter result
   -> MIR interpreter result
+  -> optimized OptIR interpreter result
   -> compare value result and observable effects
 ```
 
@@ -1513,6 +1866,28 @@ The binary spine should use structural reference validators:
 
 These validators should not rely on the writer's own internal data structures
 after serialization. Parse the bytes back.
+
+### Optimization Scorecard Tests
+
+The optimization scorecard is a development score suite, not a correctness
+oracle and not a default compile phase. Its infrastructure should still have
+ordinary unit tests:
+
+- fixed-point score arithmetic is deterministic
+- score bucket aggregation is canonical
+- lower scores compare as improvements
+- positive score credits are capped more aggressively than regressions
+- worst-case regressions remain visible in suite summaries
+- local policy decision logs preserve alternatives, certified facts, feature
+  vectors, and explanations
+- input shapes are reported separately before aggregation
+- register allocation churn and stability probes are reported for register
+  policy comparisons
+- score schema, feature extractor, and profile changes invalidate or explicitly
+  rebaseline score baselines
+
+The expensive representative corpus should run through an opt-in command such
+as `bun run optimization:score`, not as part of ordinary `agent:check`.
 
 ### Certificates And Traces
 
@@ -1567,23 +1942,27 @@ it before a bad `.efi` is emitted.
 ## Testing Strategy
 
 - Unit tests for every value object, IR builder, fact engine, layout algorithm,
-  encoder, relocation, linker, and PE writer.
+  OptIR pass, encoder, relocation, linker, and PE writer.
 - Integration tests at each pipeline boundary.
 - Golden byte tests for tiny AArch64 instruction sequences.
 - PE header round-trip tests that parse emitted bytes.
 - QEMU/UEFI smoke tests once binary emission exists.
 - Property tests for CFG invariants, SSA dominance, relocation bounds, and
   deterministic output.
+- Unit tests for optimization score arithmetic, reports, baseline schema
+  handling, and policy-decision log extraction.
 - Integration tests that compile equivalent programs through default stdlib,
   replacement stdlib, and direct platform-function wrappers where the language
   permits.
+- Opt-in optimization scorecard runs over representative OptIR and register
+  selection fixtures.
 - Negative tests proving stdlib modules cannot bypass platform primitive
   preconditions, resource checks, target availability, or layout obligations.
 - Negative tests proving source `platform fn` declarations cannot weaken target
   primitive contracts or bind as methods.
 - Targeted differential tests for Proof MIR facts/resource flow, requirement
-  entailment, layout, MIR lowering on small pure programs, linker layout, and PE
-  validation.
+  entailment, layout, MIR lowering on small pure programs, OptIR lowering and
+  optimization, linker layout, and PE validation.
 
 Required invariants:
 
@@ -1601,6 +1980,18 @@ Methods wrap certified freestanding platform functions; they do not bind
 directly to target primitives.
 MIR blocks have valid terminators.
 SSA values have one definition.
+OptIR preserves checked MIR observable behavior and consumes only certified or
+pass-derived facts.
+OptIR never vectorizes volatile, MMIO, image-device, or firmware-table access
+without an explicit platform contract allowing that access pattern.
+Local optimization policies choose only among bounded alternatives already
+produced by a pass.
+Production compilation never consults optimization scorecard baselines or
+benchmark data while deciding ordinary optimization alternatives.
+Scorecard runs are opt-in and emit evidence for human-reviewed policy changes;
+they do not automatically enable, disable, or reorder production optimizations.
+Register-policy scorecard comparisons report allocation churn and worst-case
+regressions, not only average score movement.
 Every live obligation is discharged or intentionally transferred on each exit.
 Linked symbols resolve exactly once.
 Relocations point inside valid sections.
@@ -1615,6 +2006,26 @@ Repeated builds produce identical bytes for identical inputs.
   the core problem.
 - Keep proof MIR before destructive lowering.
 - Preserve checked proof-derived facts after proof-only operations are erased.
+- Treat checked MIR as the proof boundary and OptIR as the optimization
+  workbench derived from checked MIR plus certified facts.
+- Keep OptIR above physical target choices such as registers, stack slots,
+  instruction encodings, and ABI location assignment.
+- Skip a generic LIR while AArch64 is the only backend; introduce one only when
+  repeated target-independent lowering below OptIR appears.
+- Prefer staged whole-program inlining: mandatory semantic inlining first,
+  budgeted call-graph inlining after cleanup.
+- Make OptIR vectorization fact-gated and target-feature-gated, with SLP before
+  general loop vectorization.
+- Use bounded, fact-aware local policies for compile-time optimization choices.
+- Keep the optimization scorecard outside production compile-time authority.
+- Use scorecard runs to audit and tune OptIR and register-selection policies
+  through human-reviewed changes.
+- Keep scorecard baselines versioned by schema, extractor, and profile so
+  optimizer movement is distinguishable from measurement movement.
+- Report input-sensitive optimization behavior through separate scorecard input
+  shapes.
+- Treat scorecard search and ML recommendations as offline evidence that needs
+  benchmark anchors or explicit score-only labeling.
 - Keep the back end ignorant of language obligations.
 - Treat the standard library as source, not compiler authority.
 - Make platform primitive contracts explicit, target-gated, certified before
@@ -1634,6 +2045,8 @@ Repeated builds produce identical bytes for identical inputs.
 
 ## References
 
+- Optimization scorecard details:
+  `docs/design/opt-ir-cost-semantics-design.md`
 - UEFI Specification: image loading, image entry, system table, and AArch64 UEFI
   behavior: <https://uefi.org/specs/UEFI/2.10/02_Overview.html> and
   <https://uefi.org/specs/UEFI/2.10/04_EFI_System_Table.html>

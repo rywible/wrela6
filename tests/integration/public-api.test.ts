@@ -46,3 +46,14 @@ describe("lexer public api", () => {
     expect(typeof wrela.hir.lowerTypedHir).toBe("function");
   });
 });
+
+describe("proof-mir public api", () => {
+  test("exports proof-mir namespace with builder and diagnostics", () => {
+    expect(wrela.proofMir).toBeDefined();
+    expect(typeof wrela.proofMir.buildProofMir).toBe("function");
+    expect(typeof wrela.proofMir.proofMirDiagnostic).toBe("function");
+    expect(typeof wrela.proofMir.proofMirDiagnosticCode).toBe("function");
+    expect(typeof wrela.proofMir.sortProofMirDiagnostics).toBe("function");
+    expect(typeof wrela.proofMir.proofMirBlockId).toBe("function");
+  });
+});

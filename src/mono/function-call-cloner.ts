@@ -214,8 +214,29 @@ export function cloneCall(input: {
     if (normalized.kind === "error") return { kind: "error" };
     typeArguments.push(normalized.type);
   }
+  const platformBinding =
+    input.call.calleeFunctionId !== undefined
+      ? input.program.monoClosure.certifiedPlatformBindings.get(input.call.calleeFunctionId)
+      : undefined;
+  const resolvedTarget =
+    input.call.calleeFunctionId !== undefined &&
+    input.call.recovered !== true &&
+    platformBinding === undefined
+      ? {
+          kind: "sourceFunction" as const,
+          targetFunctionInstanceId: canonicalFunctionInstanceId({
+            functionId: input.call.calleeFunctionId,
+            ...(input.call.ownerTypeId !== undefined
+              ? { ownerTypeId: input.call.ownerTypeId }
+              : {}),
+            ownerTypeArguments,
+            functionTypeArguments: typeArguments,
+          }),
+        }
+      : undefined;
   const call: MonoCallExpression = {
     callee: callee.expression,
+    ...(resolvedTarget !== undefined ? { resolvedTarget } : {}),
     ...(input.call.calleeFunctionId !== undefined
       ? { calleeFunctionId: input.call.calleeFunctionId }
       : {}),

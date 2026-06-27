@@ -69,6 +69,7 @@ import {
 import { type MonoCheckedType, type MonomorphizedHirProgram } from "../../../src/mono/mono-hir";
 import type { MonoDiagnostic } from "../../../src/mono/diagnostics";
 import { type MonoInstanceId, monoInstanceId } from "../../../src/mono/ids";
+import { monoPlatformContractEdgeKey } from "../../../src/mono/mono-hir";
 import {
   type MonoTypeNormalizationContext,
   normalizeMonoCheckedType,
@@ -1620,16 +1621,34 @@ export function monomorphizedProgramWithPlatformEdgesForTest(
     (idString, index) => {
       const primitiveId = idString as PlatformPrimitiveId;
       const edgeIdId = (index + 1) as never;
+      const callerInstanceId = monoInstanceId("fn:caller");
+      const contractId = `${idString}_contract` as never;
+      const targetId = "uefi-aarch64" as never;
+      const callExpressionId = {
+        hirId: (index + 100) as never,
+        instanceId: callerInstanceId,
+      };
       return {
         edgeId: {
-          owner: { kind: "function", instanceId: monoInstanceId("fn:caller") },
+          owner: { kind: "function", instanceId: callerInstanceId },
           hirId: edgeIdId,
-          instanceId: monoInstanceId("fn:caller"),
+          instanceId: callerInstanceId,
         },
         sourceFunctionId: functionId(1),
         primitiveId,
-        contractId: `${idString}_contract` as never,
-        targetId: "uefi-aarch64" as never,
+        contractId,
+        targetId,
+        callExpressionId,
+        instantiatedOwnerTypeArguments: [],
+        instantiatedFunctionTypeArguments: [],
+        monomorphicEdgeKey: monoPlatformContractEdgeKey(
+          `caller:${callerInstanceId}|call:${index + 100}|callee:${String(functionId(1)).padStart(12, "0")}|owner:<>|fn:<>`,
+        ),
+        abi: {
+          targetId,
+          primitiveId,
+          contractId,
+        },
         ensuredFacts: [],
         sourceOrigin: "test:0:0",
       };
@@ -1651,6 +1670,7 @@ export function monomorphizedProgramWithPlatformEdgesForTest(
       devices: [],
       sourceOrigin: "test:0:0",
     },
+    externalRoots: [],
     functions: {
       get: () => undefined,
       entries: () => [],
@@ -1679,6 +1699,10 @@ export function monomorphizedProgramWithPlatformEdgesForTest(
     },
     instantiationGraph: { edges: [] },
     origins: createHirOriginAllocator(),
+    resolvedCallTargets: {
+      get: () => undefined,
+      entries: () => [],
+    },
     reachablePlatformPrimitiveIds: [...new Set(primitiveIds)]
       .sort()
       .map((id) => id as PlatformPrimitiveId),

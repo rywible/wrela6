@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type {
   MonomorphizedHirProgram,
+  MonoExternalRoot,
   MonoFunctionInstance,
   MonoTypeInstance,
   MonoProofMetadata,
@@ -14,6 +15,7 @@ import { HIR_EXPRESSION_KINDS, HIR_STATEMENT_KINDS } from "../../../src/hir";
 
 type PublicMonoSmoke = {
   readonly program?: MonomorphizedHirProgram;
+  readonly externalRoot?: MonoExternalRoot;
   readonly functionInstance?: MonoFunctionInstance;
   readonly typeInstance?: MonoTypeInstance;
   readonly proofMetadata?: MonoProofMetadata;

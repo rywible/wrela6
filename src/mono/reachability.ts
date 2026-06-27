@@ -18,20 +18,22 @@ import {
 } from "./instantiation-key";
 import type {
   MonoCheckedType,
+  MonoExpression,
   MonoExpressionId,
   MonoFunctionInstance,
   MonoInstantiatedProofId,
   MonoInstantiationEdgeSource,
-  MonoPlatformContractEdge,
   MonoProofOwner,
   MonoTypeInstance,
 } from "./mono-hir";
+import { buildMonoPlatformContractEdge } from "./platform-contract-edge";
 import { seedMonoRootWorkResult, type MonoRootWorkItem } from "./monomorphizer";
 import {
   platformEdgeBindingMismatch,
   platformEnsuredFactMismatch,
 } from "./platform-edge-consistency";
 import { finalizeReachability } from "./reachability-finalization";
+import { recordCallResolvedTarget } from "./call-resolved-target-application";
 import { validateInstantiationGraphForCycles } from "./reachability-graph";
 import {
   createReachabilityNormalizationContext,
@@ -440,6 +442,27 @@ function processCertifiedPlatformFunctionWorkItem(
     return;
   }
 
+  const callExpression = lookupMonoCallExpression({
+    state: input.state,
+    callerInstanceId,
+    callExpressionId: input.caller.callExpressionId,
+  });
+  if (callExpression === undefined) {
+    input.state.diagnostics.push(
+      monoDiagnostic({
+        severity: "error",
+        code: "MONO_PLATFORM_CONTRACT_EDGE_MISSING",
+        message:
+          "Reachable call to certified platform function has no resolvable mono call expression.",
+        ownerKey: `function:${input.functionId}`,
+        rootCauseKey: "platform-edge",
+        stableDetail: `missing-call-expression:${input.canonicalKey}`,
+        sourceOrigin: input.sourceOrigin,
+      }),
+    );
+    return;
+  }
+
   const ownerInstanceId = input.caller.instanceId;
   const monoOwner: MonoProofOwner = { kind: "function", instanceId: ownerInstanceId };
   const edgeId: MonoInstantiatedProofId<typeof edge.edgeId.id> = {
@@ -452,22 +475,30 @@ function processCertifiedPlatformFunctionWorkItem(
     hirId: id.id,
     instanceId: ownerInstanceId,
   }));
-  const monoEdge: MonoPlatformContractEdge = {
+  const monoEdge = buildMonoPlatformContractEdge({
     edgeId,
-    sourceFunctionId: edge.sourceFunctionId,
-    primitiveId: edge.primitiveId,
-    contractId: edge.contractId,
-    targetId: edge.targetId,
+    hirEdge: edge,
+    callExpressionId: input.caller.callExpressionId,
+    callerInstanceId: ownerInstanceId,
+    calleeFunctionId: input.functionId,
+    ownerTypeArguments: callExpression.call.ownerTypeArguments,
+    functionTypeArguments: callExpression.call.typeArguments,
     ...(edge.certificate !== undefined ? { certificate: edge.certificate } : {}),
     ...(sourceRequirementIds !== undefined ? { sourceRequirementIds } : {}),
-    ...(edge.callExpressionId !== undefined
-      ? { callExpressionId: input.caller.callExpressionId }
-      : {}),
     ...(edge.callOrigin !== undefined ? { callOrigin: String(edge.callOrigin) } : {}),
-    ensuredFacts: edge.ensuredFacts,
-    sourceOrigin: String(edge.sourceOrigin),
-  };
+  });
   input.state.platformContractEdges.push(monoEdge);
+  const resolvedTarget = {
+    kind: "certifiedPlatform" as const,
+    targetPlatformEdgeId: edgeId,
+    primitiveId: edge.primitiveId,
+  };
+  recordCallResolvedTarget({
+    state: input.state,
+    callerInstanceId: ownerInstanceId,
+    callExpressionId: input.caller.callExpressionId,
+    resolvedTarget,
+  });
 }
 
 interface ProcessTypeWorkItemInput {
@@ -826,6 +857,24 @@ function processOutgoingFunctionEdges(input: ProcessOutgoingFunctionEdgesInput):
             callExpressionId,
           }
         : { kind: "function", instanceId: input.owner.instanceId };
+    if (callExpressionId !== undefined) {
+      recordCallResolvedTarget({
+        state: input.state,
+        callerInstanceId: input.owner.instanceId,
+        callExpressionId,
+        resolvedTarget: {
+          kind: "sourceFunction",
+          targetFunctionInstanceId: canonicalFunctionInstanceId({
+            functionId: edge.targetFunctionId,
+            ...(edge.targetOwnerTypeId !== undefined
+              ? { ownerTypeId: edge.targetOwnerTypeId }
+              : {}),
+            ownerTypeArguments: edge.targetOwnerTypeArguments ?? [],
+            functionTypeArguments: edge.targetFunctionTypeArguments ?? [],
+          }),
+        },
+      });
+    }
     processFunctionWorkItem({
       state: input.state,
       functionId: edge.targetFunctionId,
@@ -853,4 +902,15 @@ function outgoingEdgeSortKey(edge: MonoOutgoingEdge): string {
     edge.callExpressionId === undefined ? "" : instantiatedHirIdKey(edge.callExpressionId),
     edge.sourceOrigin,
   ].join("|");
+}
+
+function lookupMonoCallExpression(input: {
+  readonly state: ReachabilityState;
+  readonly callerInstanceId: MonoInstanceId;
+  readonly callExpressionId: MonoExpressionId;
+}): Extract<MonoExpression["kind"], { readonly kind: "call" }> | undefined {
+  const caller = input.state.functionTableLookup.get(String(input.callerInstanceId));
+  const expression = caller?.bodyIndex?.expressions.get(input.callExpressionId);
+  if (expression?.kind.kind !== "call") return undefined;
+  return expression.kind;
 }

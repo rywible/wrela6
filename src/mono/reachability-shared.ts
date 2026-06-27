@@ -9,6 +9,7 @@ import type {
   MonoInstantiationEdge,
   MonomorphizedHirProgram,
   MonoPlatformContractEdge,
+  MonoResolvedCallTarget,
   MonoTypeInstance,
   MonoValidatedBuffer,
 } from "./mono-hir";
@@ -45,6 +46,7 @@ export interface ReachabilityState {
   readonly typeSourceForKey: Map<string, TypeId>;
   readonly ancestry: MonoTypeAncestry;
   readonly canonicalInstanceKeys: ReadonlyMap<HirProofOwner, string>;
+  readonly callResolvedTargets: Map<string, MonoResolvedCallTarget>;
 }
 
 export function createReachabilityNormalizationContext(
@@ -88,6 +90,7 @@ export function createReachabilityState(input: {
     typeSourceForKey: new Map<string, TypeId>(),
     ancestry: monoTypeAncestry(),
     canonicalInstanceKeys,
+    callResolvedTargets: new Map<string, MonoResolvedCallTarget>(),
   };
 }
 

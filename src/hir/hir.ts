@@ -343,6 +343,9 @@ export type HirTakeOperand =
   | {
       readonly kind: "takeOnlyCall";
       readonly call: HirCallExpression;
+      readonly callExpressionId: HirExpressionId;
+      readonly resultType: CheckedType;
+      readonly resultResourceKind: CheckedResourceKind;
       readonly resultPlace: HirResourcePlace;
     }
   | { readonly kind: "error"; readonly expression?: HirExpression };

@@ -34,6 +34,7 @@ export const MONO_DIAGNOSTIC_CODES = [
   "MONO_PLATFORM_EDGE_UNRESOLVED_POLYMORPHISM",
   "MONO_DUPLICATE_CANONICAL_INSTANCE_KEY",
   "MONO_DECLARED_TYPE_PARAMETER_KEY_INVALID",
+  "MONO_DROPPED_EXTERNAL_ROOT",
 ] as const;
 
 export type MonoDiagnosticCode = (typeof MONO_DIAGNOSTIC_CODES)[number] & {
@@ -212,6 +213,11 @@ export const MONO_DIAGNOSTIC_REGISTRY: Record<MonoDiagnosticCode, MonoDiagnostic
     severity: "error",
     category: "inconsistent-HIR",
     rootCauseKey: "generic-parameter-order",
+  },
+  MONO_DROPPED_EXTERNAL_ROOT: {
+    severity: "error",
+    category: "user-closure",
+    rootCauseKey: "external-root",
   },
 };
 

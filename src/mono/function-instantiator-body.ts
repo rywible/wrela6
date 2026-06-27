@@ -86,7 +86,7 @@ function instantiateMonoFunctionBodyInternal(
     return {
       kind: "ok",
       body: { statements: [], sourceOrigin: String(input.instance.sourceOrigin) },
-      bodyIndex: buildMonoBodyIndex({ statements: [], expressions: [] }),
+      bodyIndex: rebuildMonoBodyIndex({ statements: [], expressions: [] }),
       remap: immutableRemapFrom(mutableRemap),
       outgoingEdges: [],
     };
@@ -131,7 +131,7 @@ function instantiateMonoFunctionBodyInternal(
   if (diagnostics.length > 0) {
     return { kind: "error", diagnostics };
   }
-  const bodyIndex = buildMonoBodyIndex(collectBodyIndexEntries(cloned.block));
+  const bodyIndex = rebuildMonoBodyIndex(collectBodyIndexEntries(cloned.block));
   return {
     kind: "ok",
     body: cloned.block,
@@ -172,7 +172,7 @@ function immutableRemapFrom(remap: ReturnType<typeof mutableRemapFrom>): MonoFun
   };
 }
 
-function collectBodyIndexEntries(block: MonoBlock): {
+export function collectBodyIndexEntries(block: MonoBlock): {
   readonly statements: readonly MonoStatement[];
   readonly expressions: readonly MonoExpression[];
 } {
@@ -190,7 +190,7 @@ function collectBodyIndexEntries(block: MonoBlock): {
   };
 }
 
-function buildMonoBodyIndex(input: {
+export function rebuildMonoBodyIndex(input: {
   readonly statements: readonly MonoStatement[];
   readonly expressions: readonly MonoExpression[];
 }): MonoBodyIndex {

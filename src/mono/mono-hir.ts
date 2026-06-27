@@ -12,6 +12,7 @@ import type {
   HirExpressionId,
   HirImageOriginId,
   HirLocalId,
+  HirOriginId,
   HirPlatformContractEdgeId,
   HirRequirementId,
   HirStatementId,
@@ -153,8 +154,17 @@ export interface MonoCallArgument {
   readonly place?: MonoResourcePlace;
 }
 
+export type MonoResolvedCallTarget =
+  | { readonly kind: "sourceFunction"; readonly targetFunctionInstanceId: MonoInstanceId }
+  | {
+      readonly kind: "certifiedPlatform";
+      readonly targetPlatformEdgeId: MonoInstantiatedProofId<HirPlatformContractEdgeId>;
+      readonly primitiveId: PlatformPrimitiveId;
+    };
+
 export interface MonoCallExpression {
   readonly callee: MonoExpression;
+  readonly resolvedTarget?: MonoResolvedCallTarget;
   readonly calleeFunctionId?: FunctionId;
   readonly ownerTypeId?: TypeId;
   readonly ownerTypeArguments: readonly MonoCheckedType[];
@@ -291,6 +301,9 @@ export type MonoTakeOperand =
   | {
       readonly kind: "takeOnlyCall";
       readonly call: MonoCallExpression;
+      readonly callExpressionId: MonoExpressionId;
+      readonly resultType: MonoCheckedType;
+      readonly resultResourceKind: ConcreteResourceKind;
       readonly resultPlace: MonoResourcePlace;
     }
   | { readonly kind: "error"; readonly expression?: MonoExpression };
@@ -524,6 +537,14 @@ export interface MonoPrivateStateTransition {
 
 export type MonoCertifiedPlatformEnsuredFact = CheckedPlatformEnsuredFact;
 
+export type MonoPlatformContractEdgeKey = string & {
+  readonly __brand: "MonoPlatformContractEdgeKey";
+};
+
+export function monoPlatformContractEdgeKey(value: string): MonoPlatformContractEdgeKey {
+  return value as MonoPlatformContractEdgeKey;
+}
+
 export interface MonoPlatformContractEdge {
   readonly edgeId: MonoInstantiatedProofId<HirPlatformContractEdgeId>;
   readonly sourceFunctionId: FunctionId;
@@ -532,8 +553,16 @@ export interface MonoPlatformContractEdge {
   readonly targetId: TargetId;
   readonly certificate?: import("../semantic/surface/checked-program").CertifiedPlatformBinding["certificate"];
   readonly sourceRequirementIds?: readonly MonoInstantiatedProofId<HirRequirementId>[];
-  readonly callExpressionId?: MonoExpressionId;
+  readonly callExpressionId: MonoExpressionId;
   readonly callOrigin?: string;
+  readonly instantiatedOwnerTypeArguments: readonly MonoCheckedType[];
+  readonly instantiatedFunctionTypeArguments: readonly MonoCheckedType[];
+  readonly monomorphicEdgeKey: MonoPlatformContractEdgeKey;
+  readonly abi: {
+    readonly targetId: TargetId;
+    readonly primitiveId: PlatformPrimitiveId;
+    readonly contractId: PlatformContractId;
+  };
   readonly ensuredFacts: readonly CheckedPlatformEnsuredFactSurface[];
   readonly sourceOrigin: string;
 }
@@ -753,6 +782,18 @@ export interface MonoFunctionInstance {
 
 export type MonoFunctionTable = MonoDeterministicTable<MonoInstanceId, MonoFunctionInstance>;
 
+export type MonoExternalRootReason =
+  | "imageEntry"
+  | "deviceHandler"
+  | "hardwareCallback"
+  | "targetRequired";
+
+export interface MonoExternalRoot {
+  readonly functionInstanceId: MonoInstanceId;
+  readonly reason: MonoExternalRootReason;
+  readonly origin: HirOriginId;
+}
+
 export type MonoInstantiationEdgeSource =
   | { readonly kind: "image"; readonly imageId: ImageId }
   | {
@@ -835,14 +876,18 @@ export interface MonoProofMetadata {
   >;
 }
 
+export type MonoResolvedCallTargetTable = MonoDeterministicTable<string, MonoResolvedCallTarget>;
+
 export interface MonomorphizedHirProgram {
   readonly image: MonoImage;
+  readonly externalRoots: readonly MonoExternalRoot[];
   readonly functions: MonoFunctionTable;
   readonly types: MonoTypeTable;
   readonly validatedBuffers: MonoValidatedBufferTable;
   readonly proofMetadata: MonoProofMetadata;
   readonly instantiationGraph: MonoInstantiationGraph;
   readonly origins: HirOriginTable;
+  readonly resolvedCallTargets: MonoResolvedCallTargetTable;
   readonly reachablePlatformPrimitiveIds: readonly PlatformPrimitiveId[];
 }
 

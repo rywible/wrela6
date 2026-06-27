@@ -12,7 +12,6 @@ import type {
   MonoFunctionInstance,
   MonoImageOrigin,
   MonoObligation,
-  MonoPlatformContractEdge,
   MonoPrivateStateTransition,
   MonoProofMetadata,
   MonoResourcePlace,
@@ -21,10 +20,6 @@ import type {
   MonoTypeInstance,
   MonoValidation,
 } from "./mono-hir";
-import {
-  platformEdgeBindingMismatch,
-  platformEnsuredFactMismatch,
-} from "./platform-edge-consistency";
 
 import { lookupProofMetadataOwner, monoProofOwnerFor, ownerKey } from "./proof-metadata-index";
 import {
@@ -43,7 +38,6 @@ import {
   normalizeCheckedTypeForInstance,
   remapExpressionId,
   remapLocalId,
-  shouldInstantiatePlatformEdge,
 } from "./proof-metadata-instance-helpers";
 import { buildMonoTable, proofMetadataIdKey } from "./proof-metadata-tables";
 export {
@@ -70,7 +64,6 @@ export interface InstantiateMonoProofMetadataInput {
   readonly imageInstanceId: MonoInstanceId;
   readonly source?: { readonly kind: "image"; readonly imageId: ImageId };
   readonly canonicalInstanceKeys: ReadonlyMap<HirProofOwner, string>;
-  readonly reachablePlatformEdgeKeys?: ReadonlySet<string>;
 }
 
 export type InstantiateMonoProofMetadataResult =
@@ -80,6 +73,10 @@ export type InstantiateMonoProofMetadataResult =
       readonly diagnostics: readonly MonoDiagnostic[];
     }
   | { readonly kind: "error"; readonly diagnostics: readonly MonoDiagnostic[] };
+
+type MonoProofMetadataPlatformEdge = ReturnType<
+  MonoProofMetadata["platformContractEdges"]["entries"]
+>[number];
 
 export function instantiateMonoProofMetadata(
   input: InstantiateMonoProofMetadataInput,
@@ -489,105 +486,6 @@ export function instantiateMonoProofMetadata(
     }
   }
 
-  const platformContractEdges: MonoPlatformContractEdge[] = [];
-  for (const record of input.program.proofMetadata.platformContractEdges.entries()) {
-    const owner = record.edgeId.owner;
-    const matchingInstances = lookupInstancesForOwner({
-      owner,
-      functionInstanceByCanonicalKey,
-      typeInstanceByCanonicalKey,
-      imageInstanceId: input.imageInstanceId,
-      canonicalInstanceKeys: input.canonicalInstanceKeys,
-    }).filter((instance) =>
-      shouldInstantiatePlatformEdge({
-        record,
-        instance,
-        reachablePlatformEdgeKeys: input.reachablePlatformEdgeKeys,
-      }),
-    );
-    if (matchingInstances.length === 0) continue;
-    const binding = input.program.monoClosure.certifiedPlatformBindings.get(
-      record.sourceFunctionId,
-    );
-    if (binding === undefined) {
-      diagnostics.push(
-        monoDiagnostic({
-          severity: "error",
-          code: "MONO_CERTIFIED_PLATFORM_BINDING_MISSING",
-          message: "HIR platform contract edge references a missing certified platform binding.",
-          ownerKey: `function:${record.sourceFunctionId}`,
-          rootCauseKey: "platform-binding",
-          stableDetail: `missing-binding:${ownerKey(owner)}:${String(record.edgeId.id)}`,
-          sourceOrigin: String(record.sourceOrigin),
-        }),
-      );
-      continue;
-    }
-    const bindingMismatchReason = platformEdgeBindingMismatch({ edge: record, binding });
-    if (bindingMismatchReason !== undefined) {
-      diagnostics.push(
-        monoDiagnostic({
-          severity: "error",
-          code: "MONO_PLATFORM_EDGE_BINDING_MISMATCH",
-          message:
-            "HIR platform contract edge does not match the certified platform binding for the call.",
-          ownerKey: `function:${record.sourceFunctionId}`,
-          rootCauseKey: "platform-edge",
-          stableDetail: `binding-mismatch:${ownerKey(owner)}:${String(record.edgeId.id)}:${bindingMismatchReason}`,
-          sourceOrigin: String(record.sourceOrigin),
-        }),
-      );
-      continue;
-    }
-    const ensuredFactMismatchReason = platformEnsuredFactMismatch({ edge: record, binding });
-    if (ensuredFactMismatchReason !== undefined) {
-      diagnostics.push(
-        monoDiagnostic({
-          severity: "error",
-          code: "MONO_INCONSISTENT_PLATFORM_ENSURED_FACT",
-          message:
-            "HIR platform contract edge ensured facts do not match the certified platform binding.",
-          ownerKey: `function:${record.sourceFunctionId}`,
-          rootCauseKey: "platform-edge",
-          stableDetail: `ensured-fact-mismatch:${ownerKey(owner)}:${String(
-            record.edgeId.id,
-          )}:${ensuredFactMismatchReason}`,
-          sourceOrigin: String(record.sourceOrigin),
-        }),
-      );
-      continue;
-    }
-    for (const instance of matchingInstances) {
-      platformContractEdges.push({
-        edgeId: {
-          owner: monoProofOwnerFor(instance.instanceId, owner),
-          hirId: record.edgeId.id,
-          instanceId: instance.instanceId,
-        },
-        sourceFunctionId: record.sourceFunctionId,
-        primitiveId: record.primitiveId,
-        contractId: record.contractId,
-        targetId: record.targetId,
-        ...(record.certificate !== undefined ? { certificate: record.certificate } : {}),
-        ...(record.sourceRequirementIds !== undefined
-          ? {
-              sourceRequirementIds: record.sourceRequirementIds.map((id) => ({
-                owner: monoProofOwnerFor(instance.instanceId, id.owner),
-                hirId: id.id,
-                instanceId: instance.instanceId,
-              })),
-            }
-          : {}),
-        ...(record.callExpressionId !== undefined
-          ? { callExpressionId: remapExpressionId(record.callExpressionId, instance) }
-          : {}),
-        ...(record.callOrigin !== undefined ? { callOrigin: String(record.callOrigin) } : {}),
-        ensuredFacts: record.ensuredFacts,
-        sourceOrigin: String(record.sourceOrigin),
-      });
-    }
-  }
-
   const imageOrigins: MonoImageOrigin[] = [];
   for (const record of input.program.proofMetadata.imageOrigins.entries()) {
     const owner = record.imageOriginId.owner;
@@ -683,7 +581,7 @@ export function instantiateMonoProofMetadata(
         (id) => proofMetadataIdKey(id),
       ),
       platformContractEdges: buildMonoTable(
-        platformContractEdges,
+        [] as readonly MonoProofMetadataPlatformEdge[],
         (entry) => proofMetadataIdKey(entry.edgeId),
         (id) => proofMetadataIdKey(id),
       ),

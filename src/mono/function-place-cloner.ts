@@ -12,7 +12,11 @@ import { monoDiagnostic, type MonoDiagnostic } from "./diagnostics";
 import { cloneCall } from "./function-call-cloner";
 import { cloneExpression, type CloneExpressionResult } from "./function-expression-cloner";
 import { type MonoOutgoingEdge, type MutableMonoFunctionRemap } from "./function-instantiator-body";
-import { createNormalizationContext, monoLocalIdFor } from "./function-instantiator-shell";
+import {
+  createNormalizationContext,
+  monoExpressionIdFor,
+  monoLocalIdFor,
+} from "./function-instantiator-shell";
 import { type CloneStatementResult } from "./function-statement-cloner";
 import { type MonoInstanceId } from "./ids";
 import { normalizeMonoCheckedType } from "./instantiation-key";
@@ -121,9 +125,13 @@ export function cloneTakeOperand(input: {
       };
     }
     case "takeOnlyCall": {
+      const callExpressionId = monoExpressionIdFor(
+        input.remap.instanceId,
+        input.operand.callExpressionId,
+      );
       const call = cloneCall({
         call: input.operand.call,
-        callExpressionId: undefined,
+        callExpressionId,
         instance: input.instance,
         substitution: input.substitution,
         remap: input.remap,
@@ -143,9 +151,31 @@ export function cloneTakeOperand(input: {
         diagnostics: input.diagnostics,
       });
       if (resultPlace.kind === "error") return { kind: "error" };
+      const resultType = normalizeMonoCheckedTypeForClone({
+        type: input.operand.resultType,
+        substitution: input.substitution,
+        program: input.program,
+        diagnostics: input.diagnostics,
+      });
+      if (resultType.kind === "error") return { kind: "error" };
+      const resultResourceKind = concretizeResourceKindForClone({
+        kind: input.operand.resultResourceKind,
+        type: resultType.type,
+        context: input.context,
+        substitution: input.substitution,
+        diagnostics: input.diagnostics,
+      });
+      if (resultResourceKind.kind === "error") return { kind: "error" };
       return {
         kind: "ok",
-        operand: { kind: "takeOnlyCall", call: call.call, resultPlace: resultPlace.place },
+        operand: {
+          kind: "takeOnlyCall",
+          call: call.call,
+          callExpressionId,
+          resultType: resultType.type,
+          resultResourceKind: resultResourceKind.value,
+          resultPlace: resultPlace.place,
+        },
       };
     }
     case "error": {

@@ -278,7 +278,6 @@ describe("computeValidatedBufferFieldFacts", () => {
     const payloadFieldId = fieldId(21);
     const instanceId = monoInstanceId("type:Packet");
     const trailerLengthExpression = fieldValueExpression(trailerFieldId, "layout");
-    const target = layoutTargetSurfaceFake();
     const buffer: MonoValidatedBuffer = {
       instanceId,
       typeId: typeId(1),
@@ -341,7 +340,6 @@ describe("computeValidatedBufferFieldFacts", () => {
     const derivedFieldId = fieldId(32);
     const payloadFieldId = fieldId(31);
     const instanceId = monoInstanceId("type:Packet");
-    const target = layoutTargetSurfaceFake();
     const buffer: MonoValidatedBuffer = {
       instanceId,
       typeId: typeId(1),

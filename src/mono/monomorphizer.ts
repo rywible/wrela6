@@ -3,9 +3,15 @@ import type { FunctionId, ImageId, PlatformPrimitiveId, TypeId } from "../semant
 import type { CheckedType } from "../semantic/surface/type-model";
 import { checkClosedMonoBoundary } from "./closed-boundary-checker";
 import { monoDiagnostic, sortMonoDiagnostics, type MonoDiagnostic } from "./diagnostics";
-import { normalizeMonoCheckedType } from "./instantiation-key";
 import type { MonoCheckedType, MonomorphizedHirProgram } from "./mono-hir";
 import { runReachability } from "./reachability";
+import { normalizeRootArguments } from "./mono-external-roots";
+
+export {
+  buildMonoExternalRoots,
+  functionInstanceIdForExternalEntryRoot,
+  normalizeRootArguments,
+} from "./mono-external-roots";
 
 export interface MonomorphizeWholeImageInput {
   readonly program: TypedHirProgram;
@@ -328,32 +334,6 @@ function sourceTypeRootFromCheckedType(input: {
     default:
       return { kind: "none" };
   }
-}
-
-type NormalizeRootArgumentsResult =
-  | { readonly kind: "ok"; readonly arguments: readonly MonoCheckedType[] }
-  | { readonly kind: "error"; readonly diagnostics: readonly MonoDiagnostic[] };
-
-function normalizeRootArguments(input: {
-  readonly program: TypedHirProgram;
-  readonly arguments: readonly CheckedType[];
-}): NormalizeRootArgumentsResult {
-  const normalized: MonoCheckedType[] = [];
-  const diagnostics: MonoDiagnostic[] = [];
-  for (const argument of input.arguments) {
-    const result = normalizeMonoCheckedType(argument, {
-      targetTypeKinds: input.program.monoClosure.targetTypeKinds,
-      constructorKindRules: input.program.monoClosure.constructorKindRules,
-      sourceOrigin: input.program.origins.originRecords()[0]?.originId ?? (0 as never),
-    });
-    if (result.kind === "error") {
-      diagnostics.push(...result.diagnostics);
-    } else {
-      normalized.push(result.type);
-    }
-  }
-  if (diagnostics.length > 0) return { kind: "error", diagnostics };
-  return { kind: "ok", arguments: normalized };
 }
 
 function rootWorkItemKey(item: MonoRootWorkItem): string {

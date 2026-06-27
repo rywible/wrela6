@@ -348,6 +348,34 @@ test("body instantiation remaps expression ids and extracts call edge", () => {
     ).toBe(true);
     expect(body.outgoingEdges.map((edge) => edge.targetKind)).toContain("function");
     expect(body.outgoingEdges[0]?.source.kind).toBe("function");
+    const call = body.bodyIndex.expressions
+      .entries()
+      .map((expression) => expression.kind)
+      .find((kind) => kind.kind === "call");
+    expect(call?.kind).toBe("call");
+    if (call?.kind === "call" && call.call.resolvedTarget?.kind === "sourceFunction") {
+      expect(call.call.resolvedTarget.targetFunctionInstanceId).toBeDefined();
+      expect(call.call.resolvedTarget.kind).not.toBe("certifiedPlatform");
+    }
+  }
+});
+
+test("recovered and unresolved calls do not receive fake resolved targets", () => {
+  const program = errorExpressionBodyProgramForMonoTest();
+  const shell = instantiateShellOk(program);
+  const body = instantiateMonoFunctionBody({
+    program,
+    instance: shell.instance,
+    substitution: shell.substitution,
+    remap: shell.remap,
+    source: { kind: "image", imageId: imageId(0) },
+  });
+
+  expect(body.kind).toBe("error");
+  if (body.kind === "error") {
+    expect(body.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      monoDiagnosticCode("MONO_REACHABLE_HIR_RECOVERY"),
+    );
   }
 });
 
