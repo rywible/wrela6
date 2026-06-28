@@ -27,8 +27,8 @@ selection, linking, relocation emission, and final PE/COFF image writing.
 - Treat the standard library as ordinary, replaceable source with no semantic
   privilege over project code.
 - Keep compiler-owned authority narrow: explicit platform primitive contracts,
-  target ABI lowering, generated entry thunks, code generation, linking, and
-  image writing.
+  compiler-runtime helper contracts, target ABI lowering, generated entry
+  thunks, code generation, linking, and image writing.
 - Keep compiler back-end layers independent from language concepts such as
   `take`, `requires`, unique edge roots, or validated-buffer syntax.
 - Use proof acceptance to create optimization authority: checked MIR plus a
@@ -87,8 +87,9 @@ Load-bearing risks:
 - validated-buffer proofs depend on representation and layout facts, which
   means serious proof checking should happen after monomorphization and layout
   facts exist
-- the platform primitive boundary must be small and explicit enough that a
-  replacement standard library cannot accidentally rely on compiler magic
+- the platform primitive and compiler-runtime boundaries must be small and
+  explicit enough that a replacement standard library cannot accidentally rely
+  on compiler magic
 - OptIR optimizations must preserve the authority of the checked fact packet;
   an optimization pass must not silently assume proof facts that were not
   certified or derived from certified facts by a checked pass invariant
@@ -554,15 +555,75 @@ target_aarch64
 target_uefi
   firmware call ABI helpers over explicit firmware function pointers
   status conversion primitives
-
-image_runtime
-  compiler-known entry capability initialization
-  panic/abort lowering policy
 ```
 
 The default stdlib should mostly wrap these families in safer, domain-shaped
 APIs. Replacement stdlibs can choose very different wrappers or expose the
 platform functions more directly.
+
+Platform primitive entries describe behavior owned by the target platform or
+firmware. For UEFI, a platform primitive is a checked doorway to firmware-owned
+behavior such as a boot-services function pointer, system-table service,
+console output function, memory-map operation, or exit-boot-services call. The
+compiler owns the contract and lowering rule; UEFI firmware owns the behavior
+that runs after the indirect call.
+
+Compiler-runtime helpers are a separate target-owned catalog. They describe
+compiler-provided machinery used to implement Wrela language behavior on the
+selected target, not firmware services exposed through `platform fn`
+declarations.
+
+```text
+CompilerRuntimeHelper
+  stable runtime ID
+  helper name
+  required facts
+  consumed capabilities
+  produced capabilities
+  effects
+  ABI or generated-code lowering owner
+```
+
+For UEFI AArch64, the runtime catalog includes only compiler-owned support such
+as:
+
+```text
+image_runtime
+  compiler-known entry capability initialization
+  panic/abort lowering policy
+
+coroutine_runtime
+  yield frame setup
+  suspend/resume handoff
+
+validated_buffer_runtime
+  generated checked read helpers when a read is not inlined
+
+core_transfer_runtime
+  move-ring and cross-core transfer helpers
+
+target_memory_runtime
+  compiler-owned memory helpers that are not firmware calls
+```
+
+Runtime helpers may lower to generated AArch64 instructions, tiny
+compiler-emitted helper routines, or target intrinsics. They are not declared by
+the stdlib as `platform fn`, and Proof MIR is not allowed to bring its own
+trusted runtime catalog. The selected UEFI AArch64 target supplies the runtime
+catalog; Proof MIR may carry a cached copy only if the checker authenticates it
+against the selected target catalog.
+
+This distinction keeps the source model simple:
+
+```text
+stdlib platform fn
+  source declaration for target/firmware-owned behavior
+  must certify against the UEFI platform primitive catalog
+
+compiler runtime helper
+  compiler-owned implementation support for language/runtime behavior
+  must certify against the UEFI compiler-runtime catalog
+```
 
 ## Typed HIR And Proof-Relevant Surface
 
@@ -1400,7 +1461,11 @@ relocation table shape.
 
 ## UEFI AArch64 Target
 
-The target module owns all UEFI/AArch64-specific constants and shims.
+The target module owns all UEFI/AArch64-specific constants, shims, platform
+primitive contracts, and compiler-runtime helper contracts. Since UEFI AArch64
+is the firmware target for this compiler path, the production target surface can
+be focused on that one target while still keeping the authority boundary
+explicit.
 
 ```text
 target/uefi-aarch64
@@ -1408,6 +1473,8 @@ target/uefi-aarch64
   system table parameter
   entry thunk
   firmware pointer types
+  platform primitive catalog
+  compiler-runtime helper catalog
   PE subsystem choice
   page/file alignment defaults
   relocation kinds
@@ -1423,6 +1490,19 @@ efi_entry(image_handle, system_table)
   convert result to EFI_STATUS
   return
 ```
+
+The UEFI platform primitive catalog should start with the firmware operations
+the default stdlib and image entry need, such as console output, boot-services
+memory allocation, memory-map retrieval, event/timer operations, and
+exit-boot-services. Each primitive entry records the source signature it
+certifies, required facts, consumed and produced capabilities, effects, ABI
+shape, and lowering rule.
+
+The UEFI compiler-runtime catalog should start with compiler-owned helpers for
+panic/abort, coroutine/yield machinery, validated-buffer helper reads,
+entry-capability initialization, and move-ring or cross-core transfer machinery
+when those language features lower to helper code instead of direct inline
+instructions.
 
 ## Implementation Sequence
 
@@ -1442,6 +1522,7 @@ the checker rather than a standalone implementation phase.
   source files
 - core builtin type catalog
 - selected-target platform primitive catalog
+- selected-target compiler-runtime helper catalog
 - lexer and module graph lexer
 - parser and lossless CST
 - module graph parser across loaded source paths
@@ -1558,7 +1639,8 @@ Output: concrete layout and ABI facts for the closed program.
 - preserve source origins, HIR origins, type IDs, resource kind IDs, obligation
   IDs, borrow/session IDs, and layout facts
 - consume the selected target feature set and closed compiler-runtime catalog as
-  explicit input, not host environment state
+  explicit input from the selected target, not host environment state or
+  untrusted Proof MIR state
 - make all exits explicit
 - record explicit regions, edge effects, operand roles, and boundary-resource
   sets without running checker-owned resource-flow analysis
@@ -1576,6 +1658,8 @@ Output: Proof MIR for each monomorphized function.
 - requirement entailment
 - platform primitive precondition and postcondition checking from catalog-owned
   contracts
+- compiler-runtime helper precondition, postcondition, effect, and capability
+  checking from the selected runtime catalog
 - move/use/consume checking
 - take-session and validation/attempt obligations
 - terminal closure
@@ -1588,8 +1672,8 @@ Output: Proof MIR for each monomorphized function.
 - emit a checked fact packet on success, including ownership/noalias facts,
   field-disjointness, erased proof/resource values, validated-buffer bounds,
   packet/source relationships, private-state generation facts, platform
-  primitive effects and capability flow, terminal/exit closure facts, concrete
-  layout/ABI facts, and origin mappings
+  primitive effects and capability flow, compiler-runtime helper effects,
+  terminal/exit closure facts, concrete layout/ABI facts, and origin mappings
 
 Output: checked MIR with certified optimization facts, or proof diagnostics.
 
@@ -1648,17 +1732,17 @@ The Proof MIR builder should not be implemented against guessed upstream data.
 Before a production Proof MIR builder can accept the full language surface, the
 existing pipeline must expose these contracts:
 
-| Pipeline area             | Required extension                                                                                          |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| HIR mono-closure surface  | External entry roots preserve reason, type arguments, and origin                                            |
-| Whole-image mono output   | `externalRoots` table with instantiated function instance IDs and root reasons                              |
-| Whole-image mono output   | Concrete resolved call targets on every mono call expression                                                |
-| Platform contract edges   | Instantiated owner/function type arguments or canonical monomorphic edge keys                               |
-| Mono proof metadata       | Concurrency/cross-core operation metadata before cross-core constructs are accepted                         |
-| Layout facts              | Deterministic `readRequires`, derived case order, and canonical layout-term arrays                          |
-| Target/runtime selection  | Explicit target feature set plus closed runtime catalog from target/runtime authority passed into Proof MIR |
-| Proof-semantics companion | Loop convergence, yield safety, fact entailment, terminal closure, and cross-core ownership rules           |
-| Checked MIR fact packet   | Certified facts schema consumed by OptIR and AArch64 lowering                                               |
+| Pipeline area             | Required extension                                                                                                        |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| HIR mono-closure surface  | External entry roots preserve reason, type arguments, and origin                                                          |
+| Whole-image mono output   | `externalRoots` table with instantiated function instance IDs and root reasons                                            |
+| Whole-image mono output   | Concrete resolved call targets on every mono call expression                                                              |
+| Platform contract edges   | Instantiated owner/function type arguments or canonical monomorphic edge keys                                             |
+| Mono proof metadata       | Concurrency/cross-core operation metadata before cross-core constructs are accepted                                       |
+| Layout facts              | Deterministic `readRequires`, derived case order, and canonical layout-term arrays                                        |
+| Target/runtime selection  | Explicit target feature set plus closed runtime catalog from target/runtime authority, authenticated again by the checker |
+| Proof-semantics companion | Loop convergence, yield safety, fact entailment, terminal closure, and cross-core ownership rules                         |
+| Checked MIR fact packet   | Certified facts schema consumed by OptIR and AArch64 lowering                                                             |
 
 If any row is missing for a reachable construct, the owning earlier phase
 should reject before Proof MIR when possible. If the missing contract is only
