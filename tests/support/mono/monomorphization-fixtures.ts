@@ -1671,6 +1671,11 @@ export function monomorphizedProgramWithPlatformEdgesForTest(
       sourceOrigin: "test:0:0",
     },
     externalRoots: [],
+    reachableFunctions: {
+      get: () => undefined,
+      has: () => false,
+      entries: () => [],
+    },
     functions: {
       get: () => undefined,
       entries: () => [],

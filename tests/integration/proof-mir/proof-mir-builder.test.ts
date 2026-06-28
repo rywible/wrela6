@@ -23,7 +23,21 @@ describe("buildProofMir", () => {
     expect(result.mir.platformEdges).toBeDefined();
     expect(result.mir.runtimeCatalog).toBeDefined();
     expect(result.mir.runtimeCalls).toBeDefined();
+    expect(result.mir.reachableFunctions).toBeDefined();
     expect(result.diagnostics.every((diagnostic) => diagnostic.severity !== "error")).toBe(true);
+  });
+
+  test("proof mir preserves explicit reachable function closure", () => {
+    const input = closedProofMirFixture();
+    const result = buildProofMir(input);
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+
+    expect(result.mir.reachableFunctions.entries().map((entry) => entry.reason)).toEqual([
+      "imageEntry",
+    ]);
+    expect(result.mir.reachableFunctions.has(result.mir.image.entryFunctionInstanceId)).toBe(true);
   });
 
   test("compatibility failure returns error diagnostics without mir", () => {

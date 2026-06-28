@@ -5,6 +5,7 @@ import {
   streamForLoopProofMirBuildInputParts,
 } from "./lower-harness/iterator-lowerer-integration-parts";
 import {
+  buildReachableFunctionsForProofMirTest,
   closedProofMirFixture,
   layoutTargetForSerialDevice,
   monoAndLayoutForTypedHirProgram,
@@ -51,6 +52,33 @@ export function ordinaryIteratorProofMirFixture(): ProofMirBuildInput {
   }
   const nextFunctionInstanceId = monoInstanceId("fn:iterator-next");
   const iterableFunctionInstanceId = monoInstanceId("fn:packet-bytes");
+  const resolvedCallTargetEntries = [
+    {
+      callerInstanceId: iteratorFunctionInstanceId,
+      callExpressionId: expressionIdFor(iteratorFunctionInstanceId, 2),
+      resolvedTarget: {
+        kind: "sourceFunction" as const,
+        targetFunctionInstanceId: iterableFunctionInstanceId,
+      },
+    },
+    {
+      callerInstanceId: iteratorFunctionInstanceId,
+      callExpressionId: expressionIdFor(iteratorFunctionInstanceId, 100),
+      resolvedTarget: {
+        kind: "sourceFunction" as const,
+        targetFunctionInstanceId: nextFunctionInstanceId,
+      },
+    },
+  ];
+  const externalRoots = [
+    ...closed.program.externalRoots,
+    ...iterator.program.externalRoots.filter(
+      (root) =>
+        !closed.program.externalRoots.some(
+          (existing) => existing.functionInstanceId === root.functionInstanceId,
+        ),
+    ),
+  ];
   return {
     program: {
       ...closed.program,
@@ -59,38 +87,19 @@ export function ordinaryIteratorProofMirFixture(): ProofMirBuildInput {
         get: (instanceId) =>
           mergedFunctions.find((functionInstance) => functionInstance.instanceId === instanceId),
       },
-      externalRoots: [
-        ...closed.program.externalRoots,
-        ...iterator.program.externalRoots.filter(
-          (root) =>
-            !closed.program.externalRoots.some(
-              (existing) => existing.functionInstanceId === root.functionInstanceId,
-            ),
-        ),
-      ],
+      externalRoots,
+      reachableFunctions: buildReachableFunctionsForProofMirTest({
+        externalRoots,
+        functions: mergedFunctions,
+        resolvedCallTargetEntries,
+        seedReachableFunctions: closed.program.reachableFunctions.entries(),
+      }),
       proofMetadata: {
         ...closed.program.proofMetadata,
         obligations: iterator.program.proofMetadata.obligations,
         callSiteRequirements: iterator.program.proofMetadata.callSiteRequirements,
       },
-      resolvedCallTargets: monoResolvedCallTargetTableFromEntries([
-        {
-          callerInstanceId: iteratorFunctionInstanceId,
-          callExpressionId: expressionIdFor(iteratorFunctionInstanceId, 2),
-          resolvedTarget: {
-            kind: "sourceFunction",
-            targetFunctionInstanceId: iterableFunctionInstanceId,
-          },
-        },
-        {
-          callerInstanceId: iteratorFunctionInstanceId,
-          callExpressionId: expressionIdFor(iteratorFunctionInstanceId, 100),
-          resolvedTarget: {
-            kind: "sourceFunction",
-            targetFunctionInstanceId: nextFunctionInstanceId,
-          },
-        },
-      ]),
+      resolvedCallTargets: monoResolvedCallTargetTableFromEntries(resolvedCallTargetEntries),
     },
     layout: {
       ...closed.layout,
@@ -130,6 +139,15 @@ export function streamForLoopProofMirFixture(): ProofMirBuildInput {
             .some((existing) => existing.functionInstanceId === fact.functionInstanceId),
       ),
   ];
+  const externalRoots = [
+    ...closed.program.externalRoots,
+    ...stream.program.externalRoots.filter(
+      (root) =>
+        !closed.program.externalRoots.some(
+          (existing) => existing.functionInstanceId === root.functionInstanceId,
+        ),
+    ),
+  ];
   return {
     program: {
       ...closed.program,
@@ -138,15 +156,12 @@ export function streamForLoopProofMirFixture(): ProofMirBuildInput {
         get: (instanceId) =>
           mergedFunctions.find((functionInstance) => functionInstance.instanceId === instanceId),
       },
-      externalRoots: [
-        ...closed.program.externalRoots,
-        ...stream.program.externalRoots.filter(
-          (root) =>
-            !closed.program.externalRoots.some(
-              (existing) => existing.functionInstanceId === root.functionInstanceId,
-            ),
-        ),
-      ],
+      externalRoots,
+      reachableFunctions: buildReachableFunctionsForProofMirTest({
+        externalRoots,
+        functions: mergedFunctions,
+        seedReachableFunctions: closed.program.reachableFunctions.entries(),
+      }),
       proofMetadata: stream.program.proofMetadata,
     },
     layout: {

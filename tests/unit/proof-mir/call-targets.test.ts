@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { hirPlatformContractEdgeId } from "../../../src/hir/ids";
+import { hirPlatformContractEdgeId, hirOriginId } from "../../../src/hir/ids";
 import type {
   LayoutFactProgram,
   LayoutFunctionAbiFact,
@@ -114,6 +114,7 @@ function minimalFunctionInstance(input: {
     locals: monoTable<MonoLocalId, MonoLocal>([], (local) => local.localId),
     declaredRequirements: [],
     sourceOrigin: FIXTURE_SOURCE_ORIGIN,
+    hirSourceOrigin: hirOriginId(0),
   };
 }
 

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { hirOriginId } from "../../../src/hir/ids";
 import type { LayoutFactProgram } from "../../../src/layout/layout-program";
 import { layoutDeterministicTable } from "../../../src/layout/type-key";
 import { monoInstanceId } from "../../../src/mono/ids";
@@ -7,6 +8,8 @@ import type {
   MonoFunctionBodyStatus,
   MonoFunctionInstance,
   MonoLocal,
+  MonoReachableFunction,
+  MonoReachableFunctionTable,
 } from "../../../src/mono/mono-hir";
 import { proofMirDiagnosticCode } from "../../../src/proof-mir/diagnostics";
 import { validateProofMirBuildInputCompatibility } from "../../../src/proof-mir/validation/input-compatibility-validator";
@@ -15,6 +18,26 @@ import { closedProofMirFixture } from "../../support/proof-mir/proof-mir-fixture
 import { coreTypeId, functionId, itemId, targetId } from "../../../src/semantic/ids";
 import { coreCheckedType } from "../../../src/semantic/surface/type-model";
 import type { MonoCheckedType } from "../../../src/mono/mono-hir";
+
+export function emptyProofMirReachableFunctionTableForTest(): MonoReachableFunctionTable {
+  return monoReachableTable([]);
+}
+
+function monoReachableTable(entries: readonly MonoReachableFunction[]): MonoReachableFunctionTable {
+  const lookup = new Map<string, MonoReachableFunction>();
+  for (const entry of entries) {
+    lookup.set(String(entry.functionInstanceId), entry);
+  }
+  return {
+    get(key) {
+      return lookup.get(String(key));
+    },
+    has(key) {
+      return lookup.has(String(key));
+    },
+    entries: () => entries,
+  };
+}
 
 function monoTable<Key, Value>(
   entries: readonly Value[],
@@ -66,6 +89,20 @@ function minimalFunctionInstance(input: {
     locals: monoTable([] as MonoLocal[], (local) => local.localId),
     declaredRequirements: [],
     sourceOrigin: "input-compatibility-validator.test",
+    hirSourceOrigin: hirOriginId(0),
+  };
+}
+
+function withProgramReachableFunctions(
+  input: ReturnType<typeof closedProofMirFixture>,
+  reachableFunctions: MonoReachableFunctionTable,
+): ReturnType<typeof closedProofMirFixture> {
+  return {
+    ...input,
+    program: {
+      ...input.program,
+      reachableFunctions,
+    },
   };
 }
 
@@ -286,6 +323,73 @@ describe("validateProofMirBuildInputCompatibility", () => {
     const diagnostics = validateProofMirBuildInputCompatibility(
       withProgramFunctions(input, [...input.program.functions.entries(), recoveryInstance]),
     );
+
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+      proofMirDiagnosticCode("PROOF_MIR_MISSING_FUNCTION_BODY"),
+    );
+  });
+
+  test("reachable closure rejects missing reachable function instances", () => {
+    const input = closedProofMirFixture();
+    const imageEntryRoot = input.program.externalRoots.find((root) => root.reason === "imageEntry");
+    if (imageEntryRoot === undefined) {
+      throw new Error("expected image entry external root in closed fixture");
+    }
+
+    const diagnostics = validateProofMirBuildInputCompatibility(
+      withProgramReachableFunctions(
+        input,
+        monoReachableTable([
+          {
+            functionInstanceId: monoInstanceId("fn:missing-reachable"),
+            reason: "sourceCall",
+            origin: imageEntryRoot.origin,
+          },
+        ]),
+      ),
+    );
+
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      proofMirDiagnosticCode("PROOF_MIR_INVALID_EXTERNAL_ROOT"),
+    );
+  });
+
+  test("reachable closure rejects external roots outside reachable set", () => {
+    const input = closedProofMirFixture();
+
+    const diagnostics = validateProofMirBuildInputCompatibility(
+      withProgramReachableFunctions(input, emptyProofMirReachableFunctionTableForTest()),
+    );
+
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      proofMirDiagnosticCode("PROOF_MIR_INVALID_EXTERNAL_ROOT"),
+    );
+  });
+
+  test("reachable bodylessRecovery functions in closure are rejected", () => {
+    const input = closedProofMirFixture();
+    const recoveryInstance = minimalFunctionInstance({
+      instanceId: monoInstanceId("fn:recovery"),
+      bodyStatus: "bodylessRecovery",
+    });
+    const imageEntryRoot = input.program.externalRoots.find((root) => root.reason === "imageEntry");
+    if (imageEntryRoot === undefined) {
+      throw new Error("expected image entry external root in closed fixture");
+    }
+    const diagnostics = validateProofMirBuildInputCompatibility({
+      ...withProgramFunctions(input, [...input.program.functions.entries(), recoveryInstance]),
+      program: {
+        ...withProgramFunctions(input, [...input.program.functions.entries(), recoveryInstance])
+          .program,
+        reachableFunctions: monoReachableTable([
+          {
+            functionInstanceId: recoveryInstance.instanceId,
+            reason: "sourceCall",
+            origin: imageEntryRoot.origin,
+          },
+        ]),
+      },
+    });
 
     expect(diagnostics.map((diagnostic) => diagnostic.code)).toContain(
       proofMirDiagnosticCode("PROOF_MIR_MISSING_FUNCTION_BODY"),

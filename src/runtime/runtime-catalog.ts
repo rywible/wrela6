@@ -1,5 +1,9 @@
 import { compareCodeUnitStrings } from "../semantic/surface/deterministic-sort";
 import type { TargetId } from "../semantic/ids";
+import {
+  proofAuthorityFingerprintsEqual,
+  type ProofAuthorityFingerprint,
+} from "../shared/proof-authority-types";
 import type {
   ProofMirRuntimeCatalog,
   ProofMirRuntimeOperation,
@@ -75,6 +79,7 @@ export function runtimeCatalogDiagnostic(
 export interface RuntimeCatalogInput {
   readonly targetId: TargetId;
   readonly features: readonly string[];
+  readonly fingerprint?: ProofAuthorityFingerprint;
   readonly entries: readonly ProofMirRuntimeOperation[];
 }
 
@@ -136,6 +141,7 @@ export function runtimeCatalog(input: RuntimeCatalogInput): RuntimeCatalogResult
   const catalog: ProofMirRuntimeCatalog = {
     targetId: input.targetId,
     features: sortedFeatures,
+    fingerprint: input.fingerprint,
     get(runtimeId: ProofMirRuntimeOperationId): ProofMirRuntimeOperation | undefined {
       return lookup.get(runtimeOperationKey(runtimeId));
     },
@@ -183,4 +189,62 @@ export function runtimeCatalogFeaturesEqual(
   right: readonly string[],
 ): boolean {
   return featuresEqual(sortFeatures(left), sortFeatures(right));
+}
+
+export function normalizedProofMirRuntimeOperationContent(
+  operation: ProofMirRuntimeOperation,
+): string {
+  return JSON.stringify({
+    name: operation.name,
+    targetAvailability: operation.targetAvailability,
+    requiredFactSchemas: operation.requiredFactSchemas,
+    consumedCapabilitySchemas: operation.consumedCapabilitySchemas,
+    producedCapabilitySchemas: operation.producedCapabilitySchemas,
+    effectSchemas: operation.effectSchemas,
+    abi: operation.abi,
+    loweringOwner: operation.loweringOwner,
+  });
+}
+
+export function runtimeCatalogsEqual(
+  left: ProofMirRuntimeCatalog,
+  right: ProofMirRuntimeCatalog,
+): boolean {
+  if (left.targetId !== right.targetId) {
+    return false;
+  }
+  if (!runtimeCatalogFeaturesEqual(left.features, right.features)) {
+    return false;
+  }
+  if (!proofAuthorityFingerprintsEqual(left.fingerprint, right.fingerprint)) {
+    return false;
+  }
+
+  const leftEntries = left.entries();
+  const rightEntries = right.entries();
+  if (leftEntries.length !== rightEntries.length) {
+    return false;
+  }
+
+  for (let index = 0; index < leftEntries.length; index += 1) {
+    const leftEntry = leftEntries[index];
+    const rightEntry = rightEntries[index];
+    if (leftEntry === undefined || rightEntry === undefined) {
+      return false;
+    }
+    if (leftEntry.runtimeId !== rightEntry.runtimeId) {
+      return false;
+    }
+    if (leftEntry.authorityKey !== rightEntry.authorityKey) {
+      return false;
+    }
+    if (
+      normalizedProofMirRuntimeOperationContent(leftEntry) !==
+      normalizedProofMirRuntimeOperationContent(rightEntry)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
 }

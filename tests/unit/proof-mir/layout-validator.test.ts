@@ -188,6 +188,7 @@ function programForLayout(input: {
       layout: { kind: "imageEntryAbi", imageInstanceId },
       origin: proofMirOriginId(0),
     },
+    reachableFunctions: emptyTable(),
     functions: functions.table,
     layout: input.layout,
     proofMetadata: {} as MonoProofMetadata,

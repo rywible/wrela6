@@ -1,5 +1,9 @@
 import { instantiatedHirIdKey, type MonoInstanceId } from "./ids";
-import type { MonoExpression, MonoResolvedCallTarget } from "./mono-hir";
+import type {
+  MonoExpression,
+  MonoResolvedCallTarget,
+  MonoResolvedCallTargetEntry,
+} from "./mono-hir";
 import type { ReachabilityState } from "./reachability-shared";
 
 export function callResolvedTargetKey(input: {
@@ -15,11 +19,14 @@ export function recordCallResolvedTarget(input: {
   readonly callExpressionId: MonoExpression["expressionId"];
   readonly resolvedTarget: MonoResolvedCallTarget;
 }): void {
-  input.state.callResolvedTargets.set(
-    callResolvedTargetKey({
-      callerInstanceId: input.callerInstanceId,
-      callExpressionId: input.callExpressionId,
-    }),
-    input.resolvedTarget,
-  );
+  const key = callResolvedTargetKey({
+    callerInstanceId: input.callerInstanceId,
+    callExpressionId: input.callExpressionId,
+  });
+  const entry: MonoResolvedCallTargetEntry = {
+    callerInstanceId: input.callerInstanceId,
+    callExpressionId: input.callExpressionId,
+    resolvedTarget: input.resolvedTarget,
+  };
+  input.state.callResolvedTargets.set(key, entry);
 }

@@ -1,5 +1,5 @@
 import type { LayoutFactProgram } from "../layout/layout-program";
-import type { MonomorphizedHirProgram } from "../mono/mono-hir";
+import type { MonomorphizedHirProgram, MonoReachableFunction } from "../mono/mono-hir";
 import type { ProofMirRuntimeCatalog } from "../runtime/runtime-catalog-types";
 import type { TargetId } from "../semantic/ids";
 import {
@@ -40,8 +40,39 @@ import { validateProofMirEffects } from "./validation/effect-validator";
 import { validateProofMirFacts } from "./validation/fact-validator";
 import { validateProofMirCalls } from "./validation/call-validator";
 import { validateProofMirLayout } from "./validation/layout-validator";
-import type { ProofMirProgram } from "./model/program";
 import type { ProofMirCanonicalKey } from "./canonicalization/canonical-keys";
+import type { ProofMirProgram } from "./model/program";
+
+function registerReachableFunctionOrigins(input: {
+  readonly programDraft: DraftProofMirProgramDraft;
+  readonly program: MonomorphizedHirProgram;
+  readonly diagnostics: ProofMirDiagnostic[];
+  readonly loweredFunctionInstanceIds: ReadonlySet<string>;
+}): void {
+  for (const reachableFunction of input.program.reachableFunctions.entries()) {
+    if (!input.loweredFunctionInstanceIds.has(String(reachableFunction.functionInstanceId))) {
+      continue;
+    }
+    if (reachableFunction.reason !== "sourceCall") {
+      continue;
+    }
+    const originKey = draftOriginKey({
+      owner: { kind: "function", functionInstanceId: reachableFunction.functionInstanceId },
+      hirOriginId: reachableFunction.origin,
+      note: `reachable-function:${reachableFunction.reason}`,
+    });
+    acceptProgramOrigin(
+      input.programDraft,
+      {
+        key: originKey,
+        ownerKey: `function:${String(reachableFunction.functionInstanceId)}`,
+        note: `reachable-function:${reachableFunction.reason}`,
+        sourceOrigin: String(reachableFunction.origin),
+      },
+      input.diagnostics,
+    );
+  }
+}
 
 export interface ProofMirBuildTargetContext {
   readonly targetId: TargetId;
@@ -271,6 +302,20 @@ function collectSuccessfulFunctionDrafts(
   );
 }
 
+function reachableFunctionsForProofMirProgram(input: {
+  readonly program: MonomorphizedHirProgram;
+  readonly functionDrafts: readonly DraftProofMirFunctionDraft[];
+}): readonly MonoReachableFunction[] {
+  const loweredFunctionIds = new Set(
+    input.functionDrafts.map((functionDraft) => String(functionDraft.functionInstanceId)),
+  );
+  return input.program.reachableFunctions
+    .entries()
+    .filter((reachableFunction) =>
+      loweredFunctionIds.has(String(reachableFunction.functionInstanceId)),
+    );
+}
+
 function acceptProgramOrigin(
   programDraft: DraftProofMirProgramDraft,
   input: {
@@ -361,7 +406,18 @@ export function buildProofMir(input: BuildProofMirInput): BuildProofMirResult {
     return buildProofMirErrorResult(draftResult.buildContext.diagnostics());
   }
 
+  const functionDrafts = collectSuccessfulFunctionDrafts(draftResult.buildContext, input.program);
+  const loweredFunctionInstanceIds = new Set(
+    functionDrafts.map((functionDraft) => String(functionDraft.functionInstanceId)),
+  );
+
   const programLevelDiagnostics: ProofMirDiagnostic[] = [];
+  registerReachableFunctionOrigins({
+    programDraft: draftResult.programDraft,
+    program: input.program,
+    diagnostics: programLevelDiagnostics,
+    loweredFunctionInstanceIds,
+  });
   const { imageOriginKey, externalRoots } = registerProgramLevelOrigins({
     programDraft: draftResult.programDraft,
     program: input.program,
@@ -391,11 +447,15 @@ export function buildProofMir(input: BuildProofMirInput): BuildProofMirResult {
 
   const freezeResult = freezeDraftProgram({
     programDraft: draftResult.programDraft,
-    functions: collectSuccessfulFunctionDrafts(draftResult.buildContext, input.program),
+    functions: functionDrafts,
     functionInstances,
     layout: input.layout,
     proofMetadata: input.program.proofMetadata,
     runtimeCatalog: input.target.runtimeCatalog,
+    reachableFunctions: reachableFunctionsForProofMirProgram({
+      program: input.program,
+      functionDrafts,
+    }),
     image: {
       imageInstanceId: input.program.image.instanceId,
       entryFunctionInstanceId,

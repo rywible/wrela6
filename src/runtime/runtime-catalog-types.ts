@@ -1,3 +1,4 @@
+import type { ProofAuthorityFingerprint } from "../shared/proof-authority-types";
 import type { ParameterId, TargetId } from "../semantic/ids";
 
 export type ProofMirRuntimeOperationId = number & {
@@ -54,6 +55,7 @@ export type ProofMirRuntimeAbiReference =
 export interface ProofMirRuntimeOperation {
   readonly runtimeId: ProofMirRuntimeOperationId;
   readonly name: string;
+  readonly authorityKey?: string;
   readonly targetAvailability: ProofMirRuntimeTargetAvailability;
   readonly requiredFactSchemas: readonly ProofMirRuntimeFactSchema[];
   readonly consumedCapabilitySchemas: readonly ProofMirRuntimePlaceSchema[];
@@ -66,6 +68,7 @@ export interface ProofMirRuntimeOperation {
 export interface ProofMirRuntimeCatalog {
   readonly targetId: TargetId;
   readonly features: readonly string[];
+  readonly fingerprint?: ProofAuthorityFingerprint;
   get(runtimeId: ProofMirRuntimeOperationId): ProofMirRuntimeOperation | undefined;
   entries(): readonly ProofMirRuntimeOperation[];
 }

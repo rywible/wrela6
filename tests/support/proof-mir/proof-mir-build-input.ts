@@ -3,6 +3,18 @@ import type { LayoutFactProgram, LayoutTargetSurface } from "../../../src/layout
 import type { TypedHirProgram } from "../../../src/hir/hir";
 import { monomorphizeWholeImage } from "../../../src/mono/monomorphizer";
 import type { MonomorphizedHirProgram } from "../../../src/mono/mono-hir";
+import type {
+  MonoExpressionId,
+  MonoExternalRoot,
+  MonoFunctionInstance,
+  MonoReachableFunction,
+  MonoReachableFunctionReason,
+  MonoReachableFunctionTable,
+  MonoResolvedCallTarget,
+} from "../../../src/mono/mono-hir";
+import { callResolvedTargetKey } from "../../../src/mono/call-resolved-target-application";
+import { monoResolvedCallTargetEntriesForCaller } from "../../../src/mono/resolved-call-targets";
+import { hirOriginId } from "../../../src/hir/ids";
 import type { MonoInstanceId } from "../../../src/mono/ids";
 import type { DraftProofMirBuildTargetContext } from "../../../src/proof-mir/draft/draft-builder-context";
 import type { ProofMirRuntimeOperation } from "../../../src/runtime/runtime-catalog-types";
@@ -210,4 +222,127 @@ export function proofMirDefaultTargetId(): TargetId {
 
 export function proofMirDefaultLayoutTarget(): LayoutTargetSurface {
   return defaultProofMirLayoutTarget();
+}
+
+const MONO_REACHABLE_FUNCTION_REASON_RANK: Readonly<Record<MonoReachableFunctionReason, number>> = {
+  imageEntry: 0,
+  deviceHandler: 1,
+  hardwareCallback: 2,
+  targetRequired: 3,
+  sourceCall: 4,
+};
+
+export function monoReachableFunctionTableForTest(
+  entries: readonly MonoReachableFunction[],
+): MonoReachableFunctionTable {
+  const lookup = new Map<string, MonoReachableFunction>();
+  for (const entry of entries) {
+    lookup.set(String(entry.functionInstanceId), entry);
+  }
+  return {
+    get(key) {
+      return lookup.get(String(key));
+    },
+    has(key) {
+      return lookup.has(String(key));
+    },
+    entries: () => entries,
+  };
+}
+
+export function buildReachableFunctionsForProofMirTest(input: {
+  readonly externalRoots: readonly MonoExternalRoot[];
+  readonly functions: readonly MonoFunctionInstance[];
+  readonly resolvedCallTargetEntries?: readonly {
+    readonly callerInstanceId: MonoInstanceId;
+    readonly callExpressionId: MonoExpressionId;
+    readonly resolvedTarget: MonoResolvedCallTarget;
+  }[];
+  readonly seedReachableFunctions?: readonly MonoReachableFunction[];
+}): MonoReachableFunctionTable {
+  const functionByInstanceId = new Map<string, MonoFunctionInstance>();
+  for (const functionInstance of input.functions) {
+    functionByInstanceId.set(String(functionInstance.instanceId), functionInstance);
+  }
+
+  const entries = new Map<string, MonoReachableFunction>();
+  const queue: MonoInstanceId[] = [];
+
+  const enqueue = (entry: MonoReachableFunction): void => {
+    const key = String(entry.functionInstanceId);
+    const existing = entries.get(key);
+    if (existing === undefined) {
+      entries.set(key, entry);
+      queue.push(entry.functionInstanceId);
+      return;
+    }
+    if (
+      MONO_REACHABLE_FUNCTION_REASON_RANK[entry.reason] <
+      MONO_REACHABLE_FUNCTION_REASON_RANK[existing.reason]
+    ) {
+      entries.set(key, entry);
+    }
+  };
+
+  for (const entry of input.seedReachableFunctions ?? []) {
+    enqueue(entry);
+  }
+  for (const root of input.externalRoots) {
+    enqueue({
+      functionInstanceId: root.functionInstanceId,
+      reason: root.reason,
+      origin: root.origin,
+    });
+  }
+
+  const callResolvedTargets = new Map(
+    (input.resolvedCallTargetEntries ?? []).map((entry) => [
+      callResolvedTargetKey({
+        callerInstanceId: entry.callerInstanceId,
+        callExpressionId: entry.callExpressionId,
+      }),
+      entry,
+    ]),
+  );
+
+  while (queue.length > 0) {
+    const callerInstanceId = queue.shift();
+    if (callerInstanceId === undefined) {
+      continue;
+    }
+    const caller = functionByInstanceId.get(String(callerInstanceId));
+    if (caller === undefined) {
+      continue;
+    }
+    for (const resolvedCallTargetEntry of monoResolvedCallTargetEntriesForCaller({
+      callResolvedTargets,
+      callerInstanceId,
+    })) {
+      if (resolvedCallTargetEntry.resolvedTarget.kind !== "sourceFunction") {
+        continue;
+      }
+      const callExpressionId = resolvedCallTargetEntry.callExpressionId;
+      const callee = resolvedCallTargetEntry.resolvedTarget.targetFunctionInstanceId;
+      const expression = caller.bodyIndex?.expressions.get(callExpressionId);
+      const expressionOrigin =
+        expression === undefined ? Number.NaN : Number(expression.sourceOrigin);
+      const callerOrigin = Number(caller.sourceOrigin);
+      const origin =
+        Number.isInteger(expressionOrigin) && expressionOrigin >= 0
+          ? hirOriginId(expressionOrigin)
+          : Number.isInteger(callerOrigin) && callerOrigin >= 0
+            ? hirOriginId(callerOrigin)
+            : hirOriginId(0);
+      enqueue({
+        functionInstanceId: callee,
+        reason: "sourceCall",
+        origin,
+      });
+    }
+  }
+
+  const sortedEntries = [...entries.values()].sort((left, right) =>
+    String(left.functionInstanceId).localeCompare(String(right.functionInstanceId)),
+  );
+  return monoReachableFunctionTableForTest(sortedEntries);
 }

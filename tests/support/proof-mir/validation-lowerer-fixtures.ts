@@ -1,6 +1,7 @@
 import {
   hirExpressionId,
   hirLocalId,
+  hirOriginId,
   hirStatementId,
   resourcePlaceId,
   validationId,
@@ -374,6 +375,7 @@ export function validationLowererFixture(
     } as never,
     declaredRequirements: [],
     sourceOrigin: "source:function",
+    hirSourceOrigin: hirOriginId(0),
   };
 
   const contextResult = buildValidationLoweringContext({

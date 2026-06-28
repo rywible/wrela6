@@ -1,6 +1,6 @@
 import * as typescript from "typescript";
 
-interface PolicyViolation {
+export interface PolicyViolation {
   filePath: string;
   line: number;
   column: number;
@@ -126,6 +126,20 @@ const proofMirForbiddenModulePathPatterns = [
   /(?:bun:|node:fs|node:path|node:os|node:process|fs|path|os|process)/,
 ] as const;
 
+const proofCheckForbiddenModulePathPatterns = [
+  /[^"']*\/frontend\//,
+  /[^"']*\/lexer\//,
+  /[^"']*\/parser\//,
+  /[^"']*\/semantic\/names\//,
+  /[^"']*\/semantic\/item-index\//,
+  /[^"']*\/semantic\/surface\/(?!resource-kind)/,
+  /[^"']*\/hir\/.*lowerer/,
+  /[^"']*\/proof-mir\/(?:lower|draft|canonicalization)\//,
+  /[^"']*\/(?:opt|optimization|codegen|linker)\//,
+  /[^"']*(?:aarch64|pe-coff)/i,
+  /(?:bun:|node:fs|node:path|node:os|node:process|fs|path|os|process)/,
+] as const;
+
 function expandImportBoundaryPatterns(pathPatterns: readonly RegExp[]): RegExp[] {
   const patterns: RegExp[] = [];
   for (const pathPattern of pathPatterns) {
@@ -133,12 +147,22 @@ function expandImportBoundaryPatterns(pathPatterns: readonly RegExp[]): RegExp[]
     patterns.push(new RegExp(`from\\s+["']${pathSource}`));
     patterns.push(new RegExp(`import\\s+["']${pathSource}`));
     patterns.push(new RegExp(`import\\s+\\w+\\s*=\\s*require\\(\\s*["']${pathSource}`));
+    if (pathSource.endsWith("\\/")) {
+      const barrelSource = `${pathSource.slice(0, -2)}["']`;
+      patterns.push(new RegExp(`from\\s+["']${barrelSource}`));
+      patterns.push(new RegExp(`import\\s+["']${barrelSource}`));
+      patterns.push(new RegExp(`import\\s+\\w+\\s*=\\s*require\\(\\s*["']${barrelSource}`));
+    }
   }
   return patterns;
 }
 
 const proofMirImportForbiddenPatterns = expandImportBoundaryPatterns(
   proofMirForbiddenModulePathPatterns,
+);
+
+const proofCheckImportForbiddenPatterns = expandImportBoundaryPatterns(
+  proofCheckForbiddenModulePathPatterns,
 );
 
 function checkLayoutImportBoundary(filePath: string, sourceText: string): PolicyViolation[] {
@@ -178,6 +202,39 @@ function checkProofMirImportBoundary(filePath: string, sourceText: string): Poli
         column: 1,
         message:
           "src/proof-mir must not import frontend, lexer, parser, name resolution, item index, proof checker, codegen, linker, target backend, or host/runtime modules.",
+      });
+      break;
+    }
+  }
+  return violations;
+}
+
+function checkProofCheckImportBoundary(filePath: string, sourceText: string): PolicyViolation[] {
+  const normalizedPath = normalizePath(filePath);
+  if (!normalizedPath.startsWith("src/proof-check/")) {
+    return [];
+  }
+
+  const violations: PolicyViolation[] = [];
+  if (
+    /node:crypto/.test(sourceText) &&
+    normalizedPath !== "src/proof-check/authority/canonical-serialization.ts"
+  ) {
+    violations.push({
+      filePath,
+      line: 1,
+      column: 1,
+      message: "node:crypto is only allowed in proof-check authority canonical serialization.",
+    });
+  }
+  for (const pattern of proofCheckImportForbiddenPatterns) {
+    if (pattern.test(sourceText)) {
+      violations.push({
+        filePath,
+        line: 1,
+        column: 1,
+        message:
+          "src/proof-check must not import frontend, lexer, parser, semantic internals, HIR lowering internals, Proof MIR lowering internals, optimization, target backend, linker, PE-COFF, Bun, or filesystem modules.",
       });
       break;
     }
@@ -232,7 +289,24 @@ function checkTextPolicies(filePath: string, sourceText: string): PolicyViolatio
   return violations;
 }
 
-async function main(): Promise<void> {
+export function checkPolicyFileText(filePath: string, sourceText: string): PolicyViolation[] {
+  return [
+    ...checkIdentifiers(filePath, sourceText),
+    ...checkLayoutImportBoundary(filePath, sourceText),
+    ...checkProofMirImportBoundary(filePath, sourceText),
+    ...checkProofCheckImportBoundary(filePath, sourceText),
+    ...checkTextPolicies(filePath, sourceText),
+  ];
+}
+
+export function checkPolicyTextForTest(input: {
+  filePath: string;
+  sourceText: string;
+}): PolicyViolation[] {
+  return checkPolicyFileText(input.filePath, input.sourceText);
+}
+
+export async function runPolicyCheck(): Promise<void> {
   const files = (
     await Promise.all(checkedRoots.map((root) => collectTypeScriptFiles(root)))
   ).flat();
@@ -240,10 +314,7 @@ async function main(): Promise<void> {
 
   for (const filePath of files) {
     const sourceText = await readText(filePath);
-    violations.push(...checkIdentifiers(filePath, sourceText));
-    violations.push(...checkLayoutImportBoundary(filePath, sourceText));
-    violations.push(...checkProofMirImportBoundary(filePath, sourceText));
-    violations.push(...checkTextPolicies(filePath, sourceText));
+    violations.push(...checkPolicyFileText(filePath, sourceText));
   }
 
   if (violations.length > 0) {
@@ -257,4 +328,6 @@ async function main(): Promise<void> {
   }
 }
 
-await main();
+if (import.meta.main) {
+  await runPolicyCheck();
+}

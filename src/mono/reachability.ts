@@ -858,20 +858,19 @@ function processOutgoingFunctionEdges(input: ProcessOutgoingFunctionEdgesInput):
           }
         : { kind: "function", instanceId: input.owner.instanceId };
     if (callExpressionId !== undefined) {
+      const calleeInstanceId = canonicalFunctionInstanceId({
+        functionId: edge.targetFunctionId,
+        ...(edge.targetOwnerTypeId !== undefined ? { ownerTypeId: edge.targetOwnerTypeId } : {}),
+        ownerTypeArguments: edge.targetOwnerTypeArguments ?? [],
+        functionTypeArguments: edge.targetFunctionTypeArguments ?? [],
+      });
       recordCallResolvedTarget({
         state: input.state,
         callerInstanceId: input.owner.instanceId,
         callExpressionId,
         resolvedTarget: {
           kind: "sourceFunction",
-          targetFunctionInstanceId: canonicalFunctionInstanceId({
-            functionId: edge.targetFunctionId,
-            ...(edge.targetOwnerTypeId !== undefined
-              ? { ownerTypeId: edge.targetOwnerTypeId }
-              : {}),
-            ownerTypeArguments: edge.targetOwnerTypeArguments ?? [],
-            functionTypeArguments: edge.targetFunctionTypeArguments ?? [],
-          }),
+          targetFunctionInstanceId: calleeInstanceId,
         },
       });
     }

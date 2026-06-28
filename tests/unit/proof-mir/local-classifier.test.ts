@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { hirExpressionId, hirLocalId, hirStatementId } from "../../../src/hir/ids";
+import { hirExpressionId, hirLocalId, hirOriginId, hirStatementId } from "../../../src/hir/ids";
 import { instantiatedHirId, instantiatedHirIdKey, monoInstanceId } from "../../../src/mono/ids";
 import type { MonoFunctionInstance, MonoLocal, MonoLocalId } from "../../../src/mono/mono-hir";
 import { buildMonoTable } from "../../../src/mono/proof-metadata-tables";
@@ -342,6 +342,7 @@ describe("ProofMirLocalClassifier", () => {
       ),
       declaredRequirements: [],
       sourceOrigin: "source:1",
+      hirSourceOrigin: hirOriginId(1),
     };
 
     const result = createProofMirLocalClassifier({ functionInstance });

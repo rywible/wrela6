@@ -81,6 +81,13 @@ export type {
   ProofMirDeterministicTableResult,
 } from "./canonicalization/canonical-order";
 
+export { buildProofMirReachabilityView } from "./domains/reachability-view";
+export type {
+  ProofMirReachabilityView,
+  ProofMirSourceCallEdge,
+  ProofMirSourceCallGraph,
+} from "./domains/reachability-view";
+
 export { buildProofMir } from "./proof-mir-builder";
 export type {
   BuildProofMirInput,
@@ -134,4 +141,6 @@ export type {
   ProofMirPlatformEdge,
   ProofMirPrivateStateGeneration,
   ProofMirProgram,
+  ProofMirReachableFunction,
+  ProofMirReachableFunctionTable,
 } from "./model/program";

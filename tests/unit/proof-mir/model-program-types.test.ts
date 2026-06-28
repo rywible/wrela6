@@ -60,6 +60,7 @@ function proofMirProgramModelFake(): ProofMirProgram {
 
   return {
     image,
+    reachableFunctions: emptyDeterministicTable(),
     functions: emptyDeterministicTable(),
     layout: {} as LayoutFactProgram,
     proofMetadata: {} as MonoProofMetadata,

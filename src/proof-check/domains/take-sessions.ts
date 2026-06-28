@@ -1,0 +1,31 @@
+export type {
+  TakeSessionOperation,
+  TakeSessionTransferResult,
+  TakeCrossedScopeExitKind,
+  TakeSessionTransferInput,
+  OpenTakeStreamInput,
+  OpenTakeBufferInput,
+  OpenTakeValidatedInput,
+  YieldStreamMemberInput,
+  DischargeTakeMemberInput,
+  DischargeTakeObligationInput,
+  CloseTakeSessionInput,
+  CheckCrossedScopeExitInput,
+  CheckValidatedTakePlaceOperationInput,
+} from "./take-session-types";
+
+export {
+  openTakeStream,
+  openTakeObligation,
+  openTakeBuffer,
+  openTakeValidated,
+  yieldStreamMember,
+  dischargeTakeMember,
+  dischargeTakeObligation,
+  closeTakeSession,
+  checkCrossedScopeExit,
+  checkValidatedTakePlaceOperation,
+  transferTakeSession,
+  takeSessionTransferChain,
+  applyTakeSessionPatchesForTest,
+} from "./take-session-operations";

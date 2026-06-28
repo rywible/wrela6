@@ -30,6 +30,7 @@ import { collectReachablePlatformPrimitiveIds } from "./platform-primitives";
 import { instantiateMonoProofMetadata } from "./proof-metadata-instantiator";
 import { buildMonoExternalRoots } from "./mono-external-roots";
 import { buildMonoResolvedCallTargetTable } from "./resolved-call-targets";
+import { finalizeMonoReachableFunctionTable } from "./reachable-functions";
 import { buildMonoTable, proofMetadataIdKey } from "./proof-metadata-tables";
 import {
   createReachabilityNormalizationContext,
@@ -86,9 +87,15 @@ export function finalizeReachability(state: ReachabilityState): ReachabilityResu
     functionTableLookup: state.functionTableLookup,
     diagnostics: state.diagnostics,
   });
+  const reachableFunctions = finalizeMonoReachableFunctionTable({
+    state,
+    externalRoots,
+    functions: sortedFunctions,
+  });
   const programWithoutPrimitiveIds: MonomorphizedHirProgram = {
     image: imageRecord,
     externalRoots,
+    reachableFunctions,
     functions: buildMonoFunctionTable(sortedFunctions),
     types: buildMonoTypeTable(sortedTypes),
     validatedBuffers: buildMonoValidatedBufferTable(state.validatedBuffers),

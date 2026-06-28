@@ -1,6 +1,10 @@
 import type { HirPlatformContractEdgeId } from "../../hir/ids";
 import type { LayoutFactProgram } from "../../layout/layout-program";
-import type { MonoInstantiatedProofId, MonoProofMetadata } from "../../mono/mono-hir";
+import type {
+  MonoInstantiatedProofId,
+  MonoProofMetadata,
+  MonoReachableFunctionReason,
+} from "../../mono/mono-hir";
 import type { MonoInstanceId } from "../../mono/ids";
 import type { PlatformPrimitiveId } from "../../semantic/ids";
 import type { ProofMirRuntimeCatalog } from "../../runtime/runtime-catalog-types";
@@ -23,6 +27,7 @@ import type { ProofMirOriginTable } from "./origins";
 
 export interface ProofMirProgram {
   readonly image: ProofMirImage;
+  readonly reachableFunctions: ProofMirReachableFunctionTable;
   readonly functions: ProofMirFunctionTable;
   readonly layout: LayoutFactProgram;
   readonly proofMetadata: MonoProofMetadata;
@@ -49,6 +54,17 @@ export interface ProofMirExternalRoot {
   readonly reason: "imageEntry" | "deviceHandler" | "hardwareCallback" | "targetRequired";
   readonly origin: ProofMirOriginId;
 }
+
+export interface ProofMirReachableFunction {
+  readonly functionInstanceId: MonoInstanceId;
+  readonly reason: MonoReachableFunctionReason;
+  readonly origin: ProofMirOriginId;
+}
+
+export type ProofMirReachableFunctionTable = ProofMirDeterministicTable<
+  MonoInstanceId,
+  ProofMirReachableFunction
+>;
 
 export interface ProofMirPlatformEdge {
   readonly edgeId: MonoInstantiatedProofId<HirPlatformContractEdgeId>;

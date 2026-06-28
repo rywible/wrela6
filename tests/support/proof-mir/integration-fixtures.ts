@@ -38,6 +38,7 @@ import type {
 } from "../../../src/mono/mono-hir";
 import { coreTypeId, functionId } from "../../../src/semantic/ids";
 import {
+  buildReachableFunctionsForProofMirTest,
   proofMirBuildInputFromMonoLayout,
   proofMirDefaultLayoutTarget,
   validatedBufferProofMirLayoutFixture,
@@ -129,6 +130,10 @@ function mergeProgramWithEntryFunction(input: {
       entryFunctionInstanceId: input.entryFunction.instanceId,
     },
     externalRoots,
+    reachableFunctions: buildReachableFunctionsForProofMirTest({
+      externalRoots,
+      functions,
+    }),
     functions: {
       entries: () => functions,
       get: (instanceId) =>
@@ -392,6 +397,7 @@ function functionInstanceShell(input: {
     } as never,
     declaredRequirements: [],
     sourceOrigin: "source:function",
+    hirSourceOrigin: hirOriginId(0),
   };
 }
 
@@ -425,24 +431,29 @@ export function validationAttemptProofMirFixture(): ProofMirBuildInput {
     validationFunction,
     attemptFunction,
   ];
+  const externalRoots: readonly MonoExternalRoot[] = [
+    {
+      functionInstanceId: validationFunctionId,
+      reason: "imageEntry",
+      origin: hirOriginId(1),
+    },
+    {
+      functionInstanceId: attemptFunctionId,
+      reason: "targetRequired",
+      origin: hirOriginId(2),
+    },
+  ];
   const program: MonomorphizedHirProgram = {
     ...layoutFixture.program,
     image: {
       ...layoutFixture.program.image,
       entryFunctionInstanceId: validationFunctionId,
     },
-    externalRoots: [
-      {
-        functionInstanceId: validationFunctionId,
-        reason: "imageEntry",
-        origin: hirOriginId(1),
-      },
-      {
-        functionInstanceId: attemptFunctionId,
-        reason: "targetRequired",
-        origin: hirOriginId(2),
-      },
-    ],
+    externalRoots,
+    reachableFunctions: buildReachableFunctionsForProofMirTest({
+      externalRoots,
+      functions,
+    }),
     functions: {
       entries: () => functions,
       get: (instanceId) =>

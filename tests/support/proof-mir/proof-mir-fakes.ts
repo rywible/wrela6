@@ -1,5 +1,7 @@
 import type { TargetId } from "../../../src/semantic/ids";
 import { targetId } from "../../../src/semantic/ids";
+import { createHash } from "node:crypto";
+import type { ProofAuthorityFingerprint } from "../../../src/proof-check/authority/authority-types";
 import {
   runtimeCatalog,
   type ProofMirRuntimeAbiReference,
@@ -44,6 +46,7 @@ export interface ProofMirRuntimeCallContract {
 export interface ProofMirRuntimeOperationFakeInput {
   readonly runtimeId: ProofMirRuntimeOperationId;
   readonly name: string;
+  readonly authorityKey?: string;
   readonly targetAvailability?: ProofMirRuntimeTargetAvailability;
   readonly loweringOwner?: ProofMirRuntimeLoweringOwner;
   readonly abi?: ProofMirRuntimeAbiReference;
@@ -57,6 +60,9 @@ export interface ProofMirRuntimeCatalogFakeInput {
   readonly targetId?: TargetId;
   readonly features?: readonly string[];
   readonly operations: readonly ProofMirRuntimeOperation[];
+  readonly fingerprintName?: string;
+  readonly targetName?: string;
+  readonly version?: string;
 }
 
 export interface ProofMirRuntimeCallContractFakeInput {
@@ -71,6 +77,22 @@ export interface ProofMirRuntimeCallContractFakeInput {
 }
 
 const DEFAULT_RUNTIME_CATALOG_TARGET_ID = targetId("x64-test");
+
+function runtimeCatalogFingerprintForFake(input: {
+  readonly fingerprintName: string;
+  readonly targetName?: string;
+  readonly version?: string;
+}): ProofAuthorityFingerprint {
+  return {
+    authorityKind: "runtime",
+    targetId: targetId(input.targetName ?? "x64-test"),
+    version: input.version ?? "runtime-v1",
+    digestAlgorithm: "sha256",
+    digestHex: createHash("sha256")
+      .update(`proof-check-authority-test:${input.fingerprintName}`)
+      .digest("hex"),
+  };
+}
 
 function stableTestOriginValue(note: string): number {
   let hash = 0;
@@ -109,6 +131,7 @@ export function proofMirRuntimeOperationFake(
   return {
     runtimeId: input.runtimeId,
     name: input.name,
+    ...(input.authorityKey === undefined ? {} : { authorityKey: input.authorityKey }),
     targetAvailability: input.targetAvailability ?? { kind: "allTargets" },
     loweringOwner,
     abi: input.abi ?? { kind: "compilerRuntime", symbol: `__wr_${input.name}` },
@@ -122,9 +145,19 @@ export function proofMirRuntimeOperationFake(
 export function proofMirRuntimeCatalogFake(
   input: ProofMirRuntimeCatalogFakeInput,
 ): ProofMirRuntimeCatalog {
+  const catalogTargetId = input.targetId ?? DEFAULT_RUNTIME_CATALOG_TARGET_ID;
+  const fingerprint =
+    input.fingerprintName === undefined
+      ? undefined
+      : runtimeCatalogFingerprintForFake({
+          fingerprintName: input.fingerprintName,
+          targetName: input.targetName,
+          version: input.version,
+        });
   const result = runtimeCatalog({
-    targetId: input.targetId ?? DEFAULT_RUNTIME_CATALOG_TARGET_ID,
+    targetId: catalogTargetId,
     features: input.features ?? [],
+    ...(fingerprint === undefined ? {} : { fingerprint }),
     entries: input.operations,
   });
   if (result.kind !== "ok") {

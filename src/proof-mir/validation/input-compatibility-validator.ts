@@ -194,6 +194,11 @@ function validateExternalRoots(input: {
       root,
       diagnostics: input.diagnostics,
     });
+    validateExternalRootInReachableClosure({
+      program: input.program,
+      root,
+      diagnostics: input.diagnostics,
+    });
   }
 
   validateImageEntryExternalRoot({
@@ -233,6 +238,45 @@ function validateImageEntryExternalRoot(input: {
         : "missing-image-entry-root",
     }),
   );
+}
+
+function validateExternalRootInReachableClosure(input: {
+  readonly program: MonomorphizedHirProgram;
+  readonly root: MonoExternalRoot;
+  readonly diagnostics: ProofMirDiagnostic[];
+}): void {
+  if (input.program.reachableFunctions.has(input.root.functionInstanceId)) {
+    return;
+  }
+  input.diagnostics.push(
+    inputCompatibilityDiagnostic({
+      code: "PROOF_MIR_INVALID_EXTERNAL_ROOT",
+      message: "External entry root is outside the monomorphized reachable function closure.",
+      ownerKey: `external-root:${input.root.reason}`,
+      stableDetail: `reachable-closure:${String(input.root.functionInstanceId)}`,
+      functionInstanceId: input.root.functionInstanceId,
+    }),
+  );
+}
+
+function validateReachableFunctionClosure(input: {
+  readonly program: MonomorphizedHirProgram;
+  readonly diagnostics: ProofMirDiagnostic[];
+}): void {
+  for (const reachableFunction of input.program.reachableFunctions.entries()) {
+    if (input.program.functions.get(reachableFunction.functionInstanceId) !== undefined) {
+      continue;
+    }
+    input.diagnostics.push(
+      inputCompatibilityDiagnostic({
+        code: "PROOF_MIR_INVALID_EXTERNAL_ROOT",
+        message: "Reachable function closure references a missing monomorphized function instance.",
+        ownerKey: `reachable-function:${reachableFunction.reason}`,
+        stableDetail: `function:${String(reachableFunction.functionInstanceId)}`,
+        functionInstanceId: reachableFunction.functionInstanceId,
+      }),
+    );
+  }
 }
 
 function validateExternalRoot(input: {
@@ -521,8 +565,9 @@ function validateReachableBodylessRecoveryFunctions(input: {
   readonly program: MonomorphizedHirProgram;
   readonly diagnostics: ProofMirDiagnostic[];
 }): void {
-  for (const functionInstance of input.program.functions.entries()) {
-    if (functionInstance.bodyStatus !== "bodylessRecovery") {
+  for (const reachableFunction of input.program.reachableFunctions.entries()) {
+    const functionInstance = input.program.functions.get(reachableFunction.functionInstanceId);
+    if (functionInstance === undefined || functionInstance.bodyStatus !== "bodylessRecovery") {
       continue;
     }
     input.diagnostics.push(
@@ -557,6 +602,10 @@ export function validateProofMirBuildInputCompatibility(
     diagnostics,
   });
   validateExternalRoots({
+    program: input.program,
+    diagnostics,
+  });
+  validateReachableFunctionClosure({
     program: input.program,
     diagnostics,
   });

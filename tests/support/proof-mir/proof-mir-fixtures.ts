@@ -10,6 +10,8 @@ export {
   closedProofMirFixture,
   proofMirDefaultTargetId,
   proofMirDefaultLayoutTarget,
+  buildReachableFunctionsForProofMirTest,
+  monoReachableFunctionTableForTest,
 } from "./proof-mir-build-input";
 export type { ShuffledProofMirInputFixtureOptions } from "./proof-mir-determinism-fixtures";
 export { shuffledProofMirInputFixture } from "./proof-mir-determinism-fixtures";

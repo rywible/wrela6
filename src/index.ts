@@ -4,6 +4,7 @@ export * as hir from "./hir";
 export * as layout from "./layout";
 export * as mono from "./mono";
 export * as proofMir from "./proof-mir";
+export * as proofCheck from "./proof-check";
 export * as runtime from "./runtime";
 export * as semantic from "./semantic";
 export * as shared from "./shared";

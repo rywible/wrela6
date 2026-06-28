@@ -162,6 +162,12 @@ export type MonoResolvedCallTarget =
       readonly primitiveId: PlatformPrimitiveId;
     };
 
+export interface MonoResolvedCallTargetEntry {
+  readonly callerInstanceId: MonoInstanceId;
+  readonly callExpressionId: MonoExpressionId;
+  readonly resolvedTarget: MonoResolvedCallTarget;
+}
+
 export interface MonoCallExpression {
   readonly callee: MonoExpression;
   readonly resolvedTarget?: MonoResolvedCallTarget;
@@ -778,6 +784,7 @@ export interface MonoFunctionInstance {
   readonly bodyIndex?: MonoBodyIndex;
   readonly declaredRequirements: readonly MonoRequirement[];
   readonly sourceOrigin: string;
+  readonly hirSourceOrigin: HirOriginId;
 }
 
 export type MonoFunctionTable = MonoDeterministicTable<MonoInstanceId, MonoFunctionInstance>;
@@ -793,6 +800,21 @@ export interface MonoExternalRoot {
   readonly reason: MonoExternalRootReason;
   readonly origin: HirOriginId;
 }
+
+export type MonoReachableFunctionReason = MonoExternalRootReason | "sourceCall";
+
+export interface MonoReachableFunction {
+  readonly functionInstanceId: MonoInstanceId;
+  readonly reason: MonoReachableFunctionReason;
+  readonly origin: HirOriginId;
+}
+
+export type MonoReachableFunctionTable = MonoDeterministicTable<
+  MonoInstanceId,
+  MonoReachableFunction
+> & {
+  has(key: MonoInstanceId): boolean;
+};
 
 export type MonoInstantiationEdgeSource =
   | { readonly kind: "image"; readonly imageId: ImageId }
@@ -881,6 +903,7 @@ export type MonoResolvedCallTargetTable = MonoDeterministicTable<string, MonoRes
 export interface MonomorphizedHirProgram {
   readonly image: MonoImage;
   readonly externalRoots: readonly MonoExternalRoot[];
+  readonly reachableFunctions: MonoReachableFunctionTable;
   readonly functions: MonoFunctionTable;
   readonly types: MonoTypeTable;
   readonly validatedBuffers: MonoValidatedBufferTable;

@@ -339,6 +339,17 @@ function draftProgramFixture(input: { readonly order: readonly ("a" | "b" | "c")
       note: "function-root",
     }),
   );
+  const reachableOriginKey = draftOriginKey({
+    owner: { kind: "function", functionInstanceId },
+    note: "external-root:imageEntry",
+  });
+  acceptOrThrow(
+    programDraft.origins.accept({
+      key: reachableOriginKey,
+      ownerKey: `function:${String(functionInstanceId)}`,
+      note: "external-root:imageEntry",
+    }),
+  );
 
   const blockKeys = new Map<"a" | "b" | "c", ReturnType<typeof draftBlockKey>>();
   for (const role of input.order) {
@@ -492,10 +503,23 @@ function draftProgramFixture(input: { readonly order: readonly ("a" | "b" | "c")
       get: () => undefined,
       entries: () => [],
     } satisfies ProofMirRuntimeCatalog,
+    reachableFunctions: [
+      {
+        functionInstanceId,
+        reason: "imageEntry" as const,
+        origin: 0 as never,
+      },
+    ],
     image: {
       imageInstanceId: monoInstanceId("image:main"),
       entryFunctionInstanceId: functionInstanceId,
-      externalRoots: [],
+      externalRoots: [
+        {
+          functionInstanceId,
+          reason: "imageEntry" as const,
+          originKey: reachableOriginKey,
+        },
+      ],
       layout: { kind: "imageEntryAbi" as const, imageInstanceId: monoInstanceId("image:main") },
       originKey: imageOriginKey,
     },

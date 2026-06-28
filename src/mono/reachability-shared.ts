@@ -1,5 +1,5 @@
 import type { HirImage, TypedHirProgram } from "../hir/hir";
-import type { HirProofOwner } from "../hir/ids";
+import type { HirOriginId, HirProofOwner } from "../hir/ids";
 import type { FunctionId, ImageId, ItemId, TypeId } from "../semantic/ids";
 import type { MonoDiagnostic } from "./diagnostics";
 import { monoInstanceId, type MonoInstanceId } from "./ids";
@@ -9,7 +9,8 @@ import type {
   MonoInstantiationEdge,
   MonomorphizedHirProgram,
   MonoPlatformContractEdge,
-  MonoResolvedCallTarget,
+  MonoReachableFunction,
+  MonoResolvedCallTargetEntry,
   MonoTypeInstance,
   MonoValidatedBuffer,
 } from "./mono-hir";
@@ -30,6 +31,7 @@ export interface ReachabilityState {
   readonly imageInstanceId: MonoInstanceId;
   readonly imageItemId: ItemId;
   readonly imageSourceOrigin: string;
+  readonly imageHirSourceOrigin: HirOriginId;
   readonly diagnostics: MonoDiagnostic[];
   readonly functionInstances: MonoFunctionInstance[];
   readonly functionTableLookup: Map<string, MonoFunctionInstance>;
@@ -46,7 +48,8 @@ export interface ReachabilityState {
   readonly typeSourceForKey: Map<string, TypeId>;
   readonly ancestry: MonoTypeAncestry;
   readonly canonicalInstanceKeys: ReadonlyMap<HirProofOwner, string>;
-  readonly callResolvedTargets: Map<string, MonoResolvedCallTarget>;
+  readonly callResolvedTargets: Map<string, MonoResolvedCallTargetEntry>;
+  readonly reachableFunctions: Map<string, MonoReachableFunction>;
 }
 
 export function createReachabilityNormalizationContext(
@@ -74,6 +77,7 @@ export function createReachabilityState(input: {
     imageInstanceId: canonicalImageInstanceId(input.image.imageId),
     imageItemId: input.image.itemId,
     imageSourceOrigin: String(input.image.sourceOrigin),
+    imageHirSourceOrigin: input.image.sourceOrigin,
     diagnostics: [],
     functionInstances: [],
     functionTableLookup: new Map<string, MonoFunctionInstance>(),
@@ -90,7 +94,8 @@ export function createReachabilityState(input: {
     typeSourceForKey: new Map<string, TypeId>(),
     ancestry: monoTypeAncestry(),
     canonicalInstanceKeys,
-    callResolvedTargets: new Map<string, MonoResolvedCallTarget>(),
+    callResolvedTargets: new Map<string, MonoResolvedCallTargetEntry>(),
+    reachableFunctions: new Map<string, MonoReachableFunction>(),
   };
 }
 

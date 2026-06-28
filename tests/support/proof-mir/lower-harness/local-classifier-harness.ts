@@ -1,6 +1,7 @@
 import {
   hirExpressionId,
   hirLocalId,
+  hirOriginId,
   hirStatementId,
   resourcePlaceId,
 } from "../../../../src/hir/ids";
@@ -170,6 +171,7 @@ function buildMonoFunctionInstanceForClassifierTest(
       ),
       declaredRequirements: [],
       sourceOrigin: "source:1",
+      hirSourceOrigin: hirOriginId(1),
     };
   }
 
@@ -194,6 +196,7 @@ function buildMonoFunctionInstanceForClassifierTest(
       ),
       declaredRequirements: [],
       sourceOrigin: "source:1",
+      hirSourceOrigin: hirOriginId(1),
     };
   }
 
@@ -223,6 +226,7 @@ function buildMonoFunctionInstanceForClassifierTest(
     bodyIndex,
     declaredRequirements: [],
     sourceOrigin: "source:1",
+    hirSourceOrigin: hirOriginId(1),
   };
 }
 

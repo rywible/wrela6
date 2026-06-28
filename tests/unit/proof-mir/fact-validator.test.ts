@@ -86,6 +86,7 @@ function proofMirProgramWithFactForTest(input: {
       layout: { kind: "imageEntryAbi", imageInstanceId },
       origin: proofMirOriginId(0),
     },
+    reachableFunctions: emptyDeterministicTable(),
     functions: emptyDeterministicTable(),
     layout: {} as LayoutFactProgram,
     proofMetadata: {} as MonoProofMetadata,

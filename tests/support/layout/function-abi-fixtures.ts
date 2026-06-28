@@ -1,4 +1,5 @@
 import { monoInstanceId } from "../../../src/mono/ids";
+import { hirOriginId } from "../../../src/hir/ids";
 import type { MonoCheckedType, MonoFunctionInstance, MonoLocal } from "../../../src/mono/mono-hir";
 import {
   computeFunctionAbiFact,
@@ -157,6 +158,7 @@ function fixtureFunctionInstance(
     }),
     declaredRequirements: [],
     sourceOrigin: FIXTURE_SOURCE_ORIGIN,
+    hirSourceOrigin: hirOriginId(0),
   };
 }
 

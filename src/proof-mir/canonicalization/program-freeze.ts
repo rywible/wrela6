@@ -1,6 +1,6 @@
 import type { LayoutFactProgram } from "../../layout/layout-program";
 import type { MonoInstanceId } from "../../mono/ids";
-import type { MonoExternalRootReason } from "../../mono/mono-hir";
+import type { MonoExternalRootReason, MonoReachableFunction } from "../../mono/mono-hir";
 import type { MonoFunctionInstance, MonoProofMetadata } from "../../mono/mono-hir";
 import type { ProofMirRuntimeCatalog } from "../../runtime/runtime-catalog-types";
 import { sortProofMirDiagnostics, type ProofMirDiagnostic } from "../diagnostics";
@@ -16,6 +16,7 @@ import type {
   ProofMirProgram,
 } from "../model/program";
 import { freezeFunctionDraft } from "./program-freeze-function-draft";
+import { freezeProofMirReachableFunctionTable } from "./program-freeze-reachable-functions";
 import { freezeProgramLevelTables } from "./program-freeze-program-tables";
 import { functionCanonicalKey } from "./program-freeze-shared";
 
@@ -40,6 +41,7 @@ export interface FreezeDraftProgramInput {
   readonly layout: LayoutFactProgram;
   readonly proofMetadata: MonoProofMetadata;
   readonly runtimeCatalog: ProofMirRuntimeCatalog;
+  readonly reachableFunctions: readonly MonoReachableFunction[];
   readonly image: FreezeDraftProgramImageInput;
 }
 
@@ -141,10 +143,20 @@ export function freezeDraftProgram(input: FreezeDraftProgramInput): FreezeDraftP
     origin: imageOrigin,
   };
 
+  const reachableFunctionsResult = freezeProofMirReachableFunctionTable({
+    reachableFunctions: input.reachableFunctions,
+    origins: programTables.origins,
+    diagnostics,
+  });
+  if (reachableFunctionsResult.kind === "error") {
+    return { kind: "error", diagnostics: collectProofMirDiagnostics(diagnostics) };
+  }
+
   return {
     kind: "ok",
     program: {
       image,
+      reachableFunctions: reachableFunctionsResult.table,
       functions: functionsTable.table,
       layout: input.layout,
       proofMetadata: input.proofMetadata,

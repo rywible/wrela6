@@ -1,4 +1,4 @@
-import { hirExpressionId, hirLocalId, resourcePlaceId } from "../../../../src/hir/ids";
+import { hirExpressionId, hirLocalId, hirOriginId, resourcePlaceId } from "../../../../src/hir/ids";
 import type { LayoutFactProgram } from "../../../../src/layout/layout-program";
 import {
   instantiatedHirId,
@@ -310,6 +310,7 @@ function buildExpressionLowererFunctionInstance(input: {
     },
     declaredRequirements: [],
     sourceOrigin: "source:1",
+    hirSourceOrigin: hirOriginId(1),
   };
 }
 

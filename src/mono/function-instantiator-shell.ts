@@ -232,6 +232,7 @@ export function instantiateMonoFunctionShell(
     locals: localsResult.table,
     declaredRequirements: requirementsResult.requirements,
     sourceOrigin: String(sourceFunction.sourceOrigin),
+    hirSourceOrigin: sourceFunction.sourceOrigin,
   };
 
   const remap: MonoFunctionRemap = {

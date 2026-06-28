@@ -1,0 +1,874 @@
+import { stableNumericSeed } from "../stable-numeric-seed";
+import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
+import { proofMirOriginId } from "../../proof-mir/ids";
+import {
+  proofCheckDiagnostic,
+  sortProofCheckDiagnostics,
+  type ProofCheckDiagnostic,
+} from "../diagnostics";
+import {
+  placeStateForKey,
+  proofMirPlaceIdForPlaceKey,
+  type ProofCheckPlaceResolver,
+} from "../kernel/registry/transition-helpers";
+import { proofCheckCoreCertificateId, proofCheckPacketFactId } from "../ids";
+import type { ProofCheckCertificateId, ProofCheckCoreCertificate } from "../model/certificates";
+import {
+  checkedFactKindId,
+  type CheckedFactKindId,
+  type CheckedFactPacketEntry,
+  type CheckedFactScope,
+  type CheckedFactSubject,
+  type CheckedOriginFact,
+} from "../model/fact-packet";
+import {
+  computeProofCheckCoreMeet,
+  proofCheckStateComponentKeysForJoinFailure,
+} from "../kernel/graph-worklist";
+import type { ProofCheckStatePatchEntry } from "../kernel/state-patch";
+import {
+  type CheckedActiveFact,
+  type CheckedPlaceState,
+  type CheckedValidationState,
+  type ProofCheckState,
+} from "../kernel/state";
+
+export interface CreateValidationInput {
+  readonly state: ProofCheckState;
+  readonly validationKey: string;
+  readonly sourcePlaceKey: string;
+  readonly pendingResultPlaceKey: string;
+  readonly packetPlaceKey: string;
+  readonly layoutKey: string;
+  readonly payloadPlaceKey?: string;
+  readonly membershipBrandKey?: string;
+  readonly operationOriginKey?: string;
+  readonly placeResolver?: ProofCheckPlaceResolver;
+}
+
+export interface MatchValidationInput {
+  readonly state: ProofCheckState;
+  readonly validationKey: string;
+  readonly sourcePlaceKey: string;
+  readonly packetPlaceKey: string;
+  readonly pendingResultPlaceKey: string;
+  readonly layoutKey: string;
+  readonly payloadPlaceKey?: string;
+  readonly membershipBrandKey?: string;
+  readonly operationOriginKey?: string;
+  readonly placeResolver?: ProofCheckPlaceResolver;
+}
+
+export interface ValidationOkArmTransferInput {
+  readonly state: ProofCheckState;
+  readonly validationKey: string;
+  readonly sourcePlaceKey: string;
+  readonly packetPlaceKey: string;
+  readonly layoutKey: string;
+  readonly payloadPlaceKey?: string;
+  readonly membershipBrandKey?: string;
+  readonly operationOriginKey?: string;
+  readonly placeResolver?: ProofCheckPlaceResolver;
+}
+
+export interface ValidationErrArmTransferInput {
+  readonly state: ProofCheckState;
+  readonly validationKey: string;
+  readonly sourcePlaceKey: string;
+  readonly errPayloadPlaceKey?: string;
+  readonly operationOriginKey?: string;
+  readonly placeResolver?: ProofCheckPlaceResolver;
+}
+
+export interface ValidationSplitJoinInput {
+  readonly okState: ProofCheckState;
+  readonly errorState: ProofCheckState;
+  readonly validationKey?: string;
+  readonly operationOriginKey?: string;
+}
+
+export interface ValidationSplitTransferResult {
+  readonly okState: ProofCheckState;
+  readonly errorState: ProofCheckState;
+  readonly packetSourceCertificate?: ProofCheckCoreCertificate;
+}
+
+export interface CheckValidationExitClosureInput {
+  readonly state: ProofCheckState;
+  readonly exitKind?: "return" | "break" | "continue" | "yield" | "validationReject";
+  readonly operationOriginKey?: string;
+}
+
+export type ValidationTransferResult =
+  | {
+      readonly kind: "ok";
+      readonly patches: readonly ProofCheckStatePatchEntry[];
+      readonly armStates?: ValidationSplitTransferResult;
+      readonly certificates: readonly ProofCheckCertificateId[];
+      readonly packetEntries: readonly CheckedFactPacketEntry<
+        CheckedFactKindId,
+        CheckedFactSubject
+      >[];
+    }
+  | { readonly kind: "error"; readonly diagnostics: readonly ProofCheckDiagnostic[] };
+
+export type ValidationSplitJoinResult =
+  | {
+      readonly kind: "ok";
+      readonly state: ProofCheckState;
+      readonly meetKind: "exact" | "coreMeet";
+    }
+  | { readonly kind: "error"; readonly diagnostics: readonly ProofCheckDiagnostic[] };
+
+export function resetValidationCertificateIdsForTest(): void {
+  // Certificate ids are derived from stable subject-key seeds; no module-local counter to reset.
+}
+
+function defaultOwnerKey(ownerKey: string | undefined, fallback: string): string {
+  return ownerKey ?? fallback;
+}
+
+function allocateCoreCertificate(input: {
+  readonly rule: ProofCheckCoreCertificate["rule"];
+  readonly subjectKey: string;
+  readonly dependencyKeys: readonly string[];
+}): ProofCheckCoreCertificate {
+  const dependencyKeys = [...input.dependencyKeys].sort(compareCodeUnitStrings);
+  return {
+    certificateId: proofCheckCoreCertificateId(
+      stableNumericSeed(`validation:${input.rule}:${input.subjectKey}:${dependencyKeys.join(",")}`),
+    ),
+    rule: input.rule,
+    subjectKey: input.subjectKey,
+    dependencyKeys,
+  };
+}
+
+function defaultScope(): CheckedFactScope {
+  return { kind: "wholeImage" };
+}
+
+function originForValidationFact(originKey: string): CheckedOriginFact {
+  return {
+    originKey,
+    proofMirOriginId: proofMirOriginId(stableNumericSeed(`origin:${originKey}`)),
+  };
+}
+
+function placeStatePatch(
+  placeKey: string,
+  lifecycle: CheckedPlaceState["lifecycle"],
+  placeResolver?: ProofCheckPlaceResolver,
+): ProofCheckStatePatchEntry {
+  return {
+    kind: "placeState",
+    place: proofMirPlaceIdForPlaceKey(placeKey, placeResolver),
+    state: { placeKey, lifecycle },
+  };
+}
+
+function validationPatch(
+  validation: CheckedValidationState,
+  action: "open" | "consume" | "close",
+): ProofCheckStatePatchEntry {
+  return { kind: "validation", action, validation };
+}
+
+function layoutPatch(bufferKey: string, layoutKey: string): ProofCheckStatePatchEntry {
+  return {
+    kind: "layout",
+    layout: { bufferKey, layoutKey },
+  };
+}
+
+function packetSourcePatch(packetKey: string, sourceKey: string): ProofCheckStatePatchEntry {
+  return {
+    kind: "packetSource",
+    packetSource: { packetKey, sourceKey },
+  };
+}
+
+function factAddPatch(fact: CheckedActiveFact): ProofCheckStatePatchEntry {
+  return { kind: "fact", action: "add", fact };
+}
+
+function okValidationTransfer(
+  patches: readonly ProofCheckStatePatchEntry[] = [],
+  extras: {
+    readonly armStates?: ValidationSplitTransferResult;
+    readonly certificates?: readonly ProofCheckCertificateId[];
+    readonly packetEntries?: readonly CheckedFactPacketEntry<
+      CheckedFactKindId,
+      CheckedFactSubject
+    >[];
+  } = {},
+): ValidationTransferResult {
+  return {
+    kind: "ok",
+    patches,
+    ...(extras.armStates !== undefined ? { armStates: extras.armStates } : {}),
+    certificates: extras.certificates ?? [],
+    packetEntries: extras.packetEntries ?? [],
+  };
+}
+
+function errorValidationTransfer(
+  diagnostics: readonly ProofCheckDiagnostic[],
+): ValidationTransferResult {
+  return { kind: "error", diagnostics: sortProofCheckDiagnostics(diagnostics) };
+}
+
+function invalidValidationSplitDiagnostic(input: {
+  readonly detail: string;
+  readonly ownerKey: string;
+  readonly rootCauseKey: string;
+}): ProofCheckDiagnostic {
+  return proofCheckDiagnostic({
+    severity: "error",
+    code: "PROOF_CHECK_INVALID_VALIDATION_SPLIT",
+    messageTemplateId: "proof-check.validation.invalid-split",
+    messageArguments: [{ kind: "text", value: input.detail }],
+    message: input.detail,
+    ownerKey: input.ownerKey,
+    rootCauseKey: input.rootCauseKey,
+    stableDetail: input.detail,
+  });
+}
+
+function divergentSplitStateDiagnostic(input: {
+  readonly failedComponentKeys: readonly string[];
+  readonly ownerKey: string;
+  readonly rootCauseKey: string;
+}): ProofCheckDiagnostic {
+  const stableDetail = `divergent-split:${input.failedComponentKeys.join(",")}`;
+  return proofCheckDiagnostic({
+    severity: "error",
+    code: "PROOF_CHECK_DIVERGENT_SPLIT_STATE",
+    messageTemplateId: "proof-check.validation.divergent-split-state",
+    messageArguments: [{ kind: "text", value: stableDetail }],
+    message: stableDetail,
+    ownerKey: input.ownerKey,
+    rootCauseKey: input.rootCauseKey,
+    stableDetail,
+  });
+}
+
+function leakedValidationDiagnostic(input: {
+  readonly validationKey: string;
+  readonly exitKind: NonNullable<CheckValidationExitClosureInput["exitKind"]>;
+  readonly ownerKey: string;
+}): ProofCheckDiagnostic {
+  return proofCheckDiagnostic({
+    severity: "error",
+    code: "PROOF_CHECK_LEAKED_VALIDATION",
+    messageTemplateId: "proof-check.validation.leaked-validation",
+    messageArguments: [
+      { kind: "text", value: input.exitKind },
+      { kind: "text", value: input.validationKey },
+    ],
+    message: `${input.exitKind} crosses live validation ${input.validationKey}`,
+    ownerKey: input.ownerKey,
+    rootCauseKey: input.validationKey,
+    stableDetail: `operation:${input.exitKind}:validation:${input.validationKey}`,
+  });
+}
+
+function leakedValidationSourceDiagnostic(input: {
+  readonly sourcePlaceKey: string;
+  readonly exitKind: NonNullable<CheckValidationExitClosureInput["exitKind"]>;
+  readonly ownerKey: string;
+}): ProofCheckDiagnostic {
+  return proofCheckDiagnostic({
+    severity: "error",
+    code: "PROOF_CHECK_LEAKED_VALIDATION",
+    messageTemplateId: "proof-check.validation.leaked-source",
+    messageArguments: [
+      { kind: "text", value: input.exitKind },
+      { kind: "text", value: input.sourcePlaceKey },
+    ],
+    message: `${input.exitKind} crosses live validation source ${input.sourcePlaceKey}`,
+    ownerKey: input.ownerKey,
+    rootCauseKey: input.sourcePlaceKey,
+    stableDetail: `operation:${input.exitKind}:validation-source:${input.sourcePlaceKey}`,
+  });
+}
+
+function leakedPacketDiagnostic(input: {
+  readonly packetKey: string;
+  readonly exitKind: NonNullable<CheckValidationExitClosureInput["exitKind"]>;
+  readonly ownerKey: string;
+}): ProofCheckDiagnostic {
+  return proofCheckDiagnostic({
+    severity: "error",
+    code: "PROOF_CHECK_LEAKED_PACKET",
+    messageTemplateId: "proof-check.validation.leaked-packet",
+    messageArguments: [
+      { kind: "text", value: input.exitKind },
+      { kind: "text", value: input.packetKey },
+    ],
+    message: `${input.exitKind} crosses live packet ${input.packetKey}`,
+    ownerKey: input.ownerKey,
+    rootCauseKey: input.packetKey,
+    stableDetail: `operation:${input.exitKind}:packet:${input.packetKey}`,
+  });
+}
+
+function pendingValidation(
+  state: ProofCheckState,
+  validationKey: string,
+): CheckedValidationState | undefined {
+  const validation = state.validations.get(validationKey);
+  if (validation === undefined || validation.status !== "pending") {
+    return undefined;
+  }
+  return validation;
+}
+
+function liveValidationSourceKeys(state: ProofCheckState): readonly string[] {
+  return [...state.layout.keys()]
+    .filter((bufferKey) => state.places.get(bufferKey)?.lifecycle === "owned")
+    .sort(compareCodeUnitStrings);
+}
+
+function livePendingValidationKeys(state: ProofCheckState): readonly string[] {
+  return [...state.validations.values()]
+    .filter((validation) => validation.status === "pending")
+    .map((validation) => validation.validationKey)
+    .sort(compareCodeUnitStrings);
+}
+
+function livePacketKeys(state: ProofCheckState): readonly string[] {
+  return [...state.packetSources.values()]
+    .map((packetSource) => packetSource.packetKey)
+    .sort(compareCodeUnitStrings);
+}
+
+function membershipBrandFactKey(packetPlaceKey: string, brandKey: string): string {
+  return `place:${packetPlaceKey}:brand:${brandKey}`;
+}
+
+function layoutBoundsFactKey(packetPlaceKey: string, layoutKey: string): string {
+  return `place:${packetPlaceKey}:layout:${layoutKey}`;
+}
+
+function buildPacketSourcePacketEntry(input: {
+  readonly packetPlaceKey: string;
+  readonly sourcePlaceKey: string;
+  readonly certificate: ProofCheckCertificateId;
+  readonly operationOriginKey: string;
+  readonly placeResolver?: ProofCheckPlaceResolver;
+}): CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject> {
+  const packetPlaceId = proofMirPlaceIdForPlaceKey(input.packetPlaceKey, input.placeResolver);
+  const sourcePlaceId = proofMirPlaceIdForPlaceKey(input.sourcePlaceKey, input.placeResolver);
+  return {
+    factId: proofCheckPacketFactId(
+      stableNumericSeed(`packet-source:${input.packetPlaceKey}:${input.sourcePlaceKey}`),
+    ),
+    kind: checkedFactKindId("packetSource"),
+    subject: {
+      kind: "packetSource",
+      packet: packetPlaceId,
+      source: sourcePlaceId,
+    },
+    scope: defaultScope(),
+    dependencies: [
+      { kind: "proofMirPlace", placeId: packetPlaceId },
+      { kind: "proofMirPlace", placeId: sourcePlaceId },
+    ],
+    invalidatedBy: [
+      {
+        kind: "packetSourceSplit",
+        packet: packetPlaceId,
+        source: sourcePlaceId,
+      },
+    ],
+    certificate: input.certificate,
+    origin: originForValidationFact(input.operationOriginKey),
+  };
+}
+
+function buildValidationOkArmState(input: {
+  readonly state: ProofCheckState;
+  readonly sourcePlaceKey: string;
+  readonly packetPlaceKey: string;
+  readonly layoutKey: string;
+  readonly payloadPlaceKey?: string;
+  readonly membershipBrandKey?: string;
+}): ProofCheckState {
+  const places = new Map(input.state.places);
+  places.set(input.sourcePlaceKey, {
+    placeKey: input.sourcePlaceKey,
+    lifecycle: "consumed",
+  });
+  places.set(input.packetPlaceKey, {
+    placeKey: input.packetPlaceKey,
+    lifecycle: "owned",
+  });
+  if (input.payloadPlaceKey !== undefined) {
+    places.set(input.payloadPlaceKey, {
+      placeKey: input.payloadPlaceKey,
+      lifecycle: "owned",
+    });
+  }
+
+  const validations = new Map(input.state.validations);
+  for (const [validationKey, validation] of input.state.validations) {
+    if (validation.status === "pending") {
+      validations.set(validationKey, { ...validation, status: "consumed" });
+    }
+  }
+
+  const layout = new Map(input.state.layout);
+  layout.delete(input.sourcePlaceKey);
+  layout.set(input.packetPlaceKey, {
+    bufferKey: input.packetPlaceKey,
+    layoutKey: input.layoutKey,
+  });
+
+  const packetSources = new Map(input.state.packetSources);
+  packetSources.set(`${input.packetPlaceKey}->${input.sourcePlaceKey}`, {
+    packetKey: input.packetPlaceKey,
+    sourceKey: input.sourcePlaceKey,
+  });
+
+  const facts = new Map(input.state.facts);
+  facts.set(layoutBoundsFactKey(input.packetPlaceKey, input.layoutKey), {
+    factKey: layoutBoundsFactKey(input.packetPlaceKey, input.layoutKey),
+    termKey: layoutBoundsFactKey(input.packetPlaceKey, input.layoutKey),
+  });
+  if (input.membershipBrandKey !== undefined) {
+    const brandFactKey = membershipBrandFactKey(input.packetPlaceKey, input.membershipBrandKey);
+    facts.set(brandFactKey, { factKey: brandFactKey, termKey: brandFactKey });
+  }
+
+  return {
+    ...input.state,
+    places,
+    validations,
+    layout,
+    packetSources,
+    facts,
+  };
+}
+
+function buildValidationErrArmState(input: {
+  readonly state: ProofCheckState;
+  readonly sourcePlaceKey: string;
+  readonly errPayloadPlaceKey?: string;
+}): ProofCheckState {
+  const places = new Map(input.state.places);
+  const sourcePlace = places.get(input.sourcePlaceKey);
+  if (sourcePlace !== undefined) {
+    places.set(input.sourcePlaceKey, { ...sourcePlace, lifecycle: "owned" });
+  }
+  if (input.errPayloadPlaceKey !== undefined) {
+    places.set(input.errPayloadPlaceKey, {
+      placeKey: input.errPayloadPlaceKey,
+      lifecycle: "owned",
+    });
+  }
+
+  const validations = new Map(input.state.validations);
+  for (const [validationKey, validation] of input.state.validations) {
+    if (validation.status === "pending") {
+      validations.set(validationKey, { ...validation, status: "consumed" });
+    }
+  }
+
+  return {
+    ...input.state,
+    places,
+    validations,
+  };
+}
+
+export function createValidation(input: CreateValidationInput): ValidationTransferResult {
+  const ownerKey = defaultOwnerKey(input.operationOriginKey, "proof-check:create-validation");
+  const sourcePlace = placeStateForKey(input.state, input.sourcePlaceKey, input.placeResolver);
+  if (sourcePlace === undefined || sourcePlace.lifecycle !== "owned") {
+    return errorValidationTransfer([
+      invalidValidationSplitDiagnostic({
+        detail: `validation source ${input.sourcePlaceKey} is not owned`,
+        ownerKey,
+        rootCauseKey: input.sourcePlaceKey,
+      }),
+    ]);
+  }
+
+  if (input.state.validations.has(input.validationKey)) {
+    return errorValidationTransfer([
+      invalidValidationSplitDiagnostic({
+        detail: `validation ${input.validationKey} already exists`,
+        ownerKey,
+        rootCauseKey: input.validationKey,
+      }),
+    ]);
+  }
+
+  if (input.state.layout.has(input.sourcePlaceKey)) {
+    return errorValidationTransfer([
+      invalidValidationSplitDiagnostic({
+        detail: `validation source ${input.sourcePlaceKey} is already bound`,
+        ownerKey,
+        rootCauseKey: input.sourcePlaceKey,
+      }),
+    ]);
+  }
+
+  const pendingResultPlace = placeStateForKey(
+    input.state,
+    input.pendingResultPlaceKey,
+    input.placeResolver,
+  );
+  if (pendingResultPlace === undefined || pendingResultPlace.lifecycle !== "owned") {
+    return errorValidationTransfer([
+      invalidValidationSplitDiagnostic({
+        detail: `pending validation result ${input.pendingResultPlaceKey} is not owned`,
+        ownerKey,
+        rootCauseKey: input.pendingResultPlaceKey,
+      }),
+    ]);
+  }
+
+  const patches: ProofCheckStatePatchEntry[] = [
+    validationPatch({ validationKey: input.validationKey, status: "pending" }, "open"),
+    layoutPatch(input.sourcePlaceKey, input.layoutKey),
+  ];
+
+  return okValidationTransfer(patches);
+}
+
+export function matchValidation(input: MatchValidationInput): ValidationTransferResult {
+  const ownerKey = defaultOwnerKey(input.operationOriginKey, "proof-check:match-validation");
+  const validation = pendingValidation(input.state, input.validationKey);
+  if (validation === undefined) {
+    return errorValidationTransfer([
+      invalidValidationSplitDiagnostic({
+        detail: `validation ${input.validationKey} is not pending`,
+        ownerKey,
+        rootCauseKey: input.validationKey,
+      }),
+    ]);
+  }
+
+  if (!input.state.layout.has(input.sourcePlaceKey)) {
+    return errorValidationTransfer([
+      invalidValidationSplitDiagnostic({
+        detail: `validation source ${input.sourcePlaceKey} is not live`,
+        ownerKey,
+        rootCauseKey: input.sourcePlaceKey,
+      }),
+    ]);
+  }
+
+  const packetSourceCertificate = allocateCoreCertificate({
+    rule: "packetSource",
+    subjectKey: `${input.packetPlaceKey}->${input.sourcePlaceKey}`,
+    dependencyKeys: [input.sourcePlaceKey, input.packetPlaceKey, input.layoutKey],
+  });
+
+  const okState = buildValidationOkArmState({
+    state: input.state,
+    sourcePlaceKey: input.sourcePlaceKey,
+    packetPlaceKey: input.packetPlaceKey,
+    layoutKey: input.layoutKey,
+    payloadPlaceKey: input.payloadPlaceKey,
+    membershipBrandKey: input.membershipBrandKey,
+  });
+  const errorState = buildValidationErrArmState({
+    state: input.state,
+    sourcePlaceKey: input.sourcePlaceKey,
+    errPayloadPlaceKey: input.payloadPlaceKey,
+  });
+
+  const patches: ProofCheckStatePatchEntry[] = [
+    validationPatch({ validationKey: input.validationKey, status: "consumed" }, "consume"),
+    placeStatePatch(input.pendingResultPlaceKey, "consumed", input.placeResolver),
+  ];
+
+  return okValidationTransfer(patches, {
+    armStates: {
+      okState,
+      errorState,
+      packetSourceCertificate,
+    },
+  });
+}
+
+export function transferValidationOkArm(
+  input: ValidationOkArmTransferInput,
+): ValidationTransferResult {
+  const ownerKey = defaultOwnerKey(input.operationOriginKey, "proof-check:validation-ok-arm");
+  const sourcePlace = input.state.places.get(input.sourcePlaceKey);
+  if (sourcePlace === undefined || sourcePlace.lifecycle !== "owned") {
+    return errorValidationTransfer([
+      invalidValidationSplitDiagnostic({
+        detail: `validation ok arm requires owned source ${input.sourcePlaceKey}`,
+        ownerKey,
+        rootCauseKey: input.sourcePlaceKey,
+      }),
+    ]);
+  }
+
+  const packetSourceCertificate = allocateCoreCertificate({
+    rule: "packetSource",
+    subjectKey: `${input.packetPlaceKey}->${input.sourcePlaceKey}`,
+    dependencyKeys: [input.sourcePlaceKey, input.packetPlaceKey, input.layoutKey],
+  });
+  const certificate: ProofCheckCertificateId = {
+    kind: "core",
+    id: packetSourceCertificate.certificateId,
+  };
+
+  const patches: ProofCheckStatePatchEntry[] = [
+    placeStatePatch(input.sourcePlaceKey, "consumed", input.placeResolver),
+    placeStatePatch(input.packetPlaceKey, "owned", input.placeResolver),
+    layoutPatch(input.packetPlaceKey, input.layoutKey),
+    packetSourcePatch(input.packetPlaceKey, input.sourcePlaceKey),
+    factAddPatch({
+      factKey: layoutBoundsFactKey(input.packetPlaceKey, input.layoutKey),
+      termKey: layoutBoundsFactKey(input.packetPlaceKey, input.layoutKey),
+    }),
+  ];
+
+  if (input.payloadPlaceKey !== undefined) {
+    patches.push(placeStatePatch(input.payloadPlaceKey, "owned", input.placeResolver));
+  }
+  if (input.membershipBrandKey !== undefined) {
+    const brandFactKey = membershipBrandFactKey(input.packetPlaceKey, input.membershipBrandKey);
+    patches.push(
+      factAddPatch({
+        factKey: brandFactKey,
+        termKey: brandFactKey,
+      }),
+    );
+  }
+
+  return okValidationTransfer(patches, {
+    certificates: [certificate],
+    packetEntries: [
+      buildPacketSourcePacketEntry({
+        packetPlaceKey: input.packetPlaceKey,
+        sourcePlaceKey: input.sourcePlaceKey,
+        certificate,
+        operationOriginKey: ownerKey,
+        placeResolver: input.placeResolver,
+      }),
+    ],
+  });
+}
+
+export function transferValidationErrArm(
+  input: ValidationErrArmTransferInput,
+): ValidationTransferResult {
+  const ownerKey = defaultOwnerKey(input.operationOriginKey, "proof-check:validation-err-arm");
+  const sourcePlace = input.state.places.get(input.sourcePlaceKey);
+  if (sourcePlace === undefined || sourcePlace.lifecycle !== "owned") {
+    return errorValidationTransfer([
+      invalidValidationSplitDiagnostic({
+        detail: `validation err arm requires live source ${input.sourcePlaceKey}`,
+        ownerKey,
+        rootCauseKey: input.sourcePlaceKey,
+      }),
+    ]);
+  }
+
+  const patches: ProofCheckStatePatchEntry[] = [];
+  if (input.errPayloadPlaceKey !== undefined) {
+    patches.push(placeStatePatch(input.errPayloadPlaceKey, "owned", input.placeResolver));
+  }
+
+  return okValidationTransfer(patches);
+}
+
+export function checkValidationSplitJoin(
+  input: ValidationSplitJoinInput,
+): ValidationSplitJoinResult {
+  const ownerKey = defaultOwnerKey(input.operationOriginKey, "proof-check:validation-split-join");
+  const rootCauseKey = input.validationKey ?? "validation:split";
+  const meet = computeProofCheckCoreMeet([input.okState, input.errorState]);
+  if (meet === undefined) {
+    return {
+      kind: "error",
+      diagnostics: [
+        divergentSplitStateDiagnostic({
+          failedComponentKeys: ["state"],
+          ownerKey,
+          rootCauseKey,
+        }),
+      ],
+    };
+  }
+
+  if (meet.kind === "failed") {
+    const failedComponentKeys =
+      meet.failedComponentKeys.length > 0
+        ? meet.failedComponentKeys
+        : proofCheckStateComponentKeysForJoinFailure(input.okState, input.errorState);
+    return {
+      kind: "error",
+      diagnostics: [
+        divergentSplitStateDiagnostic({
+          failedComponentKeys,
+          ownerKey,
+          rootCauseKey: failedComponentKeys[0] ?? rootCauseKey,
+        }),
+      ],
+    };
+  }
+
+  return {
+    kind: "ok",
+    state: meet.state,
+    meetKind: meet.kind === "exact" ? "exact" : "coreMeet",
+  };
+}
+
+export function checkValidationExitClosure(
+  input: CheckValidationExitClosureInput,
+): ValidationTransferResult {
+  const exitKind = input.exitKind ?? "return";
+  const ownerKey = defaultOwnerKey(
+    input.operationOriginKey,
+    `proof-check:validation-exit:${exitKind}`,
+  );
+  const diagnostics: ProofCheckDiagnostic[] = [];
+
+  for (const validationKey of livePendingValidationKeys(input.state)) {
+    diagnostics.push(
+      leakedValidationDiagnostic({
+        validationKey,
+        exitKind,
+        ownerKey,
+      }),
+    );
+  }
+
+  for (const sourcePlaceKey of liveValidationSourceKeys(input.state)) {
+    diagnostics.push(
+      leakedValidationSourceDiagnostic({
+        sourcePlaceKey,
+        exitKind,
+        ownerKey,
+      }),
+    );
+  }
+
+  for (const packetKey of livePacketKeys(input.state)) {
+    diagnostics.push(
+      leakedPacketDiagnostic({
+        packetKey,
+        exitKind,
+        ownerKey,
+      }),
+    );
+  }
+
+  if (diagnostics.length > 0) {
+    return errorValidationTransfer(diagnostics);
+  }
+  return okValidationTransfer();
+}
+
+export function applyValidationPatchesForTest(
+  state: ProofCheckState,
+  patches: readonly ProofCheckStatePatchEntry[],
+): ProofCheckState {
+  const places = new Map(state.places);
+  const validations = new Map(state.validations);
+  const layout = new Map(state.layout);
+  const packetSources = new Map(state.packetSources);
+  const facts = new Map(state.facts);
+
+  for (const patch of patches) {
+    switch (patch.kind) {
+      case "placeState":
+        places.set(patch.state.placeKey, patch.state);
+        break;
+      case "validation":
+        validations.set(patch.validation.validationKey, patch.validation);
+        break;
+      case "layout":
+        layout.set(patch.layout.bufferKey, patch.layout);
+        break;
+      case "packetSource":
+        packetSources.set(
+          `${patch.packetSource.packetKey}->${patch.packetSource.sourceKey}`,
+          patch.packetSource,
+        );
+        break;
+      case "fact":
+        if (patch.action === "add") {
+          facts.set(patch.fact.factKey, patch.fact);
+        } else if (patch.action === "drop") {
+          facts.delete(patch.fact.factKey);
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  return {
+    ...state,
+    places,
+    validations,
+    layout,
+    packetSources,
+    facts,
+  };
+}
+
+export function validationTransferChain(
+  state: ProofCheckState,
+  steps: readonly (
+    | { readonly kind: "create"; readonly input: Omit<CreateValidationInput, "state"> }
+    | { readonly kind: "match"; readonly input: Omit<MatchValidationInput, "state"> }
+    | { readonly kind: "okArm"; readonly input: Omit<ValidationOkArmTransferInput, "state"> }
+    | { readonly kind: "errArm"; readonly input: Omit<ValidationErrArmTransferInput, "state"> }
+  )[],
+  options: { readonly placeResolver: ProofCheckPlaceResolver },
+): ValidationTransferResult {
+  let currentState = state;
+  const allPatches: ProofCheckStatePatchEntry[] = [];
+  const allCertificates: ProofCheckCertificateId[] = [];
+  const allPacketEntries: CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject>[] = [];
+  let armStates: ValidationSplitTransferResult | undefined;
+  const placeResolver = options.placeResolver;
+
+  for (const step of steps) {
+    let result: ValidationTransferResult;
+    switch (step.kind) {
+      case "create":
+        result = createValidation({ ...step.input, state: currentState, placeResolver });
+        break;
+      case "match":
+        result = matchValidation({ ...step.input, state: currentState, placeResolver });
+        break;
+      case "okArm":
+        result = transferValidationOkArm({ ...step.input, state: currentState, placeResolver });
+        break;
+      case "errArm":
+        result = transferValidationErrArm({ ...step.input, state: currentState, placeResolver });
+        break;
+    }
+
+    if (result.kind === "error") {
+      return result;
+    }
+
+    allPatches.push(...result.patches);
+    allCertificates.push(...result.certificates);
+    allPacketEntries.push(...result.packetEntries);
+    if (result.armStates !== undefined) {
+      armStates = result.armStates;
+    }
+    currentState = applyValidationPatchesForTest(currentState, result.patches);
+  }
+
+  return okValidationTransfer(allPatches, {
+    ...(armStates !== undefined ? { armStates } : {}),
+    certificates: allCertificates,
+    packetEntries: allPacketEntries,
+  });
+}
