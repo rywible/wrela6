@@ -60,6 +60,7 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/integration/opt-ir/validated-buffer
 - Task 26 SCCP must deduplicate derived impossibility facts across fixpoint rounds, and value numbering must preserve operand order for order-sensitive operations. Sorting every operand made reversed subtraction look commonable.
 - Task 34 memory forwarding must require a compatible memory-version or effect-token chain and matching value type. Falling back to forwarding untracked regions with no token chain was unsafe.
 - Task 34 memory rewrite records must identify real operation or region subjects. Placeholder operation IDs for scalar replacement or stack promotion hide the rewrite surface from downstream legality checks.
+- Task 30 local policy feature vectors must be allowlisted and typed. Rejecting only known dynamic fields still let arbitrary host-derived or malformed feature keys influence deterministic policy decisions.
 
 ## Executor Protocol
 
