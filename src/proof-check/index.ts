@@ -73,3 +73,18 @@ export type {
   CheckedPacketFactKind,
 } from "./model/fact-packet";
 export type { CheckedTerminalGraphCertificate } from "./model/certificates";
+
+export {
+  checkedOptIrHandoffFingerprint,
+  checkedOptIrHandoffStableKey,
+} from "./model/opt-ir-handoff";
+export type {
+  CheckedOptIrHandoff,
+  CheckedOptIrHandoffFingerprint,
+  CheckedOptIrHandoffFingerprintInput,
+  CheckedPacketValidationAttestation,
+  CheckedPathCertificate,
+  CheckedSemanticInlinePolicy,
+  CheckedSemanticInlinePolicyKind,
+  CheckedSemanticInlinePolicySource,
+} from "./model/opt-ir-handoff";

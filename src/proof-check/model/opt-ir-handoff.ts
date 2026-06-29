@@ -58,6 +58,10 @@ function stableJson(value: unknown): string {
 }
 
 function toStableValue(value: unknown): unknown {
+  if (typeof value === "bigint") {
+    return { kind: "bigint", value: value.toString() };
+  }
+
   if (value instanceof Map) {
     return [...value.entries()]
       .map(([key, entry]) => [toStableValue(key), toStableValue(entry)] as const)

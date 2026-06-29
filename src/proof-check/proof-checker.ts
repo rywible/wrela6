@@ -13,6 +13,7 @@ import {
 } from "./diagnostics";
 import { checkedTerminalClosureKey } from "./model/certificates";
 import type { CheckedMirProgram } from "./model/checked-mir";
+import type { CheckedOptIrHandoff } from "./model/opt-ir-handoff";
 import {
   checkedFactKindId,
   type CheckedFactKindId,
@@ -26,6 +27,7 @@ import {
 } from "./validation/packet-validator";
 import {
   assembleCheckedFactPacket,
+  buildCheckedOptIrHandoff,
   buildCheckedMirProgram,
   runReachableFunctionChecks,
 } from "./proof-check-phases";
@@ -38,6 +40,7 @@ export type CheckProofAndResourcesResult =
   | {
       readonly kind: "ok";
       readonly checked: CheckedMirProgram;
+      readonly checkedOptIrHandoff: CheckedOptIrHandoff;
       readonly diagnostics: readonly ProofCheckNonErrorDiagnostic[];
     }
   | {
@@ -209,10 +212,16 @@ function runProofCheckReferenceChecker(
     packet: packetResult.packet,
     terminalGraph: terminalResult.certificate,
   });
+  const checkedOptIrHandoff = buildCheckedOptIrHandoff({
+    checkInput: input,
+    checked,
+    certificates: packetResult.allCertificates,
+  });
 
   return {
     kind: "ok",
     checked,
+    checkedOptIrHandoff,
     diagnostics: nonErrorDiagnostics([...combinedDiagnostics, ...packetResult.packetDiagnostics]),
   };
 }

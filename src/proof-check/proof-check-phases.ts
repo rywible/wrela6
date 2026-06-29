@@ -64,6 +64,7 @@ import {
   type ProofCheckCertificate,
   type ProofSemanticsCertificateRecord,
 } from "./validation/packet-validator";
+import { checkedOptIrHandoffFingerprint, type CheckedOptIrHandoff } from "./model/opt-ir-handoff";
 
 export interface ProofCheckReachableFunctionChecksResult {
   readonly kind: "ok";
@@ -460,5 +461,75 @@ export function buildCheckedMirProgram(input: {
     facts: input.packet,
     terminalGraph: input.terminalGraph,
     originMap: new Map(input.packet.origins.map((entry) => [entry.origin.originKey, entry.origin])),
+  };
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(toStableValue(value));
+}
+
+function toStableValue(value: unknown): unknown {
+  if (value instanceof Map) {
+    return [...value.entries()]
+      .map(([key, entry]) => [toStableValue(key), toStableValue(entry)] as const)
+      .sort((left, right) => stableJson(left[0]).localeCompare(stableJson(right[0])));
+  }
+
+  if (value instanceof Set) {
+    return [...value]
+      .map(toStableValue)
+      .sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(toStableValue);
+  }
+
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, toStableValue(entry)]),
+    );
+  }
+
+  return value;
+}
+
+export function buildCheckedOptIrHandoff(input: {
+  readonly checkInput: CheckProofAndResourcesInput;
+  readonly checked: CheckedMirProgram;
+  readonly certificates: readonly ProofCheckCertificate[];
+}): CheckedOptIrHandoff {
+  const acceptedFunctionInstanceIds = [...input.checked.checkedFunctions.keys()].sort();
+  const summaryCertificateIds = [...input.checked.checkedFunctions.values()]
+    .map((checkedFunction) => checkedFunction.summaryCertificate)
+    .sort((left, right) => left - right);
+  const originMapStableKey = stableJson(input.checked.originMap);
+  const checkedFactPacketStableKey = stableJson(input.checked.facts);
+  const withoutFingerprint = {
+    checkedMir: input.checked,
+    certificates: input.certificates,
+    packetValidation: {
+      checkedFactPacketStableKey,
+      acceptedFunctionInstanceIds,
+      summaryCertificateIds,
+      terminalGraphCertificateId: input.checked.terminalGraph.certificateId,
+      originMapStableKey,
+      authorityFingerprints: [
+        input.checkInput.platformContracts.fingerprint,
+        input.checkInput.runtimeCatalog.fingerprint,
+        input.checkInput.typeFacts.fingerprint,
+        input.checkInput.semantics.fingerprint,
+      ],
+    },
+    pathCertificates: [],
+    semanticInlinePolicies: [],
+  } satisfies Omit<CheckedOptIrHandoff, "handoffFingerprint">;
+
+  return {
+    ...withoutFingerprint,
+    handoffFingerprint: checkedOptIrHandoffFingerprint(withoutFingerprint),
   };
 }

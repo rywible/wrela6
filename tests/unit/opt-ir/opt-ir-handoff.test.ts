@@ -12,12 +12,22 @@ import {
 } from "../../../src/proof-check/model/certificates";
 import { emptyCheckedFactPacket } from "../../../src/proof-check/model/fact-packet";
 import {
+  checkProofAndResourcesForClosedFixture,
+  proofCheckClosedFixture,
+  checkProofAndResourcesForTest,
+} from "../../support/proof-check/proof-check-fixtures";
+import {
+  checkProofAndResources,
+  checkedOptIrHandoffFingerprint as publicCheckedOptIrHandoffFingerprint,
+  checkedOptIrHandoffStableKey as publicCheckedOptIrHandoffStableKey,
+  type CheckedOptIrHandoff as PublicCheckedOptIrHandoff,
+} from "../../../src/proof-check";
+import {
   checkedOptIrHandoffFingerprint,
   checkedOptIrHandoffStableKey,
   type CheckedOptIrHandoff,
 } from "../../../src/proof-check/model/opt-ir-handoff";
 import {
-  checkedSummaryInstantiationCertificateId,
   proofCheckCoreCertificateId,
   proofCheckPacketFactId,
   proofCheckPathCertificateId,
@@ -258,5 +268,68 @@ describe("CheckedOptIrHandoff", () => {
         first.handoffFingerprint.digestHex,
       );
     }
+  });
+
+  test("proof-check success returns one checked OptIR handoff authority object", () => {
+    const result = checkProofAndResourcesForClosedFixture();
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+
+    const checkedOptIrHandoff: PublicCheckedOptIrHandoff = result.checkedOptIrHandoff;
+    expect(checkedOptIrHandoff.checkedMir).toBe(result.checked);
+    expect(checkedOptIrHandoff.packetValidation.checkedFactPacketStableKey).toBeString();
+    expect(checkedOptIrHandoff.packetValidation.acceptedFunctionInstanceIds).toEqual(
+      [...result.checked.checkedFunctions.keys()].sort(),
+    );
+    expect(checkedOptIrHandoff.packetValidation.summaryCertificateIds).toEqual(
+      [...result.checked.checkedFunctions.values()]
+        .map((checkedFunction) => checkedFunction.summaryCertificate)
+        .sort((left, right) => left - right),
+    );
+    expect(checkedOptIrHandoff.packetValidation.terminalGraphCertificateId).toBe(
+      result.checked.terminalGraph.certificateId,
+    );
+    expect(checkedOptIrHandoff.packetValidation.authorityFingerprints.length).toBeGreaterThan(0);
+    expect(checkedOptIrHandoff.semanticInlinePolicies).toBeArray();
+    expect(checkedOptIrHandoff.handoffFingerprint).toEqual(
+      checkedOptIrHandoffFingerprint(checkedOptIrHandoff),
+    );
+  });
+
+  test("proof-check errors do not expose partial OptIR handoff authority", () => {
+    const input = proofCheckClosedFixture();
+    const result = checkProofAndResourcesForTest({
+      ...input,
+      limits: {
+        ...input.limits,
+        maximumReachableFunctions: 0,
+      },
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") return;
+    expect("checked" in result).toBe(false);
+    expect("checkedOptIrHandoff" in result).toBe(false);
+  });
+
+  test("packet-validation attestation is only returned after packet validation succeeds", () => {
+    const input = proofCheckClosedFixture();
+    const result = checkProofAndResources({
+      ...input,
+      runtimeCatalog: {
+        ...input.runtimeCatalog,
+        fingerprint: fingerprint("cc".repeat(32)),
+      },
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") return;
+    expect("checkedOptIrHandoff" in result).toBe(false);
+  });
+
+  test("public proof-check exports include checked OptIR handoff helpers", () => {
+    expect(publicCheckedOptIrHandoffFingerprint).toBe(checkedOptIrHandoffFingerprint);
+    expect(publicCheckedOptIrHandoffStableKey).toBe(checkedOptIrHandoffStableKey);
   });
 });
