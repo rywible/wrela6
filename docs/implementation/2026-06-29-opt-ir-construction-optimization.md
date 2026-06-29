@@ -41,6 +41,15 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/unit/opt-ir/fact-gated-egraph.test.
 PATH="$HOME/.bun/bin:$PATH" bun test ./tests/integration/opt-ir/validated-buffer-optimization.test.ts
 ```
 
+## Implementation Findings From Execution
+
+- Task 14B also owns `src/opt-ir/facts/fact-query.ts`; the atomic split matrix has been updated so future workers do not treat fact-query wiring as orphaned shared state.
+- Task 13 fact import schema implementation found that `summaryInstantiation` dependencies must validate against summary-instantiation certificate IDs, not function-summary certificate IDs.
+- Task 15 path-certificate re-homing now drops excluded edges from the old CFG snapshot after proving they do not survive; retaining removed excluded edges made rehomed certificates reference stale CFG edges.
+- Task 15 import rejects an edge allocator that maps two distinct `ProofMirControlEdgeId` values to the same `OptIrEdgeId`, preserving the one-time fresh-edge mapping requirement.
+- Task 16 callback-visible regions are conservatively tied to the `externalUnknown` alias class after external memory is materialized, including callback-visible stack locals.
+- Task 27A dominance needed a linear-chain regression: immediate dominator selection must choose the closest strict dominator, not the shallowest one.
+
 ## Executor Protocol
 
 Every task is intended to be small enough for one worker after its dependencies have landed.
