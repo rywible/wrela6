@@ -147,11 +147,7 @@ const PURE_EFFECT = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 0, "pure");
 const READ_REGION_VERSION = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 1, "read-region-version");
 const WRITE_REGION_VERSION = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 2, "write-region-version");
 const CALL_SUMMARY_EFFECTS = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 4, "call-summary-effects");
-const PROOF_ERASED_NO_EFFECT = catalogEntry(
-  OPT_IR_EFFECT_RULE_IDS,
-  6,
-  "proof-erased-no-effect",
-);
+const PROOF_ERASED_NO_EFFECT = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 6, "proof-erased-no-effect");
 
 export const EFFECTFUL_OPT_IR_OPERATION_SCHEMAS = [
   schema({
