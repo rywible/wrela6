@@ -38,16 +38,41 @@ import { runCfgSimplification } from "./cfg-simplification";
 import { runScalarSimplification } from "./scalar-simplification";
 import { runDeadCodeElimination } from "./dce";
 import { runMemoryOptimization } from "./memory-optimization";
+import { buildOptIrMemorySsa } from "../analyses/memory-ssa";
+import { computeOptIrEscapeAnalysis } from "../analyses/escape-analysis";
+import { runScalarReplacement } from "./scalar-replacement";
+import { runStackPromotion } from "./stack-promotion";
+import { runLicm } from "./licm";
 import { runWrelaBoundsZeroCopy } from "./wrela-optimizations/bounds-zero-copy";
 import { runWrelaEndianParserCollapse } from "./wrela-optimizations/endian-parser-collapse";
 import { runWrelaMoveCopyWrapperElision } from "./wrela-optimizations/move-copy-wrapper-elision";
 import { runWrelaTerminalPlatformSpecialization } from "./wrela-optimizations/terminal-platform-specialization";
 import { extractOptIrEGraph } from "../egraph/extraction";
+import { selectEGraphRegions } from "../egraph/region-selection";
 import { defaultOptIrEGraphExtractionPolicy } from "../policy/egraph-extraction-policy";
 import { runFactGatedEGraphPass } from "./fact-gated-egraph";
 import { runSlpVectorization } from "./slp-vectorization";
 import { runLoopVectorization } from "./loop-vectorization";
 import { runVectorizationCleanup } from "./vectorization-cleanup";
+import {
+  discoverBoundsCandidates,
+  discoverEGraphRegionCandidates,
+  discoverEndianFoldCandidates,
+  discoverLoopVectorizationCandidates,
+  discoverMoveCopyWrapperCandidates,
+  discoverParserCollapseCandidates,
+  discoverPlatformSpecializationCandidates,
+  discoverScalarReplacementCandidates,
+  discoverSlpCandidates,
+  discoverSlpScalarOperationIds,
+  discoverTerminalCleanupCandidates,
+  discoverZeroCopyAccesses,
+  firstBlockId,
+  hasMemoryAccess,
+  nextOperationOrdinal,
+  nextValueOrdinal,
+  optIrEGraphExtractionPolicyRank,
+} from "./pipeline-candidates";
 import type { ProofAuthorityFingerprint } from "../../shared/proof-authority-types";
 
 export interface OptimizedOptIrProvenanceSnapshot {
@@ -239,14 +264,26 @@ function runPipelineEntry(
       next = runCfgSimplificationStep(next);
       break;
     case "memory-ssa":
+      const memorySsa = runMemorySsaAnalysisStep(next);
+      if (isPipelineError(memorySsa)) {
+        return memorySsa;
+      }
+      next = memorySsa;
       break;
     case "load-store-forwarding":
+      next = runMemoryOptimizationStep(next, "load-store-forwarding");
+      break;
     case "dead-store-elimination":
-      next = runMemoryOptimizationStep(next);
+      next = runMemoryOptimizationStep(next, "dead-store-elimination");
       break;
     case "scalar-replacement":
+      next = runScalarReplacementStep(next);
+      break;
     case "stack-promotion":
+      next = runStackPromotionStep(next);
+      break;
     case "licm":
+      next = runLicmStep(next);
       break;
     case "wrela-fact-rounds":
       next = runWrelaCluster(next);
@@ -257,6 +294,7 @@ function runPipelineEntry(
         : appendPipelineDecision(next, entry, "denied", "policy:disabled", "conservative");
       break;
     case "vector-idiom-prep":
+      next = runVectorIdiomPrepStep(next);
       break;
     case "slp-vectorization":
       next = input.policy.enableVectorization
@@ -421,7 +459,31 @@ function runDeadCodeEliminationStep(state: PipelineState): PipelineState {
   );
 }
 
-function runMemoryOptimizationStep(state: PipelineState): PipelineState {
+function runMemorySsaAnalysisStep(state: PipelineState): PipelineStepResult {
+  const result = buildOptIrMemorySsa({
+    program: state.program,
+    regions: optimizationRegionsForProgram(state.program),
+    operationForId(operationId) {
+      return operationMap(state.operations).get(operationId);
+    },
+  });
+  if (result.kind === "error") {
+    return {
+      ...state,
+      diagnostics: [
+        ...state.diagnostics,
+        pipelineInfoDiagnostic(
+          "opt-ir-optimization",
+          "memory-ssa",
+          "memory-ssa:conservative-incomplete-call-headers",
+        ),
+      ],
+    };
+  }
+  return state;
+}
+
+function runMemoryOptimizationStep(state: PipelineState, passId: string): PipelineState {
   const result = runMemoryOptimization({
     program: state.program,
     regions: optimizationRegionsForProgram(state.program),
@@ -430,77 +492,224 @@ function runMemoryOptimizationStep(state: PipelineState): PipelineState {
       return operationMap(state.operations).get(operationId);
     },
   });
-  return { ...state, program: result.program };
+  const removed = new Set(result.removedOperationIds);
+  const diagnostics = [
+    ...state.diagnostics,
+    ...result.valueForwards.map((valueForward) =>
+      pipelineInfoDiagnostic(
+        "opt-ir-optimization",
+        passId,
+        `memory:value-forward:${Number(valueForward.sourceValue)}:${Number(
+          valueForward.replacementValue,
+        )}`,
+      ),
+    ),
+    ...result.rewriteRecords.map((record) =>
+      pipelineInfoDiagnostic(
+        "opt-ir-optimization",
+        passId,
+        `memory:${record.subject.kind}:${Number(
+          record.subject.kind === "operation"
+            ? record.subject.operationId
+            : record.subject.regionId,
+        )}:${record.invariant.kind}`,
+      ),
+    ),
+  ];
+  const next = {
+    ...state,
+    program: removeOperationsFromProgram(result.program, removed),
+    operations: sortedOperations(
+      state.operations.filter((operation) => !removed.has(operation.operationId)),
+    ),
+    diagnostics,
+  };
+  if (result.valueForwards.length === 0) {
+    return next;
+  }
+  return runPerFunctionPass(next, (func, operations) =>
+    runCopyPropagation({
+      function: func,
+      operations,
+      valueCopies: result.valueForwards.map(
+        (valueForward) => [valueForward.sourceValue, valueForward.replacementValue] as const,
+      ),
+    }),
+  );
 }
 
-function runWrelaCluster(state: PipelineState): PipelineState {
-  const bounds = runWrelaBoundsZeroCopy({ operations: state.operations, candidates: [] });
-  const endian = runWrelaEndianParserCollapse({ operations: bounds.operations });
-  const moveCopy = runWrelaMoveCopyWrapperElision({
-    operations: endian.operations,
-    candidates: [],
+function runScalarReplacementStep(state: PipelineState): PipelineState {
+  const regions = optimizationRegionsForProgram(state.program);
+  const result = runScalarReplacement({
+    program: state.program,
+    regions,
+    candidates: discoverScalarReplacementCandidates(state.operations, regions),
   });
-  const terminal = runWrelaTerminalPlatformSpecialization({ operations: moveCopy.operations });
   return {
     ...state,
-    operations: sortedOperations(terminal.operations),
+    program: result.program,
     diagnostics: [
       ...state.diagnostics,
-      ...bounds.explanations.map((explanation) =>
+      ...result.rewriteRecords.map((record) =>
         pipelineInfoDiagnostic(
           "opt-ir-optimization",
-          "wrela-bounds-zero-copy",
-          `${explanation.kind}:${Number(explanation.operationId)}`,
-        ),
-      ),
-      ...endian.explanations.map((explanation) =>
-        pipelineInfoDiagnostic(
-          "opt-ir-optimization",
-          "wrela-endian-parser-collapse",
-          explanation.operationId === undefined
-            ? `${explanation.kind}:parser-state`
-            : `${explanation.kind}:${Number(explanation.operationId)}`,
-        ),
-      ),
-      ...moveCopy.explanations.map((explanation) =>
-        pipelineInfoDiagnostic(
-          "opt-ir-optimization",
-          "wrela-move-copy-wrapper-elision",
-          `${explanation.kind}:${Number(explanation.operationId)}`,
-        ),
-      ),
-      ...terminal.explanations.map((explanation) =>
-        pipelineInfoDiagnostic(
-          "opt-ir-optimization",
-          "wrela-terminal-platform-specialization",
-          `${explanation.kind}:${Number(explanation.operationId)}`,
+          "scalar-replacement",
+          `scalar-replacement:${record.subject.kind}:${Number(
+            record.subject.kind === "operation"
+              ? record.subject.operationId
+              : record.subject.regionId,
+          )}:${record.invariant.kind}`,
         ),
       ),
     ],
   };
 }
 
+function runStackPromotionStep(state: PipelineState): PipelineState {
+  const regions = optimizationRegionsForProgram(state.program);
+  const escape = computeOptIrEscapeAnalysis({ regions });
+  const result = runStackPromotion({
+    program: state.program,
+    regions,
+    lifetimeFacts: regions.map((region) => ({
+      regionId: region.regionId,
+      valid: region.kind === "stackLocal" && region.lifetime === "activation",
+    })),
+    escapedRegionIds: escape.escapedRegions(),
+  });
+  return {
+    ...state,
+    program: result.program,
+    diagnostics: [
+      ...state.diagnostics,
+      ...result.rewriteRecords.map((record) =>
+        pipelineInfoDiagnostic(
+          "opt-ir-optimization",
+          "stack-promotion",
+          `stack-promotion:${record.subject.kind}:${Number(
+            record.subject.kind === "operation"
+              ? record.subject.operationId
+              : record.subject.regionId,
+          )}:${record.invariant.kind}`,
+        ),
+      ),
+    ],
+  };
+}
+
+function runLicmStep(state: PipelineState): PipelineState {
+  const memoryOperationIds = new Set(
+    state.operations
+      .filter(hasMemoryAccess)
+      .filter((operation) => operation.kind === "memoryLoad")
+      .map((operation) => operation.operationId),
+  );
+  const result = runLicm({
+    program: state.program,
+    operations: state.operations,
+    loopOperationIds: operationsInProgramOrder(state.program, state.operations).map(
+      (operation) => operation.operationId,
+    ),
+    effectBoundaryOperationIds: state.operations
+      .filter((operation) => !operation.effects.isRuntimePure)
+      .map((operation) => operation.operationId),
+    regionSafeOperationIds: [...memoryOperationIds],
+  });
+  return {
+    ...state,
+    program: result.program,
+    diagnostics: [
+      ...state.diagnostics,
+      ...result.rewriteRecords.map((record) =>
+        pipelineInfoDiagnostic(
+          "opt-ir-optimization",
+          "licm",
+          `licm:${record.subject.kind}:${Number(
+            record.subject.kind === "operation"
+              ? record.subject.operationId
+              : record.subject.regionId,
+          )}:${record.invariant.kind}`,
+        ),
+      ),
+    ],
+  };
+}
+
+function runWrelaCluster(state: PipelineState): PipelineState {
+  const bounds = runWrelaBoundsZeroCopy({
+    operations: state.operations,
+    candidates: discoverBoundsCandidates(state.operations),
+    zeroCopyAccessOperationIds: discoverZeroCopyAccesses(state.operations),
+  });
+  const endian = runWrelaEndianParserCollapse({
+    operations: bounds.operations,
+    endianFoldCandidates: discoverEndianFoldCandidates(bounds.operations),
+    parserCollapseCandidates: discoverParserCollapseCandidates(bounds.operations),
+    targetContract: {
+      permitsFirmwareEndianFold: false,
+      permitsVolatileEndianFold: false,
+    },
+  });
+  const moveCopy = runWrelaMoveCopyWrapperElision({
+    operations: endian.operations,
+    candidates: discoverMoveCopyWrapperCandidates(endian.operations),
+  });
+  const terminal = runWrelaTerminalPlatformSpecialization({
+    operations: moveCopy.operations,
+    terminalCleanupCandidates: discoverTerminalCleanupCandidates(moveCopy.operations),
+    platformSpecializationCandidates: discoverPlatformSpecializationCandidates(moveCopy.operations),
+  });
+  const operations = sortedOperations(terminal.operations);
+  const program = removeOperationsFromProgram(
+    state.program,
+    removedOperationIdsBetween(state.operations, operations),
+  );
+  return {
+    ...state,
+    program,
+    operations,
+    diagnostics: [
+      ...state.diagnostics,
+      ...bounds.explanations.map(wrelaBoundsDiagnostic),
+      ...endian.explanations.map(wrelaEndianDiagnostic),
+      ...moveCopy.explanations.map(wrelaMoveCopyDiagnostic),
+      ...terminal.explanations.map(wrelaTerminalDiagnostic),
+    ],
+  };
+}
+
 function runFactGatedEGraphStep(state: PipelineState): PipelineState {
+  const regions = selectEGraphRegions({
+    candidates: discoverEGraphRegionCandidates(state.program, state.operations),
+  });
+  const validateProgram = (program: OptIrProgram) =>
+    verifyOptIrProgram({
+      program,
+      operations: operationMap(state.operations),
+      options: { checkDominance: true, recomputeOperationMetadata: true },
+    });
   const result = runFactGatedEGraphPass<OptIrProgram, OptIrProgram>({
     original: state.program,
     extraction: extractOptIrEGraph<OptIrProgram, OptIrProgram>({
       original: state.program,
-      candidates: [],
+      candidates: regions.map((region) => ({
+        extracted: state.program,
+        regionId: region.regionId,
+        stableRootOperationId: region.rootOperationId,
+        policyRank: optIrEGraphExtractionPolicyRank(0),
+        uncertaintyPenalty: 0,
+        appliedRuleIds: [`identity-region:${region.kind}`],
+      })),
       policy: defaultOptIrEGraphExtractionPolicy(),
       tracingEnabled: false,
     }),
     validateTranslation: () => ({ kind: "passed", inputSet: [] }),
     validators: {
-      structural: (program) =>
-        verifyOptIrProgram({
-          program,
-          operations: operationMap(state.operations),
-          options: { checkDominance: true, recomputeOperationMetadata: true },
-        }),
-      effect: () => ({ kind: "ok" }),
-      dominance: () => ({ kind: "ok" }),
-      fact: () => ({ kind: "ok" }),
-      rewriteLegality: () => ({ kind: "ok" }),
+      structural: validateProgram,
+      effect: validateProgram,
+      dominance: validateProgram,
+      fact: validateProgram,
+      rewriteLegality: validateProgram,
     },
     tracingEnabled: false,
   });
@@ -510,22 +719,77 @@ function runFactGatedEGraphStep(state: PipelineState): PipelineState {
 function runSlpVectorizationStep(state: PipelineState, target: OptIrTargetSurface): PipelineState {
   const policy = optIrDefaultVectorPolicy(target);
   const slp = runSlpVectorization({
-    blockId: 0 as never,
-    scalarOperationIds: [],
+    blockId: firstBlockId(state.program),
+    scalarOperationIds: discoverSlpScalarOperationIds(state.operations),
     nextOperationId: nextOperationOrdinal(state.operations),
-    nextValueId: 1,
-    candidates: [],
+    nextValueId: nextValueOrdinal(state.operations),
+    candidates: discoverSlpCandidates(state.operations),
     policy,
   });
-  return { ...state, operations: sortedOperations([...state.operations, ...slp.vectorOperations]) };
+  return {
+    ...state,
+    diagnostics: [
+      ...state.diagnostics,
+      ...slp.rewriteRecords.map((record) =>
+        pipelineInfoDiagnostic(
+          "opt-ir-optimization",
+          "slp-vectorization",
+          `slp-vectorization:materialization-deferred:${Number(record.vectorOperationId)}:${record.scalarOperationIds.map(Number).join(",")}`,
+        ),
+      ),
+      ...slp.rejections.map((rejection) =>
+        pipelineInfoDiagnostic(
+          "opt-ir-optimization",
+          "slp-vectorization",
+          `slp-vectorization:rejected:${rejection.reason}:${rejection.candidate.idiom}`,
+        ),
+      ),
+    ],
+  };
 }
 
 function runLoopVectorizationStep(state: PipelineState, target: OptIrTargetSurface): PipelineState {
   const policy = optIrDefaultVectorPolicy(target);
-  const loop = runLoopVectorization({ candidates: [], policy });
+  const loop = runLoopVectorization({
+    candidates: discoverLoopVectorizationCandidates(state.program, state.operations, target),
+    policy,
+  });
   return {
     ...state,
-    operations: sortedOperations([...state.operations, ...loop.vectorOperations]),
+    diagnostics: [
+      ...state.diagnostics,
+      ...loop.rewriteRecords.map((record) =>
+        pipelineInfoDiagnostic(
+          "opt-ir-optimization",
+          "certified-loop-vectorization",
+          `loop-vectorization:materialization-deferred:${record.loopId}:${record.vectorOperationIds.map(Number).join(",")}`,
+        ),
+      ),
+      ...loop.rejections.map((rejection) =>
+        pipelineInfoDiagnostic(
+          "opt-ir-optimization",
+          "certified-loop-vectorization",
+          `loop-vectorization:rejected:${rejection.reason}:${rejection.candidate.loopId}`,
+        ),
+      ),
+    ],
+  };
+}
+
+function runVectorIdiomPrepStep(state: PipelineState): PipelineState {
+  return {
+    ...state,
+    diagnostics:
+      discoverSlpCandidates(state.operations).length === 0
+        ? state.diagnostics
+        : [
+            ...state.diagnostics,
+            pipelineInfoDiagnostic(
+              "opt-ir-optimization",
+              "vector-idiom-prep",
+              `vector-idiom-prep:candidates:${discoverSlpCandidates(state.operations).length}`,
+            ),
+          ],
   };
 }
 
@@ -535,6 +799,55 @@ function runVectorizationCleanupStep(state: PipelineState): PipelineState {
     liveValueIds: liveValueIds(state.program),
   });
   return { ...state, operations: sortedOperations(cleanup.operations) };
+}
+
+function operationsInProgramOrder(
+  program: OptIrProgram,
+  operations: readonly OptIrOperation[],
+): readonly OptIrOperation[] {
+  const byId = operationMap(operations);
+  return program.functions
+    .entries()
+    .flatMap((function_) =>
+      function_.blocks.flatMap((block) =>
+        block.operations
+          .map((operationId) => byId.get(operationId))
+          .filter((operation): operation is OptIrOperation => operation !== undefined),
+      ),
+    );
+}
+
+function removeOperationsFromProgram(
+  program: OptIrProgram,
+  removed: ReadonlySet<OptIrOperationId>,
+): OptIrProgram {
+  if (removed.size === 0) {
+    return program;
+  }
+  return optIrProgram({
+    ...program,
+    functions: optIrFunctionTable(
+      program.functions.entries().map((function_) => ({
+        ...function_,
+        blocks: function_.blocks.map((block) => ({
+          ...block,
+          operations: block.operations.filter((operationId) => !removed.has(operationId)),
+        })),
+      })),
+    ),
+  });
+}
+
+function removedOperationIdsBetween(
+  before: readonly OptIrOperation[],
+  after: readonly OptIrOperation[],
+): ReadonlySet<OptIrOperationId> {
+  const afterIds = new Set(after.map((operation) => operation.operationId));
+  return new Set(
+    before
+      .map((operation) => operation.operationId)
+      .filter((operationId) => !afterIds.has(operationId)),
+  );
 }
 
 function runPerFunctionPass<
@@ -729,13 +1042,6 @@ function optimizationRegionsForProgram(
   return program.optimizationRegions ?? [];
 }
 
-function nextOperationOrdinal(operations: readonly OptIrOperation[]): number {
-  return (
-    operations.reduce((maximum, operation) => Math.max(maximum, Number(operation.operationId)), 0) +
-    1
-  );
-}
-
 function nextFactIdCounter(facts: OptIrFactSet): () => OptIrFactId {
   let next = facts.records.reduce((maximum, fact) => Math.max(maximum, Number(fact.factId)), 0) + 1;
   return () => {
@@ -772,6 +1078,83 @@ function pipelineInfoDiagnostic(
   stableDetail: string,
 ): OptIrDiagnostic {
   return pipelineDiagnostic("info", ownerKey, rootCauseKey, stableDetail);
+}
+
+function wrelaBoundsDiagnostic(
+  explanation: ReturnType<typeof runWrelaBoundsZeroCopy>["explanations"][number],
+): OptIrDiagnostic {
+  return wrelaDiagnostic({
+    ownerKey: `operation:${Number(explanation.operationId)}`,
+    rootCauseKey: explanation.kind,
+    messageTemplate:
+      explanation.kind === "boundsCheckEliminated" ? "removed bounds check" : "zero copy access",
+    factChain: explanation.factChain,
+  });
+}
+
+function wrelaEndianDiagnostic(
+  explanation: ReturnType<typeof runWrelaEndianParserCollapse>["explanations"][number],
+): OptIrDiagnostic {
+  return wrelaDiagnostic({
+    ownerKey: `operation:${explanation.operationId ?? "parser-state"}`,
+    rootCauseKey: explanation.kind,
+    messageTemplate:
+      explanation.kind === "endianFolded" ? "folded endian decode" : "removed parser state",
+    factChain: explanation.factChain,
+  });
+}
+
+function wrelaMoveCopyDiagnostic(
+  explanation: ReturnType<typeof runWrelaMoveCopyWrapperElision>["explanations"][number],
+): OptIrDiagnostic {
+  return wrelaDiagnostic({
+    ownerKey: `operation:${Number(explanation.operationId)}`,
+    rootCauseKey: explanation.kind,
+    messageTemplate:
+      explanation.kind === "copyEliminated" ? "removed copy helper" : "removed wrapper",
+    factChain: explanation.factChain,
+  });
+}
+
+function wrelaTerminalDiagnostic(
+  explanation: ReturnType<typeof runWrelaTerminalPlatformSpecialization>["explanations"][number],
+): OptIrDiagnostic {
+  return wrelaDiagnostic({
+    ownerKey: `operation:${Number(explanation.operationId)}`,
+    rootCauseKey: explanation.kind,
+    messageTemplate:
+      explanation.kind === "terminalCleanupPruned"
+        ? "removed terminal cleanup"
+        : "specialized platform call",
+    factChain: explanation.factChain,
+  });
+}
+
+function wrelaDiagnostic(input: {
+  readonly ownerKey: string;
+  readonly rootCauseKey: string;
+  readonly messageTemplate: string;
+  readonly factChain: readonly string[];
+}): OptIrDiagnostic {
+  const code = optIrDiagnosticCode("OPT_IR_INPUT_CONTRACT_INVALID");
+  const stableDetail = `provenance:wrela;facts:${input.factChain.join(">")}`;
+  return {
+    severity: "info",
+    code,
+    messageTemplate: input.messageTemplate,
+    arguments: {},
+    ownerKey: input.ownerKey,
+    rootCauseKey: input.rootCauseKey,
+    stableDetail,
+    orderKey: optIrDiagnosticOrderKey({
+      originKey: "",
+      functionKey: "",
+      code,
+      ownerKey: input.ownerKey,
+      rootCauseKey: input.rootCauseKey,
+      stableDetail,
+    }),
+  };
 }
 
 function pipelineDiagnostic(

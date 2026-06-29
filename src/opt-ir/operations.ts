@@ -24,7 +24,7 @@ import {
   type OptIrOperationSemanticsMetadata,
 } from "./operation-semantics";
 import type { OptIrRegionVolatility } from "./regions";
-import { optIrBooleanType, optIrUnitType, type OptIrType } from "./types";
+import { optIrBooleanType, type OptIrType } from "./types";
 
 export type OptIrIntegerUnaryOperator = "negate" | "bitwiseNot";
 export type OptIrIntegerBinaryOperator =
@@ -574,7 +574,7 @@ export function optIrMemoryStoreOperation(
         operationId: input.operationId,
         operandIds: [input.storeValue],
         resultIds: [],
-        resultTypes: [optIrUnitType()],
+        resultTypes: [],
         originId: input.originId,
       },
       { memoryAccess: access.memoryAccess, storeValue: input.storeValue },
@@ -742,7 +742,7 @@ function vectorMemoryStoreOperation(
         operationId: input.operationId,
         operandIds: operands,
         resultIds: [],
-        resultTypes: [optIrUnitType()],
+        resultTypes: [],
         originId: input.originId,
       },
       {

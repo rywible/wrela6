@@ -75,6 +75,11 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/integration/opt-ir/validated-buffer
 - Independent review found that optimizer inputs must not accept top-level operation or region sidecars. Operation/region optimization state now belongs to the constructed program artifact so callers cannot pass stale side tables beside a program.
 - Independent review found that fixed pipeline schedule entries should dispatch the named pass or a deliberate analysis marker, not repeatedly run whole pass clusters under every scalar, memory, or vector entry.
 - Independent review found that SSA dominance verification must use CFG dominance, not block-list order. Later-listed dominators are valid, while sibling branch values must be rejected.
+- Independent review found that memory-region and Wrela schedule entries still needed production candidate discovery and operation-artifact synchronization. The pipeline now dispatches memory SSA, memory optimization, scalar replacement, stack promotion, LICM, Wrela, e-graph, and vector analysis from real program state, and dead-store removals update both returned operation artifacts and block operation lists.
+- Independent review found that the packet-parser demo must not replace the optimizer result with a fabricated operation snapshot. The demo fixture now rewrites the constructed program, inserts the required packet region metadata, and runs the real optimizer result end to end.
+- Execution found that memory and vector store constructors emitted a unit result type without a corresponding SSA result ID, which structural verification rejected once store operations flowed through the full pipeline. Store operations now have empty result IDs and empty result types.
+- Execution found that vector pass orchestration must not publish vector operations as final optimized artifacts until they are committed into verified program blocks. The pipeline records real SLP and loop-vectorization candidate decisions without returning unattached vector sidecars.
+- Execution split production pipeline candidate discovery into `pipeline-candidates.ts` so orchestration stays focused on pass ordering, verification checkpoints, and state transitions.
 
 ## Executor Protocol
 

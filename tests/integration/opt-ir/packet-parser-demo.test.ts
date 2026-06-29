@@ -23,6 +23,17 @@ describe("OptIR packet parser demonstration", () => {
     }
 
     expect(hasNoProofOrValidationWrappersForTest(result.operations)).toBe(true);
+    expect(result.program.operations?.map((operation) => operation.operationId)).toEqual(
+      result.operations.map((operation) => operation.operationId),
+    );
+    const blockOperationIds = new Set(
+      result.program.functions
+        .entries()
+        .flatMap((function_) => function_.blocks.flatMap((block) => block.operations)),
+    );
+    expect(
+      result.operations.every((operation) => blockOperationIds.has(operation.operationId)),
+    ).toBe(true);
     expect(canonicalPacketLoadsForTest(result.operations)).toHaveLength(2);
     expect(derivedFieldOperationKindsForTest(result.operations)).toEqual(
       expect.arrayContaining([
@@ -36,7 +47,7 @@ describe("OptIR packet parser demonstration", () => {
       expect.arrayContaining([
         expect.objectContaining({
           messageTemplate: "removed bounds check",
-          stableDetail: expect.stringContaining("facts:validated-buffer:packet:attested"),
+          stableDetail: expect.stringContaining("facts:validated-buffer:dominating-bounds"),
         }),
         expect.objectContaining({
           messageTemplate: "removed parser state",
@@ -52,7 +63,7 @@ describe("OptIR packet parser demonstration", () => {
         }),
         expect.objectContaining({
           messageTemplate: "folded endian decode",
-          stableDetail: expect.stringContaining("layout:endian:network"),
+          stableDetail: expect.stringContaining("layout:endian:big"),
         }),
       ]),
     );

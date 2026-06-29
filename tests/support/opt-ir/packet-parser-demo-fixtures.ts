@@ -1,5 +1,6 @@
 import type { LayoutFactKey } from "../../../src/proof-check/model/fact-packet";
 import {
+  optIrAliasClassId,
   optIrCallId,
   optIrFactId,
   optIrOperationId,
@@ -20,7 +21,13 @@ import {
   optIrMemoryLoadOperation,
   optIrRuntimeCallOperation,
 } from "../../../src/opt-ir/operations";
-import { optimizeOptIr, type OptimizeOptIrResult } from "../../../src/opt-ir/passes/pipeline";
+import {
+  optimizeOptIr,
+  type OptimizeOptIrInput,
+  type OptimizeOptIrResult,
+} from "../../../src/opt-ir/passes/pipeline";
+import { optIrFunctionTable, optIrRegionTable } from "../../../src/opt-ir/program";
+import type { OptIrRegion } from "../../../src/opt-ir/regions";
 import { rewriteLegalityObligationId } from "../../../src/opt-ir/passes/pass-contract";
 import {
   runWrelaBoundsZeroCopyForTest,
@@ -62,22 +69,10 @@ export function packetParserDemoInputForTest(): BuildOptimizedOptIrInput {
 
 export function packetParserDemoOptimizerForTest(): BuildOptimizedOptIrDependencies["optimizer"] {
   return (input): OptimizeOptIrResult => {
-    const base = optimizeOptIr({
+    return optimizeOptIr({
       ...input,
-      program: {
-        ...input.program,
-        operations: packetParserDemoOperationsForTest(),
-      },
+      program: programWithPacketParserDemoOperations(input.program),
     });
-    if (base.kind === "error") {
-      return base;
-    }
-    const snapshot = optimizedPacketParserDemoSnapshotForTest();
-    return {
-      ...base,
-      operations: snapshot.operations,
-      diagnostics: [...base.diagnostics, ...snapshot.diagnostics],
-    };
   };
 }
 
@@ -184,10 +179,6 @@ function packetParserDemoOperationsForTest(): readonly OptIrOperation[] {
     runtimeCall(710, "runtime.bounds_check", "validation-wrapper"),
     runtimeCall(711, "runtime.packet_parser_state", "parser-state"),
     runtimeCall(712, "runtime.packet_parser_state.advance", "parser-state"),
-    runtimeCall(713, "runtime.proof_wrapper", "proof-wrapper"),
-    runtimeCall(714, "runtime.copy", "validation-wrapper"),
-    runtimeCall(715, "runtime.resource_wrapper", "resource-wrapper"),
-    runtimeCall(716, "runtime.safe_field_api", "safe-field-api-thunk"),
     packetLoad(720, 740, 0n, 2, "big", HEADER_LAYOUT),
     packetLoad(721, 741, 2n, 2, "big", LENGTH_LAYOUT),
     optIrLayoutEndianDecodeOperation({
@@ -215,8 +206,74 @@ function packetParserDemoOperationsForTest(): readonly OptIrOperation[] {
       resultId: optIrValueId(744),
       originId: ORIGIN,
     }),
+    runtimeCall(713, "runtime.proof_wrapper", "proof-wrapper", 744, 730),
+    runtimeCall(714, "runtime.copy", "copy-helper", 730, 731),
+    runtimeCall(715, "runtime.resource_wrapper", "resource-wrapper", 731, 732),
+    runtimeCall(716, "runtime.safe_field_api", "safe-field-api-thunk", 732, 733),
     runtimeCall(725, "runtime.packet_parser_reject_diagnostic", "observable-reject"),
   ];
+}
+
+function programWithPacketParserDemoOperations(
+  program: OptimizeOptIrInput["program"],
+): OptimizeOptIrInput["program"] {
+  const operations = packetParserDemoOperationsForTest();
+  const functions = program.functions.entries();
+  const [firstFunction] = functions;
+  const [firstBlock] = firstFunction?.blocks ?? [];
+  if (firstFunction === undefined || firstBlock === undefined) {
+    return { ...program, operations };
+  }
+
+  const rewrittenBlock = {
+    ...firstBlock,
+    operations: operations.map((operation) => operation.operationId),
+    terminator:
+      firstBlock.terminator?.kind === "return"
+        ? {
+            ...firstBlock.terminator,
+            values: [optIrValueId(744)],
+          }
+        : firstBlock.terminator,
+  };
+  const rewrittenFunctions = functions.map((function_) =>
+    function_.functionId === firstFunction.functionId
+      ? {
+          ...function_,
+          blocks: function_.blocks.map((block) =>
+            block.blockId === firstBlock.blockId ? rewrittenBlock : block,
+          ),
+        }
+      : function_,
+  );
+  const packetRegion = packetRegionForTest();
+  return {
+    ...program,
+    operations,
+    functions: optIrFunctionTable(rewrittenFunctions),
+    regions: optIrRegionTable([
+      ...program.regions.entries().filter((region) => region.regionId !== PACKET_REGION),
+      { regionId: PACKET_REGION, originId: ORIGIN },
+    ]),
+    optimizationRegions: [
+      ...(program.optimizationRegions ?? []).filter((region) => region.regionId !== PACKET_REGION),
+      packetRegion,
+    ],
+  };
+}
+
+function packetRegionForTest(): OptIrRegion {
+  return {
+    regionId: PACKET_REGION,
+    kind: "packetSource",
+    owner: { kind: "program" },
+    lifetime: "activation",
+    aliasClass: optIrAliasClassId(70),
+    layoutKey: HEADER_LAYOUT,
+    volatility: "nonVolatile",
+    effects: { mutability: "readOnly", ordering: "none" },
+    origin: { originId: ORIGIN, source: { file: "packet-parser-demo.wr" } },
+  };
 }
 
 function packetLoad(
@@ -247,14 +304,20 @@ function packetLoad(
   return result_.operation;
 }
 
-function runtimeCall(operation: number, runtimeKey: string, displayName: string): OptIrOperation {
+function runtimeCall(
+  operation: number,
+  runtimeKey: string,
+  displayName: string,
+  source?: number,
+  result?: number,
+): OptIrOperation {
   const call = optIrRuntimeCallOperation({
     operationId: optIrOperationId(operation),
     callId: optIrCallId(operation),
     target: { kind: "runtime", runtimeKey },
-    argumentIds: [],
-    resultIds: [],
-    resultTypes: [],
+    argumentIds: source === undefined ? [] : [optIrValueId(source)],
+    resultIds: result === undefined ? [] : [optIrValueId(result)],
+    resultTypes: result === undefined ? [] : [optIrUnsignedIntegerType(16)],
     originId: ORIGIN,
   });
   return { ...call, displayName };
