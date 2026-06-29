@@ -57,6 +57,9 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/integration/opt-ir/validated-buffer
 - Task 28 memory SSA/effect-token indexes must preserve per-block operation order when computing dependencies. Sorting operations globally by operation ID can invent dependencies that are not present in the actual block sequence.
 - Task 22 construction cleanup must feed its returned functions back into the public construction result, and skeleton lowering must preserve basic Proof MIR terminators before cleanup runs. Applying cleanup to edge-only skeletons would make valid multi-block checked MIR appear unreachable.
 - Task 29 mandatory inlining must rewrite operation-specific value fields as well as generic operand/result arrays, and must reject callee operation IDs that collide with caller operation IDs when the implementation reuses callee IDs.
+- Task 26 SCCP must deduplicate derived impossibility facts across fixpoint rounds, and value numbering must preserve operand order for order-sensitive operations. Sorting every operand made reversed subtraction look commonable.
+- Task 34 memory forwarding must require a compatible memory-version or effect-token chain and matching value type. Falling back to forwarding untracked regions with no token chain was unsafe.
+- Task 34 memory rewrite records must identify real operation or region subjects. Placeholder operation IDs for scalar replacement or stack promotion hide the rewrite surface from downstream legality checks.
 
 ## Executor Protocol
 
@@ -378,40 +381,41 @@ tests/
 
 ## Shared Test Helper Registry
 
-| Helper                                              | Owning Task | File                                                     |
-| --------------------------------------------------- | ----------- | -------------------------------------------------------- |
-| `checkPolicyTextForTest`                            | Task 0      | `scripts/check-policy.ts`                                |
-| `optIrProgramIdForTest`                             | Task 1      | `tests/support/opt-ir/ids-diagnostics-fakes.ts`          |
-| `optIrDiagnosticForTest`                            | Task 1      | `tests/support/opt-ir/ids-diagnostics-fakes.ts`          |
-| `optIrScalarTypeForTest`                            | Task 2      | `tests/support/opt-ir/types-fakes.ts`                    |
-| `optIrBlockForTest`                                 | Task 3      | `tests/support/opt-ir/cfg-fakes.ts`                      |
-| `optIrRegionForTest`                                | Task 4      | `tests/support/opt-ir/region-effect-fakes.ts`            |
-| `optIrOperationForTest`                             | Task 5      | `tests/support/opt-ir/operation-fakes.ts`                |
-| `optIrVerifierInputForTest`                         | Task 6      | `tests/support/opt-ir/verifier-fixtures.ts`              |
-| `verifyOptIrProgramForTest`                         | Task 6      | `tests/support/opt-ir/verifier-fixtures.ts`              |
-| `optIrInterpreterFixtureForTest`                    | Task 7      | `tests/support/opt-ir/opt-ir-interpreter.ts`             |
-| `checkedMirProgramForOptIrTest`                     | Task 8      | `tests/support/opt-ir/checked-mir-fixtures.ts`           |
-| `checkedOptIrHandoffForTest`                        | Task 8      | `tests/support/opt-ir/opt-ir-handoff-fixtures.ts`        |
-| `targetOptimizationSurfaceForTest`                  | Task 8      | `tests/support/opt-ir/target-optimization-fakes.ts`      |
-| `constructOptIrInputForTest`                        | Task 11     | `tests/support/opt-ir/internal-construction-fixtures.ts` |
-| `checkedFactPacketEntryForTest`                     | Task 13     | `tests/support/opt-ir/fact-import-fixtures.ts`           |
-| `optIrFactSetForTest`                               | Task 14     | `tests/support/opt-ir/fact-index-fixtures.ts`            |
-| `optIrPathCertificateForTest`                       | Task 15     | `tests/support/opt-ir/path-certificate-fixtures.ts`      |
-| `optIrConstructionFixtureForTest`                   | Task 22     | `tests/support/opt-ir/construction-fixtures.ts`          |
-| `validConstructOptIrInputForTest`                   | Task 22     | `tests/support/opt-ir/construction-fixtures.ts`          |
+| Helper                                               | Owning Task | File                                                     |
+| ---------------------------------------------------- | ----------- | -------------------------------------------------------- |
+| `checkPolicyTextForTest`                             | Task 0      | `scripts/check-policy.ts`                                |
+| `optIrProgramIdForTest`                              | Task 1      | `tests/support/opt-ir/ids-diagnostics-fakes.ts`          |
+| `optIrDiagnosticForTest`                             | Task 1      | `tests/support/opt-ir/ids-diagnostics-fakes.ts`          |
+| `optIrScalarTypeForTest`                             | Task 2      | `tests/support/opt-ir/types-fakes.ts`                    |
+| `optIrBlockForTest`                                  | Task 3      | `tests/support/opt-ir/cfg-fakes.ts`                      |
+| `optIrRegionForTest`                                 | Task 4      | `tests/support/opt-ir/region-effect-fakes.ts`            |
+| `optIrOperationForTest`                              | Task 5      | `tests/support/opt-ir/operation-fakes.ts`                |
+| `optIrVerifierInputForTest`                          | Task 6      | `tests/support/opt-ir/verifier-fixtures.ts`              |
+| `verifyOptIrProgramForTest`                          | Task 6      | `tests/support/opt-ir/verifier-fixtures.ts`              |
+| `optIrInterpreterFixtureForTest`                     | Task 7      | `tests/support/opt-ir/opt-ir-interpreter.ts`             |
+| `checkedMirProgramForOptIrTest`                      | Task 8      | `tests/support/opt-ir/checked-mir-fixtures.ts`           |
+| `checkedOptIrHandoffForTest`                         | Task 8      | `tests/support/opt-ir/opt-ir-handoff-fixtures.ts`        |
+| `targetOptimizationSurfaceForTest`                   | Task 8      | `tests/support/opt-ir/target-optimization-fakes.ts`      |
+| `constructOptIrInputForTest`                         | Task 11     | `tests/support/opt-ir/internal-construction-fixtures.ts` |
+| `checkedFactPacketEntryForTest`                      | Task 13     | `tests/support/opt-ir/fact-import-fixtures.ts`           |
+| `optIrFactSetForTest`                                | Task 14     | `tests/support/opt-ir/fact-index-fixtures.ts`            |
+| `optIrPathCertificateForTest`                        | Task 15     | `tests/support/opt-ir/path-certificate-fixtures.ts`      |
+| `optIrConstructionFixtureForTest`                    | Task 22     | `tests/support/opt-ir/construction-fixtures.ts`          |
+| `validConstructOptIrInputForTest`                    | Task 22     | `tests/support/opt-ir/construction-fixtures.ts`          |
 | `validConstructOptIrInputWithReachableBlocksForTest` | Task 22     | `tests/support/opt-ir/construction-fixtures.ts`          |
-| `validConstructOptIrInputWithShuffledTablesForTest` | Task 22     | `tests/support/opt-ir/construction-fixtures.ts`          |
-| `optIrPassContractForTest`                          | Task 23     | `tests/support/opt-ir/pass-contract-fixtures.ts`         |
-| `subjectRemapTableForTest`                          | Task 24     | `tests/support/opt-ir/fact-preservation-fixtures.ts`     |
-| `programWithStaticSwitchForTest`                    | Task 26     | `tests/support/opt-ir/dataflow-fixtures.ts`              |
-| `optIrAnalysisFixtureForTest`                       | Task 27     | `tests/support/opt-ir/analysis-fixtures.ts`              |
-| `optIrMemorySsaFixtureForTest`                      | Task 28     | `tests/support/opt-ir/memory-ssa-fixtures.ts`            |
-| `optIrEGraphRegionForTest`                          | Task 36     | `tests/support/opt-ir/egraph-fixtures.ts`                |
-| `optIrVectorLoopForTest`                            | Task 40     | `tests/support/opt-ir/vector-fixtures.ts`                |
-| `optIrProgramStableKeyForTest`                      | Task 43     | `tests/support/opt-ir/property-generators.ts`            |
-| `inputFromProgramForTest`                           | Task 43     | `tests/support/opt-ir/property-generators.ts`            |
-| `shuffleTablesForTest`                              | Task 43     | `tests/support/opt-ir/property-generators.ts`            |
-| `optIrResultStableKeyForTest`                       | Task 43     | `tests/support/opt-ir/property-generators.ts`            |
+| `validConstructOptIrInputWithShuffledTablesForTest`  | Task 22     | `tests/support/opt-ir/construction-fixtures.ts`          |
+| `optIrPassContractForTest`                           | Task 23     | `tests/support/opt-ir/pass-contract-fixtures.ts`         |
+| `subjectRemapTableForTest`                           | Task 24     | `tests/support/opt-ir/fact-preservation-fixtures.ts`     |
+| `programWithStaticSwitchForTest`                     | Task 26     | `tests/support/opt-ir/dataflow-fixtures.ts`              |
+| `programWithOrderSensitiveOperationsForTest`         | Task 26     | `tests/support/opt-ir/dataflow-fixtures.ts`              |
+| `optIrAnalysisFixtureForTest`                        | Task 27     | `tests/support/opt-ir/analysis-fixtures.ts`              |
+| `optIrMemorySsaFixtureForTest`                       | Task 28     | `tests/support/opt-ir/memory-ssa-fixtures.ts`            |
+| `optIrEGraphRegionForTest`                           | Task 36     | `tests/support/opt-ir/egraph-fixtures.ts`                |
+| `optIrVectorLoopForTest`                             | Task 40     | `tests/support/opt-ir/vector-fixtures.ts`                |
+| `optIrProgramStableKeyForTest`                       | Task 43     | `tests/support/opt-ir/property-generators.ts`            |
+| `inputFromProgramForTest`                            | Task 43     | `tests/support/opt-ir/property-generators.ts`            |
+| `shuffleTablesForTest`                               | Task 43     | `tests/support/opt-ir/property-generators.ts`            |
+| `optIrResultStableKeyForTest`                        | Task 43     | `tests/support/opt-ir/property-generators.ts`            |
 
 ## Exact Contract Tables
 
