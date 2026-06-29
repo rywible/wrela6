@@ -70,15 +70,15 @@ describe("subject remap", () => {
     const table = createOptIrSubjectRemapTable(input);
 
     expect(table.entries).toEqual([
-      { from: valueSubject(1), to: valueSubject(11) },
-      { from: valueSubject(9), to: valueSubject(19) },
+      { source: valueSubject(1), target: valueSubject(11) },
+      { source: valueSubject(9), target: valueSubject(19) },
     ]);
     expect(table.droppedSubjectKeys).toEqual(["edge:3", "value:2"]);
 
     expect(() => {
-      (table.entries as { from: OptIrFactSubject; to: OptIrFactSubject }[]).push({
-        from: valueSubject(40),
-        to: valueSubject(41),
+      (table.entries as { source: OptIrFactSubject; target: OptIrFactSubject }[]).push({
+        source: valueSubject(40),
+        target: valueSubject(41),
       });
     }).toThrow();
     expect(table.entries).toHaveLength(2);

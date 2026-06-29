@@ -26,8 +26,8 @@ export interface OptIrSubjectRemapTableInput {
 }
 
 export interface OptIrSubjectRemapEntry {
-  readonly from: OptIrFactSubject;
-  readonly to: OptIrFactSubject;
+  readonly source: OptIrFactSubject;
+  readonly target: OptIrFactSubject;
 }
 
 export interface OptIrSubjectRemapTable {
@@ -51,7 +51,7 @@ export function createOptIrSubjectRemapTable(
 
   const remaps = new Map<string, OptIrFactSubject>();
   for (const entry of entries) {
-    remaps.set(optIrFactSubjectKey(entry.from), entry.to);
+    remaps.set(optIrFactSubjectKey(entry.source), entry.target);
   }
 
   const droppedSubjectKeys = Object.freeze([
@@ -117,11 +117,11 @@ export function optIrFactSubjectKey(subject: OptIrFactSubject): string {
 
 function subjectEntries<SubjectId>(
   pairs: readonly (readonly [SubjectId, SubjectId])[],
-  createSubject: (id: SubjectId) => OptIrFactSubject,
+  createSubject: (subjectId: SubjectId) => OptIrFactSubject,
 ): OptIrSubjectRemapEntry[] {
-  return pairs.map(([from, to]) => ({
-    from: createSubject(from),
-    to: createSubject(to),
+  return pairs.map(([source, target]) => ({
+    source: createSubject(source),
+    target: createSubject(target),
   }));
 }
 
@@ -150,13 +150,13 @@ function factSubject(factId: OptIrFactId): OptIrFactSubject {
 }
 
 function compareRemapEntry(left: OptIrSubjectRemapEntry, right: OptIrSubjectRemapEntry): number {
-  return compareStrings(optIrFactSubjectKey(left.from), optIrFactSubjectKey(right.from));
+  return compareStrings(optIrFactSubjectKey(left.source), optIrFactSubjectKey(right.source));
 }
 
 function freezeRemapEntry(entry: OptIrSubjectRemapEntry): OptIrSubjectRemapEntry {
   return Object.freeze({
-    from: Object.freeze({ ...entry.from }),
-    to: Object.freeze({ ...entry.to }),
+    source: Object.freeze({ ...entry.source }),
+    target: Object.freeze({ ...entry.target }),
   });
 }
 
