@@ -29,6 +29,7 @@ export type OptIrFactImportTypedAnswer =
   | "provesImpossible"
   | "privateStateGeneration"
   | "callEffects"
+  | "volatilityOf"
   | "capabilityFlow"
   | "terminalBehavior"
   | "layoutOf"
@@ -142,7 +143,7 @@ const SCHEMAS = {
     subjectKinds: ["authority"],
     requiredDependencies: ["authorityEntry", "coreCertificate"],
     certificateRule: "core",
-    typedAnswers: ["callEffects"],
+    typedAnswers: ["callEffects", "volatilityOf"],
   },
   capabilityFlow: {
     kind: "capabilityFlow",

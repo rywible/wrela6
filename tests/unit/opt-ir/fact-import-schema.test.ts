@@ -29,7 +29,7 @@ const EXPECTED_TYPED_ANSWERS = {
   validatedBuffer: ["provesInBounds", "provesImpossible"],
   packetSource: ["provesInBounds"],
   privateState: ["privateStateGeneration"],
-  platformEffect: ["callEffects"],
+  platformEffect: ["callEffects", "volatilityOf"],
   capabilityFlow: ["capabilityFlow"],
   terminalClosure: ["terminalBehavior", "provesImpossible"],
   exitClosure: ["terminalBehavior", "provesImpossible"],
