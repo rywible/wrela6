@@ -18,15 +18,28 @@ import {
 import type { OptIrPathCertificate } from "../../../src/opt-ir/facts/path-certificates";
 import { verifyPreservedOptIrFacts } from "../../../src/opt-ir/verify/fact-verifier";
 import {
+  optimizationPassId,
   optIrCfgEditId,
   optIrBlockId,
   optIrEdgeId,
   optIrFactId,
   optIrOperationId,
+  optIrOriginId,
   optIrPathCertificateId,
   optIrRegionId,
+  optIrRewriteRegionId,
   optIrValueId,
 } from "../../../src/opt-ir/ids";
+import {
+  passInvariantCheckerId,
+  passInvariantSchemaId,
+  rewriteLegalityObligationId,
+} from "../../../src/opt-ir/passes/pass-contract";
+import { createPassInvariantSchemaRegistry } from "../../../src/opt-ir/verify/pass-invariant-schema";
+import {
+  validateRewriteLegality,
+  type RewriteLegalityRecord,
+} from "../../../src/opt-ir/verify/rewrite-legality";
 
 describe("subject remap", () => {
   test("remaps every optimization subject kind and records dropped subjects", () => {
@@ -279,6 +292,82 @@ describe("preservation", () => {
   });
 });
 
+describe("rewrite legality", () => {
+  test("rewrite legality accepts records whose obligation schema and exact facts match", () => {
+    const registry = createPassInvariantSchemaRegistry([specializationResidualEquivalenceSchema()]);
+
+    const result = validateRewriteLegality({
+      records: [rewriteLegalityRecord()],
+      obligations: [rewriteLegalityObligation()],
+      schemas: registry,
+      factKinds: new Map([[optIrFactId(1), "validatedBuffer"]]),
+    });
+
+    expect(result).toEqual({ kind: "ok" });
+  });
+
+  test("rewrite legality rejects records that cite extra or missing facts", () => {
+    const result = validateRewriteLegality({
+      records: [
+        rewriteLegalityRecord({
+          factsUsed: [optIrFactId(1), optIrFactId(2)],
+        }),
+      ],
+      obligations: [rewriteLegalityObligation()],
+      schemas: createPassInvariantSchemaRegistry([specializationResidualEquivalenceSchema()]),
+      factKinds: new Map([
+        [optIrFactId(1), "validatedBuffer"],
+        [optIrFactId(2), "ownership"],
+      ]),
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") {
+      throw new Error("Expected rewrite legality validation to fail.");
+    }
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+      "rewrite-facts-mismatch:record:rewrite-record:obligation:specialization-residual:expected:1:actual:1,2",
+    );
+  });
+
+  test("rewrite legality rejects pass-specific invariants without reviewed schema and decomposition", () => {
+    const result = validateRewriteLegality({
+      records: [
+        rewriteLegalityRecord({
+          invariant: {
+            kind: "passSpecificInvariant",
+            schema: passInvariantSchemaId("missing-schema"),
+            checker: passInvariantCheckerId("missing-checker"),
+            decomposesTo: [],
+          },
+        }),
+      ],
+      obligations: [rewriteLegalityObligation()],
+      schemas: createPassInvariantSchemaRegistry([specializationResidualEquivalenceSchema()]),
+      factKinds: new Map([[optIrFactId(1), "validatedBuffer"]]),
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") {
+      throw new Error("Expected rewrite legality validation to fail.");
+    }
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+      "rewrite-pass-invariant-decomposition-empty:record:rewrite-record",
+    );
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+      "rewrite-pass-invariant-schema-missing:record:rewrite-record:schema:missing-schema",
+    );
+  });
+
+  test("rewrite legality rejects ambiguous reviewed invariant schemas", () => {
+    const schema = specializationResidualEquivalenceSchema();
+
+    expect(() => createPassInvariantSchemaRegistry([schema, schema])).toThrow(
+      "Duplicate OptIR pass invariant schema specializationResidualEquivalence.",
+    );
+  });
+});
+
 function valueSubject(value: number): OptIrFactSubject {
   return { kind: "value", valueId: optIrValueId(value) };
 }
@@ -338,6 +427,70 @@ function preservedFactForVerifier(): OptIrPreservedFact {
       obligationId: "rewrite-bounds",
       remappedFrom: valueSubject(1),
     },
+  };
+}
+
+function rewriteLegalityRecord(
+  overrides: Partial<RewriteLegalityRecord> = {},
+): RewriteLegalityRecord {
+  return {
+    recordId: "rewrite-record",
+    passId: optimizationPassId("whole-program-specialization"),
+    ruleId: "specialization-residual",
+    obligationId: rewriteLegalityObligationId("specialization-residual"),
+    original: optIrRewriteRegionId(1),
+    replacement: optIrRewriteRegionId(2),
+    invariant: {
+      kind: "passSpecificInvariant",
+      schema: passInvariantSchemaId("specializationResidualEquivalence"),
+      checker: passInvariantCheckerId("specialization-residual-equivalence"),
+      decomposesTo: [{ kind: "pureAlgebraicEquivalence" }, { kind: "boundsDominanceElimination" }],
+    },
+    factsUsed: [optIrFactId(1)],
+    cfgEdits: [],
+    memoryEdits: [],
+    callEdits: [],
+    origin: optIrOriginId(1),
+    ...overrides,
+  };
+}
+
+function rewriteLegalityObligation() {
+  return {
+    obligationId: rewriteLegalityObligationId("specialization-residual"),
+    invariant: {
+      kind: "passSpecificInvariant" as const,
+      schema: passInvariantSchemaId("specializationResidualEquivalence"),
+      checker: passInvariantCheckerId("specialization-residual-equivalence"),
+      decomposesTo: [
+        { kind: "pureAlgebraicEquivalence" as const },
+        { kind: "boundsDominanceElimination" as const },
+      ],
+    },
+    requiredFacts: [optIrFactId(1)],
+    factsShape: { minimumFacts: 1, acceptedFactKinds: ["validatedBuffer" as const] },
+    original: optIrRewriteRegionId(1),
+    replacement: optIrRewriteRegionId(2),
+    origin: optIrOriginId(1),
+  };
+}
+
+function specializationResidualEquivalenceSchema() {
+  return {
+    schemaId: passInvariantSchemaId("specializationResidualEquivalence"),
+    passId: optimizationPassId("whole-program-specialization"),
+    operands: [
+      { name: "original", kind: "operation" as const },
+      { name: "replacement", kind: "operation" as const },
+    ],
+    requiredFacts: [
+      { factKind: "validatedBuffer" as const, subjectRole: "static-branch-condition" },
+    ],
+    checker: passInvariantCheckerId("specialization-residual-equivalence"),
+    decomposesTo: [
+      { kind: "pureAlgebraicEquivalence" as const },
+      { kind: "boundsDominanceElimination" as const },
+    ],
   };
 }
 
