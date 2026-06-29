@@ -65,6 +65,9 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/integration/opt-ir/validated-buffer
 - Task 39 SLP vector operation construction must validate idiom-specific source value counts before creating vector operations. Fixed-width store/set idioms need distinct vector and store-value operands, not a default or duplicated source value.
 - Task 31 whole-program inlining has the same remapping hazards as mandatory inlining: reject callee operation IDs that collide with caller IDs when IDs are reused, and remap operation-specific value fields rather than only generic operand/result arrays.
 - Task 32 binding-time analysis must treat dynamic classifications as terminal/conservative. SCCP-discovered constants or static fact sources must not upgrade values that consume dynamic operands, rely on out-of-scope facts, come from unknown calls, or are produced by effectful operations.
+- Task 33 specialization clone candidates must materialize real clone functions or be denied for a concrete policy reason. Logging accepted candidates as `not-materialized` misses the polyvariant cloning and fact/path re-homing requirement.
+- Task 37 conjunction fact gates must report the sum of child minimum fact requirements, and extraction records should expose the plan-facing `rulesApplied` field alongside internal rule IDs.
+- Task 40 loop vector store rewrites must preserve the vector memory descriptor type and reject malformed store source-value shapes during legality, before rewrite construction can throw.
 
 ## Executor Protocol
 
