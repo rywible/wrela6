@@ -52,6 +52,11 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/integration/opt-ir/validated-buffer
 - Task 23C pass-schedule validation must use the pass contract's declared form preconditions directly; recomputing inferred form requirements from preserved analyses made intentionally narrow contracts look invalid.
 - Task 25A dead-code elimination must seed CFG edge arguments as live values. Edge arguments are control-flow uses, not normal operation operands, and omitting them made DCE remove required block-parameter producers.
 - Task 24B path-scoped preserved facts must update their `scope.certificateId` to the re-homed OptIR path certificate. Treating a path certificate ID as an edge subject remap or retaining the old scope allowed stale path scopes to pass preservation.
+- Task 21 construction cleanup must compute reachability from terminator successor edges, not from every CFG edge leaving a reachable block. Otherwise return blocks with stale outgoing edges keep unreachable blocks, operations, and facts alive.
+- Task 25D scalar simplification must iterate under the declared fuel and accumulate all rewrite records, removals, and remaps across rounds. Single-round folding missed constants exposed by earlier rewrites.
+- Task 28 memory SSA/effect-token indexes must preserve per-block operation order when computing dependencies. Sorting operations globally by operation ID can invent dependencies that are not present in the actual block sequence.
+- Task 22 construction cleanup must feed its returned functions back into the public construction result, and skeleton lowering must preserve basic Proof MIR terminators before cleanup runs. Applying cleanup to edge-only skeletons would make valid multi-block checked MIR appear unreachable.
+- Task 29 mandatory inlining must rewrite operation-specific value fields as well as generic operand/result arrays, and must reject callee operation IDs that collide with caller operation IDs when the implementation reuses callee IDs.
 
 ## Executor Protocol
 
@@ -394,6 +399,7 @@ tests/
 | `optIrPathCertificateForTest`                       | Task 15     | `tests/support/opt-ir/path-certificate-fixtures.ts`      |
 | `optIrConstructionFixtureForTest`                   | Task 22     | `tests/support/opt-ir/construction-fixtures.ts`          |
 | `validConstructOptIrInputForTest`                   | Task 22     | `tests/support/opt-ir/construction-fixtures.ts`          |
+| `validConstructOptIrInputWithReachableBlocksForTest` | Task 22     | `tests/support/opt-ir/construction-fixtures.ts`          |
 | `validConstructOptIrInputWithShuffledTablesForTest` | Task 22     | `tests/support/opt-ir/construction-fixtures.ts`          |
 | `optIrPassContractForTest`                          | Task 23     | `tests/support/opt-ir/pass-contract-fixtures.ts`         |
 | `subjectRemapTableForTest`                          | Task 24     | `tests/support/opt-ir/fact-preservation-fixtures.ts`     |
