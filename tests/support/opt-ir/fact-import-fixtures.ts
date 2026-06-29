@@ -207,7 +207,7 @@ function dependenciesForImportKind(kind: CheckedPacketFactKind): readonly Checke
         { kind: "proofMirPlace", placeId: proofMirPlaceId(1) },
       ];
     case "erasure":
-      return [core];
+      return [{ kind: "proofMirPlace", placeId: proofMirPlaceId(1) }, core];
     case "validatedBuffer":
       return [
         { kind: "proofMirEdge", edgeId: proofMirControlEdgeId(1) },

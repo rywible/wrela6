@@ -112,7 +112,7 @@ const SCHEMAS = {
   },
   erasure: {
     kind: "erasure",
-    subjectKinds: ["place"],
+    subjectKinds: ["place", "value"],
     requiredDependencies: ["coreCertificate"],
     certificateRule: "core",
     typedAnswers: ["erasureOf"],
@@ -140,7 +140,7 @@ const SCHEMAS = {
   },
   platformEffect: {
     kind: "platformEffect",
-    subjectKinds: ["authority"],
+    subjectKinds: ["call", "authority"],
     requiredDependencies: ["authorityEntry", "coreCertificate"],
     certificateRule: "core",
     typedAnswers: ["callEffects", "volatilityOf"],
@@ -265,6 +265,7 @@ export function validateCheckedFactImportSchema(
   }
 
   diagnostics.push(...validateDependencyReferences(input));
+  diagnostics.push(...validateSubjectEvidenceDependencies(input));
   diagnostics.push(...validateSubjectReferences(input));
   diagnostics.push(...validateLayoutReferences(input));
   diagnostics.push(...validateAuthorityReferences(input));
@@ -292,6 +293,35 @@ function validateDependencyReferences(
     }
   }
   return diagnostics;
+}
+
+function validateSubjectEvidenceDependencies(
+  input: CheckedFactImportValidationInput,
+): readonly OptIrFactImportDiagnostic[] {
+  if (String(input.entry.kind) !== "erasure") {
+    return [];
+  }
+
+  const subject = input.entry.subject;
+  if (
+    subject.kind === "place" &&
+    !input.entry.dependencies.some(
+      (dependency) => dependency.kind === "proofMirPlace" && dependency.placeId === subject.placeId,
+    )
+  ) {
+    return [missingSubjectEvidenceDependency(input, "proofMirPlace")];
+  }
+
+  if (
+    subject.kind === "value" &&
+    !input.entry.dependencies.some(
+      (dependency) => dependency.kind === "proofMirValue" && dependency.valueId === subject.valueId,
+    )
+  ) {
+    return [missingSubjectEvidenceDependency(input, "proofMirValue")];
+  }
+
+  return [];
 }
 
 function validateSubjectReferences(
@@ -470,6 +500,17 @@ function missingProofMirSubject(
     "OPT_IR_FACT_IMPORT_MISSING_PROOF_MIR_NODE",
     "Checked fact import subject does not resolve in Proof MIR.",
     `${String(input.entry.kind)}:${subjectKind}`,
+  );
+}
+
+function missingSubjectEvidenceDependency(
+  input: CheckedFactImportValidationInput,
+  dependencyKind: CheckedFactDependency["kind"],
+): OptIrFactImportDiagnostic {
+  return diagnostic(
+    "OPT_IR_FACT_IMPORT_MISSING_DEPENDENCY",
+    "Checked fact import subject is missing its required Proof MIR evidence dependency.",
+    `${String(input.entry.kind)}:${dependencyKind}`,
   );
 }
 

@@ -1,11 +1,15 @@
 import { describe, expect, test } from "bun:test";
 
+import { monoInstanceId } from "../../../src/mono/ids";
 import {
   checkedFactKindId,
   CHECKED_PACKET_FACT_KINDS,
 } from "../../../src/proof-check/model/fact-packet";
-import { checkedSummaryInstantiationCertificateId } from "../../../src/proof-check/ids";
-import { proofMirPlaceId, proofMirValueId } from "../../../src/proof-mir/ids";
+import {
+  checkedSummaryInstantiationCertificateId,
+  proofCheckCoreCertificateId,
+} from "../../../src/proof-check/ids";
+import { proofMirCallId, proofMirPlaceId, proofMirValueId } from "../../../src/proof-mir/ids";
 import {
   checkedFactImportSchemaForKind,
   type CheckedFactImportValidationResult,
@@ -148,6 +152,57 @@ describe("OptIR checked fact import schema registry", () => {
       layoutFacts: { ...input.layoutFacts, keys: [] },
     });
     expect(expectImportError(result)).toContain("OPT_IR_FACT_IMPORT_LAYOUT_MISMATCH");
+  });
+
+  test("erasure imports value subjects only with matching Proof MIR value evidence", () => {
+    const valueSubject = { kind: "value" as const, valueId: proofMirValueId(1) };
+    const coreCertificate = {
+      kind: "coreCertificate" as const,
+      certificateId: proofCheckCoreCertificateId(1),
+    };
+
+    expect(
+      validateCheckedFactImportSchema(
+        completeFactImportValidationInputForTest({
+          kind: "erasure",
+          entry: checkedFactPacketEntryForTest({
+            kind: "erasure",
+            subject: valueSubject,
+            dependencies: [{ kind: "proofMirValue", valueId: proofMirValueId(1) }, coreCertificate],
+          }),
+        }),
+      ),
+    ).toEqual({ kind: "ok", typedAnswers: EXPECTED_TYPED_ANSWERS.erasure });
+
+    expect(
+      expectImportError(
+        validateCheckedFactImportSchemaForTest({
+          entry: checkedFactPacketEntryForTest({
+            kind: "erasure",
+            subject: valueSubject,
+            dependencies: [coreCertificate],
+          }),
+        }),
+      ),
+    ).toContain("OPT_IR_FACT_IMPORT_MISSING_DEPENDENCY");
+  });
+
+  test("platformEffect imports call subjects as well as authority subjects", () => {
+    const result = validateCheckedFactImportSchema(
+      completeFactImportValidationInputForTest({
+        kind: "platformEffect",
+        entry: checkedFactPacketEntryForTest({
+          kind: "platformEffect",
+          subject: {
+            kind: "call",
+            functionInstanceId: monoInstanceId("fixture::main"),
+            callId: proofMirCallId(1),
+          },
+        }),
+      }),
+    );
+
+    expect(result).toEqual({ kind: "ok", typedAnswers: EXPECTED_TYPED_ANSWERS.platformEffect });
   });
 
   test("summary-instantiation dependencies resolve only against summary-instantiation certificates", () => {
