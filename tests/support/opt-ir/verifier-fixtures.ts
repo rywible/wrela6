@@ -22,6 +22,7 @@ import {
   optIrIntegerBinaryOperation,
   optIrMemoryLoadOperation,
 } from "../../../src/opt-ir/operations";
+import type { OptIrTerminator } from "../../../src/opt-ir/terminators";
 import {
   optIrFunctionTable,
   optIrProgram,
@@ -203,6 +204,99 @@ export function optIrProgramWithDominanceViolationForTest() {
   });
 }
 
+export function optIrProgramWithSiblingBranchDominanceViolationForTest() {
+  const condition = optIrBlockParameter({
+    valueId: optIrValueId(1),
+    type: optIrBooleanTypeForTest(),
+    incomingRole: "entry",
+    originId: optIrOriginId(1),
+  });
+  const siblingValue = constantForTest({
+    operationId: optIrOperationId(1),
+    resultId: optIrValueId(2),
+  });
+  const useFromSibling = optIrIntegerBinaryOperation({
+    operationId: optIrOperationId(2),
+    resultId: optIrValueId(3),
+    left: optIrValueId(2),
+    right: optIrValueId(2),
+    operator: "add",
+    resultType: U32,
+    originId: optIrOriginId(1),
+  });
+  const entry = blockForTest({
+    blockId: optIrBlockId(1),
+    parameters: [condition],
+    terminator: branchTerminator(condition.valueId, optIrEdgeId(1), optIrEdgeId(2)),
+  });
+  const left = blockForTest({
+    blockId: optIrBlockId(2),
+    operations: [siblingValue.operationId],
+  });
+  const right = blockForTest({
+    blockId: optIrBlockId(3),
+    operations: [useFromSibling.operationId],
+  });
+  const func = functionForTest({
+    blocks: [entry, left, right],
+    edges: optIrCfgEdgeTable([
+      edgeForTest({
+        edgeId: optIrEdgeId(1),
+        from: entry.blockId,
+        toBlock: left.blockId,
+        kind: "branchTrue",
+      }),
+      edgeForTest({
+        edgeId: optIrEdgeId(2),
+        from: entry.blockId,
+        toBlock: right.blockId,
+        kind: "branchFalse",
+      }),
+    ]),
+    entryBlock: entry.blockId,
+  });
+  return optIrVerifierInputForTest({
+    program: programForFunctionForTest(func),
+    operations: [siblingValue, useFromSibling],
+  });
+}
+
+export function optIrProgramWithLaterDominatingDefinitionForTest() {
+  const dominatingValue = constantForTest({
+    operationId: optIrOperationId(1),
+    resultId: optIrValueId(2),
+  });
+  const useAfterJump = optIrIntegerBinaryOperation({
+    operationId: optIrOperationId(2),
+    resultId: optIrValueId(3),
+    left: optIrValueId(2),
+    right: optIrValueId(2),
+    operator: "add",
+    resultType: U32,
+    originId: optIrOriginId(1),
+  });
+  const entry = blockForTest({
+    blockId: optIrBlockId(1),
+    operations: [dominatingValue.operationId],
+    terminator: jumpTerminator(optIrEdgeId(1)),
+  });
+  const successor = blockForTest({
+    blockId: optIrBlockId(2),
+    operations: [useAfterJump.operationId],
+  });
+  const func = functionForTest({
+    blocks: [successor, entry],
+    edges: optIrCfgEdgeTable([
+      edgeForTest({ edgeId: optIrEdgeId(1), from: entry.blockId, toBlock: successor.blockId }),
+    ]),
+    entryBlock: entry.blockId,
+  });
+  return optIrVerifierInputForTest({
+    program: programForFunctionForTest(func),
+    operations: [dominatingValue, useAfterJump],
+  });
+}
+
 export function optIrProgramWithMetadataMismatchForTest() {
   const operation = {
     ...constantForTest({ operationId: optIrOperationId(1), resultId: optIrValueId(1) }),
@@ -284,6 +378,34 @@ function blockForTest(input: Partial<OptIrBlock> = {}): OptIrBlock {
     terminator: input.terminator,
     originId: input.originId ?? optIrOriginId(1),
   };
+}
+
+function branchTerminator(
+  condition: OptIrValueId,
+  trueEdge: OptIrEdgeId,
+  falseEdge: OptIrEdgeId,
+): OptIrTerminator {
+  return {
+    kind: "branch",
+    operationId: optIrOperationId(1_000),
+    condition,
+    trueEdge,
+    falseEdge,
+    originId: optIrOriginId(1),
+  };
+}
+
+function jumpTerminator(edge: OptIrEdgeId): OptIrTerminator {
+  return {
+    kind: "jump",
+    operationId: optIrOperationId(1_001),
+    edge,
+    originId: optIrOriginId(1),
+  };
+}
+
+function optIrBooleanTypeForTest() {
+  return { kind: "boolean" as const };
 }
 
 function edgeForTest(input: Partial<OptIrEdge> = {}): OptIrEdge {

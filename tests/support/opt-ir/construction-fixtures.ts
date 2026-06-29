@@ -11,15 +11,20 @@ import {
   targetSurfaceForInternalConstructionTest,
 } from "./internal-construction-fixtures";
 import type { ConstructOptIrInput, ConstructOptIrResult } from "../../../src/opt-ir/public-api";
+import type { MonoCheckedType } from "../../../src/mono/mono-hir";
 import type { CheckedMirProgram } from "../../../src/proof-check/model/checked-mir";
 import type { ProofMirFunction } from "../../../src/proof-mir/model/program";
+import type { ProofMirValue } from "../../../src/proof-mir/model/graph";
+import { coreCheckedType } from "../../../src/semantic/surface/type-model";
+import { coreTypeId } from "../../../src/semantic/ids";
 import {
   proofMirBlockId,
   proofMirControlEdgeId,
   proofMirExitEdgeId,
-  proofMirFactId,
+  proofMirPlaceId,
   proofMirStatementId,
   proofMirTerminatorId,
+  proofMirValueId,
 } from "../../../src/proof-mir/ids";
 import {
   proofMirCanonicalKey,
@@ -50,6 +55,12 @@ export function validConstructOptIrInputWithReachableBlocksForTest(): ConstructO
   return { ...input, handoff: withCheckedMir(input.handoff, checkedMir) };
 }
 
+export function validConstructOptIrInputWithScalarStatementsForTest(): ConstructOptIrInput {
+  const input = validConstructOptIrInputForTest();
+  const checkedMir = mapFirstFunction(input.handoff.checkedMir, scalarStatementFunction);
+  return { ...input, handoff: withCheckedMir(input.handoff, checkedMir) };
+}
+
 export function invalidBoundaryConstructOptIrInputForTest(): ConstructOptIrInput {
   const input = validConstructOptIrInputForTest();
   return {
@@ -74,7 +85,11 @@ export function constructOptIrInputWithUnsupportedOperationForTest(): ConstructO
               statements: [
                 {
                   statementId: proofMirStatementId(999),
-                  kind: { kind: "recordFactEvidence", factId: proofMirFactId(999) },
+                  kind: {
+                    kind: "load",
+                    place: proofMirPlaceId(999),
+                    result: proofMirValueId(999),
+                  },
                   origin: block.origin,
                 },
               ],
@@ -224,6 +239,106 @@ function reachableTwoBlockFunction(function_: ProofMirFunction): ProofMirFunctio
     ...function_,
     blocks: table([rewrittenEntryBlock, returnBlock], (block) => block.blockId),
     edges: table([jumpEdge, rewrittenReturnEdge], (edge) => edge.edgeId),
+  };
+}
+
+function scalarStatementFunction(function_: ProofMirFunction): ProofMirFunction {
+  const entryBlock = function_.blocks.get(function_.entryBlockId) ?? function_.blocks.entries()[0];
+  if (entryBlock === undefined) {
+    return function_;
+  }
+  const left = proofMirValueId(9301);
+  const right = proofMirValueId(9302);
+  const sum = proofMirValueId(9303);
+  const predicate = proofMirValueId(9304);
+  const u32 = coreCheckedType(coreTypeId("u32")) as MonoCheckedType;
+  const bool = coreCheckedType(coreTypeId("bool")) as MonoCheckedType;
+
+  const rewrittenEntryBlock = {
+    ...entryBlock,
+    statements: [
+      {
+        statementId: proofMirStatementId(9301),
+        kind: {
+          kind: "literal" as const,
+          value: left,
+          literal: { kind: "integer" as const, text: "2", value: 2n },
+        },
+        origin: entryBlock.origin,
+      },
+      {
+        statementId: proofMirStatementId(9302),
+        kind: {
+          kind: "literal" as const,
+          value: right,
+          literal: { kind: "integer" as const, text: "40", value: 40n },
+        },
+        origin: entryBlock.origin,
+      },
+      {
+        statementId: proofMirStatementId(9303),
+        kind: { kind: "binary" as const, operator: "add" as const, left, right, result: sum },
+        origin: entryBlock.origin,
+      },
+      {
+        statementId: proofMirStatementId(9304),
+        kind: {
+          kind: "comparison" as const,
+          operator: "ge" as const,
+          left: sum,
+          right,
+          result: predicate,
+        },
+        origin: entryBlock.origin,
+      },
+    ],
+    terminator:
+      entryBlock.terminator.kind.kind === "return"
+        ? {
+            ...entryBlock.terminator,
+            kind: {
+              ...entryBlock.terminator.kind,
+              value: {
+                mode: "observe" as const,
+                operand: { kind: "value" as const, value: predicate },
+              },
+            },
+          }
+        : entryBlock.terminator,
+  };
+
+  return {
+    ...function_,
+    values: table(
+      [
+        ...function_.values.entries(),
+        proofMirRuntimeValue(left, u32, entryBlock.origin),
+        proofMirRuntimeValue(right, u32, entryBlock.origin),
+        proofMirRuntimeValue(sum, u32, entryBlock.origin),
+        proofMirRuntimeValue(predicate, bool, entryBlock.origin),
+      ],
+      (value) => value.valueId,
+    ),
+    blocks: table(
+      function_.blocks
+        .entries()
+        .map((block) => (block.blockId === entryBlock.blockId ? rewrittenEntryBlock : block)),
+      (block) => block.blockId,
+    ),
+  };
+}
+
+function proofMirRuntimeValue(
+  valueId: ReturnType<typeof proofMirValueId>,
+  type: MonoCheckedType,
+  origin: ProofMirValue["origin"],
+): ProofMirValue {
+  return {
+    valueId,
+    type,
+    resourceKind: "Copy" as never,
+    representation: { kind: "runtime" },
+    origin,
   };
 }
 

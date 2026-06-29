@@ -506,6 +506,23 @@ export function buildCheckedOptIrHandoff(input: {
   const summaryCertificateIds = [...input.checked.checkedFunctions.values()]
     .map((checkedFunction) => checkedFunction.summaryCertificate)
     .sort((left, right) => left - right);
+  const semanticInlinePolicies = [...input.checked.checkedFunctions.entries()]
+    .map(([functionInstanceId, checkedFunction]) => ({
+      functionInstanceId,
+      kind: "mandatory" as const,
+      reason: "checked-summary",
+      source: "checkedSummary" as const,
+      summaryCertificateId: checkedFunction.summaryCertificate,
+    }))
+    .sort((left, right) => {
+      const functionOrder = String(left.functionInstanceId).localeCompare(
+        String(right.functionInstanceId),
+      );
+      if (functionOrder !== 0) {
+        return functionOrder;
+      }
+      return left.summaryCertificateId - right.summaryCertificateId;
+    });
   const originMapStableKey = stableJson(input.checked.originMap);
   const checkedFactPacketStableKey = stableJson(input.checked.facts);
   const withoutFingerprint = {
@@ -525,7 +542,7 @@ export function buildCheckedOptIrHandoff(input: {
       ],
     },
     pathCertificates: [],
-    semanticInlinePolicies: [],
+    semanticInlinePolicies,
   } satisfies Omit<CheckedOptIrHandoff, "handoffFingerprint">;
 
   return {

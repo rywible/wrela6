@@ -62,7 +62,13 @@ export function packetParserDemoInputForTest(): BuildOptimizedOptIrInput {
 
 export function packetParserDemoOptimizerForTest(): BuildOptimizedOptIrDependencies["optimizer"] {
   return (input): OptimizeOptIrResult => {
-    const base = optimizeOptIr({ ...input, operations: packetParserDemoOperationsForTest() });
+    const base = optimizeOptIr({
+      ...input,
+      program: {
+        ...input.program,
+        operations: packetParserDemoOperationsForTest(),
+      },
+    });
     if (base.kind === "error") {
       return base;
     }

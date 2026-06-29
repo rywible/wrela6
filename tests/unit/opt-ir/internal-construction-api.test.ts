@@ -89,6 +89,15 @@ describe("internal OptIR construction API", () => {
       // @ts-expect-error optimization provenance must stay on the program, not a side map.
       provenanceMap: new Map(),
     };
+
+    const _withOperationSidecar: OptimizeOptIrInput = {
+      program,
+      facts: input.facts,
+      target: input.target,
+      policy: input.policy,
+      // @ts-expect-error optimization operations must stay on the constructed program artifact.
+      operations: [],
+    };
   });
 
   test("target surface models every construction and optimization target concern", () => {

@@ -4,6 +4,7 @@ import type { OptIrBlockId, OptIrOperationId, OptIrValueId } from "../ids";
 import type { OptIrOperation } from "../operations";
 import type { OptIrFunction } from "../program";
 import { optIrTypesEqual, type OptIrType } from "../types";
+import { computeOptIrDominance } from "../analyses/dominance";
 import { makeOptIrVerifierDiagnostic, type OptIrVerifierContext } from "./structural-verifier";
 
 export interface OptIrValueDefinition {
@@ -191,29 +192,41 @@ function verifyValueDominance(input: {
   readonly context: OptIrVerifierContext;
 }): readonly OptIrDiagnostic[] {
   const diagnostics: OptIrDiagnostic[] = [];
-  const available = new Set<OptIrValueId>();
+  const dominance = computeOptIrDominance(input.func);
+
   for (const block of input.func.blocks) {
-    for (const parameter of block.parameters) {
-      available.add(parameter.valueId);
-    }
+    let position = block.parameters.length;
     for (const operationId of block.operations) {
       const operation = input.operations.get(operationId);
       if (operation === undefined) {
+        position += 1;
         continue;
       }
       for (const valueId of operation.operandIds) {
-        if (!available.has(valueId)) {
+        const definition = input.definitions.get(valueId);
+        if (
+          definition === undefined ||
+          !definitionDominatesUse(definition, block.blockId, position, dominance)
+        ) {
           diagnostics.push(dominanceDiagnostic(input.context, operation, valueId));
         }
       }
-      for (const valueId of operation.resultIds) {
-        if (input.definitions.has(valueId)) {
-          available.add(valueId);
-        }
-      }
+      position += 1;
     }
   }
   return diagnostics;
+}
+
+function definitionDominatesUse(
+  definition: OptIrValueDefinition,
+  useBlockId: OptIrBlockId,
+  usePosition: number,
+  dominance: ReturnType<typeof computeOptIrDominance>,
+): boolean {
+  if (definition.blockId === useBlockId) {
+    return definition.position < usePosition;
+  }
+  return dominance.blockDominatesUse(definition.blockId, useBlockId);
 }
 
 function dominanceDiagnostic(

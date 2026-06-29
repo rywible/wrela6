@@ -6,8 +6,10 @@ import {
   optIrProgramWithBlockArgumentMismatchForTest,
   optIrProgramWithDominanceViolationForTest,
   optIrProgramWithDuplicateValueDefinitionForTest,
+  optIrProgramWithLaterDominatingDefinitionForTest,
   optIrProgramWithMetadataMismatchForTest,
   optIrProgramWithMissingRegionTokenForTest,
+  optIrProgramWithSiblingBranchDominanceViolationForTest,
   optIrVerifierInputForTest,
   validVerifierProgramForTest,
   verifyOptIrProgramForTest,
@@ -53,6 +55,24 @@ describe("OptIR verifier suite", () => {
     expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
       optIrDiagnosticCode("OPT_IR_DOMINANCE_VIOLATION"),
     );
+  });
+
+  test("ssa verifier rejects sibling branch values that do not dominate a use", () => {
+    const result = verifyOptIrProgramForTest(
+      optIrProgramWithSiblingBranchDominanceViolationForTest(),
+    );
+
+    expect(result.kind).toBe("error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      optIrDiagnosticCode("OPT_IR_DOMINANCE_VIOLATION"),
+    );
+  });
+
+  test("ssa verifier accepts a later-listed block that dominates its successor", () => {
+    expect(verifyOptIrProgramForTest(optIrProgramWithLaterDominatingDefinitionForTest())).toEqual({
+      kind: "ok",
+      diagnostics: [],
+    });
   });
 
   test("operation metadata verifier rejects stale cached metadata", () => {

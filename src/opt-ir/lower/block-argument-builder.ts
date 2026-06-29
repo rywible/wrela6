@@ -11,12 +11,19 @@ export interface OptIrLoweredParameterInput {
   readonly originId: OptIrOriginId;
 }
 
+export interface OptIrDeclaredValueInput {
+  readonly valueKey: string;
+  readonly runtime: boolean;
+  readonly proofOnlyReason?: string;
+}
+
 export interface OptIrProofOnlyValueMarker {
   readonly valueId: OptIrValueId;
   readonly reason: string;
 }
 
 export interface OptIrBlockArgumentBuilder {
+  readonly declareValue: (input: OptIrDeclaredValueInput) => OptIrValueId;
   readonly parameterFor: (input: OptIrLoweredParameterInput) => OptIrBlockParameter;
   readonly valueIdFor: (valueKey: string) => OptIrValueId | undefined;
   readonly executableValueIds: () => readonly OptIrValueId[];
@@ -42,18 +49,24 @@ export function optIrBlockArgumentBuilder(): OptIrBlockArgumentBuilder {
     return valueId;
   }
 
+  function declareValue(input: OptIrDeclaredValueInput): OptIrValueId {
+    const valueId = valueIdForKey(input.valueKey);
+    if (input.runtime) {
+      executableValueIds.add(valueId);
+    } else if (!executableValueIds.has(valueId)) {
+      proofOnlyValueIds.add(valueId);
+      erasureMarkers.set(valueId, {
+        valueId,
+        reason: input.proofOnlyReason ?? "proofOnly",
+      });
+    }
+    return valueId;
+  }
+
   return {
+    declareValue,
     parameterFor(input) {
-      const valueId = valueIdForKey(input.valueKey);
-      if (input.runtime) {
-        executableValueIds.add(valueId);
-      } else {
-        proofOnlyValueIds.add(valueId);
-        erasureMarkers.set(valueId, {
-          valueId,
-          reason: input.proofOnlyReason ?? "proofOnly",
-        });
-      }
+      const valueId = declareValue(input);
 
       return optIrBlockParameter({
         valueId,

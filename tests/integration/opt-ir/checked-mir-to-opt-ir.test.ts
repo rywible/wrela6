@@ -4,6 +4,7 @@ import { constructOptIr } from "../../../src/opt-ir/public-api";
 import {
   validConstructOptIrInputForTest,
   validConstructOptIrInputWithReachableBlocksForTest,
+  validConstructOptIrInputWithScalarStatementsForTest,
 } from "../../support/opt-ir/construction-fixtures";
 
 describe("checked MIR to OptIR construction", () => {
@@ -33,5 +34,30 @@ describe("checked MIR to OptIR construction", () => {
     const function_ = result.program.functions.entries()[0];
     expect(function_?.blocks.map((block) => block.terminator?.kind)).toEqual(["jump", "return"]);
     expect(function_?.edges.entries().map((edge) => edge.kind)).toEqual(["normal", "returnExit"]);
+  });
+
+  test("lowers checked MIR scalar statements into canonical OptIR operations", () => {
+    const result = constructOptIr(validConstructOptIrInputWithScalarStatementsForTest());
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") {
+      throw new Error("Expected scalar checked MIR handoff to lower.");
+    }
+
+    expect(result.program.operations?.map((operation) => operation.kind)).toEqual([
+      "constant",
+      "constant",
+      "integerBinary",
+      "integerCompare",
+    ]);
+    const function_ = result.program.functions.entries()[0];
+    const returnBlock = function_?.blocks.find((block) => block.terminator?.kind === "return");
+    expect(returnBlock?.operations).toEqual(
+      result.program.operations?.map((operation) => operation.operationId),
+    );
+    expect(returnBlock?.terminator).toMatchObject({
+      kind: "return",
+      values: [result.program.operations?.at(-1)?.resultIds[0]],
+    });
   });
 });

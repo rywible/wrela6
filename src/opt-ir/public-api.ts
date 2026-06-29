@@ -15,6 +15,7 @@ import { verifyOptIrProgram } from "./verify/structural-verifier";
 import { optIrDiagnosticCode, optIrDiagnosticOrderKey, type OptIrDiagnostic } from "./diagnostics";
 import type { OptIrOriginId } from "./ids";
 import type { OptIrOperation } from "./operations";
+import type { OptIrRegion } from "./regions";
 import {
   optimizeOptIr,
   type OptimizeOptIrInput,
@@ -33,6 +34,8 @@ export interface ConstructedOptIrProvenanceSnapshot {
 
 export type ConstructedOptIrProgram = Omit<OptIrProgram, "provenance"> & {
   readonly provenance: ConstructedOptIrProvenanceSnapshot;
+  readonly operations?: readonly OptIrOperation[];
+  readonly optimizationRegions?: readonly OptIrRegion[];
 };
 
 export type ConstructOptIrResult =
@@ -89,12 +92,22 @@ export function constructOptIr(input: ConstructOptIrInput): ConstructOptIrResult
     regions: optIrRegionTable(lowering.program.regions.entries()),
     constants: optIrConstantTable(lowering.program.constants.entries()),
   });
-  const operations = new Map<never, OptIrOperation>();
+  let operations = sortedOperations(lowering.operations);
   const cleanedFunctions: OptIrFunction[] = [];
 
   for (const function_ of loweredProgram.functions.entries()) {
-    const cleanup = runConstructionCleanup({ function: function_, operations: [], facts: [] });
+    const cleanup = runConstructionCleanup({
+      function: function_,
+      operations: operationsForFunction(function_, operations),
+      facts: [],
+    });
     cleanedFunctions.push(cleanup.function);
+    operations = sortedOperations([
+      ...operations.filter(
+        (operation) => !functionOwnsOperationId(function_, operation.operationId),
+      ),
+      ...cleanup.operations,
+    ]);
   }
 
   const cleanedProgram = optIrProgram({
@@ -102,10 +115,10 @@ export function constructOptIr(input: ConstructOptIrInput): ConstructOptIrResult
     functions: optIrFunctionTable(cleanedFunctions),
   });
 
-  const verifiedProgram = withProvenanceSnapshot(cleanedProgram);
+  const verifiedProgram = withProvenanceSnapshot(cleanedProgram, operations);
   const verifier = verifyOptIrProgram({
     program: verifiedProgram,
-    operations,
+    operations: operationMap(operations),
     options: { checkDominance: true, recomputeOperationMetadata: true },
   });
   if (verifier.kind === "error") {
@@ -167,10 +180,44 @@ function loweringDiagnostic(detail: string): OptIrDiagnostic {
   return diagnostic("OPT_IR_UNSUPPORTED_CHECKED_MIR_OPERATION", "checked-mir", detail, detail);
 }
 
-function withProvenanceSnapshot(program: OptIrProgram): ConstructedOptIrProgram {
+function operationsForFunction(
+  function_: OptIrFunction,
+  operations: readonly OptIrOperation[],
+): readonly OptIrOperation[] {
+  return operations.filter((operation) =>
+    functionOwnsOperationId(function_, operation.operationId),
+  );
+}
+
+function functionOwnsOperationId(
+  function_: OptIrFunction,
+  operationId: OptIrOperation["operationId"],
+): boolean {
+  return function_.blocks.some((block) => block.operations.includes(operationId));
+}
+
+function operationMap(
+  operations: readonly OptIrOperation[],
+): ReadonlyMap<OptIrOperation["operationId"], OptIrOperation> {
+  return new Map(operations.map((operation) => [operation.operationId, operation]));
+}
+
+function sortedOperations(operations: readonly OptIrOperation[]): readonly OptIrOperation[] {
+  return Object.freeze([...operations].sort((left, right) => left.operationId - right.operationId));
+}
+
+function withProvenanceSnapshot(
+  program: OptIrProgram,
+  operations: readonly OptIrOperation[] = [],
+  optimizationRegions: readonly OptIrRegion[] = [],
+): ConstructedOptIrProgram {
   return {
     ...program,
     provenance: snapshotProvenance(program.provenance.originIds),
+    operations: sortedOperations(operations),
+    optimizationRegions: Object.freeze(
+      [...optimizationRegions].sort((left, right) => left.regionId - right.regionId),
+    ),
   };
 }
 

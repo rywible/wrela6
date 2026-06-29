@@ -57,6 +57,8 @@ export interface OptimizedOptIrProvenanceSnapshot {
 
 export type OptimizedOptIrProgram = Omit<OptIrProgram, "provenance"> & {
   readonly provenance: OptimizedOptIrProvenanceSnapshot;
+  readonly operations?: readonly OptIrOperation[];
+  readonly optimizationRegions?: readonly OptIrRegion[];
 };
 
 export type OptIrVerifierCheckpointKind =
@@ -78,12 +80,13 @@ export interface OptIrVerifierCheckpoint {
 }
 
 export interface OptimizeOptIrInput {
-  readonly program: OptIrProgram;
+  readonly program: OptIrProgram & {
+    readonly operations?: readonly OptIrOperation[];
+    readonly optimizationRegions?: readonly OptIrRegion[];
+  };
   readonly facts: OptIrFactSet;
   readonly target: OptIrTargetSurface;
   readonly policy: OptIrOptimizationPolicy;
-  readonly operations?: readonly OptIrOperation[];
-  readonly regions?: readonly OptIrRegion[];
 }
 
 export type OptimizeOptIrResult =
@@ -126,7 +129,7 @@ export function optimizeOptIr(input: OptimizeOptIrInput): OptimizeOptIrResult {
 
   let state: PipelineState = {
     program: input.program,
-    operations: sortedOperations(input.operations ?? []),
+    operations: sortedOperations(input.program.operations ?? []),
     facts: input.facts,
     diagnostics: [],
     decisionLog: undefined,
@@ -150,7 +153,12 @@ export function optimizeOptIr(input: OptimizeOptIrInput): OptimizeOptIrResult {
   state = beforeLowering;
 
   const decisionLog = state.decisionLog ?? emptyDecisionLog();
-  const optimizedProgram = withOptimizedProvenance(state.program, decisionLog);
+  const optimizedProgram = withOptimizedProvenance(
+    state.program,
+    decisionLog,
+    state.operations,
+    optimizationRegionsForProgram(state.program),
+  );
   return {
     kind: "ok",
     program: optimizedProgram,
@@ -216,19 +224,29 @@ function runPipelineEntry(
       next = runSccpStep(next);
       break;
     case "constant-folding":
+      next = runScalarSimplificationStep(next);
+      break;
     case "dce":
+      next = runDeadCodeEliminationStep(next);
+      break;
     case "gvn":
+      next = runGvnStep(next);
+      break;
     case "copy-propagation":
+      next = runCopyPropagationStep(next);
+      break;
     case "cfg-simplification":
-      next = runScalarCleanupCluster(next);
+      next = runCfgSimplificationStep(next);
       break;
     case "memory-ssa":
+      break;
     case "load-store-forwarding":
     case "dead-store-elimination":
+      next = runMemoryOptimizationStep(next);
+      break;
     case "scalar-replacement":
     case "stack-promotion":
     case "licm":
-      next = runMemoryCluster(next, input.regions ?? []);
       break;
     case "wrela-fact-rounds":
       next = runWrelaCluster(next);
@@ -239,11 +257,20 @@ function runPipelineEntry(
         : appendPipelineDecision(next, entry, "denied", "policy:disabled", "conservative");
       break;
     case "vector-idiom-prep":
+      break;
     case "slp-vectorization":
+      next = input.policy.enableVectorization
+        ? runSlpVectorizationStep(next, input.target)
+        : appendPipelineDecision(next, entry, "denied", "policy:disabled", "conservative");
+      break;
     case "certified-loop-vectorization":
+      next = input.policy.enableVectorization
+        ? runLoopVectorizationStep(next, input.target)
+        : appendPipelineDecision(next, entry, "denied", "policy:disabled", "conservative");
+      break;
     case "vector-cleanup":
       next = input.policy.enableVectorization
-        ? runVectorizationCluster(next, input.target)
+        ? runVectorizationCleanupStep(next)
         : appendPipelineDecision(next, entry, "denied", "policy:disabled", "conservative");
       break;
     case "final-verification":
@@ -355,19 +382,10 @@ function runCleanupCluster(state: PipelineState): PipelineState {
 
 function runScalarCleanupCluster(state: PipelineState): PipelineState {
   let next = runGvnStep(state);
-  next = runPerFunctionPass(next, (func, operations) =>
-    runCopyPropagation({ function: func, operations }),
-  );
-  next = runPerFunctionPass(next, (func, operations) =>
-    runCfgSimplification({ function: func, operations }),
-  );
-  next = runPerFunctionPass(next, (func, operations) =>
-    runScalarSimplification({ function: func, operations }),
-  );
-  next = runPerFunctionPass(next, (func, operations) =>
-    runDeadCodeElimination({ function: func, operations }),
-  );
-  return next;
+  next = runCopyPropagationStep(next);
+  next = runCfgSimplificationStep(next);
+  next = runScalarSimplificationStep(next);
+  return runDeadCodeEliminationStep(next);
 }
 
 function runGvnStep(state: PipelineState): PipelineState {
@@ -379,10 +397,34 @@ function runGvnStep(state: PipelineState): PipelineState {
   };
 }
 
-function runMemoryCluster(state: PipelineState, regions: readonly OptIrRegion[]): PipelineState {
+function runCopyPropagationStep(state: PipelineState): PipelineState {
+  return runPerFunctionPass(state, (func, operations) =>
+    runCopyPropagation({ function: func, operations }),
+  );
+}
+
+function runCfgSimplificationStep(state: PipelineState): PipelineState {
+  return runPerFunctionPass(state, (func, operations) =>
+    runCfgSimplification({ function: func, operations }),
+  );
+}
+
+function runScalarSimplificationStep(state: PipelineState): PipelineState {
+  return runPerFunctionPass(state, (func, operations) =>
+    runScalarSimplification({ function: func, operations }),
+  );
+}
+
+function runDeadCodeEliminationStep(state: PipelineState): PipelineState {
+  return runPerFunctionPass(state, (func, operations) =>
+    runDeadCodeElimination({ function: func, operations }),
+  );
+}
+
+function runMemoryOptimizationStep(state: PipelineState): PipelineState {
   const result = runMemoryOptimization({
     program: state.program,
-    regions,
+    regions: optimizationRegionsForProgram(state.program),
     operations: state.operations,
     operationForId(operationId) {
       return operationMap(state.operations).get(operationId);
@@ -465,7 +507,7 @@ function runFactGatedEGraphStep(state: PipelineState): PipelineState {
   return result.kind === "changed" ? { ...state, program: result.optIr } : state;
 }
 
-function runVectorizationCluster(state: PipelineState, target: OptIrTargetSurface): PipelineState {
+function runSlpVectorizationStep(state: PipelineState, target: OptIrTargetSurface): PipelineState {
   const policy = optIrDefaultVectorPolicy(target);
   const slp = runSlpVectorization({
     blockId: 0 as never,
@@ -475,9 +517,21 @@ function runVectorizationCluster(state: PipelineState, target: OptIrTargetSurfac
     candidates: [],
     policy,
   });
+  return { ...state, operations: sortedOperations([...state.operations, ...slp.vectorOperations]) };
+}
+
+function runLoopVectorizationStep(state: PipelineState, target: OptIrTargetSurface): PipelineState {
+  const policy = optIrDefaultVectorPolicy(target);
   const loop = runLoopVectorization({ candidates: [], policy });
+  return {
+    ...state,
+    operations: sortedOperations([...state.operations, ...loop.vectorOperations]),
+  };
+}
+
+function runVectorizationCleanupStep(state: PipelineState): PipelineState {
   const cleanup = runVectorizationCleanup({
-    operations: [...state.operations, ...slp.vectorOperations, ...loop.vectorOperations],
+    operations: state.operations,
     liveValueIds: liveValueIds(state.program),
   });
   return { ...state, operations: sortedOperations(cleanup.operations) };
@@ -561,9 +615,18 @@ function mergeDecisionLogs(
 function withOptimizedProvenance(
   program: OptIrProgram,
   decisionLog: OptIrDecisionLog,
+  operations: readonly OptIrOperation[],
+  regions: readonly OptIrRegion[],
 ): OptimizedOptIrProgram {
   const snapshot = snapshotProvenance(program.provenance.originIds, decisionLog);
-  return { ...program, provenance: snapshot };
+  return {
+    ...program,
+    provenance: snapshot,
+    operations: sortedOperations(operations),
+    optimizationRegions: Object.freeze(
+      [...regions].sort((left, right) => left.regionId - right.regionId),
+    ),
+  };
 }
 
 function snapshotProvenance(
@@ -658,6 +721,12 @@ function liveValueIds(program: OptIrProgram) {
     }
   }
   return Object.freeze(valueIds);
+}
+
+function optimizationRegionsForProgram(
+  program: OptIrProgram & { readonly optimizationRegions?: readonly OptIrRegion[] },
+): readonly OptIrRegion[] {
+  return program.optimizationRegions ?? [];
 }
 
 function nextOperationOrdinal(operations: readonly OptIrOperation[]): number {

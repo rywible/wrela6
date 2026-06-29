@@ -70,6 +70,11 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/integration/opt-ir/validated-buffer
 - Task 38 non-interpreter-complete e-graph rewrites must reject unapproved `notApplicable` reasons. Filtering unapproved reasons away lets unsupported slices be accepted without catalog authority.
 - Task 40 loop vector store rewrites must preserve the vector memory descriptor type and reject malformed store source-value shapes during legality, before rewrite construction can throw.
 - Task 42 packet-parser demonstrations should wrap the real optimizer result and provenance when using explicit demo operations. Fabricating an optimizer result hides pipeline/provenance regressions even if individual Wrela passes are real.
+- Independent review found that real proof-check handoffs must emit mandatory semantic-inline policies for every checked summary; otherwise boundary validation rejects actual proof-check output even while synthetic fixtures pass.
+- Independent review found that public construction must carry canonical OptIR operations from checked MIR statement lowering into verification and optimization. Verifying construction against an empty operation table masked missing statement-result definitions and stale skeleton-only lowering.
+- Independent review found that optimizer inputs must not accept top-level operation or region sidecars. Operation/region optimization state now belongs to the constructed program artifact so callers cannot pass stale side tables beside a program.
+- Independent review found that fixed pipeline schedule entries should dispatch the named pass or a deliberate analysis marker, not repeatedly run whole pass clusters under every scalar, memory, or vector entry.
+- Independent review found that SSA dominance verification must use CFG dominance, not block-list order. Later-listed dominators are valid, while sibling branch values must be rejected.
 
 ## Executor Protocol
 
