@@ -708,9 +708,7 @@ function sameSwitchCases(
     left.every((switchCase, index) => {
       const other = right[index];
       return (
-        other !== undefined &&
-        switchCase.label === other.label &&
-        switchCase.edge === other.edge
+        other !== undefined && switchCase.label === other.label && switchCase.edge === other.edge
       );
     })
   );
