@@ -4,6 +4,12 @@ import {
   optIrVectorType,
   vectorMaskType,
 } from "../../../src/opt-ir/vector-types";
+import {
+  optIrMaskedLoadInactiveLaneSemantics,
+  optIrMaskedStoreInactiveLaneSemantics,
+  optIrVectorOperationKinds,
+  optIrVectorSelectInactiveLaneSemantics,
+} from "../../../src/opt-ir/policy/vector-policy";
 import { optIrSignedIntegerType, optIrTypesEqual } from "../../../src/opt-ir/types";
 
 describe("OptIR vector types", () => {
@@ -48,5 +54,33 @@ describe("OptIR vector types", () => {
     expect(mergeRule).not.toEqual(zeroRule);
     expect(mergeRule.requiresPassthroughValue).toBe(true);
     expect(zeroRule.requiresPassthroughValue).toBe(false);
+  });
+
+  test("vector operation vocabulary includes memory, mask, shuffle, compare, select, and byte swap", () => {
+    expect(optIrVectorOperationKinds()).toEqual([
+      "vectorLoad",
+      "vectorStore",
+      "vectorMaskedLoad",
+      "vectorMaskedStore",
+      "vectorShuffle",
+      "vectorCompare",
+      "vectorSelect",
+      "vectorByteSwap",
+    ]);
+  });
+
+  test("masked inactive lanes have explicit passthrough and no-effect semantics", () => {
+    expect(optIrMaskedLoadInactiveLaneSemantics()).toEqual({
+      inactiveLaneBehavior: "passthrough",
+      memoryEffect: "none",
+    });
+    expect(optIrMaskedStoreInactiveLaneSemantics()).toEqual({
+      inactiveLaneBehavior: "noEffect",
+      memoryEffect: "none",
+    });
+    expect(optIrVectorSelectInactiveLaneSemantics()).toEqual({
+      inactiveLaneBehavior: "passthrough",
+      memoryEffect: "none",
+    });
   });
 });
