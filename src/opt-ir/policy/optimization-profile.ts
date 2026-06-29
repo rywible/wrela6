@@ -1,4 +1,5 @@
 import type { OptimizationPassId } from "../ids";
+import { OPT_IR_PRODUCTION_PASS_SCHEDULE } from "./pass-order-policy";
 
 export interface OptIrOptimizationPolicy {
   readonly profileName: string;
@@ -18,4 +19,19 @@ export function defaultOptIrOptimizationPolicy(): OptIrOptimizationPolicy {
     enableFactGatedRewrites: false,
     enableVectorization: false,
   };
+}
+
+export function productionOptIrOptimizationPolicy(): OptIrOptimizationPolicy {
+  return {
+    profileName: "production-v1",
+    pipeline: OPT_IR_PRODUCTION_PASS_SCHEDULE.map((entry) => entry.passId),
+    enableMandatoryInlining: true,
+    enableWholeProgramSpecialization: true,
+    enableFactGatedRewrites: true,
+    enableVectorization: true,
+  };
+}
+
+export function productionOptimizationPolicyForTest(): OptIrOptimizationPolicy {
+  return productionOptIrOptimizationPolicy();
 }

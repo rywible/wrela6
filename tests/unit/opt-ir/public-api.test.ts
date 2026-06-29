@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { constructOptIr } from "../../../src/opt-ir/public-api";
+import * as optIrBarrel from "../../../src/opt-ir";
+import * as topLevelExports from "../../../src";
+import { buildOptimizedOptIr, constructOptIr } from "../../../src/opt-ir/public-api";
+import { productionOptimizationPolicyForTest } from "../../../src/opt-ir/policy/optimization-profile";
 import {
+  invalidBoundaryConstructOptIrInputForTest,
   stableOptIrConstructionKey,
   validConstructOptIrInputForTest,
 } from "../../support/opt-ir/construction-fixtures";
@@ -30,5 +34,48 @@ describe("OptIR public construction API", () => {
     const second = constructOptIr(validConstructOptIrInputForTest());
 
     expect(stableOptIrConstructionKey(first)).toBe(stableOptIrConstructionKey(second));
+  });
+
+  test("buildOptimizedOptIr composes construction and optimization", () => {
+    const result = buildOptimizedOptIr({
+      ...validConstructOptIrInputForTest(),
+      policy: productionOptimizationPolicyForTest(),
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") {
+      throw new Error("Expected optimized construction to succeed.");
+    }
+    expect(result.provenance.fingerprint).toEqual(result.program.provenance.fingerprint);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+      "construction-cleanup",
+    );
+  });
+
+  test("buildOptimizedOptIr propagates construction errors without optimizer execution", () => {
+    let optimizerCalled = false;
+    const result = buildOptimizedOptIr(
+      {
+        ...invalidBoundaryConstructOptIrInputForTest(),
+        policy: productionOptimizationPolicyForTest(),
+      },
+      {
+        optimizer() {
+          optimizerCalled = true;
+          throw new Error("optimizer should not run after construction failure");
+        },
+      },
+    );
+
+    expect(result.kind).toBe("error");
+    expect(optimizerCalled).toBe(false);
+  });
+
+  test("OptIR is exported as a top-level namespace and direct barrel", () => {
+    expect(Object.keys(topLevelExports)).toContain("optIr");
+    expect(Object.keys(topLevelExports)).toContain("constructOptIr");
+    expect(Object.keys(optIrBarrel)).toEqual(
+      expect.arrayContaining(["constructOptIr", "buildOptimizedOptIr", "optimizeOptIr"]),
+    );
   });
 });

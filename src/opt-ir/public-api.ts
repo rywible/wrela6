@@ -15,6 +15,12 @@ import { verifyOptIrProgram } from "./verify/structural-verifier";
 import { optIrDiagnosticCode, optIrDiagnosticOrderKey, type OptIrDiagnostic } from "./diagnostics";
 import type { OptIrOriginId } from "./ids";
 import type { OptIrOperation } from "./operations";
+import {
+  optimizeOptIr,
+  type OptimizeOptIrInput,
+  type OptimizeOptIrResult,
+} from "./passes/pipeline";
+import type { OptIrOptimizationPolicy } from "./policy/optimization-profile";
 import type { ProofAuthorityFingerprint } from "../shared/proof-authority-types";
 import { targetId } from "../semantic/ids";
 
@@ -38,6 +44,14 @@ export type ConstructOptIrResult =
       readonly diagnostics: readonly OptIrDiagnostic[];
     }
   | { readonly kind: "error"; readonly diagnostics: readonly OptIrDiagnostic[] };
+
+export interface BuildOptimizedOptIrInput extends ConstructOptIrInput {
+  readonly policy: OptIrOptimizationPolicy;
+}
+
+export interface BuildOptimizedOptIrDependencies {
+  readonly optimizer?: (input: OptimizeOptIrInput) => OptimizeOptIrResult;
+}
 
 export function constructOptIr(input: ConstructOptIrInput): ConstructOptIrResult {
   const boundary = validateOptIrConstructionBoundary(input);
@@ -115,6 +129,34 @@ export function constructOptIr(input: ConstructOptIrInput): ConstructOptIrResult
             ),
           ]
         : [],
+  };
+}
+
+export function buildOptimizedOptIr(
+  input: BuildOptimizedOptIrInput,
+  dependencies: BuildOptimizedOptIrDependencies = {},
+): OptimizeOptIrResult {
+  const construction = constructOptIr(input);
+  if (construction.kind === "error") {
+    return construction;
+  }
+
+  const optimizer = dependencies.optimizer ?? optimizeOptIr;
+  const optimization = optimizer({
+    program: construction.program,
+    facts: construction.facts,
+    target: input.target,
+    policy: input.policy,
+  });
+  if (optimization.kind === "error") {
+    return {
+      kind: "error",
+      diagnostics: [...construction.diagnostics, ...optimization.diagnostics],
+    };
+  }
+  return {
+    ...optimization,
+    diagnostics: [...construction.diagnostics, ...optimization.diagnostics],
   };
 }
 

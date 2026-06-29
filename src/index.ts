@@ -3,6 +3,8 @@ export * as frontend from "./frontend";
 export * as hir from "./hir";
 export * as layout from "./layout";
 export * as mono from "./mono";
+export * from "./opt-ir";
+export * as optIr from "./opt-ir";
 export * as proofMir from "./proof-mir";
 export * as proofCheck from "./proof-check";
 export * as runtime from "./runtime";
