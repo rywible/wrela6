@@ -49,6 +49,9 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/integration/opt-ir/validated-buffer
 - Task 15 import rejects an edge allocator that maps two distinct `ProofMirControlEdgeId` values to the same `OptIrEdgeId`, preserving the one-time fresh-edge mapping requirement.
 - Task 16 callback-visible regions are conservatively tied to the `externalUnknown` alias class after external memory is materialized, including callback-visible stack locals.
 - Task 27A dominance needed a linear-chain regression: immediate dominator selection must choose the closest strict dominator, not the shallowest one.
+- Task 23C pass-schedule validation must use the pass contract's declared form preconditions directly; recomputing inferred form requirements from preserved analyses made intentionally narrow contracts look invalid.
+- Task 25A dead-code elimination must seed CFG edge arguments as live values. Edge arguments are control-flow uses, not normal operation operands, and omitting them made DCE remove required block-parameter producers.
+- Task 24B path-scoped preserved facts must update their `scope.certificateId` to the re-homed OptIR path certificate. Treating a path certificate ID as an edge subject remap or retaining the old scope allowed stale path scopes to pass preservation.
 
 ## Executor Protocol
 
