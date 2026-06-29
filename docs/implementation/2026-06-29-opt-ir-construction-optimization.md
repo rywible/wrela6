@@ -63,6 +63,7 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/integration/opt-ir/validated-buffer
 - Task 30 local policy feature vectors must be allowlisted and typed. Rejecting only known dynamic fields still let arbitrary host-derived or malformed feature keys influence deterministic policy decisions.
 - Task 36 e-graph import ordering may sort by stable referenced operand IDs, but imported e-node operands must keep schema order. Sorting operands inside the imported entry erases order-sensitive semantics.
 - Task 39 SLP vector operation construction must validate idiom-specific source value counts before creating vector operations. Fixed-width store/set idioms need distinct vector and store-value operands, not a default or duplicated source value.
+- Task 31 whole-program inlining has the same remapping hazards as mandatory inlining: reject callee operation IDs that collide with caller IDs when IDs are reused, and remap operation-specific value fields rather than only generic operand/result arrays.
 
 ## Executor Protocol
 
