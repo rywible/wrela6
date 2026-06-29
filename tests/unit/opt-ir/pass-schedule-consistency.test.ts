@@ -4,8 +4,18 @@ import {
   OPT_IR_PRODUCTION_INVALIDATION_MATRIX,
   OPT_IR_PRODUCTION_PASS_SCHEDULE,
   OPT_IR_PRODUCTION_SCHEDULE_STAGE_IDS,
+  type OptIrProductionPassScheduleEntry,
 } from "../../../src/opt-ir/policy/pass-order-policy";
-import { validateOptIrPassContract } from "../../../src/opt-ir/passes/pass-contract";
+import {
+  validateOptIrPassSchedule,
+  validateProductionOptIrPassSchedule,
+} from "../../../src/opt-ir/verify/pass-schedule-consistency";
+import {
+  validateOptIrPassContract,
+  type OptIrPassContract,
+  type OptIrPassFuelPolicy,
+} from "../../../src/opt-ir/passes/pass-contract";
+import { optimizationPassId, type OptimizationPassId } from "../../../src/opt-ir/ids";
 
 describe("OptIR production schedule policy", () => {
   test("production schedule matches the reviewed design staging", () => {
@@ -142,4 +152,210 @@ describe("OptIR production schedule policy", () => {
       },
     ]);
   });
+
+  test("production schedule validates successfully with the schedule consistency verifier", () => {
+    expect(validateProductionOptIrPassSchedule().kind).toBe("ok");
+  });
+
+  test("schedule verifier rejects passes scheduled before producers of preconditions", () => {
+    const result = validateOptIrPassSchedule([
+      passEntry("consumer", {
+        requires: ["lowering-ready"],
+        produces: ["verified-for-lowering"],
+      }),
+      passEntry("producer", {
+        requires: ["canonical-opt-ir"],
+        produces: ["lowering-ready"],
+      }),
+    ]);
+
+    expect(result).toEqual({
+      kind: "error",
+      issues: [
+        {
+          code: "PRECONDITION_PRODUCER_NOT_SCHEDULED",
+          passId: optimizationPassId("consumer"),
+          order: 0,
+          precondition: "lowering-ready",
+        },
+      ],
+    });
+  });
+
+  test("schedule verifier rejects invalidated analyses consumed without recomputation", () => {
+    const result = validateOptIrPassSchedule(
+      [
+        passEntry("producer", {
+          requires: ["canonical-opt-ir"],
+          produces: ["canonical-clean"],
+          invalidatesAnalyses: ["dominance"],
+        }),
+        passEntry("consumer", {
+          requires: ["canonical-clean", "dominance"],
+          produces: ["verified-for-lowering"],
+        }),
+      ],
+      { initialAvailable: ["canonical-opt-ir", "dominance"] },
+    );
+
+    expect(result).toEqual({
+      kind: "error",
+      issues: [
+        {
+          analysis: "dominance",
+          code: "STALE_ANALYSIS_CONSUMED",
+          invalidatedByPassId: optimizationPassId("producer"),
+          invalidatedByOrder: 0,
+          order: 1,
+          passId: optimizationPassId("consumer"),
+        },
+      ],
+    });
+  });
+
+  test("schedule verifier accepts invalidated analyses after explicit recomputation", () => {
+    expect(
+      validateOptIrPassSchedule(
+        [
+          passEntry("producer", {
+            requires: ["canonical-opt-ir"],
+            produces: ["canonical-clean"],
+            invalidatesAnalyses: ["dominance"],
+          }),
+          passEntry("recompute-dominance", {
+            requires: ["canonical-clean"],
+            produces: ["dominance"],
+          }),
+          passEntry("consumer", {
+            requires: ["canonical-clean", "dominance"],
+            produces: ["verified-for-lowering"],
+          }),
+        ],
+        { initialAvailable: ["canonical-opt-ir", "dominance"] },
+      ),
+    ).toEqual({ kind: "ok" });
+  });
+
+  test("schedule verifier treats a pass-produced analysis as fresh after local invalidation", () => {
+    expect(
+      validateOptIrPassSchedule(
+        [
+          passEntry("recompute-dominance", {
+            requires: ["canonical-opt-ir"],
+            produces: ["dominance"],
+            invalidatesAnalyses: ["dominance"],
+          }),
+          passEntry("consumer", {
+            requires: ["dominance"],
+            produces: ["verified-for-lowering"],
+          }),
+        ],
+        { initialAvailable: ["canonical-opt-ir", "dominance"] },
+      ),
+    ).toEqual({ kind: "ok" });
+  });
+
+  test("schedule verifier rejects non-idempotent and unbounded fixpoint members", () => {
+    const result = validateOptIrPassSchedule([
+      passEntry("not-idempotent", {
+        requires: ["canonical-opt-ir"],
+        produces: ["clean"],
+        idempotent: false,
+        fixpointId: "cleanup-fixpoint",
+      }),
+      passEntry("unbounded", {
+        requires: ["clean"],
+        produces: ["cleaner"],
+        fuel: { kind: "none" },
+        fixpointId: "cleanup-fixpoint",
+      }),
+    ]);
+
+    expect(result).toEqual({
+      kind: "error",
+      issues: [
+        {
+          code: "FIXPOINT_PASS_NOT_IDEMPOTENT",
+          fixpointId: "cleanup-fixpoint",
+          order: 0,
+          passId: optimizationPassId("not-idempotent"),
+        },
+        {
+          code: "FIXPOINT_PASS_UNBOUNDED",
+          fixpointId: "cleanup-fixpoint",
+          order: 1,
+          passId: optimizationPassId("unbounded"),
+        },
+      ],
+    });
+  });
+
+  test("schedule verifier reads scheduling data from the single pass contract", () => {
+    const entry = passEntry("consumer", {
+      requires: ["canonical-opt-ir"],
+      produces: ["verified-for-lowering"],
+    });
+    const inconsistentEntry = {
+      ...entry,
+      requires: ["missing-entry-only-precondition"],
+      produces: ["entry-only-output"],
+      invalidatesAnalyses: ["entry-only-analysis"],
+      idempotent: false,
+      fuel: { kind: "none" },
+    } as OptIrProductionPassScheduleEntry;
+
+    expect(validateOptIrPassSchedule([inconsistentEntry])).toEqual({ kind: "ok" });
+  });
 });
+
+interface FakePassEntryInput {
+  readonly requires: readonly string[];
+  readonly produces: readonly string[];
+  readonly invalidatesAnalyses?: readonly string[];
+  readonly idempotent?: boolean;
+  readonly fuel?: OptIrPassFuelPolicy;
+  readonly fixpointId?: string;
+}
+
+function passEntry(
+  passIdValue: string,
+  input: FakePassEntryInput,
+): OptIrProductionPassScheduleEntry {
+  const passId = optimizationPassId(passIdValue);
+  const fuel: OptIrPassFuelPolicy = input.fuel ?? { kind: "fixedRounds", rounds: 1 };
+  const contract: OptIrPassContract = Object.freeze({
+    passId,
+    invalidatesByDefault: true,
+    preserves: Object.freeze([]),
+    derives: Object.freeze([]),
+    rewriteObligations: Object.freeze([]),
+    scheduling: Object.freeze({
+      requires: Object.freeze([...input.requires]),
+      produces: Object.freeze([...input.produces]),
+      invalidatesAnalyses: Object.freeze([...(input.invalidatesAnalyses ?? [])]),
+      idempotent: input.idempotent ?? true,
+      fuel,
+    }),
+    requiresVerifierAfterRun: true,
+  });
+
+  return Object.freeze({
+    stageId: "construction-cleanup-fixpoint",
+    order: 0,
+    passId,
+    contract,
+    requires: contract.scheduling.requires,
+    produces: contract.scheduling.produces,
+    invalidatesAnalyses: contract.scheduling.invalidatesAnalyses,
+    idempotent: contract.scheduling.idempotent,
+    fuel: contract.scheduling.fuel,
+    fixpoint:
+      input.fixpointId === undefined
+        ? undefined
+        : Object.freeze({
+            fixpointId: input.fixpointId,
+            fuel: { kind: "fixedRounds", rounds: 4 },
+            worklistPriority: Object.freeze([passId]) as readonly OptimizationPassId[],
+          }),
+  }) as OptIrProductionPassScheduleEntry;
+}
