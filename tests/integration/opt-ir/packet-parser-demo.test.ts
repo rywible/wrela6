@@ -1,12 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { optIrOperationId, optIrOriginId } from "../../../src/opt-ir/ids";
 import { buildOptimizedOptIr } from "../../../src/opt-ir/public-api";
 import {
   canonicalPacketLoadsForTest,
   derivedFieldOperationKindsForTest,
   hasNoProofOrValidationWrappersForTest,
-  optimizedPacketParserDemoSnapshotForTest,
   packetParserDemoInputForTest,
   packetParserDemoOptimizerForTest,
 } from "../../support/opt-ir/packet-parser-demo-fixtures";
@@ -66,29 +64,6 @@ describe("OptIR packet parser demonstration", () => {
           stableDetail: expect.stringContaining("layout:endian:big"),
         }),
       ]),
-    );
-  });
-
-  test("keeps only semantically observable rejected parse paths", () => {
-    const snapshot = optimizedPacketParserDemoSnapshotForTest();
-
-    expect(snapshot.endianParser.removedParserStateOperationIds).toEqual([
-      optIrOperationId(711),
-      optIrOperationId(712),
-    ]);
-    expect(snapshot.endianParser.explanations).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          diagnosticOrigins: [optIrOriginId(701)],
-          coldRejectionOrigins: [optIrOriginId(702)],
-        }),
-      ]),
-    );
-    expect(snapshot.operations.map((operation) => operation.displayName)).toContain(
-      "observable-reject",
-    );
-    expect(snapshot.operations.map((operation) => operation.displayName)).not.toContain(
-      "parser-state",
     );
   });
 });

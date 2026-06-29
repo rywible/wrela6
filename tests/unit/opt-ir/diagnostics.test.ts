@@ -12,6 +12,7 @@ import { optIrDiagnosticForTest } from "../../support/opt-ir/ids-diagnostics-fak
 describe("OptIR diagnostic codes", () => {
   test("includes the exact contract diagnostic code table", () => {
     expect(OPT_IR_DIAGNOSTIC_CODES).toEqual([
+      "OPT_IR_CONSTRUCTION_TRACE",
       "OPT_IR_INPUT_CONTRACT_INVALID",
       "OPT_IR_TARGET_MISMATCH",
       "OPT_IR_LAYOUT_AUTHORITY_MISMATCH",

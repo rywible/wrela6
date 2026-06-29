@@ -218,7 +218,7 @@ function placeKeyToLookup(
   return REGION_ORDER.includes(kind) && key.length > 0 ? { kind, key } : undefined;
 }
 
-export function buildOptIrRegionsForTest(input: BuildOptIrRegionsInput = {}): OptIrRegionTable {
+export function buildOptIrRegions(input: BuildOptIrRegionsInput = {}): OptIrRegionTable {
   const sources: RegionSource[] = [];
   addDeclarations(sources, "stackLocal", input.stackLocals);
   addDeclarations(sources, "sourceAggregate", input.sourceAggregates);
@@ -301,6 +301,8 @@ export function buildOptIrRegionsForTest(input: BuildOptIrRegionsInput = {}): Op
     externalUnknown: () => externalEntry?.region,
   };
 }
+
+export const buildOptIrRegionsForTest = buildOptIrRegions;
 
 function targetRegionsForEffect(
   regions: OptIrRegionTable,

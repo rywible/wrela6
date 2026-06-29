@@ -115,29 +115,4 @@ function reverseTable<LookupId, Entry>(
   };
 }
 
-function stableJson(value: unknown): string {
-  return JSON.stringify(toStableValue(value));
-}
-
-function toStableValue(value: unknown): unknown {
-  if (typeof value === "bigint") {
-    return { kind: "bigint", value: value.toString() };
-  }
-  if (value instanceof Map) {
-    return [...value.entries()]
-      .map(([key, entry]) => [toStableValue(key), toStableValue(entry)] as const)
-      .sort((left, right) => stableJson(left[0]).localeCompare(stableJson(right[0])));
-  }
-  if (Array.isArray(value)) {
-    return value.map(toStableValue);
-  }
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([, entry]) => entry !== undefined)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => [key, toStableValue(entry)]),
-    );
-  }
-  return value;
-}
+import { stableJson } from "../../../src/shared/stable-json";

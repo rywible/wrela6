@@ -12,6 +12,7 @@ export {
   proofAuthorityFingerprintsEqual,
   type ProofAuthorityFingerprint,
 } from "./proof-authority-types";
+export { stableDigestHex, stableJson } from "./stable-json";
 export {
   layoutWireMarkerValidationMessage,
   maximumUnsignedIntegerValueForCoreTypeName,

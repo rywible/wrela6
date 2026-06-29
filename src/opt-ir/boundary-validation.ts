@@ -4,7 +4,6 @@ import type {
   CheckedFactPacketEntry,
   CheckedFactSubject,
   CheckedFactKindId,
-  LayoutFactKey,
 } from "../proof-check/model/fact-packet";
 import { checkedOptIrHandoffFingerprint } from "../proof-check/model/opt-ir-handoff";
 import type {
@@ -13,6 +12,11 @@ import type {
 } from "../proof-check/model/opt-ir-handoff";
 import type { ProofAuthorityFingerprint } from "../shared/proof-authority-types";
 import type { InternalConstructOptIrInput } from "./internal-construction-api";
+import {
+  layoutDependencyKeys,
+  optIrLayoutAuthorityPolicyFromHandoff,
+} from "./layout-authority-policy";
+import { stableJson } from "../shared/stable-json";
 import {
   optIrDiagnosticCode,
   optIrDiagnosticOrderKey,
@@ -27,36 +31,8 @@ export type OptIrBoundaryValidationResult =
 
 type FactEntry = CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject>;
 
-function stableJson(value: unknown): string {
-  return JSON.stringify(toStableValue(value));
-}
-
-function toStableValue(value: unknown): unknown {
-  if (typeof value === "bigint") {
-    return { kind: "bigint", value: value.toString() };
-  }
-  if (value instanceof Map) {
-    return [...value.entries()]
-      .map(([key, entry]) => [toStableValue(key), toStableValue(entry)] as const)
-      .sort((left, right) => stableJson(left[0]).localeCompare(stableJson(right[0])));
-  }
-  if (value instanceof Set) {
-    return [...value]
-      .map(toStableValue)
-      .sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
-  }
-  if (Array.isArray(value)) {
-    return value.map(toStableValue);
-  }
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([, entry]) => entry !== undefined)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => [key, toStableValue(entry)]),
-    );
-  }
-  return value;
+function stableJsonForDiagnostic(value: unknown): string {
+  return stableJson(value);
 }
 
 function diagnostic(
@@ -66,7 +42,7 @@ function diagnostic(
   messageTemplate: string,
   args: Readonly<Record<string, string | number | boolean>> = {},
 ): OptIrDiagnostic {
-  const stableDetail = `${messageTemplate}:${stableJson(args)}`;
+  const stableDetail = `${messageTemplate}:${stableJsonForDiagnostic(args)}`;
   return {
     severity: "error",
     code,
@@ -118,7 +94,7 @@ function allFactEntries(facts: CheckedFactPacket): readonly FactEntry[] {
 }
 
 function fingerprintKey(fingerprint: ProofAuthorityFingerprint): string {
-  return stableJson(fingerprint);
+  return stableJsonForDiagnostic(fingerprint);
 }
 
 function sameFingerprint(
@@ -337,28 +313,6 @@ function validateSemanticInlinePolicies(handoff: CheckedOptIrHandoff): readonly 
     );
 }
 
-function layoutKeyExists(layoutFacts: unknown, layoutKey: LayoutFactKey): boolean {
-  return stableJson(layoutFacts).includes(JSON.stringify(String(layoutKey)));
-}
-
-function factLayoutKeys(entry: FactEntry): readonly LayoutFactKey[] {
-  const keys: LayoutFactKey[] = [];
-  if (entry.subject.kind === "layout") {
-    keys.push(entry.subject.layoutKey);
-  }
-  for (const dependency of entry.dependencies) {
-    if (dependency.kind === "layoutFact") {
-      keys.push(dependency.layoutKey);
-    }
-  }
-  for (const invalidation of entry.invalidatedBy) {
-    if (invalidation.kind === "abiRewrite") {
-      keys.push(invalidation.layoutKey);
-    }
-  }
-  return keys;
-}
-
 function authorityDependencies(entry: FactEntry): readonly {
   readonly fingerprint: ProofAuthorityFingerprint;
   readonly entryKey: string;
@@ -386,19 +340,36 @@ function authorityDependencies(entry: FactEntry): readonly {
 
 function validateLayoutReferences(input: InternalConstructOptIrInput): readonly OptIrDiagnostic[] {
   const diagnostics: OptIrDiagnostic[] = [];
+  const policy = optIrLayoutAuthorityPolicyFromHandoff({
+    handoff: input.handoff,
+    layoutFacts: input.layoutFacts.facts,
+    layoutFingerprint: input.layoutFacts.fingerprint,
+  });
+  let referencesLayoutFacts = false;
   for (const entry of allFactEntries(input.handoff.checkedMir.facts)) {
-    for (const layoutKey of factLayoutKeys(entry)) {
-      if (!layoutKeyExists(input.layoutFacts.facts, layoutKey)) {
+    for (const layoutKey of layoutDependencyKeys(entry)) {
+      referencesLayoutFacts = true;
+      if (!policy.authenticatedKeys.has(layoutKey)) {
         diagnostics.push(
           diagnostic(
             optIrDiagnosticCode("OPT_IR_LAYOUT_AUTHORITY_MISMATCH"),
             `fact:${String(entry.factId)}`,
-            `layout:${String(layoutKey)}`,
+            `layout:${layoutKey}`,
             "Checked layout or ABI fact does not exist in authenticated layout facts.",
           ),
         );
       }
     }
+  }
+  if (referencesLayoutFacts && !policy.fingerprintAttested(input.layoutFacts.fingerprint)) {
+    diagnostics.push(
+      diagnostic(
+        optIrDiagnosticCode("OPT_IR_LAYOUT_AUTHORITY_MISMATCH"),
+        "layoutFacts",
+        `fingerprint:${input.layoutFacts.fingerprint.digestHex}`,
+        "Authenticated layout fact fingerprint is not attested by packet validation.",
+      ),
+    );
   }
   return diagnostics;
 }

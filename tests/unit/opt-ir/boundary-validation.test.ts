@@ -185,6 +185,80 @@ describe("validateOptIrConstructionBoundary", () => {
     );
   });
 
+  test("rejects layout keys that only appear as incidental text in authenticated layout facts", () => {
+    const requestedLayoutKey = layoutFactKey("layout:fixture");
+    const handoff = withHandoffFacts(checkedOptIrHandoffForTest(), {
+      ...emptyCheckedFactPacket(),
+      layoutAbi: [
+        checkedFactPacketEntryForOptIrTest({
+          kind: "layoutAbi",
+          subject: { kind: "layout", layoutKey: requestedLayoutKey },
+          dependencies: [{ kind: "layoutFact", layoutKey: requestedLayoutKey }],
+          invalidatedBy: [],
+        }),
+      ],
+    });
+
+    const result = validateOptIrConstructionBoundary(
+      constructOptIrInputForTest({
+        handoff,
+        layoutFacts: {
+          ...constructOptIrInputForTest().layoutFacts,
+          facts: {
+            target: constructOptIrInputForTest().layoutFacts.facts.target,
+            note: "this unauthenticated note mentions layout:fixture",
+          } as never,
+        },
+      }),
+    );
+
+    const error = expectError(result);
+    expect(error.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      optIrDiagnosticCode("OPT_IR_LAYOUT_AUTHORITY_MISMATCH"),
+    );
+  });
+
+  test("rejects structured layout keys from an unattested layout fingerprint", () => {
+    const baseInput = constructOptIrInputForTest();
+    const requestedLayoutKey = layoutFactKey("layout:fixture");
+    const handoff = withHandoffFacts(checkedOptIrHandoffForTest(), {
+      ...emptyCheckedFactPacket(),
+      layoutAbi: [
+        checkedFactPacketEntryForOptIrTest({
+          kind: "layoutAbi",
+          subject: { kind: "layout", layoutKey: requestedLayoutKey },
+          dependencies: [{ kind: "layoutFact", layoutKey: requestedLayoutKey }],
+          invalidatedBy: [],
+        }),
+      ],
+    });
+
+    const result = validateOptIrConstructionBoundary(
+      constructOptIrInputForTest({
+        handoff,
+        layoutFacts: {
+          ...baseInput.layoutFacts,
+          facts: {
+            target: baseInput.layoutFacts.facts.target,
+            types: {
+              entries: () => [{ key: "fixture-type" }],
+              keyString: () => requestedLayoutKey,
+            },
+          } as never,
+          fingerprint: {
+            ...baseInput.layoutFacts.fingerprint,
+            digestHex: "ee".repeat(32),
+          },
+        },
+      }),
+    );
+
+    const error = expectError(result);
+    expect(error.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      optIrDiagnosticCode("OPT_IR_LAYOUT_AUTHORITY_MISMATCH"),
+    );
+  });
+
   test("reports missing required handoff artifacts as OptIR diagnostics", () => {
     const handoff = checkedOptIrHandoffForTest();
     const result = validateOptIrConstructionBoundary(

@@ -4,15 +4,16 @@ import {
   optIrRegionId,
   type OptIrConstantId,
   type OptIrEdgeId,
-  type OptIrFactId,
   type OptIrOperationId,
   type OptIrOriginId,
   type OptIrPathCertificateId,
   type OptIrRegionId,
   type OptIrValueId,
 } from "../ids";
-import type { RewriteLegalityObligationId } from "../passes/pass-contract";
 import { optIrUnsignedIntegerType, type OptIrType } from "../types";
+import type { OptIrBoundsAuthority, OptIrRuntimeBoundsGuard } from "../operations";
+
+export type { OptIrBoundsAuthority, OptIrRuntimeBoundsGuard };
 
 export type OptIrValidatedBufferRegionKind =
   | "packetSource"
@@ -24,23 +25,6 @@ export type OptIrByteRangeExpression = {
   readonly start: bigint;
   readonly endExclusive: bigint;
 };
-
-export type OptIrBoundsAuthority =
-  | { readonly kind: "certifiedFact"; readonly factId: OptIrFactId }
-  | {
-      readonly kind: "passDerivedFact";
-      readonly factId: OptIrFactId;
-      readonly obligationId: RewriteLegalityObligationId;
-    }
-  | { readonly kind: "runtimeGuard"; readonly guard: OptIrRuntimeBoundsGuard }
-  | { readonly kind: "constructionSize" };
-
-export interface OptIrRuntimeBoundsGuard {
-  readonly guardOperation: OptIrOperationId;
-  readonly successEdge: OptIrEdgeId;
-  readonly checkedByteRange: OptIrByteRangeExpression;
-  readonly dominatesAccess: true;
-}
 
 export interface OptIrValidatedBufferAccessMetadata {
   readonly fieldName: string;
@@ -257,6 +241,14 @@ function freezeBoundsAuthority(authority: OptIrBoundsAuthority): OptIrBoundsAuth
       });
     case "constructionSize":
       return Object.freeze({ kind: authority.kind });
+    case "layoutFact":
+      return Object.freeze({ kind: authority.kind, layoutKey: authority.layoutKey });
+    case "targetContract":
+      return Object.freeze({ kind: authority.kind, authorityKey: authority.authorityKey });
+    default: {
+      const unexpected: never = authority;
+      return unexpected;
+    }
   }
 }
 

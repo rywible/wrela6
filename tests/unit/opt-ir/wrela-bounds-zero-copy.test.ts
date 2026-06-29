@@ -44,8 +44,9 @@ describe("Wrela bounds and zero-copy optimization", () => {
       throw new Error("Expected rewritten load.");
     }
     expect(rewritten.memoryAccess.boundsAuthority).toEqual({
-      kind: "validatedBuffer",
-      authorityKey: "pass-derived:7:wrela:bce",
+      kind: "passDerivedFact",
+      factId: optIrFactId(7),
+      obligationId: rewriteLegalityObligationId("wrela:bce"),
     });
     expect(result.explanations.map((explanation) => explanation.kind)).toEqual([
       "boundsCheckEliminated",

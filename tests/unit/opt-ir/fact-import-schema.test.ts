@@ -154,6 +154,39 @@ describe("OptIR checked fact import schema registry", () => {
     expect(expectImportError(result)).toContain("OPT_IR_FACT_IMPORT_LAYOUT_MISMATCH");
   });
 
+  test("layoutAbi import rejects a layout fingerprint not attested by packet validation", () => {
+    const input = completeFactImportValidationInputForTest({ kind: "layoutAbi" });
+    const result = validateCheckedFactImportSchema({
+      ...input,
+      layoutFacts: {
+        ...input.layoutFacts,
+        fingerprint: {
+          ...input.layoutFacts.fingerprint,
+          digestHex: "ee".repeat(32),
+        },
+      },
+    });
+    expect(expectImportError(result)).toContain("OPT_IR_FACT_IMPORT_LAYOUT_MISMATCH");
+  });
+
+  test("call subjects require the checked MIR caller as well as the numeric call ID", () => {
+    const input = completeFactImportValidationInputForTest({ kind: "capabilityFlow" });
+    const result = validateCheckedFactImportSchema({
+      ...input,
+      proofMirLookups: {
+        ...input.proofMirLookups,
+        callSubjects: [
+          {
+            functionInstanceId: monoInstanceId("fixture::other"),
+            callId: proofMirCallId(1),
+          },
+        ],
+      },
+    });
+
+    expect(expectImportError(result)).toContain("OPT_IR_FACT_IMPORT_MISSING_PROOF_MIR_NODE");
+  });
+
   test("erasure imports value subjects only with matching Proof MIR value evidence", () => {
     const valueSubject = { kind: "value" as const, valueId: proofMirValueId(1) };
     const coreCertificate = {

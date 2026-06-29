@@ -28,6 +28,7 @@ import {
 import {
   optIrCallId,
   optIrConstantId,
+  optIrFactId,
   optIrOperationId,
   optIrOriginId,
   optIrRegionId,
@@ -229,7 +230,7 @@ describe("OptIR operation constructors", () => {
       endian: "little",
       volatility: "volatile",
       layoutPath,
-      boundsAuthority: { kind: "validatedBuffer", authorityKey: "packet-bounds:v1" },
+      boundsAuthority: { kind: "certifiedFact", factId: optIrFactId(1) },
       originId: optIrOriginId(2),
     });
 
@@ -250,7 +251,7 @@ describe("OptIR operation constructors", () => {
       endian: "little",
       volatility: "volatile",
       layoutPath,
-      boundsAuthority: { kind: "validatedBuffer", authorityKey: "packet-bounds:v1" },
+      boundsAuthority: { kind: "certifiedFact", factId: optIrFactId(1) },
     });
     expect(authorized.operation.effects.readsRegionVersion).toBe(true);
   });

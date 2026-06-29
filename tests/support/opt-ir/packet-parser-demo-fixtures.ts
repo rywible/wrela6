@@ -151,15 +151,21 @@ export function hasNoProofOrValidationWrappersForTest(
 export function canonicalPacketLoadsForTest(
   operations: readonly OptIrOperation[],
 ): readonly OptIrOperation[] {
-  return operations.filter(
-    (operation) =>
-      operation.kind === "memoryLoad" &&
+  return operations.filter((operation) => {
+    if (operation.kind !== "memoryLoad") {
+      return false;
+    }
+    const authorityKind = operation.memoryAccess.boundsAuthority.kind;
+    return (
       operation.memoryAccess.region === PACKET_REGION &&
-      operation.memoryAccess.boundsAuthority.kind === "validatedBuffer" &&
+      (authorityKind === "targetContract" ||
+        authorityKind === "certifiedFact" ||
+        authorityKind === "passDerivedFact") &&
       operation.memoryAccess.layoutPath !== undefined &&
       operation.memoryAccess.endian !== "native" &&
-      operation.memoryAccess.volatility === "nonVolatile",
-  );
+      operation.memoryAccess.volatility === "nonVolatile"
+    );
+  });
 }
 
 export function derivedFieldOperationKindsForTest(

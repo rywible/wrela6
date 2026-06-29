@@ -8,6 +8,7 @@ import {
   optIrCallId,
   optIrConstantId,
   optIrEdgeId,
+  optIrFactId,
   optIrFunctionId,
   optIrOperationId,
   optIrOriginId,
@@ -216,8 +217,8 @@ describe("OptIR scalar simplification", () => {
     const check = boundsCheckOperation(1);
     const load = loadOperation(2, { kind: "targetContract", authorityKey: "precheck" });
     const authority: OptIrBoundsAuthority = {
-      kind: "validatedBuffer",
-      authorityKey: "packet.bounds",
+      kind: "certifiedFact",
+      factId: optIrFactId(9),
     };
 
     const result = runScalarSimplification({

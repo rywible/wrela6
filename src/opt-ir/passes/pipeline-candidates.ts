@@ -399,8 +399,14 @@ function factChainForAccess(operation: OptIrOperation): readonly string[] {
 
 function boundsAuthorityFact(authority: OptIrMemoryAccessDescriptor["boundsAuthority"]): string {
   switch (authority.kind) {
-    case "validatedBuffer":
-      return `validated-buffer:${authority.authorityKey}`;
+    case "certifiedFact":
+      return `certified-fact:${authority.factId}`;
+    case "passDerivedFact":
+      return `pass-derived:${authority.factId}:${authority.obligationId}`;
+    case "runtimeGuard":
+      return `runtime-guard:${authority.guard.guardOperation}`;
+    case "constructionSize":
+      return "construction-size";
     case "layoutFact":
       return `layout-fact:${String(authority.layoutKey)}`;
     case "targetContract":

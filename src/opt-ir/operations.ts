@@ -9,11 +9,15 @@ import {
 } from "./diagnostics";
 import type {
   OptIrCallId,
+  OptIrEdgeId,
+  OptIrFactId,
   OptIrOperationId,
   OptIrOriginId,
+  OptIrPathCertificateId,
   OptIrRegionId,
   OptIrValueId,
 } from "./ids";
+import type { RewriteLegalityObligationId } from "./passes/pass-contract";
 import type { OptIrOperationKind } from "./operation-kinds";
 import {
   optIrOperationEffectMetadataForKind,
@@ -49,9 +53,26 @@ export type OptIrBooleanBinaryOperator = "and" | "or" | "xor" | "equal" | "notEq
 export type OptIrEndian = "little" | "big" | "native";
 
 export type OptIrBoundsAuthority =
-  | { readonly kind: "validatedBuffer"; readonly authorityKey: string }
+  | { readonly kind: "certifiedFact"; readonly factId: OptIrFactId }
+  | {
+      readonly kind: "passDerivedFact";
+      readonly factId: OptIrFactId;
+      readonly obligationId: RewriteLegalityObligationId;
+    }
+  | { readonly kind: "runtimeGuard"; readonly guard: OptIrRuntimeBoundsGuard }
+  | { readonly kind: "constructionSize" }
   | { readonly kind: "layoutFact"; readonly layoutKey: LayoutFactKey }
   | { readonly kind: "targetContract"; readonly authorityKey: string };
+
+export interface OptIrRuntimeBoundsGuard {
+  readonly guardOperation: OptIrOperationId;
+  readonly successEdge: OptIrEdgeId;
+  readonly checkedByteRange: {
+    readonly start: bigint;
+    readonly endExclusive: bigint;
+  };
+  readonly dominatesAccess: true;
+}
 
 export interface OptIrMemoryAccessDescriptor {
   readonly region: OptIrRegionId;
@@ -63,6 +84,14 @@ export interface OptIrMemoryAccessDescriptor {
   readonly volatility: OptIrRegionVolatility;
   readonly layoutPath?: LayoutFactKey;
   readonly boundsAuthority: OptIrBoundsAuthority;
+  readonly validatedBuffer?: OptIrValidatedBufferEvidence;
+}
+
+export interface OptIrValidatedBufferEvidence {
+  readonly fieldName: string;
+  readonly layoutPath: readonly string[];
+  readonly readRequires: readonly string[];
+  readonly pathCertificates: readonly OptIrPathCertificateId[];
 }
 
 export interface OptIrOperationBase<Kind extends OptIrOperationKind> {
@@ -524,6 +553,16 @@ function checkedMemoryAccess(
       volatility: input.volatility,
       ...(input.layoutPath !== undefined && { layoutPath: input.layoutPath }),
       boundsAuthority: input.boundsAuthority,
+      ...(input.validatedBuffer === undefined
+        ? {}
+        : {
+            validatedBuffer: Object.freeze({
+              fieldName: input.validatedBuffer.fieldName,
+              layoutPath: Object.freeze([...input.validatedBuffer.layoutPath]),
+              readRequires: Object.freeze([...input.validatedBuffer.readRequires]),
+              pathCertificates: Object.freeze([...input.validatedBuffer.pathCertificates]),
+            }),
+          }),
     }),
   };
 }

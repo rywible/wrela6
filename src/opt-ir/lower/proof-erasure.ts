@@ -101,7 +101,11 @@ export function eraseProofOnlyOptIr(input: EraseProofOnlyOptIrInput): EraseProof
   }
 
   const functionOutput = removeOperationsFromFunction(input.function, erasedOperations);
-  const lineage = createLineageIndex(input);
+  const lineage = proofErasureLineageIndex({
+    facts: input.facts,
+    proofOnlyValueIds: input.proofOnlyValueIds,
+    proofValueFacts: input.proofValueFacts,
+  });
   const factResult = preserveFactsThroughErasure(input.facts, erasedValues, lineage);
 
   return Object.freeze({
@@ -224,32 +228,55 @@ function removeOperationsFromFunction(
   });
 }
 
-function createLineageIndex(
-  input: EraseProofOnlyOptIrInput,
-): ReadonlyMap<OptIrValueId, readonly OptIrFactId[]> {
+export function runProofErasureFactPreservation(input: {
+  readonly facts: readonly OptIrProofErasureFact[];
+  readonly erasedValueIds: readonly OptIrValueId[];
+  readonly proofOnlyValueIds: readonly OptIrValueId[];
+  readonly proofValueFacts?: readonly (readonly [OptIrValueId, OptIrFactId])[];
+}): {
+  readonly facts: readonly OptIrProofErasureFact[];
+  readonly droppedFacts: readonly OptIrProofErasureDroppedFact[];
+} {
+  const erasedValues = new Set(input.erasedValueIds);
+  const lineage = proofErasureLineageIndex({
+    facts: input.facts,
+    proofOnlyValueIds: input.proofOnlyValueIds,
+    proofValueFacts: input.proofValueFacts,
+  });
+  return preserveFactsThroughErasure(input.facts, erasedValues, lineage);
+}
+
+export function mergeProofErasureProvenances(
+  parts: readonly OptIrProofErasureProvenance[],
+): OptIrProofErasureProvenance {
+  return Object.freeze({
+    erasedValues: Object.freeze(
+      parts
+        .flatMap((part) => part.erasedValues)
+        .sort((left, right) => left.valueId - right.valueId),
+    ),
+  });
+}
+
+export function proofErasureLineageIndex(input: {
+  readonly facts: readonly OptIrProofErasureFact[];
+  readonly proofOnlyValueIds: readonly OptIrValueId[];
+  readonly proofValueFacts?: readonly (readonly [OptIrValueId, OptIrFactId])[];
+}): ReadonlyMap<OptIrValueId, readonly OptIrFactId[]> {
+  const proofOnlyValueIds = new Set(input.proofOnlyValueIds);
   const mutable = new Map<OptIrValueId, OptIrFactId[]>();
   for (const [valueId, factId] of input.proofValueFacts ?? []) {
-    const existing = mutable.get(valueId);
-    if (existing === undefined) {
-      mutable.set(valueId, [factId]);
-      continue;
-    }
-    existing.push(factId);
+    appendLineageFact(mutable, valueId, factId);
   }
 
   for (const fact of input.facts) {
     if (fact.subject.kind !== "value") {
       continue;
     }
-    if (!input.proofOnlyValueIds.includes(fact.subject.valueId)) {
+    if (!proofOnlyValueIds.has(fact.subject.valueId)) {
       continue;
     }
-    const existing = mutable.get(fact.subject.valueId);
-    if (existing === undefined) {
-      mutable.set(fact.subject.valueId, [fact.factId]);
-      continue;
-    }
-    existing.push(fact.factId);
+    appendLineageFact(mutable, fact.subject.valueId, fact.factId);
   }
 
   return new Map(
@@ -258,6 +285,19 @@ function createLineageIndex(
       Object.freeze([...new Set(factIds)].sort(compareNumbers)),
     ]),
   );
+}
+
+function appendLineageFact(
+  lineage: Map<OptIrValueId, OptIrFactId[]>,
+  valueId: OptIrValueId,
+  factId: OptIrFactId,
+): void {
+  const existing = lineage.get(valueId);
+  if (existing === undefined) {
+    lineage.set(valueId, [factId]);
+    return;
+  }
+  existing.push(factId);
 }
 
 function preserveFactsThroughErasure(

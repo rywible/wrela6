@@ -95,7 +95,9 @@ export function completeFactImportValidationInputForTest(options: {
       places: [proofMirPlaceId(1), proofMirPlaceId(2)],
       values: [proofMirValueId(1), proofMirValueId(2)],
       edges: [proofMirControlEdgeId(1), proofMirControlEdgeId(5), proofMirControlEdgeId(11)],
-      calls: [proofMirCallId(1)],
+      callSubjects: [
+        { functionInstanceId: monoInstanceId("fixture::main"), callId: proofMirCallId(1) },
+      ],
       facts: [proofMirFactId(1)],
       origins: [proofMirOriginId(1)],
       privateGenerations: [proofMirPrivateStateGenerationId(1)],

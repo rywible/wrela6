@@ -104,6 +104,28 @@ function checkedOptIrHandoffForInternalConstructionTest(): CheckedOptIrHandoff {
   };
 }
 
+export function partialLayoutFactsForTest(
+  facts: Partial<LayoutFactProgram>,
+): AuthenticatedLayoutFactProgram {
+  return {
+    facts: {
+      target: {
+        targetId: targetId("opt-ir-internal-test"),
+        endian: "little",
+        addressableUnit: "byte",
+        pointerWidthBits: 64,
+        pointerSizeBytes: 8n,
+        pointerAlignmentBytes: 8n,
+        sizeType: { kind: "target", targetTypeId: targetId("usize") },
+        maximumObjectSizeBytes: 2n ** 32n,
+        maximumAlignmentBytes: 16n,
+      },
+      ...facts,
+    } as LayoutFactProgram,
+    fingerprint: fingerprint("layout", "bb".repeat(32)),
+  };
+}
+
 export function authenticatedLayoutFactsForTest(): AuthenticatedLayoutFactProgram {
   return {
     facts: {

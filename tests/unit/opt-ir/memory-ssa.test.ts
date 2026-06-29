@@ -4,7 +4,7 @@ import {
   buildMemorySsaForTest,
   shouldBuildMemorySsaForFixedPipeline,
 } from "../../../src/opt-ir/analyses/memory-ssa";
-import { optIrMemoryVersionId, optIrOperationId } from "../../../src/opt-ir/ids";
+import { optIrFactId, optIrMemoryVersionId, optIrOperationId } from "../../../src/opt-ir/ids";
 import {
   constantOnlyMemoryFixtureForTest,
   multiRegionCallDroppingOneTokenForTest,
@@ -80,8 +80,8 @@ describe("OptIR memory SSA and effect-token indexes", () => {
       index.index.versionBefore(optIrOperationId(1), fixture.namedRegions.packet.regionId),
     ).toBe(optIrMemoryVersionId(0));
     expect(index.index.boundsAuthorityFor(optIrOperationId(1))).toEqual({
-      kind: "validatedBuffer",
-      authorityKey: "packet.bounds",
+      kind: "certifiedFact",
+      factId: optIrFactId(1),
     });
   });
 

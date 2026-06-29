@@ -74,8 +74,9 @@ export function runWrelaBoundsZeroCopy(input: WrelaBoundsZeroCopyInput): WrelaBo
     eliminated.add(candidate.checkOperationId);
     for (const operationId of candidate.affectedAccessOperationIds) {
       authorityByAccess.set(operationId, {
-        kind: "validatedBuffer",
-        authorityKey: `pass-derived:${candidate.licensingFactId}:${candidate.obligationId}`,
+        kind: "passDerivedFact",
+        factId: candidate.licensingFactId,
+        obligationId: candidate.obligationId,
       });
     }
     explanations.push({

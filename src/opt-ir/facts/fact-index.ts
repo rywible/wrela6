@@ -183,6 +183,10 @@ function freezeFactSet(records: readonly OptIrFactRecord[]): OptIrFactSet {
   return Object.freeze({ records: frozenRecords, indexes: buildIndexes(frozenRecords) });
 }
 
+export function optIrFactSetFromRecords(records: readonly OptIrFactRecord[]): OptIrFactSet {
+  return freezeFactSet(records);
+}
+
 function freezeFactRecord(record: OptIrFactRecord): OptIrFactRecord {
   return Object.freeze({
     ...record,

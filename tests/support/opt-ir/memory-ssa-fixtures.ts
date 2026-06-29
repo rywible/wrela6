@@ -5,6 +5,7 @@ import { buildOptIrRegionsForTest } from "../../../src/opt-ir/lower/region-build
 import {
   optIrBlockId,
   optIrCallId,
+  optIrFactId,
   optIrFunctionId,
   optIrOperationId,
   optIrOriginId,
@@ -146,7 +147,7 @@ export function packetReadFixtureForTest(): OptIrMemorySsaBuildInput & {
       valueType: byteType,
       endian: "big",
       volatility: packet.volatility,
-      boundsAuthority: { kind: "validatedBuffer", authorityKey: "packet.bounds" },
+      boundsAuthority: { kind: "certifiedFact", factId: optIrFactId(1) },
       originId,
     }),
   );

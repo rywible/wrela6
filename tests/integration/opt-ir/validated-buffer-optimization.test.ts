@@ -95,8 +95,9 @@ describe("OptIR validated-buffer optimization integration", () => {
       throw new Error("Expected load after rewrite.");
     }
     expect(rewritten.memoryAccess.boundsAuthority).toEqual({
-      kind: "validatedBuffer",
-      authorityKey: "pass-derived:4:bce:payload",
+      kind: "passDerivedFact",
+      factId: optIrFactId(4),
+      obligationId: rewriteLegalityObligationId("bce:payload"),
     });
   });
 
@@ -138,8 +139,9 @@ describe("OptIR validated-buffer optimization integration", () => {
       endian: "big",
       volatility: "nonVolatile",
       boundsAuthority: {
-        kind: "validatedBuffer",
-        authorityKey: "pass-derived:4:bce:payload",
+        kind: "passDerivedFact",
+        factId: optIrFactId(4),
+        obligationId: rewriteLegalityObligationId("bce:payload"),
       },
     });
     expect(result.explanations).toEqual(

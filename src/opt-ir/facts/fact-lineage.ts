@@ -1,3 +1,4 @@
+import type { ProofMirValueId } from "../../proof-mir/ids";
 import type {
   CheckedFactKindId,
   CheckedPacketFactId,
@@ -5,7 +6,16 @@ import type {
 } from "../../proof-check/model/fact-packet";
 import type { OptIrFactId, OptimizationPassId } from "../ids";
 
-export type OptIrFactLineage = OptIrCheckedPacketFactLineage | OptIrPassDerivedFactLineage;
+export type OptIrFactLineage =
+  | OptIrCheckedPacketFactLineage
+  | OptIrPassDerivedFactLineage
+  | OptIrProofErasurePreservedFactLineage;
+
+export interface OptIrProofErasurePreservedFactLineage {
+  readonly kind: "proofErasurePreserved";
+  readonly sourceFactId: OptIrFactId;
+  readonly erasedProofMirValueIds: readonly ProofMirValueId[];
+}
 
 export interface OptIrCheckedPacketFactLineage {
   readonly kind: "checkedPacket";

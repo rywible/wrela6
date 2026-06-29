@@ -2,6 +2,7 @@ import { compareCodeUnitStrings } from "./deterministic-sort";
 import type { OptIrFunctionId, OptIrOriginId } from "./ids";
 
 export const OPT_IR_DIAGNOSTIC_CODES = [
+  "OPT_IR_CONSTRUCTION_TRACE",
   "OPT_IR_INPUT_CONTRACT_INVALID",
   "OPT_IR_TARGET_MISMATCH",
   "OPT_IR_LAYOUT_AUTHORITY_MISMATCH",

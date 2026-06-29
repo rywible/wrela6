@@ -9,6 +9,7 @@ import type {
 } from "../../proof-check/model/fact-packet";
 import { isKnownCheckedPacketFactKind } from "../../proof-check/model/fact-packet";
 import type { CheckedOptIrHandoff } from "../../proof-check/model/opt-ir-handoff";
+import type { MonoInstanceId } from "../../mono/ids";
 import type {
   ProofMirCallId,
   ProofMirControlEdgeId,
@@ -18,6 +19,7 @@ import type {
   ProofMirPrivateStateGenerationId,
   ProofMirValueId,
 } from "../../proof-mir/ids";
+import { factEntryReferencesLayout, layoutDependencyMissing } from "../layout-authority-policy";
 import type { ProofAuthorityFingerprint } from "../../shared/proof-authority-types";
 
 export type OptIrFactImportTypedAnswer =
@@ -65,7 +67,10 @@ export interface CheckedFactImportProofMirLookups {
   readonly places?: readonly ProofMirPlaceId[];
   readonly values?: readonly ProofMirValueId[];
   readonly edges?: readonly ProofMirControlEdgeId[];
-  readonly calls?: readonly ProofMirCallId[];
+  readonly callSubjects?: readonly {
+    readonly functionInstanceId: MonoInstanceId;
+    readonly callId: ProofMirCallId;
+  }[];
   readonly facts?: readonly ProofMirFactId[];
   readonly origins?: readonly ProofMirOriginId[];
   readonly privateGenerations?: readonly ProofMirPrivateStateGenerationId[];
@@ -119,7 +124,7 @@ const SCHEMAS = {
   },
   validatedBuffer: {
     kind: "validatedBuffer",
-    subjectKinds: ["value", "edge", "packetSource"],
+    subjectKinds: ["place", "value", "edge", "packetSource"],
     requiredDependencies: ["proofMirEdge", "layoutFact", "coreCertificate"],
     certificateRule: "core",
     typedAnswers: ["provesInBounds", "provesImpossible"],
@@ -268,6 +273,7 @@ export function validateCheckedFactImportSchema(
   diagnostics.push(...validateSubjectEvidenceDependencies(input));
   diagnostics.push(...validateSubjectReferences(input));
   diagnostics.push(...validateLayoutReferences(input));
+  diagnostics.push(...validateLayoutFingerprint(input));
   diagnostics.push(...validateAuthorityReferences(input));
 
   return diagnostics.length === 0
@@ -342,7 +348,7 @@ function validateSubjectReferences(
         ? []
         : [missingProofMirSubject(input, "edge")];
     case "call":
-      return hasValue(input.proofMirLookups.calls, subject.callId)
+      return hasCallSubject(input.proofMirLookups, subject)
         ? []
         : [missingProofMirSubject(input, "call")];
     case "mirOrigin":
@@ -390,24 +396,41 @@ function validateSubjectReferences(
   }
 }
 
-function validateLayoutReferences(
+function validateLayoutFingerprint(
   input: CheckedFactImportValidationInput,
 ): readonly OptIrFactImportDiagnostic[] {
   if (
-    input.entry.dependencies.some(
-      (dependency) =>
-        dependency.kind === "layoutFact" && !hasValue(input.layoutFacts.keys, dependency.layoutKey),
-    )
+    !factEntryReferencesLayout(input.entry) ||
+    authorityAllowed(input, input.layoutFacts.fingerprint)
   ) {
-    return [
-      diagnostic(
-        "OPT_IR_FACT_IMPORT_LAYOUT_MISMATCH",
-        "Checked fact import layout dependency does not match authenticated layout facts.",
-        String(input.entry.kind),
-      ),
-    ];
+    return [];
   }
-  return [];
+  return [
+    diagnostic(
+      "OPT_IR_FACT_IMPORT_LAYOUT_MISMATCH",
+      "Checked fact import layout fingerprint is not in the handoff attestation.",
+      `${String(input.entry.kind)}:${input.layoutFacts.fingerprint.digestHex}`,
+    ),
+  ];
+}
+
+function validateLayoutReferences(
+  input: CheckedFactImportValidationInput,
+): readonly OptIrFactImportDiagnostic[] {
+  const authenticatedKeys = new Set(input.layoutFacts.keys.map(String));
+  const missing = input.entry.dependencies.find((dependency) =>
+    layoutDependencyMissing(dependency, authenticatedKeys),
+  );
+  if (missing === undefined) {
+    return [];
+  }
+  return [
+    diagnostic(
+      "OPT_IR_FACT_IMPORT_LAYOUT_MISMATCH",
+      "Checked fact import layout dependency does not match authenticated layout facts.",
+      String(input.entry.kind),
+    ),
+  ];
 }
 
 function validateAuthorityReferences(
@@ -445,7 +468,7 @@ function dependencyExists(
     case "proofMirEdge":
       return hasValue(input.proofMirLookups.edges, dependency.edgeId);
     case "proofMirCall":
-      return hasValue(input.proofMirLookups.calls, dependency.callId);
+      return hasCallSubjectByCallId(input.proofMirLookups, dependency.callId);
     case "layoutFact":
       return hasValue(input.layoutFacts.keys, dependency.layoutKey);
     case "authorityEntry":
@@ -485,6 +508,23 @@ function authorityAllowed(
       candidate.version === fingerprint.version &&
       candidate.digestAlgorithm === fingerprint.digestAlgorithm &&
       candidate.digestHex === fingerprint.digestHex,
+  );
+}
+
+function hasCallSubjectByCallId(
+  lookups: CheckedFactImportProofMirLookups,
+  callId: ProofMirCallId,
+): boolean {
+  return (lookups.callSubjects ?? []).some((call) => call.callId === callId);
+}
+
+function hasCallSubject(
+  lookups: CheckedFactImportProofMirLookups,
+  subject: Extract<CheckedFactSubject, { readonly kind: "call" }>,
+): boolean {
+  return (lookups.callSubjects ?? []).some(
+    (call) =>
+      call.callId === subject.callId && call.functionInstanceId === subject.functionInstanceId,
   );
 }
 
