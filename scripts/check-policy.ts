@@ -140,6 +140,19 @@ const proofCheckForbiddenModulePathPatterns = [
   /(?:bun:|node:fs|node:path|node:os|node:process|fs|path|os|process)/,
 ] as const;
 
+const optIrForbiddenModulePathPatterns = [
+  /[^"']*\/scorecard\//,
+  /[^"']*\/benchmark\//,
+  /[^"']*\/frontend(?:\/|["'])/,
+  /[^"']*\/lexer\//,
+  /[^"']*\/parser(?:\/|["'])/,
+  /[^"']*\/hir\/.*lowerer/,
+  /[^"']*\/proof-mir\/(?:lower|draft|canonicalization)\//,
+  /[^"']*\/(?:codegen|linker)\//,
+  /[^"']*(?:aarch64|pe-coff)/i,
+  /(?:bun:|node:fs|node:path|node:os|node:process|bun|fs|path|os|process)/,
+] as const;
+
 function expandImportBoundaryPatterns(pathPatterns: readonly RegExp[]): RegExp[] {
   const patterns: RegExp[] = [];
   for (const pathPattern of pathPatterns) {
@@ -164,6 +177,8 @@ const proofMirImportForbiddenPatterns = expandImportBoundaryPatterns(
 const proofCheckImportForbiddenPatterns = expandImportBoundaryPatterns(
   proofCheckForbiddenModulePathPatterns,
 );
+
+const optIrImportForbiddenPatterns = expandImportBoundaryPatterns(optIrForbiddenModulePathPatterns);
 
 function checkLayoutImportBoundary(filePath: string, sourceText: string): PolicyViolation[] {
   const normalizedPath = normalizePath(filePath);
@@ -202,6 +217,28 @@ function checkProofMirImportBoundary(filePath: string, sourceText: string): Poli
         column: 1,
         message:
           "src/proof-mir must not import frontend, lexer, parser, name resolution, item index, proof checker, codegen, linker, target backend, or host/runtime modules.",
+      });
+      break;
+    }
+  }
+  return violations;
+}
+
+function checkOptIrImportBoundary(filePath: string, sourceText: string): PolicyViolation[] {
+  const normalizedPath = normalizePath(filePath);
+  if (!normalizedPath.startsWith("src/opt-ir/")) {
+    return [];
+  }
+
+  const violations: PolicyViolation[] = [];
+  for (const pattern of optIrImportForbiddenPatterns) {
+    if (pattern.test(sourceText)) {
+      violations.push({
+        filePath,
+        line: 1,
+        column: 1,
+        message:
+          "src/opt-ir must not import frontend, parser, HIR lowering internals, Proof MIR construction internals, target backends, scorecard baselines, benchmark data, linker, PE-COFF, Bun, or filesystem modules.",
       });
       break;
     }
@@ -295,6 +332,7 @@ export function checkPolicyFileText(filePath: string, sourceText: string): Polic
     ...checkLayoutImportBoundary(filePath, sourceText),
     ...checkProofMirImportBoundary(filePath, sourceText),
     ...checkProofCheckImportBoundary(filePath, sourceText),
+    ...checkOptIrImportBoundary(filePath, sourceText),
     ...checkTextPolicies(filePath, sourceText),
   ];
 }
