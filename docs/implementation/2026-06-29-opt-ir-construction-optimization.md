@@ -61,6 +61,7 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/integration/opt-ir/validated-buffer
 - Task 34 memory forwarding must require a compatible memory-version or effect-token chain and matching value type. Falling back to forwarding untracked regions with no token chain was unsafe.
 - Task 34 memory rewrite records must identify real operation or region subjects. Placeholder operation IDs for scalar replacement or stack promotion hide the rewrite surface from downstream legality checks.
 - Task 30 local policy feature vectors must be allowlisted and typed. Rejecting only known dynamic fields still let arbitrary host-derived or malformed feature keys influence deterministic policy decisions.
+- Task 36 e-graph import ordering may sort by stable referenced operand IDs, but imported e-node operands must keep schema order. Sorting operands inside the imported entry erases order-sensitive semantics.
 
 ## Executor Protocol
 
