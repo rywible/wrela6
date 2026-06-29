@@ -2,10 +2,13 @@ import { describe, expect, test } from "bun:test";
 
 import { emptyCheckedFactPacket } from "../../../src/proof-check/model/fact-packet";
 import { proofMirControlEdgeId, proofMirValueId } from "../../../src/proof-mir/ids";
+import { layoutFactKey } from "../../../src/proof-check/model/fact-packet";
 import {
   importCheckedFactPacketIntoOptIrFactSet,
   type OptIrFactSetImportResult,
 } from "../../../src/opt-ir/facts/fact-index";
+import { createOptIrFactQuery } from "../../../src/opt-ir/facts/fact-query";
+import { optIrFactId } from "../../../src/opt-ir/ids";
 import { checkedFactPacketEntryForTest } from "../../support/opt-ir/fact-import-fixtures";
 import { completeFactImportValidationInputForTest } from "../../support/opt-ir/fact-import-fixtures";
 
@@ -167,5 +170,97 @@ describe("OptIR fact set", () => {
     expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual([
       "noalias:1:OPT_IR_FACT_IMPORT_DUPLICATE_PACKET_FACT_ID:duplicatePacketFactId:1",
     ]);
+  });
+
+  test("layout and bounds queries answer from imported fact indexes with stable facts used", () => {
+    const layoutKey = layoutFactKey("layout:fixture");
+    const validatedBuffer = checkedFactPacketEntryForTest({
+      kind: "validatedBuffer",
+      ordinal: 0,
+      subject: { kind: "value", valueId: proofMirValueId(1) },
+    });
+    const layoutAbi = checkedFactPacketEntryForTest({
+      kind: "layoutAbi",
+      ordinal: 1,
+      subject: { kind: "layout", layoutKey },
+    });
+    const baseInput = completeFactImportValidationInputForTest({
+      kind: "validatedBuffer",
+      entry: validatedBuffer,
+    });
+
+    const factSet = expectFactSet(
+      importCheckedFactPacketIntoOptIrFactSet({
+        handoff: baseInput.handoff,
+        packet: {
+          ...emptyCheckedFactPacket(),
+          validatedBuffers: [validatedBuffer],
+          layoutAbi: [layoutAbi],
+        },
+        proofMirLookups: baseInput.proofMirLookups,
+        layoutFacts: baseInput.layoutFacts,
+      }),
+    );
+    const factQuery = createOptIrFactQuery(factSet);
+
+    expect(factQuery.provesInBounds({ kind: "value", valueId: proofMirValueId(1) })).toEqual({
+      kind: "yes",
+      factsUsed: [optIrFactId(0)],
+      explanation: ["Fact 0 proves validated buffer bounds for value:1."],
+    });
+    expect(factQuery.layoutOf(layoutKey)).toEqual({
+      kind: "yes",
+      factsUsed: [optIrFactId(1)],
+      explanation: ["Fact 1 proves layout ABI for layout:layout:fixture."],
+    });
+    expect(
+      factQuery.endianOfLayoutAccess({
+        access: { kind: "validatedBufferBounds", layoutKey },
+        layoutProgram: { target: { endian: "little" } },
+      }),
+    ).toEqual({
+      kind: "yes",
+      value: "little",
+      factsUsed: [optIrFactId(1)],
+      explanation: [
+        "Fact 1 proves layout ABI for layout:layout:fixture.",
+        "Endian little was read from the selected layout program target facts.",
+      ],
+    });
+    expect(factQuery.abiShape(layoutKey)).toEqual({
+      kind: "yes",
+      factsUsed: [optIrFactId(1)],
+      explanation: ["Fact 1 proves ABI shape for layout:layout:fixture."],
+    });
+
+    const layoutOnlyFactQuery = createOptIrFactQuery({
+      ...factSet,
+      indexes: {
+        ...factSet.indexes,
+        byTypedAnswer: { layoutOf: [optIrFactId(1)] },
+      },
+    });
+    expect(layoutOnlyFactQuery.layoutOf(layoutKey).kind).toBe("yes");
+    expect(
+      layoutOnlyFactQuery.endianOfLayoutAccess({
+        access: { kind: "validatedBufferBounds", layoutKey },
+        layoutProgram: { target: { endian: "little" } },
+      }),
+    ).toEqual({
+      kind: "unknown",
+      factsUsed: [],
+      explanation: ["No layout ABI fact is in scope for layout:layout:fixture."],
+    });
+    expect(layoutOnlyFactQuery.abiShape(layoutKey)).toEqual({
+      kind: "unknown",
+      factsUsed: [],
+      explanation: ["No ABI shape fact is in scope for layout:layout:fixture."],
+    });
+
+    expect(factQuery.provesInBounds({ kind: "value", valueId: proofMirValueId(2) })).toEqual({
+      kind: "unknown",
+      factsUsed: [],
+      explanation: ["No in-bounds fact is in scope for value:2."],
+    });
   });
 });
