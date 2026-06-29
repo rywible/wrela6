@@ -1054,6 +1054,42 @@ export interface CheckedMirProgram {
   readonly originMap: CheckedOriginMap;
 }
 
+export interface CheckedMirOptimizationEvidence {
+  readonly certificates: CheckedCertificateBundle;
+  readonly packetValidation: CheckedFactPacketValidationAttestation;
+  readonly pathCertificates: CheckedPathCertificateTable;
+  readonly semanticInlinePolicies: CheckedSemanticInlinePolicyTable;
+}
+
+export interface CheckedCertificateBundle {
+  readonly core: readonly ProofCheckCoreCertificate[];
+  readonly semantics: readonly ProofSemanticsCertificate[];
+  readonly summaryInstantiations: readonly CheckedSummaryInstantiationCertificate[];
+}
+
+export interface CheckedFactPacketValidationAttestation {
+  readonly packetFingerprint: CheckedFactPacketFingerprint;
+  readonly certificateBundleFingerprint: CheckedCertificateBundleFingerprint;
+  readonly acceptedFunctionFingerprint: CheckedFunctionTableFingerprint;
+  readonly summaryFingerprint: CheckedFunctionSummaryTableFingerprint;
+  readonly terminalGraphFingerprint: CheckedTerminalGraphFingerprint;
+  readonly originMapFingerprint: CheckedOriginMapFingerprint;
+  readonly authorityFingerprints: readonly ProofAuthorityFingerprint[];
+}
+
+export interface CheckedPathCertificate {
+  readonly certificateId: CheckedPathCertificateId;
+  readonly requiredEdges: readonly ProofMirControlEdgeId[];
+  readonly requiredDominators: readonly ProofMirBlockId[];
+  readonly excludedEdges: readonly ProofMirControlEdgeId[];
+  readonly invalidationTriggers: readonly CheckedFactInvalidation[];
+}
+
+export type CheckedPathCertificateTable = ReadonlyMap<
+  CheckedPathCertificateId,
+  CheckedPathCertificate
+>;
+
 export interface CheckedMirFunction {
   readonly functionInstanceId: MonoInstanceId;
   readonly entryStateCertificate: ProofCheckCertificateId;
@@ -1064,13 +1100,17 @@ export interface CheckedMirFunction {
 ```
 
 `checkedFunctions` does not duplicate the MIR graph. It records acceptance
-certificates for each Proof MIR function: entry state, accepted block-entry
+certificate IDs for each Proof MIR function: entry state, accepted block-entry
 states, exits, terminal/divergence outcomes, and the exported source-call
-summary. The executable shape remains `mir`; the proof authority is
-`checkedFunctions`, `summaries`, and `facts`.
+summary. `CheckedMirOptimizationEvidence` carries the records and attestations
+later phases need to authenticate those IDs without re-running proof checking.
+The executable shape remains `mir`; the proof authority is `checkedFunctions`,
+`summaries`, `facts`, and the optimization evidence bundle.
 
-The checked fact packet is the only optimization authority emitted by this
-phase:
+The checked fact packet plus `CheckedMirOptimizationEvidence` are the
+optimization authority emitted by this phase. The packet carries facts and
+scope; the evidence bundle carries certificate records, validation attestation,
+path preservation data, and semantic-inline policy:
 
 ```ts
 export interface CheckedFactPacket {
@@ -1770,6 +1810,42 @@ export interface CheckedFunctionSummary {
   readonly certificateId: CheckedFunctionSummaryCertificateId;
 }
 ```
+
+Semantic-inline policy is exported separately from callable source summaries:
+
+```ts
+export interface CheckedSemanticInlinePolicy {
+  readonly functionInstanceId: MonoInstanceId;
+  readonly kind: "mandatory" | "eligible" | "forbidden";
+  readonly reason:
+    | "proofWrapper"
+    | "validationHelper"
+    | "monomorphizedShim"
+    | "resourceWrapper"
+    | "singleCallThunk"
+    | "platformWrapper"
+    | "runtimeWrapper"
+    | "ordinaryPerformanceInline"
+    | "observableBoundary";
+  readonly certificateId: CheckedFunctionSummaryCertificateId;
+}
+
+export type CheckedSemanticInlinePolicyTable = ReadonlyMap<
+  MonoInstanceId,
+  CheckedSemanticInlinePolicy
+>;
+```
+
+Monomorphization and MIR lowering may propose policies for compiler-generated
+shims, wrappers, and thunks they create. Proof/resource checking authenticates
+the policy against the accepted function summary, erasure facts, ABI/layout
+facts, capability flow, private-state behavior, terminal behavior, and
+platform/runtime effect summaries. Source syntax or stdlib identity alone
+cannot mark a function mandatory.
+
+Authenticating this table is not an optimization pass. The checker does not
+inline or remove the function; it records whether the already-constructed MIR
+boundary has the facts required for a later OptIR mandatory-inline obligation.
 
 For a `sourceFunction` call, the checker:
 
@@ -2585,9 +2661,12 @@ domains behind that spine:
     patch replay, and exit closure.
 15. Add terminal function summaries, terminal graph closure, yield/resume, and
     enabled extensions through typed companion requests.
-16. Fill out checked fact packet categories, invalidation schemas, preservation
+16. Export checked optimization evidence: certificate bundle, packet-validation
+    attestation, checked path certificate table, and checked semantic-inline
+    policy table.
+17. Fill out checked fact packet categories, invalidation schemas, preservation
     policies, origin mappings, and packet validation.
-17. Add end-to-end integration fixtures as each domain lands; every new domain
+18. Add end-to-end integration fixtures as each domain lands; every new domain
     must include at least one success case, one must-reject case, and one
     diagnostic determinism check before the next domain is wired.
 
