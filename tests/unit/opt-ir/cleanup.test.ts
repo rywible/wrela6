@@ -16,6 +16,7 @@ import {
 } from "../../../src/opt-ir/ids";
 import {
   optIrIntegerBinaryOperation,
+  optIrConstantOperation,
   optIrMemoryLoadOperation,
   optIrPlatformCallOperation,
   type OptIrOperation,
@@ -24,10 +25,13 @@ import type { OptIrFunction } from "../../../src/opt-ir/program";
 import { optIrSignedIntegerType } from "../../../src/opt-ir/types";
 import { runDeadCodeElimination } from "../../../src/opt-ir/passes/dce";
 import { runCopyPropagation } from "../../../src/opt-ir/passes/copy-propagation";
+import { runCfgSimplification } from "../../../src/opt-ir/passes/cfg-simplification";
 import { optIrBlockParameter } from "../../../src/opt-ir/values";
 import { coreTypeId, functionId, itemId } from "../../../src/semantic/ids";
 import { coreCheckedType } from "../../../src/semantic/surface/type-model";
 import { SourceSpan } from "../../../src/shared/source-span";
+import { optIrConstantId } from "../../../src/opt-ir/ids";
+import { optIrIntegerConstant } from "../../../src/opt-ir/constants";
 
 const integer32 = optIrSignedIntegerType(32);
 
@@ -62,7 +66,11 @@ describe("OptIR cleanup dce", () => {
   });
 
   test("dce preserves effectful operations and volatile loads even when their results are unused", () => {
-    const volatileLoad = loadOperation({ operationId: 1, resultId: 10, volatility: "volatile" });
+    const volatileLoad = loadOperation({
+      operationId: 1,
+      resultId: 10,
+      volatility: "volatile",
+    });
     const platformCall = optIrPlatformCallOperation({
       operationId: optIrOperationId(2),
       callId: optIrCallId(1),
@@ -361,6 +369,204 @@ describe("OptIR cleanup copy propagation", () => {
   });
 });
 
+describe("OptIR cleanup cfg simplification", () => {
+  test("cfg simplification folds fact-known branches and removes unreachable blocks and edges", () => {
+    const condition = optIrValueId(5);
+    const trueBlockOperation = addOperation(1, 20, 1, 2);
+    const falseBlockOperation = addOperation(2, 21, 3, 4);
+    const functionInput = functionWithBlocks({
+      blocks: [
+        {
+          blockId: optIrBlockId(1),
+          parameters: [],
+          operations: [],
+          terminator: {
+            kind: "branch",
+            operationId: optIrOperationId(50),
+            condition,
+            trueEdge: optIrEdgeId(1),
+            falseEdge: optIrEdgeId(2),
+            originId: optIrOriginId(1),
+          },
+          originId: optIrOriginId(1),
+        },
+        blockWithReturn(optIrBlockId(2), [trueBlockOperation.operationId]),
+        blockWithReturn(optIrBlockId(3), [falseBlockOperation.operationId]),
+      ],
+      edges: [
+        edgeBetween(optIrEdgeId(1), optIrBlockId(1), optIrBlockId(2), []),
+        edgeBetween(optIrEdgeId(2), optIrBlockId(1), optIrBlockId(3), []),
+      ],
+    });
+
+    const result = runCfgSimplification({
+      function: functionInput,
+      operations: operationTable([trueBlockOperation, falseBlockOperation]),
+      booleanFacts: [[condition, true]],
+    });
+
+    expect(result.function.blocks.map((block) => block.blockId)).toEqual([
+      optIrBlockId(1),
+      optIrBlockId(2),
+    ]);
+    expect(result.function.edges.entries().map((edge) => edge.edgeId)).toEqual([optIrEdgeId(1)]);
+    expect(result.function.blocks[0]?.terminator).toEqual({
+      kind: "jump",
+      operationId: optIrOperationId(50),
+      edge: optIrEdgeId(1),
+      originId: optIrOriginId(1),
+    });
+    expect(result.operations.map((operation) => operation.operationId)).toEqual([
+      trueBlockOperation.operationId,
+    ]);
+    expect(result.removedBlockIds).toEqual([optIrBlockId(3)]);
+    expect(result.removedEdgeIds).toEqual([optIrEdgeId(2)]);
+    expect(result.subjectRemap.droppedSubjectKeys).toEqual([
+      "block:3",
+      "edge:2",
+      "operation:2",
+      "value:21",
+    ]);
+
+    const idempotent = runCfgSimplification({
+      function: result.function,
+      operations: operationTable(result.operations),
+      booleanFacts: [[condition, true]],
+    });
+    expect(idempotent.function.blocks).toEqual(result.function.blocks);
+    expect(idempotent.function.edges.entries()).toEqual(result.function.edges.entries());
+    expect(idempotent.removedBlockIds).toEqual([]);
+    expect(idempotent.removedEdgeIds).toEqual([]);
+  });
+
+  test("cfg simplification merges trivial jump blocks and remaps edge arguments safely", () => {
+    const parameter = optIrBlockParameter({
+      valueId: optIrValueId(20),
+      type: integer32,
+      incomingRole: "phi",
+      originId: optIrOriginId(1),
+    });
+    const consumer = addOperation(1, 30, 20, 8);
+    const functionInput = functionWithBlocks({
+      blocks: [
+        {
+          blockId: optIrBlockId(1),
+          parameters: [],
+          operations: [],
+          terminator: {
+            kind: "jump",
+            operationId: optIrOperationId(40),
+            edge: optIrEdgeId(1),
+            originId: optIrOriginId(1),
+          },
+          originId: optIrOriginId(1),
+        },
+        {
+          blockId: optIrBlockId(2),
+          parameters: [parameter],
+          operations: [],
+          terminator: {
+            kind: "jump",
+            operationId: optIrOperationId(41),
+            edge: optIrEdgeId(2),
+            originId: optIrOriginId(1),
+          },
+          originId: optIrOriginId(1),
+        },
+        blockWithReturn(optIrBlockId(3), [consumer.operationId]),
+      ],
+      edges: [
+        edgeBetween(optIrEdgeId(1), optIrBlockId(1), optIrBlockId(2), [optIrValueId(7)]),
+        edgeBetween(optIrEdgeId(2), optIrBlockId(2), optIrBlockId(3), [parameter.valueId]),
+      ],
+    });
+
+    const result = runCfgSimplification({
+      function: functionInput,
+      operations: operationTable([consumer]),
+    });
+
+    expect(result.function.blocks.map((block) => block.blockId)).toEqual([
+      optIrBlockId(1),
+      optIrBlockId(3),
+    ]);
+    expect(result.function.edges.entries()).toEqual([
+      {
+        edgeId: optIrEdgeId(1),
+        from: optIrBlockId(1),
+        toBlock: optIrBlockId(3),
+        ordinal: 1,
+        kind: "normal",
+        arguments: [optIrValueId(7)],
+        originId: optIrOriginId(1),
+      },
+    ]);
+    expect(result.function.blocks[0]?.terminator).toEqual({
+      kind: "jump",
+      operationId: optIrOperationId(40),
+      edge: optIrEdgeId(1),
+      originId: optIrOriginId(1),
+    });
+    expect(result.removedBlockIds).toEqual([optIrBlockId(2)]);
+    expect(result.removedEdgeIds).toEqual([optIrEdgeId(2)]);
+    expect(result.subjectRemap.entries).toEqual([
+      {
+        source: { kind: "edge", edgeId: optIrEdgeId(2) },
+        target: { kind: "edge", edgeId: optIrEdgeId(1) },
+      },
+      {
+        source: { kind: "value", valueId: parameter.valueId },
+        target: { kind: "value", valueId: optIrValueId(7) },
+      },
+    ]);
+    expect(requireOperation(result.operations, consumer.operationId).operandIds).toEqual([
+      optIrValueId(7),
+      optIrValueId(8),
+    ]);
+  });
+
+  test("cfg simplification keeps branches without scoped facts or constants", () => {
+    const condition = optIrValueId(5);
+    const constant = booleanConstantOperation(1, 10, 1n);
+    const functionInput = functionWithBlocks({
+      blocks: [
+        {
+          blockId: optIrBlockId(1),
+          parameters: [],
+          operations: [constant.operationId],
+          terminator: {
+            kind: "branch",
+            operationId: optIrOperationId(50),
+            condition,
+            trueEdge: optIrEdgeId(1),
+            falseEdge: optIrEdgeId(2),
+            originId: optIrOriginId(1),
+          },
+          originId: optIrOriginId(1),
+        },
+        blockWithReturn(optIrBlockId(2), []),
+        blockWithReturn(optIrBlockId(3), []),
+      ],
+      edges: [
+        edgeBetween(optIrEdgeId(1), optIrBlockId(1), optIrBlockId(2), []),
+        edgeBetween(optIrEdgeId(2), optIrBlockId(1), optIrBlockId(3), []),
+      ],
+    });
+
+    const result = runCfgSimplification({
+      function: functionInput,
+      operations: operationTable([constant]),
+    });
+
+    expect(result.function.blocks).toEqual(functionInput.blocks);
+    expect(result.function.edges.entries()).toEqual(functionInput.edges.entries());
+    expect(result.removedBlockIds).toEqual([]);
+    expect(result.removedEdgeIds).toEqual([]);
+    expect(result.subjectRemap.entries).toEqual([]);
+    expect(result.subjectRemap.droppedSubjectKeys).toEqual([]);
+  });
+});
+
 function addOperation(
   operationId: number,
   resultId: number,
@@ -400,6 +606,24 @@ function loadOperation(input: {
     throw new Error("Expected load fixture to construct.");
   }
   return result.operation;
+}
+
+function booleanConstantOperation(
+  operationId: number,
+  resultId: number,
+  normalizedValue: bigint,
+): OptIrOperation {
+  return optIrConstantOperation({
+    operationId: optIrOperationId(operationId),
+    resultId: optIrValueId(resultId),
+    constant: optIrIntegerConstant({
+      constantId: optIrConstantId(operationId),
+      type: integer32,
+      normalizedValue,
+      dataModel: { pointerWidth: 64, endian: "little" },
+    }),
+    originId: optIrOriginId(1),
+  });
 }
 
 function functionWithOperations(
@@ -462,6 +686,41 @@ function edgeIntoBlock(
     ordinal: Number(edgeId),
     kind: "normal",
     arguments: argumentIds,
+    originId: optIrOriginId(1),
+  };
+}
+
+function edgeBetween(
+  edgeId: ReturnType<typeof optIrEdgeId>,
+  from: ReturnType<typeof optIrBlockId>,
+  toBlock: ReturnType<typeof optIrBlockId>,
+  argumentIds: readonly ReturnType<typeof optIrValueId>[],
+): OptIrEdge {
+  return {
+    edgeId,
+    from,
+    toBlock,
+    ordinal: Number(edgeId),
+    kind: "normal",
+    arguments: argumentIds,
+    originId: optIrOriginId(1),
+  };
+}
+
+function blockWithReturn(
+  blockId: ReturnType<typeof optIrBlockId>,
+  operationIds: readonly OptIrOperationId[],
+): OptIrBlock {
+  return {
+    blockId,
+    parameters: [],
+    operations: operationIds,
+    terminator: {
+      kind: "return",
+      operationId: optIrOperationId(Number(blockId) + 100),
+      values: [],
+      originId: optIrOriginId(1),
+    },
     originId: optIrOriginId(1),
   };
 }
