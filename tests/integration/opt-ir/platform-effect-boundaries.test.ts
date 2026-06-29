@@ -5,7 +5,10 @@ import {
   type OptIrRegionEntry,
   normalizeTargetEffectRequirementsForTest,
 } from "../../../src/opt-ir/lower/region-builder";
+import { optIrCallId, optIrOperationId, optIrOriginId } from "../../../src/opt-ir/ids";
+import { lowerPlatformCallForTest } from "../../../src/opt-ir/lower/call-lowering";
 import type { OptIrRegion } from "../../../src/opt-ir/regions";
+import { optIrUnitType } from "../../../src/opt-ir/types";
 
 function requireRegion(region: OptIrRegion | undefined): OptIrRegion {
   if (region === undefined) {
@@ -100,6 +103,52 @@ describe("OptIR platform effect boundaries", () => {
     expect(normalized.requirements).not.toContainEqual({
       mode: "mutate",
       region: packet.aliasClass,
+    });
+  });
+
+  test("terminal platform calls emit terminal terminators without dropping earlier ordered effects", () => {
+    const first = lowerPlatformCallForTest({
+      targetKey: "platform.flush_console",
+      operationId: optIrOperationId(20),
+      callId: optIrCallId(21),
+      originId: optIrOriginId(22),
+      argumentIds: [],
+      resultIds: [],
+      resultTypes: [optIrUnitType()],
+      requirements: [{ mode: "orderedEffectToken", tokenKey: "platform:console" }],
+    });
+    const terminal = lowerPlatformCallForTest({
+      targetKey: "platform.exit",
+      operationId: optIrOperationId(23),
+      callId: optIrCallId(24),
+      originId: optIrOriginId(25),
+      argumentIds: [],
+      resultIds: [],
+      resultTypes: [optIrUnitType()],
+      requirements: [
+        { mode: "orderedEffectToken", tokenKey: "platform:console" },
+        { mode: "terminal", terminalKey: "platform:exit" },
+      ],
+      priorObservableEffects: first.kind === "ok" ? first.call.header.effects.requirements : [],
+    });
+
+    expect(first.kind).toBe("ok");
+    expect(terminal.kind).toBe("ok");
+    if (terminal.kind !== "ok") {
+      return;
+    }
+    expect(terminal.call.terminator).toEqual({
+      kind: "unreachable",
+      operationId: optIrOperationId(23),
+      originId: optIrOriginId(25),
+    });
+    expect(terminal.call.header.effects.priorObservableEffects).toContainEqual({
+      mode: "orderedEffectToken",
+      tokenKey: "platform:console",
+    });
+    expect(terminal.call.header.terminalBehavior).toEqual({
+      kind: "terminal",
+      terminalKey: "platform:exit",
     });
   });
 });
