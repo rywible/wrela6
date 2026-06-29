@@ -4,6 +4,7 @@ import {
   lowerValidatedBufferReadForTest,
   validateOptIrValidatedBufferAccesses,
 } from "../../../src/opt-ir/lower/validated-buffer-reads";
+import { buildOptimizedOptIr } from "../../../src/opt-ir/public-api";
 import { optIrEdgeId, optIrFactId, optIrOperationId } from "../../../src/opt-ir/ids";
 import { rewriteLegalityObligationId } from "../../../src/opt-ir/passes/pass-contract";
 import { runWrelaBoundsZeroCopyForTest } from "../../../src/opt-ir/passes/wrela-optimizations";
@@ -14,6 +15,7 @@ import {
 } from "../../../src/opt-ir/operations";
 import { optIrCallId, optIrOriginId, optIrRegionId, optIrValueId } from "../../../src/opt-ir/ids";
 import { optIrUnsignedIntegerType } from "../../../src/opt-ir/types";
+import { packetParserDemoInputForTest } from "../../support/opt-ir/packet-parser-demo-fixtures";
 
 describe("OptIR validated-buffer optimization integration", () => {
   test("requires access authority to be updated when bounds-check elimination removes a guard", () => {
@@ -97,6 +99,78 @@ describe("OptIR validated-buffer optimization integration", () => {
       authorityKey: "pass-derived:4:bce:payload",
     });
   });
+
+  test("canonical packet loads cite bounds, layout, endian, volatility, and path facts", () => {
+    const check = optIrRuntimeCallOperation({
+      operationId: optIrOperationId(10),
+      callId: optIrCallId(10),
+      target: { kind: "runtime", runtimeKey: "runtime.bounds_check" },
+      argumentIds: [],
+      resultIds: [],
+      resultTypes: [],
+      originId: optIrOriginId(1),
+    });
+    const access = loadOperation();
+
+    const result = runWrelaBoundsZeroCopyForTest({
+      operations: [check, access],
+      candidates: [
+        {
+          checkOperationId: check.operationId,
+          affectedAccessOperationIds: [access.operationId],
+          licensingFactId: optIrFactId(4),
+          obligationId: rewriteLegalityObligationId("bce:payload"),
+          factChain: ["bounds:payload", "layout:payload", "endian:big", "path:accepted"],
+        },
+      ],
+      zeroCopyAccessOperationIds: [access.operationId],
+    });
+
+    const rewritten = result.operations.find(
+      (operation) => operation.operationId === access.operationId,
+    );
+    expect(rewritten?.kind).toBe("memoryLoad");
+    if (rewritten?.kind !== "memoryLoad") {
+      throw new Error("Expected canonical memory load.");
+    }
+    expect(rewritten.memoryAccess).toMatchObject({
+      layoutPath: "layout:packet:payload",
+      endian: "big",
+      volatility: "nonVolatile",
+      boundsAuthority: {
+        kind: "validatedBuffer",
+        authorityKey: "pass-derived:4:bce:payload",
+      },
+    });
+    expect(result.explanations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "boundsCheckEliminated",
+          factChain: ["bounds:payload", "layout:payload", "endian:big", "path:accepted"],
+        }),
+        expect.objectContaining({
+          kind: "zeroCopyAccess",
+        }),
+      ]),
+    );
+  });
+
+  test("construction fails when required packet-validation or path-certificate handoff tables are absent", () => {
+    const input = packetParserDemoInputForTest();
+
+    expect(
+      buildOptimizedOptIr({
+        ...input,
+        handoff: { ...input.handoff, packetValidation: undefined } as never,
+      }).kind,
+    ).toBe("error");
+    expect(
+      buildOptimizedOptIr({
+        ...input,
+        handoff: { ...input.handoff, pathCertificates: undefined } as never,
+      }).kind,
+    ).toBe("error");
+  });
 });
 
 function loadOperation(): OptIrOperation {
@@ -110,6 +184,7 @@ function loadOperation(): OptIrOperation {
     valueType: optIrUnsignedIntegerType(32),
     endian: "big",
     volatility: "nonVolatile",
+    layoutPath: "layout:packet:payload" as never,
     boundsAuthority: { kind: "targetContract", authorityKey: "guarded" },
     originId: optIrOriginId(1),
   });

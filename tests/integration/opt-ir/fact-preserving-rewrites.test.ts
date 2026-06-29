@@ -7,7 +7,9 @@ import {
   optIrValueId,
 } from "../../../src/opt-ir/ids";
 import { optIrRuntimeCallOperation } from "../../../src/opt-ir/operations";
+import { buildOptimizedOptIr } from "../../../src/opt-ir/public-api";
 import { runWrelaMoveCopyWrapperElisionForTest } from "../../../src/opt-ir/passes/wrela-optimizations";
+import { packetParserDemoInputForTest } from "../../support/opt-ir/packet-parser-demo-fixtures";
 
 describe("OptIR fact-preserving Wrela rewrites", () => {
   test("debug explanations retain eliminated copy and wrapper fact chains", () => {
@@ -30,6 +32,53 @@ describe("OptIR fact-preserving Wrela rewrites", () => {
       "ownershipRuntimeIdentity",
       "abiWrapperEquivalence",
     ]);
+  });
+
+  test("keeps ownership transfers, copy helpers, and cleanup paths when facts do not prove erasure", () => {
+    const copy = operation(3);
+    const cleanup = operation(4);
+    const result = runWrelaMoveCopyWrapperElisionForTest({
+      operations: [copy, cleanup],
+      candidates: [
+        {
+          ...candidate(copy.operationId, "copy", optIrValueId(20), optIrValueId(21)),
+          erasureFactIds: [],
+        },
+        {
+          ...candidate(cleanup.operationId, "wrapper", optIrValueId(22), optIrValueId(23)),
+          hasObservableCleanup: true,
+        },
+      ],
+    });
+
+    expect(result.operations.map((entry) => entry.operationId)).toEqual([
+      copy.operationId,
+      cleanup.operationId,
+    ]);
+    expect(result.eliminatedOperationIds).toEqual([]);
+    expect(result.rejectedCandidates).toEqual([
+      { operationId: copy.operationId, reason: "missingErasureFact" },
+      { operationId: cleanup.operationId, reason: "observableCleanup" },
+    ]);
+  });
+
+  test("construction fails instead of falling back when semantic-inline policy table is absent", () => {
+    const input = packetParserDemoInputForTest();
+    const result = buildOptimizedOptIr({
+      ...input,
+      handoff: { ...input.handoff, semanticInlinePolicies: undefined } as never,
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.diagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            stableDetail: expect.stringContaining("semanticInlinePolicies"),
+          }),
+        ]),
+      );
+    }
   });
 });
 

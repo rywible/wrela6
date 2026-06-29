@@ -69,6 +69,7 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/integration/opt-ir/validated-buffer
 - Task 37 conjunction fact gates must report the sum of child minimum fact requirements, and extraction records should expose the plan-facing `rulesApplied` field alongside internal rule IDs.
 - Task 38 non-interpreter-complete e-graph rewrites must reject unapproved `notApplicable` reasons. Filtering unapproved reasons away lets unsupported slices be accepted without catalog authority.
 - Task 40 loop vector store rewrites must preserve the vector memory descriptor type and reject malformed store source-value shapes during legality, before rewrite construction can throw.
+- Task 42 packet-parser demonstrations should wrap the real optimizer result and provenance when using explicit demo operations. Fabricating an optimizer result hides pipeline/provenance regressions even if individual Wrela passes are real.
 
 ## Executor Protocol
 
