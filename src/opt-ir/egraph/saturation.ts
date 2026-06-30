@@ -2,6 +2,8 @@ import type { OptIrEGraph } from "./egraph";
 import type { OptIrFactGateEvaluationContext } from "./fact-gated-rule";
 import { evaluateOptIrFactGate } from "./fact-gated-rule";
 import type { OptIrRuleCatalog } from "./rule-catalog";
+import type { OptIrOperation } from "../operations";
+import { compareOptIrEGraphCost, optIrEGraphCostForOperations } from "./egraph-cost";
 
 export type OptIrEGraphSaturationCap = "iterations" | "eNodes" | "eClasses" | "ruleApplications";
 
@@ -18,21 +20,23 @@ export interface OptIrAppliedEGraphRule {
   readonly uncertaintyPenalty: number;
 }
 
-export interface OptIrEGraphSaturationResult {
+export interface OptIrEGraphGateApplicationCount {
   readonly graph: OptIrEGraph;
   readonly iterations: number;
   readonly eNodeCount: number;
   readonly eClassCount: number;
   readonly appliedRules: readonly OptIrAppliedEGraphRule[];
+  readonly appliedRuleIds: readonly string[];
   readonly hitCaps: readonly OptIrEGraphSaturationCap[];
+  readonly uncertaintyPenalty: number;
 }
 
-export function saturateOptIrEGraph(input: {
+export function countOptIrEGraphGateApplications(input: {
   readonly graph: OptIrEGraph;
   readonly catalog: OptIrRuleCatalog;
   readonly factContext: OptIrFactGateEvaluationContext;
   readonly limits: OptIrEGraphSaturationLimits;
-}): OptIrEGraphSaturationResult {
+}): OptIrEGraphGateApplicationCount {
   assertPositiveLimits(input.limits);
 
   const appliedRules: OptIrAppliedEGraphRule[] = [];
@@ -40,22 +44,21 @@ export function saturateOptIrEGraph(input: {
   let eNodeCount = input.graph.importOrder.length;
   const eClassCount = input.graph.classes.length;
   let iterations = 0;
+  let uncertaintyPenalty = 0;
 
   for (let iteration = 0; iteration < input.limits.maxIterations; iteration += 1) {
     iterations = iteration + 1;
     let appliedInIteration = false;
 
     for (const rule of input.catalog.rules) {
-      if (appliedRules.length >= input.limits.maxRuleApplications) {
-        hitCaps.add("ruleApplications");
-        break;
-      }
-      if (eNodeCount >= input.limits.maxENodes) {
-        hitCaps.add("eNodes");
-        break;
-      }
-      if (eClassCount >= input.limits.maxEClasses) {
-        hitCaps.add("eClasses");
+      const cap = nextSaturationCap({
+        appliedRuleCount: appliedRules.length,
+        eNodeCount,
+        eClassCount,
+        limits: input.limits,
+      });
+      if (cap !== undefined) {
+        hitCaps.add(cap);
         break;
       }
 
@@ -64,6 +67,7 @@ export function saturateOptIrEGraph(input: {
         continue;
       }
 
+      uncertaintyPenalty += gate.uncertaintyPenalty;
       appliedRules.push(
         Object.freeze({
           ruleId: String(rule.ruleId),
@@ -73,6 +77,11 @@ export function saturateOptIrEGraph(input: {
       );
       eNodeCount += 1;
       appliedInIteration = true;
+
+      if (appliedRules.length >= input.limits.maxRuleApplications) {
+        hitCaps.add("ruleApplications");
+        break;
+      }
     }
 
     if (hitCaps.size > 0 || !appliedInIteration) {
@@ -90,11 +99,53 @@ export function saturateOptIrEGraph(input: {
     eNodeCount,
     eClassCount,
     appliedRules: Object.freeze(appliedRules),
+    appliedRuleIds: Object.freeze(appliedRules.map((entry) => entry.ruleId)),
     hitCaps: Object.freeze([...hitCaps].sort()),
+    uncertaintyPenalty,
   });
 }
 
-function assertPositiveLimits(limits: OptIrEGraphSaturationLimits): void {
+export function saturatedOperationsImproveRegion(
+  originalRegionOperations: readonly OptIrOperation[],
+  rewrittenRegionOperations: readonly OptIrOperation[],
+): boolean {
+  return (
+    compareOptIrEGraphCost(
+      optIrEGraphCostForOperations(rewrittenRegionOperations),
+      optIrEGraphCostForOperations(originalRegionOperations),
+    ) < 0
+  );
+}
+
+export function saturationCountsForOperations(operations: readonly OptIrOperation[]): {
+  readonly eNodeCount: number;
+  readonly eClassCount: number;
+} {
+  return Object.freeze({
+    eNodeCount: operations.length,
+    eClassCount: new Set(operations.flatMap((operation) => operation.resultIds)).size,
+  });
+}
+
+export function nextSaturationCap(input: {
+  readonly appliedRuleCount: number;
+  readonly eNodeCount: number;
+  readonly eClassCount: number;
+  readonly limits: OptIrEGraphSaturationLimits;
+}): OptIrEGraphSaturationCap | undefined {
+  if (input.appliedRuleCount >= input.limits.maxRuleApplications) {
+    return "ruleApplications";
+  }
+  if (input.eNodeCount >= input.limits.maxENodes) {
+    return "eNodes";
+  }
+  if (input.eClassCount >= input.limits.maxEClasses) {
+    return "eClasses";
+  }
+  return undefined;
+}
+
+export function assertPositiveLimits(limits: OptIrEGraphSaturationLimits): void {
   for (const [name, value] of Object.entries(limits)) {
     if (!Number.isInteger(value) || value < 1) {
       throw new RangeError(`OptIR e-graph saturation limit ${name} must be a positive integer.`);

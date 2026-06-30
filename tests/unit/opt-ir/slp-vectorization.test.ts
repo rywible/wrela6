@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { optIrBlockId, optIrOperationId, optIrValueId } from "../../../src/opt-ir/ids";
+import {
+  optIrBlockId,
+  optIrOperationId,
+  optIrOriginId,
+  optIrValueId,
+} from "../../../src/opt-ir/ids";
 import type { OptIrSlpCandidate } from "../../../src/opt-ir/passes/slp-vectorization";
 import { runSlpVectorization } from "../../../src/opt-ir/passes/slp-vectorization";
 import { runVectorizationCleanup } from "../../../src/opt-ir/passes/vectorization-cleanup";
@@ -10,8 +15,6 @@ import { targetOptimizationSurfaceForTest } from "../../support/opt-ir/target-op
 describe("OptIR SLP vectorization", () => {
   test("pack discovery recognizes Wrela straight-line vector idioms", () => {
     const result = runSlpVectorization({
-      blockId: optIrBlockId(1),
-      scalarOperationIds: operationIds(),
       nextOperationId: 100,
       nextValueId: 200,
       candidates: [
@@ -52,8 +55,6 @@ describe("OptIR SLP vectorization", () => {
       allowUnalignedPacketLoads: false,
     };
     const result = runSlpVectorization({
-      blockId: optIrBlockId(1),
-      scalarOperationIds: operationIds(),
       nextOperationId: 100,
       nextValueId: 200,
       candidates: [
@@ -84,8 +85,6 @@ describe("OptIR SLP vectorization", () => {
 
   test("cleanup preserves unknown vector values and only removes dead shuffles", () => {
     const result = runSlpVectorization({
-      blockId: optIrBlockId(1),
-      scalarOperationIds: operationIds(),
       nextOperationId: 100,
       nextValueId: 200,
       candidates: [
@@ -118,6 +117,22 @@ describe("OptIR SLP vectorization", () => {
       optIrValueId(1002),
     ]);
   });
+
+  test("rejects hand-built SLP candidates without explicit placement", () => {
+    expect(() =>
+      runSlpVectorization({
+        nextOperationId: 100,
+        nextValueId: 200,
+        candidates: [
+          candidate("adjacentPacketFieldRead", {
+            blockId: undefined as never,
+            anchorOperationId: undefined as never,
+          }),
+        ],
+        policy: optIrDefaultVectorPolicy(targetOptimizationSurfaceForTest({ vectorEnabled: true })),
+      }),
+    ).toThrow("explicit placement");
+  });
 });
 
 type CandidateOverrides = Partial<Omit<OptIrSlpCandidate, "idiom">>;
@@ -128,6 +143,10 @@ function candidate(
 ): OptIrSlpCandidate {
   return {
     idiom,
+    blockId: optIrBlockId(1),
+    anchorOperationId: optIrOperationId(1),
+    scalarOperationIds: operationIds(),
+    originId: optIrOriginId(1),
     laneType: optIrUnsignedIntegerType(8),
     lanes: 4,
     byteOffset: 0n,

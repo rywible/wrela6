@@ -10,13 +10,6 @@ describe("OptIR loop vectorization legality", () => {
     const policy = optIrDefaultVectorPolicy(
       targetOptimizationSurfaceForTest({ vectorEnabled: true }),
     );
-    const sourceValueCandidate = loopVectorizationCandidateForTest();
-    const malformedStore = sourceValueCandidate.memoryAccesses.find(
-      (access) => access.kind === "store",
-    );
-    if (malformedStore === undefined) {
-      throw new Error("Invalid loop vectorization test fixture.");
-    }
     const result = validateLoopVectorizationLegality(
       [
         loopVectorizationCandidateForTest({
@@ -46,15 +39,6 @@ describe("OptIR loop vectorization legality", () => {
           loopId: "target",
           targetOperationKinds: ["runtimeCall"],
         }),
-        loopVectorizationCandidateForTest({
-          loopId: "malformed-store",
-          memoryAccesses: [
-            {
-              ...malformedStore,
-              sourceValueIds: [optIrValueId(20)],
-            },
-          ],
-        }),
       ],
       policy,
     );
@@ -63,7 +47,6 @@ describe("OptIR loop vectorization legality", () => {
     expect(result.rejections.map((rejection) => rejection.candidate.loopId)).toEqual([
       "carried",
       "effect",
-      "malformed-store",
       "memory",
       "missing-bounds",
       "target",
@@ -71,7 +54,6 @@ describe("OptIR loop vectorization legality", () => {
     expect(result.rejections.map((rejection) => rejection.reason)).toEqual([
       "illegalCarriedValue",
       "effectUnsafe",
-      "malformedMemoryAccess",
       "memoryDependence",
       "missingLaneBounds",
       "targetVectorOperationMissing",

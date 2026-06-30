@@ -23,16 +23,15 @@ export interface OptIrLoopLaneBoundsProof {
   readonly proven: boolean;
 }
 
-export type OptIrLoopMemoryAccessKind = "load" | "store";
-
-export interface OptIrLoopMemoryAccess {
+export interface OptIrLoopLoadMemoryAccess {
   readonly operationId: OptIrOperationId;
-  readonly kind: OptIrLoopMemoryAccessKind;
+  readonly kind: "load";
   readonly region: OptIrRegionId;
   readonly byteOffset: bigint;
   readonly byteWidth: number;
+  readonly vectorByteWidth: number;
   readonly alignment: number;
-  readonly sourceValueIds: readonly OptIrValueId[];
+  readonly sourceValueIds: readonly [];
   readonly boundsAuthority: OptIrBoundsAuthority;
   readonly memoryVersionBefore: number;
   readonly memoryVersionAfter: number;
@@ -67,7 +66,7 @@ export interface OptIrLoopEffectSafety {
   readonly vectorPermittedEffects: readonly OptIrLoopBlockedEffect[];
 }
 
-export interface OptIrLoopVectorizationCandidate {
+export interface OptIrLoopLoadPackCandidate {
   readonly loopId: string;
   readonly headerBlockId: OptIrBlockId;
   readonly latchBlockIds: readonly OptIrBlockId[];
@@ -81,7 +80,7 @@ export interface OptIrLoopVectorizationCandidate {
   readonly tripCount: OptIrLoopTripCount;
   readonly tailPlan: OptIrLoopVectorTailPlan;
   readonly laneBounds: readonly OptIrLoopLaneBoundsProof[];
-  readonly memoryAccesses: readonly OptIrLoopMemoryAccess[];
+  readonly memoryAccesses: readonly OptIrLoopLoadMemoryAccess[];
   readonly memoryIndependenceProven: boolean;
   readonly effectSafety: OptIrLoopEffectSafety;
   readonly targetOperationKinds: readonly OptIrOperationKind[];
@@ -109,7 +108,7 @@ export type OptIrLoopVectorizationShape =
     };
 
 export function classifyLoopVectorizationShape(
-  candidate: OptIrLoopVectorizationCandidate,
+  candidate: OptIrLoopLoadPackCandidate,
 ): OptIrLoopVectorizationShape {
   if (candidate.tripCount.kind === "unknown") {
     return { kind: "scalar", reason: "unknownTripCount" };
@@ -151,8 +150,8 @@ export function sortLoopVectorizationShapes(
 }
 
 export function sortLoopVectorizationCandidates(
-  candidates: readonly OptIrLoopVectorizationCandidate[],
-): readonly OptIrLoopVectorizationCandidate[] {
+  candidates: readonly OptIrLoopLoadPackCandidate[],
+): readonly OptIrLoopLoadPackCandidate[] {
   return Object.freeze(
     [...candidates].sort((left, right) => {
       const headerOrder = Number(left.headerBlockId) - Number(right.headerBlockId);
@@ -163,7 +162,7 @@ export function sortLoopVectorizationCandidates(
 }
 
 function scalarShape(
-  candidate: OptIrLoopVectorizationCandidate,
+  candidate: OptIrLoopLoadPackCandidate,
   reason: Extract<OptIrLoopVectorizationShape, { readonly kind: "scalar" }>["reason"],
 ): OptIrLoopVectorizationShape {
   return {

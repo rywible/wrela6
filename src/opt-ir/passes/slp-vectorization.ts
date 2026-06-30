@@ -1,13 +1,14 @@
-import { optIrOriginId, optIrOperationId, optIrRegionId, optIrValueId } from "../ids";
+import { optIrOperationId, optIrRegionId, optIrValueId } from "../ids";
 import {
   optIrVectorByteSwapOperation,
   optIrVectorCompareOperation,
   optIrVectorLoadOperation,
   optIrVectorStoreOperation,
   type OptIrEndian,
+  type OptIrMemoryAccessDescriptor,
   type OptIrOperation,
 } from "../operations";
-import type { OptIrBlockId, OptIrOperationId, OptIrValueId } from "../ids";
+import type { OptIrBlockId, OptIrOperationId, OptIrOriginId, OptIrValueId } from "../ids";
 import type { OptIrVectorPolicy } from "../policy/vector-policy";
 import {
   optIrVectorPolicyAllowsLaneCount,
@@ -37,6 +38,11 @@ export type OptIrSlpRejectionReason =
 
 export interface OptIrSlpCandidate {
   readonly idiom: OptIrSlpIdiom;
+  readonly blockId: OptIrBlockId;
+  readonly anchorOperationId: OptIrOperationId;
+  readonly scalarOperationIds: readonly OptIrOperationId[];
+  readonly originId: OptIrOriginId;
+  readonly memoryAccess?: OptIrMemoryAccessDescriptor;
   readonly laneType: OptIrScalarType;
   readonly lanes: number;
   readonly byteOffset: bigint;
@@ -54,8 +60,6 @@ export interface OptIrSlpCandidate {
 }
 
 export interface RunSlpVectorizationInput {
-  readonly blockId: OptIrBlockId;
-  readonly scalarOperationIds: readonly OptIrOperationId[];
   readonly nextOperationId: number;
   readonly nextValueId: number;
   readonly candidates: readonly OptIrSlpCandidate[];
@@ -63,6 +67,8 @@ export interface RunSlpVectorizationInput {
 }
 
 export interface OptIrSlpRewriteRecord {
+  readonly blockId: OptIrBlockId;
+  readonly anchorOperationId: OptIrOperationId;
   readonly scalarOperationIds: readonly OptIrOperationId[];
   readonly vectorOperationId: OptIrOperationId;
   readonly invariant: { readonly kind: "vectorLaneEquivalence" };
@@ -87,6 +93,7 @@ export function runSlpVectorization(input: RunSlpVectorizationInput): RunSlpVect
   let nextValueId = input.nextValueId;
 
   for (const candidate of input.candidates) {
+    assertSlpCandidatePlacement(candidate);
     const rejection = vectorLegalityRejection(candidate, input.policy);
     if (rejection !== undefined) {
       rejections.push({ candidate, reason: rejection });
@@ -100,7 +107,9 @@ export function runSlpVectorization(input: RunSlpVectorizationInput): RunSlpVect
     const operation = vectorOperationForCandidate(candidate, operationId, resultId);
     vectorOperations.push(operation);
     rewriteRecords.push({
-      scalarOperationIds: Object.freeze([...input.scalarOperationIds]),
+      blockId: candidate.blockId,
+      anchorOperationId: candidate.anchorOperationId,
+      scalarOperationIds: Object.freeze([...candidate.scalarOperationIds]),
       vectorOperationId: operation.operationId,
       invariant: { kind: "vectorLaneEquivalence" },
     });
@@ -111,6 +120,12 @@ export function runSlpVectorization(input: RunSlpVectorizationInput): RunSlpVect
     rewriteRecords: Object.freeze(rewriteRecords),
     rejections: Object.freeze(rejections),
   };
+}
+
+function assertSlpCandidatePlacement(candidate: OptIrSlpCandidate): void {
+  if (candidate.blockId === undefined || candidate.anchorOperationId === undefined) {
+    throw new Error("SLP vectorization candidates must carry explicit placement.");
+  }
 }
 
 function vectorLegalityRejection(
@@ -154,7 +169,7 @@ function vectorOperationForCandidate(
         endian: candidate.endian ?? "big",
         resultId,
         resultType: optIrVectorType(candidate.laneType, candidate.lanes),
-        originId: optIrOriginId(0),
+        originId: candidate.originId,
       });
     case "validationComparison":
     case "parserTableCheck":
@@ -163,7 +178,7 @@ function vectorOperationForCandidate(
         sourceValueIds: candidate.sourceValueIds,
         resultId,
         resultType: vectorMaskType(candidate.lanes),
-        originId: optIrOriginId(0),
+        originId: candidate.originId,
       });
     case "fixedWidthSet":
       return requireConstructedOperation(
@@ -171,15 +186,11 @@ function vectorOperationForCandidate(
           operationId,
           vector: requireSource(candidate, 0),
           storeValue: requireSource(candidate, 1),
-          region: optIrRegionId(0),
-          byteOffset: candidate.byteOffset,
-          byteWidth: candidate.byteWidth,
-          alignment: candidate.alignment,
-          valueType: optIrUnitType(),
-          endian: "native",
-          volatility: "nonVolatile",
-          boundsAuthority: { kind: "targetContract", authorityKey: "slp-fixed-width-set" },
-          originId: optIrOriginId(0),
+          ...memoryAccessInputForCandidate(candidate, {
+            valueType: optIrUnitType(),
+            boundsAuthorityKey: "slp-fixed-width-set",
+          }),
+          originId: candidate.originId,
         }),
       );
     case "adjacentPacketFieldRead":
@@ -190,18 +201,42 @@ function vectorOperationForCandidate(
           operationId,
           resultId,
           resultType: optIrVectorType(candidate.laneType, candidate.lanes),
-          region: optIrRegionId(0),
-          byteOffset: candidate.byteOffset,
-          byteWidth: candidate.byteWidth,
-          alignment: candidate.alignment,
-          valueType: optIrVectorType(candidate.laneType, candidate.lanes),
-          endian: "native",
-          volatility: "nonVolatile",
-          boundsAuthority: { kind: "targetContract", authorityKey: "slp-vector-load" },
-          originId: optIrOriginId(0),
+          ...memoryAccessInputForCandidate(candidate, {
+            valueType: optIrVectorType(candidate.laneType, candidate.lanes),
+            boundsAuthorityKey: "slp-vector-load",
+          }),
+          originId: candidate.originId,
         }),
       );
   }
+}
+
+function memoryAccessInputForCandidate(
+  candidate: OptIrSlpCandidate,
+  fallback: {
+    readonly valueType: OptIrMemoryAccessDescriptor["valueType"];
+    readonly boundsAuthorityKey: string;
+  },
+): OptIrMemoryAccessDescriptor {
+  return {
+    region: candidate.memoryAccess?.region ?? optIrRegionId(0),
+    byteOffset: candidate.memoryAccess?.byteOffset ?? candidate.byteOffset,
+    byteWidth: candidate.byteWidth,
+    alignment: candidate.memoryAccess?.alignment ?? candidate.alignment,
+    valueType: fallback.valueType,
+    endian: candidate.memoryAccess?.endian ?? "native",
+    volatility: candidate.memoryAccess?.volatility ?? "nonVolatile",
+    ...(candidate.memoryAccess?.layoutPath === undefined
+      ? {}
+      : { layoutPath: candidate.memoryAccess.layoutPath }),
+    ...(candidate.memoryAccess?.validatedBuffer === undefined
+      ? {}
+      : { validatedBuffer: candidate.memoryAccess.validatedBuffer }),
+    boundsAuthority: candidate.memoryAccess?.boundsAuthority ?? {
+      kind: "targetContract",
+      authorityKey: fallback.boundsAuthorityKey,
+    },
+  };
 }
 
 function firstSource(candidate: OptIrSlpCandidate): OptIrValueId {

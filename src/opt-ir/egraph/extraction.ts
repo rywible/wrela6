@@ -5,14 +5,21 @@ import type {
   OptIrEGraphExtractionPolicyRank,
 } from "../policy/egraph-extraction-policy";
 
-export interface OptIrExtractionCandidate<Extracted = unknown> {
-  readonly extracted: Extracted;
+export interface OptIrExtractionCandidateDescriptor {
   readonly regionId: OptIrRewriteRegionId;
   readonly stableRootOperationId: OptIrOperationId;
   readonly policyRank: OptIrEGraphExtractionPolicyRank;
   readonly uncertaintyPenalty: number;
   readonly appliedRuleIds: readonly string[];
 }
+
+export interface OptIrExtractionCandidate<
+  Extracted = unknown,
+> extends OptIrExtractionCandidateDescriptor {
+  readonly extracted: Extracted;
+}
+
+type OptIrExtractionDescriptorCarrier = OptIrExtractionCandidateDescriptor;
 
 export interface OptIrExtractionRecord {
   readonly policyId: string;
@@ -48,17 +55,7 @@ export function extractOptIrEGraph<Original, Extracted>(input: {
   readonly policy: OptIrEGraphExtractionPolicy;
   readonly tracingEnabled: boolean;
 }): OptIrExtractionResult<Original, Extracted> {
-  if (input.candidates.length === 0) {
-    return Object.freeze({
-      kind: "unchanged",
-      optIr: input.original,
-      diagnostics: Object.freeze(input.tracingEnabled ? [debugDiagnostic()] : []),
-    });
-  }
-
-  const [selected] = [...input.candidates].sort((left, right) =>
-    compareExtractionCandidates(left, right, input.policy),
-  );
+  const selected = selectOptIrExtractionCandidate(input.candidates, input.policy);
   if (selected === undefined) {
     return Object.freeze({
       kind: "unchanged",
@@ -84,9 +81,29 @@ export function extractOptIrEGraph<Original, Extracted>(input: {
   });
 }
 
-function compareExtractionCandidates<Extracted>(
-  left: OptIrExtractionCandidate<Extracted>,
-  right: OptIrExtractionCandidate<Extracted>,
+export function selectOptIrExtractionCandidate<Extracted>(
+  candidates: readonly OptIrExtractionCandidate<Extracted>[],
+  policy: OptIrEGraphExtractionPolicy,
+): OptIrExtractionCandidate<Extracted> | undefined {
+  return selectOptIrExtractionDescriptor(candidates, policy);
+}
+
+export function selectOptIrExtractionDescriptor<Candidate extends OptIrExtractionDescriptorCarrier>(
+  candidates: readonly Candidate[],
+  policy: OptIrEGraphExtractionPolicy,
+): Candidate | undefined {
+  if (candidates.length === 0) {
+    return undefined;
+  }
+  const [selected] = [...candidates].sort((left, right) =>
+    compareExtractionDescriptors(left, right, policy),
+  );
+  return selected;
+}
+
+function compareExtractionDescriptors(
+  left: OptIrExtractionDescriptorCarrier,
+  right: OptIrExtractionDescriptorCarrier,
   policy: OptIrEGraphExtractionPolicy,
 ): number {
   return (

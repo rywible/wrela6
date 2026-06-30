@@ -208,13 +208,54 @@ function verifyValueDominance(input: {
           definition === undefined ||
           !definitionDominatesUse(definition, block.blockId, position, dominance)
         ) {
-          diagnostics.push(dominanceDiagnostic(input.context, operation, valueId));
+          diagnostics.push(
+            dominanceDiagnostic({
+              context: input.context,
+              operationId: operation.operationId,
+              originId: operation.originId,
+              valueId,
+            }),
+          );
         }
       }
       position += 1;
     }
+    if (block.terminator !== undefined) {
+      for (const valueId of terminatorValueUses(block.terminator)) {
+        const definition = input.definitions.get(valueId);
+        if (
+          definition === undefined ||
+          !definitionDominatesUse(definition, block.blockId, position, dominance)
+        ) {
+          diagnostics.push(
+            dominanceDiagnostic({
+              context: input.context,
+              operationId: block.terminator.operationId,
+              originId: block.terminator.originId,
+              valueId,
+            }),
+          );
+        }
+      }
+    }
   }
   return diagnostics;
+}
+
+function terminatorValueUses(
+  terminator: NonNullable<OptIrFunction["blocks"][number]["terminator"]>,
+): readonly OptIrValueId[] {
+  switch (terminator.kind) {
+    case "branch":
+      return [terminator.condition];
+    case "switch":
+      return [terminator.scrutinee];
+    case "return":
+      return terminator.values;
+    case "jump":
+    case "unreachable":
+      return [];
+  }
 }
 
 function definitionDominatesUse(
@@ -229,18 +270,19 @@ function definitionDominatesUse(
   return dominance.blockDominatesUse(definition.blockId, useBlockId);
 }
 
-function dominanceDiagnostic(
-  context: OptIrVerifierContext,
-  operation: OptIrOperation,
-  valueId: OptIrValueId,
-): OptIrDiagnostic {
+function dominanceDiagnostic(input: {
+  readonly context: OptIrVerifierContext;
+  readonly operationId: OptIrOperationId;
+  readonly originId: OptIrVerifierContext["originId"];
+  readonly valueId: OptIrValueId;
+}): OptIrDiagnostic {
   return makeOptIrVerifierDiagnostic({
     code: "OPT_IR_DOMINANCE_VIOLATION",
     messageTemplate: "OptIR value use is not dominated by its definition.",
-    ownerKey: `operation:${operation.operationId}`,
-    rootCauseKey: `value:${valueId}`,
-    stableDetail: `value-dominance:${operation.operationId}:${valueId}`,
-    originId: operation.originId,
-    functionId: context.functionId,
+    ownerKey: `operation:${input.operationId}`,
+    rootCauseKey: `value:${input.valueId}`,
+    stableDetail: `value-dominance:${input.operationId}:${input.valueId}`,
+    originId: input.originId,
+    functionId: input.context.functionId,
   });
 }

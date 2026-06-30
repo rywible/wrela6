@@ -9,6 +9,7 @@ import {
   optIrProgramWithLaterDominatingDefinitionForTest,
   optIrProgramWithMetadataMismatchForTest,
   optIrProgramWithMissingRegionTokenForTest,
+  optIrProgramWithMissingReturnValueDefinitionForTest,
   optIrProgramWithSiblingBranchDominanceViolationForTest,
   optIrVerifierInputForTest,
   validVerifierProgramForTest,
@@ -61,6 +62,15 @@ describe("OptIR verifier suite", () => {
     const result = verifyOptIrProgramForTest(
       optIrProgramWithSiblingBranchDominanceViolationForTest(),
     );
+
+    expect(result.kind).toBe("error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      optIrDiagnosticCode("OPT_IR_DOMINANCE_VIOLATION"),
+    );
+  });
+
+  test("ssa verifier rejects terminator values without definitions", () => {
+    const result = verifyOptIrProgramForTest(optIrProgramWithMissingReturnValueDefinitionForTest());
 
     expect(result.kind).toBe("error");
     expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(

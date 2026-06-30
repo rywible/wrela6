@@ -1,4 +1,5 @@
 import type { OptIrOperationId, OptIrRegionId, OptIrRewriteRegionId } from "../ids";
+import type { OptIrEGraphExtractionPolicyRank } from "../policy/egraph-extraction-policy";
 
 export type OptIrEGraphRegionKind =
   | "parserValidationReadDispatchSlice"
@@ -98,7 +99,7 @@ function compareCandidates(
   );
 }
 
-function priorityForKind(kind: OptIrEGraphRegionKind): number {
+export function priorityRankForOptIrEGraphRegionKind(kind: OptIrEGraphRegionKind): number {
   switch (kind) {
     case "parserValidationReadDispatchSlice":
       return 0;
@@ -109,6 +110,16 @@ function priorityForKind(kind: OptIrEGraphRegionKind): number {
     case "pureScalarDag":
       return 3;
   }
+}
+
+export function extractionPolicyRankForRegionKind(
+  kind: OptIrEGraphRegionKind,
+): OptIrEGraphExtractionPolicyRank {
+  return priorityRankForOptIrEGraphRegionKind(kind) as OptIrEGraphExtractionPolicyRank;
+}
+
+function priorityForKind(kind: OptIrEGraphRegionKind): number {
+  return priorityRankForOptIrEGraphRegionKind(kind);
 }
 
 function containingSize(candidate: OptIrEGraphRegionCandidate): number {
@@ -125,15 +136,15 @@ function regionsOverlap(
 function freezeCandidate(candidate: OptIrEGraphRegionCandidate): OptIrEGraphRegionCandidate {
   return Object.freeze({
     ...candidate,
-    operationIds: Object.freeze(sortIds(candidate.operationIds)),
+    operationIds: Object.freeze([...candidate.operationIds]),
     ...(candidate.containingOperationIds === undefined
       ? {}
-      : { containingOperationIds: Object.freeze(sortIds(candidate.containingOperationIds)) }),
+      : { containingOperationIds: Object.freeze([...candidate.containingOperationIds]) }),
     ...(candidate.tokenWindow === undefined
       ? {}
       : {
           tokenWindow: Object.freeze({
-            operationIds: Object.freeze(sortIds(candidate.tokenWindow.operationIds)),
+            operationIds: Object.freeze([...candidate.tokenWindow.operationIds]),
             tokenInputKeys: Object.freeze(
               [...candidate.tokenWindow.tokenInputKeys].sort(compareStrings),
             ),
@@ -143,12 +154,6 @@ function freezeCandidate(candidate: OptIrEGraphRegionCandidate): OptIrEGraphRegi
           }),
         }),
   });
-}
-
-function sortIds<Identifier extends number>(
-  identifiers: readonly Identifier[],
-): readonly Identifier[] {
-  return [...identifiers].sort((left, right) => Number(left) - Number(right));
 }
 
 function compareStrings(left: string, right: string): number {

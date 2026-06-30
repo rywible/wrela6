@@ -9,11 +9,19 @@ import {
   optIrFactGate,
   type OptIrFactGateEvaluationContext,
 } from "../../../src/opt-ir/egraph/fact-gated-rule";
+import { buildOptIrFactGateContextFromFacts } from "../../../src/opt-ir/egraph/fact-context";
 import { createDefaultOptIrRuleCatalog } from "../../../src/opt-ir/egraph/rule-catalog";
-import { saturateOptIrEGraph } from "../../../src/opt-ir/egraph/saturation";
+import { countOptIrEGraphGateApplications } from "../../../src/opt-ir/egraph/saturation";
 import { importOperationsIntoEGraphForTest } from "../../../src/opt-ir/egraph/egraph";
+import { optIrFactSetFromRecords, type OptIrFactSet } from "../../../src/opt-ir/facts/fact-index";
 import { defaultOptIrEGraphExtractionPolicy } from "../../../src/opt-ir/policy/egraph-extraction-policy";
-import { optIrFactId, optIrOperationId, optIrRewriteRegionId } from "../../../src/opt-ir/ids";
+import {
+  optIrFactId,
+  optIrFunctionId,
+  optIrOperationId,
+  optIrRegionId,
+  optIrRewriteRegionId,
+} from "../../../src/opt-ir/ids";
 import { shuffledOperandImportFixtureForTest } from "../../support/opt-ir/egraph-fixtures";
 
 describe("fact-gated OptIR e-graph rewriting", () => {
@@ -66,12 +74,38 @@ describe("fact-gated OptIR e-graph rewriting", () => {
     });
   });
 
+  test("fact context blocks accepted-kind facts when no subject role matches", () => {
+    const context = buildOptIrFactGateContextFromFacts(
+      factSetWithSubjectKeyForTest("validatedBuffer", "region:unrelated"),
+    );
+
+    expect(evaluateOptIrFactGate(optIrFactGate.bounds("dominating-validation"), context)).toEqual({
+      kind: "blocked",
+      factsUsed: [],
+      missingGateKinds: ["bounds"],
+      uncertaintyPenalty: 1,
+    });
+  });
+
+  test("fact context does not satisfy gates through substring subject matches", () => {
+    const context = buildOptIrFactGateContextFromFacts(
+      factSetWithSubjectKeyForTest("validatedBuffer", "not-the-dominating-validation-subject"),
+    );
+
+    expect(evaluateOptIrFactGate(optIrFactGate.bounds("dominating-validation"), context)).toEqual({
+      kind: "blocked",
+      factsUsed: [],
+      missingGateKinds: ["bounds"],
+      uncertaintyPenalty: 1,
+    });
+  });
+
   test("saturation respects iteration, e-node, e-class, and rule application caps", () => {
     const graph = importOperationsIntoEGraphForTest(
       shuffledOperandImportFixtureForTest().operations,
     );
     const catalog = createDefaultOptIrRuleCatalog();
-    const saturated = saturateOptIrEGraph({
+    const saturated = countOptIrEGraphGateApplications({
       graph,
       catalog,
       factContext: gateContext({
@@ -194,4 +228,34 @@ function extractionCandidate(input: {
     uncertaintyPenalty: input.uncertaintyPenalty,
     appliedRuleIds: [],
   };
+}
+
+function factSetWithSubjectKeyForTest(
+  packetKind: OptIrFactSet["records"][number]["packetKind"],
+  subjectKey: string,
+): OptIrFactSet {
+  return optIrFactSetFromRecords([
+    {
+      factId: optIrFactId(1),
+      packetFactId: "packet:1" as never,
+      packetKind,
+      subject: { kind: "region", regionId: optIrRegionId(1) } as never,
+      subjectKey,
+      scope: { kind: "function", functionId: optIrFunctionId(1) } as never,
+      scopeKey: "function:unrelated",
+      certificate: {} as never,
+      dependencies: [],
+      dependencyKeys: [],
+      invalidations: [],
+      origin: {} as never,
+      typedAnswers: [],
+      explanation: {
+        answerKinds: [],
+        dependencyKinds: [],
+        dependencyExplanations: [],
+        certificateExplanation: "",
+      },
+      lineage: {} as never,
+    },
+  ]);
 }

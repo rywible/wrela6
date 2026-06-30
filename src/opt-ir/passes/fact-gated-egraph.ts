@@ -7,11 +7,7 @@ export type OptIrFactGatedEGraphValidationResult =
   | { readonly kind: "error"; readonly diagnostics: readonly OptIrDiagnostic[] };
 
 export interface OptIrFactGatedEGraphValidators<OptIr> {
-  readonly structural: (optIr: OptIr) => OptIrFactGatedEGraphValidationResult;
-  readonly effect: (optIr: OptIr) => OptIrFactGatedEGraphValidationResult;
-  readonly dominance: (optIr: OptIr) => OptIrFactGatedEGraphValidationResult;
-  readonly fact: (optIr: OptIr) => OptIrFactGatedEGraphValidationResult;
-  readonly rewriteLegality: (optIr: OptIr) => OptIrFactGatedEGraphValidationResult;
+  readonly validatePostReplacement: (optIr: OptIr) => OptIrFactGatedEGraphValidationResult;
 }
 
 export type OptIrFactGatedEGraphPassResult<Original, Extracted> =
@@ -59,15 +55,12 @@ export function runFactGatedEGraphPass<Original, Extracted>(input: {
     };
   }
 
-  const validationDiagnostics = runPostReplacementValidators(
-    input.extraction.extracted,
-    input.validators,
-  );
-  if (validationDiagnostics.length > 0) {
+  const validationResult = input.validators.validatePostReplacement(input.extraction.extracted);
+  if (validationResult.kind === "error") {
     return {
       kind: "unchanged",
       optIr: input.original,
-      diagnostics: diagnosticsWhenTracing(validationDiagnostics, input.tracingEnabled),
+      diagnostics: diagnosticsWhenTracing(validationResult.diagnostics, input.tracingEnabled),
     };
   }
 
@@ -88,26 +81,6 @@ export function runFactGatedEGraphPass<Original, Extracted>(input: {
           )
         : [],
   };
-}
-
-function runPostReplacementValidators<OptIr>(
-  optIr: OptIr,
-  validators: OptIrFactGatedEGraphValidators<OptIr>,
-): readonly OptIrDiagnostic[] {
-  const diagnostics: OptIrDiagnostic[] = [];
-  for (const validate of [
-    validators.structural,
-    validators.effect,
-    validators.dominance,
-    validators.fact,
-    validators.rewriteLegality,
-  ]) {
-    const result = validate(optIr);
-    if (result.kind === "error") {
-      diagnostics.push(...result.diagnostics);
-    }
-  }
-  return Object.freeze(diagnostics);
 }
 
 function diagnosticsWhenTracing(

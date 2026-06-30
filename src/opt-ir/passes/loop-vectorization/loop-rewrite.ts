@@ -2,24 +2,28 @@ import { optIrOperationId, optIrValueId, type OptIrOperationId } from "../../ids
 import {
   optIrVectorLoadOperation,
   optIrVectorMaskedLoadOperation,
-  optIrVectorMaskedStoreOperation,
-  optIrVectorStoreOperation,
   type OptIrOperation,
 } from "../../operations";
 import type { RewriteInvariant } from "../pass-contract";
 import { optIrVectorType } from "../../vector-types";
 import {
   classifyLoopVectorizationShape,
-  type OptIrLoopMemoryAccess,
+  type OptIrLoopLoadMemoryAccess,
+  type OptIrLoopLoadPackCandidate,
   type OptIrLoopVectorTailPlan,
-  type OptIrLoopVectorizationCandidate,
 } from "./loop-shape";
 
 export interface OptIrLoopVectorRewriteRecord {
   readonly loopId: string;
-  readonly headerBlockId: OptIrLoopVectorizationCandidate["headerBlockId"];
+  readonly headerBlockId: OptIrLoopLoadPackCandidate["headerBlockId"];
+  readonly bodyBlockIds: readonly OptIrLoopLoadPackCandidate["bodyBlockIds"][number][];
   readonly scalarOperationIds: readonly OptIrOperationId[];
   readonly vectorOperationIds: readonly OptIrOperationId[];
+  readonly memoryScalarVectorPairs: readonly {
+    readonly scalarOperationId: OptIrOperationId;
+    readonly vectorOperationId: OptIrOperationId;
+  }[];
+  readonly vectorIterationCount: number;
   readonly tailPlan: OptIrLoopVectorTailPlan;
   readonly invariant: RewriteInvariant;
 }
@@ -30,7 +34,7 @@ export interface RewriteLoopVectorizationResult {
 }
 
 export function rewriteLoopVectorizationCandidates(
-  candidates: readonly OptIrLoopVectorizationCandidate[],
+  candidates: readonly OptIrLoopLoadPackCandidate[],
 ): RewriteLoopVectorizationResult {
   const vectorOperations: OptIrOperation[] = [];
   const rewriteRecords: OptIrLoopVectorRewriteRecord[] = [];
@@ -63,8 +67,18 @@ export function rewriteLoopVectorizationCandidates(
     rewriteRecords.push({
       loopId: candidate.loopId,
       headerBlockId: candidate.headerBlockId,
+      bodyBlockIds: Object.freeze([...candidate.bodyBlockIds]),
       scalarOperationIds: Object.freeze([...candidate.scalarOperationIds]),
       vectorOperationIds: Object.freeze(vectorOperationIds),
+      memoryScalarVectorPairs: Object.freeze(
+        candidate.memoryAccesses.map((access, index) =>
+          Object.freeze({
+            scalarOperationId: access.operationId,
+            vectorOperationId: vectorOperationIds[index]!,
+          }),
+        ),
+      ),
+      vectorIterationCount: shape.vectorIterationCount,
       tailPlan: shape.tailPlan,
       invariant: {
         kind: "conjunction",
@@ -84,8 +98,8 @@ export function rewriteLoopVectorizationCandidates(
 }
 
 function operationForAccess(input: {
-  readonly candidate: OptIrLoopVectorizationCandidate;
-  readonly access: OptIrLoopMemoryAccess;
+  readonly candidate: OptIrLoopLoadPackCandidate;
+  readonly access: OptIrLoopLoadMemoryAccess;
   readonly operationId: OptIrOperationId;
   readonly nextValueId: number;
 }): OptIrOperation {
@@ -94,7 +108,7 @@ function operationForAccess(input: {
     operationId: input.operationId,
     region: input.access.region,
     byteOffset: input.access.byteOffset,
-    byteWidth: input.access.byteWidth,
+    byteWidth: input.access.vectorByteWidth,
     alignment: input.access.alignment,
     valueType,
     endian: "native" as const,
@@ -107,44 +121,18 @@ function operationForAccess(input: {
     throw new Error("Cannot rewrite a scalar loop shape.");
   }
   const mask = shape.tailPlan.kind === "maskedTail" ? shape.tailPlan.maskValueId : undefined;
-
-  if (input.access.kind === "load") {
-    const resultId = optIrValueId(input.nextValueId);
-    const result =
-      mask === undefined
-        ? optIrVectorLoadOperation({ ...common, resultId, resultType: valueType })
-        : optIrVectorMaskedLoadOperation({ ...common, resultId, resultType: valueType, mask });
-    return requireConstructedOperation(result);
-  }
-
-  const vector = requiredSource(input.access, 0);
-  const storeValue = requiredSource(input.access, 1);
+  const resultId = optIrValueId(input.nextValueId);
   const result =
     mask === undefined
-      ? optIrVectorStoreOperation({ ...common, vector, storeValue })
-      : optIrVectorMaskedStoreOperation({
-          ...common,
-          vector,
-          storeValue,
-          mask,
-        });
+      ? optIrVectorLoadOperation({ ...common, resultId, resultType: valueType })
+      : optIrVectorMaskedLoadOperation({ ...common, resultId, resultType: valueType, mask });
   return requireConstructedOperation(result);
-}
-
-function requiredSource(access: OptIrLoopMemoryAccess, index: number) {
-  const valueId = access.sourceValueIds[index];
-  if (valueId === undefined) {
-    throw new Error("Loop vector operation construction missing source values after legality.");
-  }
-  return valueId;
 }
 
 function requireConstructedOperation(
   result:
     | ReturnType<typeof optIrVectorLoadOperation>
-    | ReturnType<typeof optIrVectorMaskedLoadOperation>
-    | ReturnType<typeof optIrVectorStoreOperation>
-    | ReturnType<typeof optIrVectorMaskedStoreOperation>,
+    | ReturnType<typeof optIrVectorMaskedLoadOperation>,
 ): OptIrOperation {
   if (result.kind === "error") {
     throw new Error("Loop vector operation construction failed after legality.");

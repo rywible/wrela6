@@ -204,6 +204,23 @@ export function optIrProgramWithDominanceViolationForTest() {
   });
 }
 
+export function optIrProgramWithMissingReturnValueDefinitionForTest() {
+  const block = blockForTest({
+    terminator: {
+      kind: "return",
+      operationId: optIrOperationId(10),
+      values: [optIrValueId(404)],
+      originId: optIrOriginId(1),
+    },
+  });
+  return optIrVerifierInputForTest({
+    program: programForFunctionForTest(
+      functionForTest({ blocks: [block], entryBlock: block.blockId }),
+    ),
+    operations: [],
+  });
+}
+
 export function optIrProgramWithSiblingBranchDominanceViolationForTest() {
   const condition = optIrBlockParameter({
     valueId: optIrValueId(1),

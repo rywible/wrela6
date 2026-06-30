@@ -8,7 +8,7 @@ import {
   classifyLoopVectorizationShape,
   sortLoopVectorizationCandidates,
   type OptIrLoopCarriedValue,
-  type OptIrLoopVectorizationCandidate,
+  type OptIrLoopLoadPackCandidate,
 } from "./loop-shape";
 
 export type OptIrLoopVectorizationRejectionReason =
@@ -23,31 +23,25 @@ export type OptIrLoopVectorizationRejectionReason =
   | "registerPressureTooHigh";
 
 export interface OptIrLoopVectorizationRejection {
-  readonly candidate: OptIrLoopVectorizationCandidate;
+  readonly candidate: OptIrLoopLoadPackCandidate;
   readonly reason: OptIrLoopVectorizationRejectionReason;
 }
 
 export interface OptIrLoopVectorizationLegalityResult {
-  readonly accepted: readonly OptIrLoopVectorizationCandidate[];
+  readonly accepted: readonly OptIrLoopLoadPackCandidate[];
   readonly rejections: readonly OptIrLoopVectorizationRejection[];
 }
 
-const LEGAL_VECTOR_OPERATION_KINDS = new Set<OptIrOperationKind>([
+const LEGAL_LOOP_LOAD_PACK_OPERATION_KINDS = new Set<OptIrOperationKind>([
   "vectorLoad",
-  "vectorStore",
   "vectorMaskedLoad",
-  "vectorMaskedStore",
-  "vectorShuffle",
-  "vectorCompare",
-  "vectorSelect",
-  "vectorByteSwap",
 ]);
 
 export function validateLoopVectorizationLegality(
-  candidates: readonly OptIrLoopVectorizationCandidate[],
+  candidates: readonly OptIrLoopLoadPackCandidate[],
   policy: OptIrVectorPolicy,
 ): OptIrLoopVectorizationLegalityResult {
-  const accepted: OptIrLoopVectorizationCandidate[] = [];
+  const accepted: OptIrLoopLoadPackCandidate[] = [];
   const rejections: OptIrLoopVectorizationRejection[] = [];
 
   for (const candidate of sortLoopVectorizationCandidates(candidates)) {
@@ -66,7 +60,7 @@ export function validateLoopVectorizationLegality(
 }
 
 function legalityRejection(
-  candidate: OptIrLoopVectorizationCandidate,
+  candidate: OptIrLoopLoadPackCandidate,
   policy: OptIrVectorPolicy,
 ): OptIrLoopVectorizationRejectionReason | undefined {
   const shape = classifyLoopVectorizationShape(candidate);
@@ -78,7 +72,7 @@ function legalityRejection(
     !optIrVectorPolicyAllowsLaneType(policy, candidate.laneType) ||
     !optIrVectorPolicyAllowsLaneCount(policy, candidate.lanes) ||
     !candidate.targetOperationKinds.every((operationKind) =>
-      LEGAL_VECTOR_OPERATION_KINDS.has(operationKind),
+      LEGAL_LOOP_LOAD_PACK_OPERATION_KINDS.has(operationKind),
     )
   ) {
     return "targetVectorOperationMissing";
@@ -104,25 +98,17 @@ function legalityRejection(
   return undefined;
 }
 
-function memoryAccessShapesAreWellFormed(candidate: OptIrLoopVectorizationCandidate): boolean {
-  return candidate.memoryAccesses.every((access) => {
-    if (access.kind === "load") {
-      return access.sourceValueIds.length === 0;
-    }
-    return access.sourceValueIds.length === 2;
-  });
+function memoryAccessShapesAreWellFormed(candidate: OptIrLoopLoadPackCandidate): boolean {
+  return candidate.memoryAccesses.every((access) => access.sourceValueIds.length === 0);
 }
 
-function memoryVersionsAreCompatible(candidate: OptIrLoopVectorizationCandidate): boolean {
-  return candidate.memoryAccesses.every((access) => {
-    if (access.kind === "load") {
-      return access.memoryVersionBefore === access.memoryVersionAfter;
-    }
-    return access.memoryVersionAfter === access.memoryVersionBefore + 1;
-  });
+function memoryVersionsAreCompatible(candidate: OptIrLoopLoadPackCandidate): boolean {
+  return candidate.memoryAccesses.every(
+    (access) => access.memoryVersionBefore === access.memoryVersionAfter,
+  );
 }
 
-function effectsAreVectorSafe(candidate: OptIrLoopVectorizationCandidate): boolean {
+function effectsAreVectorSafe(candidate: OptIrLoopLoadPackCandidate): boolean {
   if (!candidate.effectSafety.safe) {
     return false;
   }

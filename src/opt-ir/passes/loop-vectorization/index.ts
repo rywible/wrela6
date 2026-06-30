@@ -4,7 +4,7 @@ import { rewriteLoopVectorizationCandidates } from "./loop-rewrite";
 import {
   classifyLoopVectorizationShape,
   sortLoopVectorizationCandidates,
-  type OptIrLoopVectorizationCandidate,
+  type OptIrLoopLoadPackCandidate,
 } from "./loop-shape";
 
 export type {
@@ -17,15 +17,15 @@ export type {
   OptIrLoopCarriedValue,
   OptIrLoopEffectSafety,
   OptIrLoopLaneBoundsProof,
-  OptIrLoopMemoryAccess,
+  OptIrLoopLoadMemoryAccess,
+  OptIrLoopLoadPackCandidate,
   OptIrLoopTripCount,
   OptIrLoopVectorTailPlan,
-  OptIrLoopVectorizationCandidate,
   OptIrLoopVectorizationShape,
 } from "./loop-shape";
 
 export interface RunLoopVectorizationInput {
-  readonly candidates: readonly OptIrLoopVectorizationCandidate[];
+  readonly candidates: readonly OptIrLoopLoadPackCandidate[];
   readonly policy: OptIrVectorPolicy;
 }
 

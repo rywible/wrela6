@@ -1,5 +1,11 @@
 import { targetId } from "../../semantic/ids";
-import { optIrFactId, type OptIrFactId, type OptIrOperationId, type OptIrValueId } from "../ids";
+import {
+  optIrFactId,
+  type OptIrBlockId,
+  type OptIrFactId,
+  type OptIrOperationId,
+  type OptIrValueId,
+} from "../ids";
 import type { OptIrFactSet } from "../facts/fact-index";
 import type { OptIrOperation } from "../operations";
 import {
@@ -100,18 +106,38 @@ export function runPerFunctionPass<
   state: PipelineState,
   pass: (func: OptIrFunction, operations: ReadonlyMap<OptIrOperationId, OptIrOperation>) => Result,
 ): PipelineState {
-  const currentOperations = operationMap(state.operations);
-  const functions: OptIrFunction[] = [];
-  const operations: OptIrOperation[] = [];
-  for (const func of state.program.functions.entries()) {
-    const result = pass(func, currentOperations);
-    functions.push(result.function);
-    operations.push(...result.operations);
-  }
+  const mapped = mapPerFunctionPassOnOperations(state.program, state.operations, pass);
   return {
     ...state,
-    program: optIrProgram({ ...state.program, functions: optIrFunctionTable(functions) }),
-    operations: sortedOperations(operations),
+    program: mapped.program,
+    operations: mapped.operations,
+  };
+}
+
+export function mapPerFunctionPassOnOperations<
+  Result extends {
+    readonly function: OptIrFunction;
+    readonly operations: readonly OptIrOperation[];
+  },
+>(
+  program: OptIrProgram,
+  operations: readonly OptIrOperation[],
+  pass: (
+    func: OptIrFunction,
+    operationById: ReadonlyMap<OptIrOperationId, OptIrOperation>,
+  ) => Result,
+): { readonly program: OptIrProgram; readonly operations: readonly OptIrOperation[] } {
+  const operationById = operationMap(operations);
+  const functions: OptIrFunction[] = [];
+  const nextOperations: OptIrOperation[] = [];
+  for (const function_ of program.functions.entries()) {
+    const result = pass(function_, operationById);
+    functions.push(result.function);
+    nextOperations.push(...result.operations);
+  }
+  return {
+    program: optIrProgram({ ...program, functions: optIrFunctionTable(functions) }),
+    operations: sortedOperations(nextOperations),
   };
 }
 
@@ -240,6 +266,20 @@ export function functionContainingOperation(
     .find((func) => func.blocks.some((block) => block.operations.includes(operationId)));
 }
 
+export function blockContainingOperation(
+  program: OptIrProgram,
+  operationId: OptIrOperationId,
+): OptIrBlockId | undefined {
+  for (const function_ of program.functions.entries()) {
+    for (const block of function_.blocks) {
+      if (block.operations.includes(operationId)) {
+        return block.blockId;
+      }
+    }
+  }
+  return undefined;
+}
+
 export function isSourceCall(operation: OptIrOperation): operation is OptIrOperation & {
   readonly target: {
     readonly kind: "source";
@@ -256,6 +296,26 @@ export function stateChanged(left: PipelineState, right: PipelineState): boolean
     stableJson(stableProgram(left.program)) !== stableJson(stableProgram(right.program)) ||
     stableJson(left.operations) !== stableJson(right.operations)
   );
+}
+
+export function runPipelineStepToFixpoint(
+  state: PipelineState,
+  apply: (current: PipelineState) => PipelineState | "unchanged",
+  limit: number,
+): PipelineState {
+  let next = state;
+  for (let application = 0; application < limit; application += 1) {
+    const before = next;
+    const result = apply(next);
+    if (result === "unchanged") {
+      return next;
+    }
+    next = result;
+    if (!stateChanged(before, next)) {
+      return next;
+    }
+  }
+  return next;
 }
 
 export function liveValueIds(program: OptIrProgram) {

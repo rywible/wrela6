@@ -24,6 +24,7 @@ import {
   type OptIrIntegerUnaryOperator,
   type OptIrOperation,
 } from "../operations";
+import { isBoundsCheckRuntimeOperation } from "../rewrites/wrela-operation-patterns";
 import type { OptIrFunction } from "../program";
 import { optIrBooleanType, type OptIrIntegerType, type OptIrType } from "../types";
 import { runCfgSimplification } from "./cfg-simplification";
@@ -617,11 +618,7 @@ function hasMemoryAccess(
 }
 
 function isRuntimeBoundsCheck(operation: OptIrOperation): boolean {
-  return (
-    operation.kind === "runtimeCall" &&
-    operation.target.kind === "runtime" &&
-    operation.target.runtimeKey === "runtime.bounds_check"
-  );
+  return isBoundsCheckRuntimeOperation(operation);
 }
 
 function constantValues(operations: readonly OptIrOperation[]): ReadonlyMap<OptIrValueId, bigint> {

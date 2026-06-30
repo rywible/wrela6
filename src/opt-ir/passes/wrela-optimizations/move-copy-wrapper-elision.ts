@@ -1,5 +1,6 @@
 import type { OptIrOperationId, OptIrValueId } from "../../ids";
 import type { OptIrOperation } from "../../operations";
+import { eliminateMoveCopyWrapperOperations } from "../../rewrites/catalog-rewrite-builders";
 import type { RewriteInvariant } from "../pass-contract";
 
 export type WrelaFactChain = readonly string[];
@@ -56,46 +57,57 @@ export function runWrelaMoveCopyWrapperElisionForTest(
 export function runWrelaMoveCopyWrapperElision(
   input: WrelaMoveCopyWrapperElisionInput,
 ): WrelaMoveCopyWrapperElisionResult {
-  const eliminated = new Set<OptIrOperationId>();
-  const valueForwards: WrelaMoveCopyWrapperElisionResult["valueForwards"][number][] = [];
-  const rejectedCandidates: WrelaMoveCopyWrapperElisionResult["rejectedCandidates"][number][] = [];
-  const explanations: WrelaMoveCopyWrapperExplanation[] = [];
-
-  for (const candidate of input.candidates) {
+  const approvedCandidates = input.candidates.filter(
+    (candidate) => rejectionReason(candidate) === undefined,
+  );
+  const rejectedCandidates = input.candidates.flatMap((candidate) => {
     const rejection = rejectionReason(candidate);
-    if (rejection !== undefined) {
-      rejectedCandidates.push({ operationId: candidate.operationId, reason: rejection });
-      continue;
-    }
-
-    eliminated.add(candidate.operationId);
-    valueForwards.push({
-      sourceValue: candidate.resultValue,
-      replacementValue: candidate.sourceValue,
-    });
-    explanations.push({
-      kind: candidate.kind === "wrapper" ? "wrapperEliminated" : "copyEliminated",
+    return rejection === undefined
+      ? []
+      : [{ operationId: candidate.operationId, reason: rejection }];
+  });
+  const rewrite = eliminateMoveCopyWrapperOperations(
+    input.operations,
+    approvedCandidates.map((candidate) => ({
       operationId: candidate.operationId,
       sourceValue: candidate.sourceValue,
       resultValue: candidate.resultValue,
-      factChain: [
-        ...candidate.ownershipFactIds,
-        ...candidate.noaliasFactIds,
-        ...candidate.erasureFactIds,
-      ],
-      invariant:
-        candidate.kind === "wrapper"
-          ? { kind: "abiWrapperEquivalence" }
-          : { kind: "ownershipRuntimeIdentity" },
-    });
+    })),
+  );
+  const explanations: WrelaMoveCopyWrapperExplanation[] = approvedCandidates.map((candidate) => ({
+    kind: candidate.kind === "wrapper" ? "wrapperEliminated" : "copyEliminated",
+    operationId: candidate.operationId,
+    sourceValue: candidate.sourceValue,
+    resultValue: candidate.resultValue,
+    factChain: [
+      ...candidate.ownershipFactIds,
+      ...candidate.noaliasFactIds,
+      ...candidate.erasureFactIds,
+    ],
+    invariant:
+      candidate.kind === "wrapper"
+        ? { kind: "abiWrapperEquivalence" }
+        : { kind: "ownershipRuntimeIdentity" },
+  }));
+
+  if (rewrite === undefined) {
+    return {
+      operations: input.operations,
+      valueForwards: [],
+      eliminatedOperationIds: [],
+      rejectedCandidates,
+      explanations: [],
+    };
   }
 
   return {
-    operations: input.operations.filter((operation) => !eliminated.has(operation.operationId)),
-    valueForwards: valueForwards.sort(
+    operations: rewrite.operations,
+    valueForwards: [...rewrite.valueForwards].sort(
       (left, right) => Number(left.sourceValue) - Number(right.sourceValue),
     ),
-    eliminatedOperationIds: [...eliminated].sort((left, right) => Number(left) - Number(right)),
+    eliminatedOperationIds: [...rewrite.removedOperationIds].sort(
+      (left, right) => Number(left) - Number(right),
+    ),
     rejectedCandidates,
     explanations,
   };

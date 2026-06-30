@@ -1,16 +1,15 @@
 import { buildOptIrMemorySsa } from "../analyses/memory-ssa";
 import { computeOptIrEscapeAnalysis } from "../analyses/escape-analysis";
-import { extractOptIrEGraph } from "../egraph/extraction";
-import { selectEGraphRegions } from "../egraph/region-selection";
-import { defaultOptIrEGraphExtractionPolicy } from "../policy/egraph-extraction-policy";
+import { hasMemoryAccess } from "../operation-access";
 import { optIrDefaultVectorPolicy } from "../policy/vector-policy";
-import type { OptIrProgram } from "../program";
 import type { OptIrTargetSurface } from "../target-surface";
-import { verifyOptIrProgram } from "../verify/structural-verifier";
 import { runCfgSimplification } from "./cfg-simplification";
 import { runCopyPropagation } from "./copy-propagation";
 import { runDeadCodeElimination } from "./dce";
-import { runFactGatedEGraphPass } from "./fact-gated-egraph";
+import {
+  runOptIrFactGatedEGraphMaterialization,
+  OPT_IR_FACT_GATED_EGRAPH_WORKLIST_LIMIT,
+} from "./egraph-materialization";
 import { runGvn } from "./gvn";
 import { runLicm } from "./licm";
 import { runLoopVectorization } from "./loop-vectorization";
@@ -18,7 +17,6 @@ import { runMandatoryInlining } from "./mandatory-inlining";
 import { runMemoryOptimization } from "./memory-optimization";
 import {
   discoverBoundsCandidates,
-  discoverEGraphRegionCandidates,
   discoverEndianFoldCandidates,
   discoverLoopVectorizationCandidates,
   discoverMoveCopyWrapperCandidates,
@@ -26,14 +24,10 @@ import {
   discoverPlatformSpecializationCandidates,
   discoverScalarReplacementCandidates,
   discoverSlpCandidates,
-  discoverSlpScalarOperationIds,
   discoverTerminalCleanupCandidates,
   discoverZeroCopyAccesses,
-  firstBlockId,
-  hasMemoryAccess,
   nextOperationOrdinal,
   nextValueOrdinal,
-  optIrEGraphExtractionPolicyRank,
 } from "./pipeline-candidates";
 import {
   pipelineInfoDiagnostic,
@@ -56,6 +50,7 @@ import {
   removedOperationIdsBetween,
   replaceFunction,
   runPerFunctionPass,
+  runPipelineStepToFixpoint,
   sortedOperations,
 } from "./pipeline-state";
 import type { PipelineState, PipelineStepResult } from "./pipeline-types";
@@ -65,6 +60,10 @@ import { runSccp } from "./sccp";
 import { runSlpVectorization } from "./slp-vectorization";
 import { runStackPromotion } from "./stack-promotion";
 import { runVectorizationCleanup } from "./vectorization-cleanup";
+import {
+  materializeLoopVectorization,
+  materializeSlpVectorization,
+} from "./vector-materialization";
 import { runWholeProgramInlining } from "./whole-program-inlining";
 import { runWholeProgramSpecialization } from "./whole-program-specialization";
 import { runWrelaBoundsZeroCopy } from "./wrela-optimizations/bounds-zero-copy";
@@ -405,41 +404,26 @@ export function runWrelaCluster(state: PipelineState): PipelineState {
 }
 
 export function runFactGatedEGraphStep(state: PipelineState): PipelineState {
-  const regions = selectEGraphRegions({
-    candidates: discoverEGraphRegionCandidates(state.program, state.operations),
-  });
-  const validateProgram = (program: OptIrProgram) =>
-    verifyOptIrProgram({
-      program,
-      operations: operationMap(state.operations),
-      options: { checkDominance: true, recomputeOperationMetadata: true },
-    });
-  const result = runFactGatedEGraphPass<OptIrProgram, OptIrProgram>({
-    original: state.program,
-    extraction: extractOptIrEGraph<OptIrProgram, OptIrProgram>({
-      original: state.program,
-      candidates: regions.map((region) => ({
-        extracted: state.program,
-        regionId: region.regionId,
-        stableRootOperationId: region.rootOperationId,
-        policyRank: optIrEGraphExtractionPolicyRank(0),
-        uncertaintyPenalty: 0,
-        appliedRuleIds: [`identity-region:${region.kind}`],
-      })),
-      policy: defaultOptIrEGraphExtractionPolicy(),
-      tracingEnabled: false,
-    }),
-    validateTranslation: () => ({ kind: "passed", inputSet: [] }),
-    validators: {
-      structural: validateProgram,
-      effect: validateProgram,
-      dominance: validateProgram,
-      fact: validateProgram,
-      rewriteLegality: validateProgram,
+  return runPipelineStepToFixpoint(
+    state,
+    (current) => {
+      const result = runOptIrFactGatedEGraphMaterialization({
+        program: current.program,
+        operations: current.operations,
+        facts: current.facts,
+        tracingEnabled: false,
+      });
+      if (result.kind !== "changed") {
+        return "unchanged";
+      }
+      return {
+        ...current,
+        program: result.optIr.program,
+        operations: sortedOperations(result.optIr.operations),
+      };
     },
-    tracingEnabled: false,
-  });
-  return result.kind === "changed" ? { ...state, program: result.optIr } : state;
+    OPT_IR_FACT_GATED_EGRAPH_WORKLIST_LIMIT,
+  );
 }
 
 export function runSlpVectorizationStep(
@@ -447,25 +431,29 @@ export function runSlpVectorizationStep(
   target: OptIrTargetSurface,
 ): PipelineState {
   const policy = optIrDefaultVectorPolicy(target);
+  const candidates = discoverSlpCandidates({
+    program: state.program,
+    operations: state.operations,
+    facts: state.facts,
+  });
   const slp = runSlpVectorization({
-    blockId: firstBlockId(state.program),
-    scalarOperationIds: discoverSlpScalarOperationIds(state.operations),
     nextOperationId: nextOperationOrdinal(state.operations),
     nextValueId: nextValueOrdinal(state.operations),
-    candidates: discoverSlpCandidates(state.operations),
+    candidates,
     policy,
+  });
+  const materialized = materializeSlpVectorization({
+    program: state.program,
+    operations: state.operations,
+    slpResult: slp,
   });
   return {
     ...state,
+    program: materialized.program,
+    operations: sortedOperations(materialized.operations),
     diagnostics: [
       ...state.diagnostics,
-      ...slp.rewriteRecords.map((record) =>
-        pipelineInfoDiagnostic(
-          "opt-ir-optimization",
-          "slp-vectorization",
-          `slp-vectorization:materialization-deferred:${Number(record.vectorOperationId)}:${record.scalarOperationIds.map(Number).join(",")}`,
-        ),
-      ),
+      ...materialized.diagnostics,
       ...slp.rejections.map((rejection) =>
         pipelineInfoDiagnostic(
           "opt-ir-optimization",
@@ -483,20 +471,26 @@ export function runLoopVectorizationStep(
 ): PipelineState {
   const policy = optIrDefaultVectorPolicy(target);
   const loop = runLoopVectorization({
-    candidates: discoverLoopVectorizationCandidates(state.program, state.operations, target),
+    candidates: discoverLoopVectorizationCandidates({
+      program: state.program,
+      operations: state.operations,
+      facts: state.facts,
+      target,
+    }),
     policy,
+  });
+  const materialized = materializeLoopVectorization({
+    program: state.program,
+    operations: state.operations,
+    loopResult: loop,
   });
   return {
     ...state,
+    program: materialized.program,
+    operations: sortedOperations(materialized.operations),
     diagnostics: [
       ...state.diagnostics,
-      ...loop.rewriteRecords.map((record) =>
-        pipelineInfoDiagnostic(
-          "opt-ir-optimization",
-          "certified-loop-vectorization",
-          `loop-vectorization:materialization-deferred:${record.loopId}:${record.vectorOperationIds.map(Number).join(",")}`,
-        ),
-      ),
+      ...materialized.diagnostics,
       ...loop.rejections.map((rejection) =>
         pipelineInfoDiagnostic(
           "opt-ir-optimization",
@@ -509,17 +503,22 @@ export function runLoopVectorizationStep(
 }
 
 export function runVectorIdiomPrepStep(state: PipelineState): PipelineState {
+  const candidateCount = discoverSlpCandidates({
+    program: state.program,
+    operations: state.operations,
+    facts: state.facts,
+  }).length;
   return {
     ...state,
     diagnostics:
-      discoverSlpCandidates(state.operations).length === 0
+      candidateCount === 0
         ? state.diagnostics
         : [
             ...state.diagnostics,
             pipelineInfoDiagnostic(
               "opt-ir-optimization",
               "vector-idiom-prep",
-              `vector-idiom-prep:candidates:${discoverSlpCandidates(state.operations).length}`,
+              `vector-idiom-prep:candidates:${candidateCount}`,
             ),
           ],
   };

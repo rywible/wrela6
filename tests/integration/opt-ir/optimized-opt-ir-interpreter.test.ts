@@ -36,7 +36,7 @@ describe("optimized OptIR interpreter e-graph integration", () => {
           },
         ],
       }),
-      validators: validationPipeline(),
+      validators: { validatePostReplacement: validationPipeline() },
       tracingEnabled: true,
     });
 
@@ -49,7 +49,7 @@ describe("optimized OptIR interpreter e-graph integration", () => {
     ]);
   });
 
-  test("runs structural, effect, dominance, fact, and rewrite-legality validation after replacement", () => {
+  test("runs post-replacement validation after replacement", () => {
     const original = { label: "original" };
     const extracted = { label: "rewritten" };
     const calls: string[] = [];
@@ -66,7 +66,7 @@ describe("optimized OptIR interpreter e-graph integration", () => {
         kind: "notApplicable",
         reasons: ["unsupported-interpreter-rule:runtime-call"],
       }),
-      validators: validationPipeline(calls),
+      validators: { validatePostReplacement: validationPipeline(calls) },
       tracingEnabled: true,
     });
 
@@ -81,13 +81,7 @@ describe("optimized OptIR interpreter e-graph integration", () => {
     expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual([
       "fact-gated-egraph:translationValidation:notApplicable:unsupported-interpreter-rule:runtime-call",
     ]);
-    expect(calls).toEqual([
-      "structural:rewritten",
-      "effect:rewritten",
-      "dominance:rewritten",
-      "fact:rewritten",
-      "rewriteLegality:rewritten",
-    ]);
+    expect(calls).toEqual(["postReplacement:rewritten"]);
   });
 });
 
@@ -105,18 +99,8 @@ function candidate(extracted: {
 }
 
 function validationPipeline(calls: string[] = []) {
-  return {
-    structural: validator("structural", calls),
-    effect: validator("effect", calls),
-    dominance: validator("dominance", calls),
-    fact: validator("fact", calls),
-    rewriteLegality: validator("rewriteLegality", calls),
-  };
-}
-
-function validator(name: string, calls: string[]) {
   return (optIr: { readonly label: string }) => {
-    calls.push(`${name}:${optIr.label}`);
+    calls.push(`postReplacement:${optIr.label}`);
     return { kind: "ok" as const };
   };
 }

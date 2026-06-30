@@ -78,7 +78,7 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/integration/opt-ir/validated-buffer
 - Independent review found that memory-region and Wrela schedule entries still needed production candidate discovery and operation-artifact synchronization. The pipeline now dispatches memory SSA, memory optimization, scalar replacement, stack promotion, LICM, Wrela, e-graph, and vector analysis from real program state, and dead-store removals update both returned operation artifacts and block operation lists.
 - Independent review found that the packet-parser demo must not replace the optimizer result with a fabricated operation snapshot. The demo fixture now rewrites the constructed program, inserts the required packet region metadata, and runs the real optimizer result end to end.
 - Execution found that memory and vector store constructors emitted a unit result type without a corresponding SSA result ID, which structural verification rejected once store operations flowed through the full pipeline. Store operations now have empty result IDs and empty result types.
-- Execution found that vector pass orchestration must not publish vector operations as final optimized artifacts until they are committed into verified program blocks. The pipeline records real SLP and loop-vectorization candidate decisions without returning unattached vector sidecars.
+- Execution found that vector pass orchestration must not publish vector operations as final optimized artifacts until they are committed into verified program blocks. Vector materialization now commits SLP and loop vector ops into verified blocks with lane-shuffle forwarding and cleanup; deferred `materialization-deferred:*` diagnostics are removed.
 - Execution split production pipeline candidate discovery into `pipeline-candidates.ts` so orchestration stays focused on pass ordering, verification checkpoints, and state transitions.
 - Independent review found that public construction still had four end-to-end gaps after the pipeline fixes: validated-buffer reads used a placeholder region, call-backed capability facts received no MIR call lookup evidence, proof erasure was implemented but not invoked by `constructOptIr`, and layout authentication relied on serialized string scanning. Construction now materializes deterministic validated-payload regions, forwards checked MIR call graph IDs into fact import, runs proof erasure before cleanup, and authenticates layout keys from structured layout fact tables only.
 - Follow-up review found three narrower authentication/canonicalization gaps: call-backed facts were validated by bare call IDs instead of owned call IDs, layout keys were checked without requiring the layout fingerprint to be attested by packet validation, and public checked-MIR validated-buffer reads still bypassed canonical read metadata. Fact import now validates call subjects against `(functionInstanceId, callId)`, layout references require an attested layout fingerprint, and public construction routes validated-buffer reads through canonical access metadata before emitting the memory load.
@@ -93,6 +93,10 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/integration/opt-ir/validated-buffer
 - Independent review found that construction proof erasure and imported-fact filtering were split across two paths without documentation. `construction-fact-filter.ts` now owns the program-wide imported-fact drop after per-function IR erasure, with an explicit module comment describing why `eraseProofOnlyOptIr` receives `facts: []`.
 - Follow-up wired construction imported-fact preservation through `runProofErasureFactPreservation`, re-homing surviving facts with `proofErasurePreserved` lineage on `OptIrFactRecord` instead of dropping every fact that mentions an erased proof-only value.
 - Empirical review found that alias queries match by subject key and ignore dependency liveness; construction now preserves `noalias`/`ownership` facts on surviving places/edges when an erased proof-only `proofMirValue` witness has erasure lineage, and drops them when lineage is missing.
+- Production vectorization follow-up shipped full SLP and loop materialization instead of deferred diagnostics. `passes/rewrite-materialization.ts` owns block splice + value-forward copy propagation; `passes/vector-discovery.ts` performs fact-aware SLP pack discovery and loop-tree-based loop candidates; `passes/vector-materialization.ts` commits vector ops into verified blocks, emits lane `vectorShuffle` forwards for scalar consumers, and unrolls `certifiedMultiple` loops with byte-offset adjustment. `pipeline-steps.ts` now runs discover → vectorize → materialize → cleanup and updates both program and operation artifacts.
+- SLP rewrite records now carry per-candidate `scalarOperationIds` on `OptIrSlpCandidate` instead of reusing a global scalar-op list for every pack.
+- Production e-graph follow-up replaced identity extraction and gate-only saturation stubs. `passes/egraph-region-discovery.ts` discovers parser slices, vectorizable loops, memory slices, and pure scalar DAGs from program state; `egraph/region-rewrite.ts` applies all eight catalog rules with shared rewrite builders; `egraph/saturation.ts` pattern-matches region operations, applies fact-gated rules, and merges e-classes on value forwards while respecting caps; `egraph/fact-context.ts` builds gate answers from imported facts; `passes/egraph-materialization.ts` runs saturate → extract → translation validation → post-replacement verification via `runFactGatedEGraphPass`. `pipeline-steps.ts` `runFactGatedEGraphStep` calls the materialization pipeline instead of `identity-region:*` placeholders.
+- New verification: `tests/unit/opt-ir/vector-materialization.test.ts`, `tests/unit/opt-ir/egraph-region-discovery.test.ts`, and `tests/unit/opt-ir/egraph-materialization.test.ts`. `saturateAndExtractOptIrEGraphRegion` in `egraph-materialization.ts` satisfies the plan's extraction example surface with an explicit program and fact set.
 
 ## Executor Protocol
 
@@ -2733,6 +2737,8 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/unit/opt-ir/wrela-move-copy-wrapper
 
 ### Task 36: E-Graph Core And Region Selection
 
+**Status:** Complete. Region discovery from program state added in follow-up (`passes/egraph-region-discovery.ts`); selection priority and boundary/token rules unchanged in `egraph/region-selection.ts`.
+
 **Description:** Implement deterministic e-graph data structures, equivalence classes, region selectors, effect-token window checks, local cost feature vectors, and diagnostics.
 
 **Dependencies:** Tasks 6, 7, 14, 23, 24, and 35.
@@ -2746,11 +2752,14 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/unit/opt-ir/wrela-move-copy-wrapper
 - Create: `src/opt-ir/egraph/egraph-diagnostics.ts`
 - Create: `tests/support/opt-ir/egraph-fixtures.ts`
 - Test: `tests/unit/opt-ir/egraph-core.test.ts`
+- Create (follow-up): `src/opt-ir/passes/egraph-region-discovery.ts`
+- Test (follow-up): `tests/unit/opt-ir/egraph-region-discovery.test.ts`
 
 **Acceptance Criteria:**
 
 - E-graph import order is stable by referenced operation and operand IDs.
 - Candidate region selection priority is parser slices, vectorizable loops, single-entry/single-exit memory slices, then pure scalar DAGs.
+- Program-driven discovery emits all four region kinds before `selectEGraphRegions` resolves overlaps.
 - Boundaries stop at volatile, terminal, callbacks, unknown calls, external roots, and effect boundaries unless catalog permits import.
 - Multi-token operations import all token inputs/outputs/intervening operations or are cut out of the candidate.
 - Overlapping candidates are resolved by priority, smaller containing region, then stable root operation ID.
@@ -2779,6 +2788,8 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/unit/opt-ir/egraph-core.test.ts
 
 ### Task 37: Fact-Gated E-Graph Rule Catalog And Extraction
 
+**Status:** Complete. Follow-up wired real pattern-matched saturation, shared rule applicators, and end-to-end materialization.
+
 **Description:** Add fact-gated rewrite rule schemas, production rule catalog, saturation loop, deterministic extraction, and extraction records.
 
 **Dependencies:** Task 36.
@@ -2793,6 +2804,10 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/unit/opt-ir/egraph-core.test.ts
 - Create: `src/opt-ir/policy/egraph-extraction-policy.ts`
 - Test: `tests/unit/opt-ir/fact-gated-egraph.test.ts`
 - Test: `tests/unit/opt-ir/egraph-rule-soundness.test.ts`
+- Create (follow-up): `src/opt-ir/egraph/region-rewrite.ts`
+- Create (follow-up): `src/opt-ir/egraph/fact-context.ts`
+- Create (follow-up): `src/opt-ir/passes/egraph-materialization.ts`
+- Test (follow-up): `tests/unit/opt-ir/egraph-materialization.test.ts`
 
 **Acceptance Criteria:**
 
@@ -2801,8 +2816,10 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/unit/opt-ir/egraph-core.test.ts
 - Gates cover none, bounds, alias, layout, effect, ABI, terminal, capability flow, private state, and conjunction.
 - Production rules cover endian load folding, bounds-branch deletion, move/copy erasure, layout arithmetic folding, parser-state collapse, field-disjoint memory CSE, platform wrapper collapse, and vector idiom preparation.
 - Saturation is bounded by e-node/e-class/iteration/rule-application caps.
+- Saturation applies catalog rules to region operation slices when fact gates pass; e-classes merge on value forwards.
 - Extraction tie-breaks by checked-in policy, uncertainty penalty, and stable root ID.
 - Failed extraction leaves OptIR unchanged and emits debug diagnostics only when tracing is enabled.
+- `saturateAndExtractOptIrEGraphRegion` and `runOptIrFactGatedEGraphMaterialization` commit extracted rewrites into verified program blocks.
 
 **Code Examples:**
 
@@ -2815,8 +2832,10 @@ expect(rule.obligation).toEqual({ kind: "layoutEndianEquivalence" });
 ```
 
 ```ts
-const extraction = saturateAndExtractForTest({
+const extraction = saturateAndExtractOptIrEGraphRegion({
   region: byteLoadShiftMaskRegionForTest(),
+  program: programForEndianLoadFoldingForTest(),
+  operations: operationsForEndianLoadFoldingForTest(),
   facts: factsForEndianLoadFoldingForTest(),
 });
 
@@ -2831,6 +2850,8 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/unit/opt-ir/fact-gated-egraph.test.
 ```
 
 ### Task 38: E-Graph Translation Validation And Pass Integration
+
+**Status:** Complete. `runFactGatedEGraphStep` now calls `runOptIrFactGatedEGraphMaterialization` with real `validateOptIrEGraphTranslation` and catalog-approved `notApplicable` reasons.
 
 **Description:** Add bounded translation validation for interpreter-complete e-graph slices and wire e-graph rewriting into the OptIR pass framework.
 
@@ -2881,6 +2902,8 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/unit/opt-ir/egraph-translation-vali
 
 ### Task 39: SLP Vectorization And Vector Cleanup
 
+**Status:** Complete. Follow-up added fact-aware discovery, block materialization, and pipeline commit.
+
 **Description:** Implement vector-capable operations, scalar-preserving vector verifier rules, SLP pack discovery, SLP legality checks, vector idiom preparation consumption, and vector cleanup.
 
 **Dependencies:** Tasks 5, 6, 23, and 35.
@@ -2892,10 +2915,15 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/unit/opt-ir/egraph-translation-vali
 - Create: `src/opt-ir/policy/vector-policy.ts`
 - Test: `tests/unit/opt-ir/slp-vectorization.test.ts`
 - Test: `tests/unit/opt-ir/vector-types.test.ts`
+- Create (follow-up): `src/opt-ir/passes/rewrite-materialization.ts`
+- Create (follow-up): `src/opt-ir/passes/vector-discovery.ts`
+- Create (follow-up): `src/opt-ir/passes/vector-materialization.ts`
+- Test (follow-up): `tests/unit/opt-ir/vector-materialization.test.ts`
 
 **Acceptance Criteria:**
 
 - Vector operations include vector load/store, masked load/store, shuffle, compare, select, and byte swap.
+- SLP materialization commits vector operations into verified blocks and forwards scalar consumers through lane shuffles.
 - Masked inactive lanes have explicit passthrough/no-effect semantics.
 - SLP detects adjacent packet/source field reads, endian decodes, repeated validation comparisons, small fixed-width copies/sets, and parser table checks.
 - SLP requires lane bounds, alias/effect safety, endian legality, target vector features, alignment/unaligned policy, and register-pressure policy.
@@ -2928,6 +2956,8 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/unit/opt-ir/slp-vectorization.test.
 
 ### Task 40: Certified Loop Vectorization
 
+**Status:** Complete. Follow-up added loop-tree discovery, certified-multiple unroll materialization, and pipeline commit.
+
 **Description:** Implement certified loop-vectorization legality and rewrite for loops with fact-proven trip count/tail, lane bounds, memory independence, effect-safe body, and legal target vector operations.
 
 **Dependencies:** Tasks 27, 28, 39, and 35.
@@ -2942,10 +2972,13 @@ PATH="$HOME/.bun/bin:$PATH" bun test ./tests/unit/opt-ir/slp-vectorization.test.
 - Test: `tests/unit/opt-ir/loop-vectorization.test.ts`
 - Test: `tests/unit/opt-ir/loop-vectorization-shape.test.ts`
 - Test: `tests/unit/opt-ir/loop-vectorization-legality.test.ts`
+- Modify (follow-up): `src/opt-ir/passes/loop-vectorization/loop-rewrite.ts` (per-access scalar op tracking for materialization)
+- Modify (follow-up): `src/opt-ir/passes/pipeline-steps.ts` (loop materialization + cleanup)
 
 **Acceptance Criteria:**
 
 - Vectorizer handles only certified trip count, certified vector-width multiple, masked-tail, or scalar-epilogue tail plans.
+- Loop materialization replaces scalar memory ops in body blocks and unrolls `certifiedMultiple` tails with adjusted byte offsets.
 - Every lane access is proven in bounds.
 - Loop body rejects volatile, MMIO, firmware-table, image-device, terminal, callback, and platform/runtime effects unless target catalog permits vector form.
 - Carried values are scalar recurrences, recognized reductions, or exactly preserved region/effect tokens.
