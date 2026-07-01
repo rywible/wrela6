@@ -5,6 +5,7 @@ import type {
   OptIrOperationId,
   OptIrValueId,
 } from "../../../opt-ir/ids";
+import { compareCodeUnitStrings } from "../../../shared/deterministic-sort";
 import type { OptIrFactRecord, OptIrFactSet } from "../../../opt-ir/facts/fact-index";
 import { createOptIrLayoutFactQuery } from "../../../opt-ir/facts/layout-facts";
 import type { LayoutFactKey } from "../../../proof-check/model/fact-packet";
@@ -44,7 +45,7 @@ export function createAArch64FactAdapterRegistry(
   adapters: readonly AArch64OptIrFactAdapter[],
 ): AArch64FactAdapterRegistry {
   const sortedAdapters = [...adapters].sort((left, right) =>
-    left.adapterKey.localeCompare(right.adapterKey),
+    compareCodeUnitStrings(left.adapterKey, right.adapterKey),
   );
   const byKey = new Map<string, AArch64OptIrFactAdapter>();
   for (const adapter of sortedAdapters) {

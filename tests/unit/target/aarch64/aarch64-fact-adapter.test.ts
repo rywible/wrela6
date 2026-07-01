@@ -67,6 +67,27 @@ describe("AArch64 fact adapters", () => {
     ]);
   });
 
+  test("orders adapter keys by code-unit order", () => {
+    const registry = createAArch64FactAdapterRegistryForTest([
+      {
+        adapterKey: "_",
+        optIrExtensionKey: "_",
+        targetQueryNamespace: () => ({}),
+        machineRekeyingRules: [],
+        targetProfileFingerprintInputs: [],
+      },
+      {
+        adapterKey: "Z",
+        optIrExtensionKey: "Z",
+        targetQueryNamespace: () => ({}),
+        machineRekeyingRules: [],
+        targetProfileFingerprintInputs: [],
+      },
+    ]);
+
+    expect(registry.adapterKeys()).toEqual(["Z", "_"]);
+  });
+
   test("default query exposes memory order and security answers with facts used", () => {
     const factSet = optIrFactSetFromRecords([
       optIrExtensionFactRecord({

@@ -36,6 +36,7 @@ export function preserveAArch64Facts(input: {
       records.push(
         aarch64MachineFactRecord({
           factId: aarch64MachineFactId(nextFactId),
+          extensionKey: mapping.extensionKey ?? "legacy.machine-fact",
           subject: mapping.subject,
           payload: mapping.payload ?? { patternId: record.patternId },
           lineage: {
@@ -110,6 +111,7 @@ function legacyInstructionMappings(input: {
   }
   return input.machineInstructions.map((machineInstruction) => ({
     optIrFactIds: input.inputFacts,
+    extensionKey: "legacy.machine-fact",
     subject: {
       kind: "machineInstruction",
       instructionId: Number(machineInstruction),
@@ -162,6 +164,7 @@ function mappingForFact(input: {
 }): readonly AArch64FactPreservationMapping[] {
   const base = {
     optIrFactIds: [Number(input.fact.factId)],
+    extensionKey: input.fact.extensionKey ?? input.fact.packetKind,
     payload: {
       extensionKey: input.fact.extensionKey ?? input.fact.packetKind,
       packetKind: input.fact.extensionPacketKind ?? input.fact.packetKind,

@@ -1,14 +1,9 @@
 import type { HirImage, TypedHirProgram } from "../hir/hir";
-import type { HirOriginId } from "../hir/ids";
 import type { FunctionId, ImageId, PlatformPrimitiveId, TypeId } from "../semantic/ids";
 import type { CheckedType } from "../semantic/surface/type-model";
 import { checkClosedMonoBoundary } from "./closed-boundary-checker";
 import { monoDiagnostic, sortMonoDiagnostics, type MonoDiagnostic } from "./diagnostics";
-import type {
-  MonoCheckedType,
-  MonoReachableFunctionReason,
-  MonomorphizedHirProgram,
-} from "./mono-hir";
+import type { MonoCheckedType, MonomorphizedHirProgram } from "./mono-hir";
 import { runReachability } from "./reachability";
 import { normalizeRootArguments } from "./mono-external-roots";
 

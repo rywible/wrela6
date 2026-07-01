@@ -1,4 +1,6 @@
 import type { OptIrFactId } from "../../../opt-ir/ids";
+import { compareCodeUnitStrings } from "../../../shared/deterministic-sort";
+import { stableJson } from "../../../shared/stable-json";
 import { aarch64MachineFactId, type AArch64MachineFactId } from "./ids";
 
 export type AArch64MachineFactSubject =
@@ -15,7 +17,10 @@ export type AArch64MachineFactSubject =
   | { readonly kind: "frameObject"; readonly frameObjectId: number }
   | { readonly kind: "symbol"; readonly symbol: string }
   | { readonly kind: "callSite"; readonly callKey: string }
-  | { readonly kind: "region"; readonly regionKey: string };
+  | { readonly kind: "region"; readonly regionKey: string }
+  | { readonly kind: "relocationReference"; readonly relocationId: number }
+  | { readonly kind: "targetDeclaration"; readonly targetDeclarationKey: string }
+  | { readonly kind: "droppedFact"; readonly droppedFactKey: string };
 
 export interface AArch64MachineFactLineage {
   readonly optIrFactIds: readonly OptIrFactId[];
@@ -24,10 +29,13 @@ export interface AArch64MachineFactLineage {
 
 export interface AArch64MachineFactRecord {
   readonly factId: AArch64MachineFactId;
+  readonly extensionKey: string;
   readonly stableKey: string;
   readonly subject: AArch64MachineFactSubject;
   readonly payload: Readonly<Record<string, unknown>>;
   readonly lineage: AArch64MachineFactLineage;
+  readonly upstreamVerifierKey: string;
+  readonly targetDeclarationKeys: readonly string[];
   readonly manifestGate?: string;
 }
 
@@ -44,21 +52,31 @@ export interface AArch64PreservedFactSet {
 
 export function aarch64MachineFactRecord(input: {
   readonly factId: AArch64MachineFactId;
+  readonly extensionKey?: string;
   readonly subject: AArch64MachineFactSubject;
   readonly payload?: Readonly<Record<string, unknown>>;
   readonly lineage?: Partial<AArch64MachineFactLineage>;
+  readonly upstreamVerifierKey?: string;
+  readonly targetDeclarationKeys?: readonly string[];
   readonly manifestGate?: string;
 }): AArch64MachineFactRecord {
   const optIrFactIds = Object.freeze(
     [...(input.lineage?.optIrFactIds ?? [])].sort((left, right) => left - right),
   );
   const targetDeclarationKeys = Object.freeze(
-    [...(input.lineage?.targetDeclarationKeys ?? [])].sort(),
+    [...(input.targetDeclarationKeys ?? input.lineage?.targetDeclarationKeys ?? [])].sort(
+      compareCodeUnitStrings,
+    ),
   );
+  const extensionKey = input.extensionKey ?? "legacy.machine-fact";
+  const upstreamVerifierKey = input.upstreamVerifierKey ?? "legacy.opt-ir-fact-preservation";
   return Object.freeze({
     factId: input.factId,
+    extensionKey,
     stableKey: machineFactStableKey(
       input.subject,
+      extensionKey,
+      input.payload ?? {},
       optIrFactIds,
       targetDeclarationKeys,
       input.manifestGate,
@@ -66,6 +84,8 @@ export function aarch64MachineFactRecord(input: {
     subject: Object.freeze({ ...input.subject }) as AArch64MachineFactSubject,
     payload: Object.freeze({ ...input.payload }),
     lineage: Object.freeze({ optIrFactIds, targetDeclarationKeys }),
+    upstreamVerifierKey,
+    targetDeclarationKeys,
     ...(input.manifestGate === undefined ? {} : { manifestGate: input.manifestGate }),
   });
 }
@@ -76,22 +96,35 @@ export function aarch64PreservedFactSet(input: {
   readonly targetDeclarations?: readonly string[];
 }): AArch64PreservedFactSet {
   const records = [...(input.records ?? [])].sort((left, right) =>
-    left.stableKey.localeCompare(right.stableKey),
+    compareCodeUnitStrings(left.stableKey, right.stableKey),
   );
-  const seen = new Map<string, string>();
-  for (const record of records) {
-    const serialized = JSON.stringify(record.payload);
-    const priorPayload = seen.get(record.stableKey);
-    if (priorPayload !== undefined && priorPayload !== serialized) {
-      throw new RangeError(`Conflicting AArch64 machine fact stable key ${record.stableKey}.`);
-    }
-    seen.set(record.stableKey, serialized);
-  }
+  assertNoStableKeyConflicts(records);
   return Object.freeze({
     records: Object.freeze(records),
     droppedFacts: Object.freeze([...(input.droppedFacts ?? [])]),
-    targetDeclarations: Object.freeze([...(input.targetDeclarations ?? [])].sort()),
+    targetDeclarations: Object.freeze(
+      [...(input.targetDeclarations ?? [])].sort(compareCodeUnitStrings),
+    ),
   });
+}
+
+function assertNoStableKeyConflicts(records: readonly AArch64MachineFactRecord[]): void {
+  const payloadByStableKey = new Map<string, string>();
+  for (const record of records) {
+    const fingerprint = stableJson({
+      extensionKey: record.extensionKey,
+      subject: record.subject,
+      payload: record.payload,
+      upstreamVerifierKey: record.upstreamVerifierKey,
+      targetDeclarationKeys: record.targetDeclarationKeys,
+      manifestGate: record.manifestGate,
+    });
+    const existing = payloadByStableKey.get(record.stableKey);
+    if (existing !== undefined && existing !== fingerprint) {
+      throw new RangeError(`AArch64 preserved fact stable-key conflict: ${record.stableKey}`);
+    }
+    payloadByStableKey.set(record.stableKey, fingerprint);
+  }
 }
 
 export function emptyAArch64PreservedFactSet(): AArch64PreservedFactSet {
@@ -106,12 +139,16 @@ export function nextAArch64MachineFactId(
 
 function machineFactStableKey(
   subject: AArch64MachineFactSubject,
+  extensionKey: string,
+  payload: Readonly<Record<string, unknown>>,
   optIrFactIds: readonly OptIrFactId[],
   targetDeclarationKeys: readonly string[],
   manifestGate: string | undefined,
 ): string {
   return [
     machineFactSubjectKey(subject),
+    `extension:${extensionKey}`,
+    `payload:${stableJson(payload)}`,
     `lineage:${optIrFactIds.map(Number).join(",")}`,
     `target:${targetDeclarationKeys.join(",")}`,
     `gate:${manifestGate ?? ""}`,
@@ -140,5 +177,11 @@ export function machineFactSubjectKey(subject: AArch64MachineFactSubject): strin
       return `call:${subject.callKey}`;
     case "region":
       return `region:${subject.regionKey}`;
+    case "relocationReference":
+      return `relocation:${subject.relocationId}`;
+    case "targetDeclaration":
+      return `target-declaration:${subject.targetDeclarationKey}`;
+    case "droppedFact":
+      return `dropped-fact:${subject.droppedFactKey}`;
   }
 }

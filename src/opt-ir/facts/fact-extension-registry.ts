@@ -7,6 +7,7 @@ import type {
 } from "../../proof-check/model/fact-packet";
 import { checkedFactKindId } from "../../proof-check/model/fact-packet";
 import { proofMirOriginId } from "../../proof-mir/ids";
+import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
 import type {
   OptIrCallId,
   OptIrEdgeId,
@@ -65,39 +66,44 @@ export function createOptIrFactExtensionRegistryForTest(
 export function createOptIrFactExtensionRegistry(
   extensions: readonly OptIrFactExtension[],
 ): OptIrFactExtensionRegistry {
-  const sortedExtensions = Object.freeze(
-    [...extensions].sort((left, right) => left.extensionKey.localeCompare(right.extensionKey)),
+  const optIrExtensionByKey = new Map<string, OptIrFactExtension>();
+  const sortedExtensions = [...extensions].sort((left, right) =>
+    compareCodeUnitStrings(left.extensionKey, right.extensionKey),
   );
-  const byKey = new Map<string, OptIrFactExtension>();
   for (const extension of sortedExtensions) {
     if (extension.extensionKey.length === 0) {
       throw new RangeError("OptIR fact extension key must be non-empty.");
     }
-    if (byKey.has(extension.extensionKey)) {
+    if (optIrExtensionByKey.has(extension.extensionKey)) {
       throw new RangeError(`Duplicate OptIR fact extension key ${extension.extensionKey}.`);
     }
-    byKey.set(extension.extensionKey, freezeExtension(extension));
+    optIrExtensionByKey.set(extension.extensionKey, freezeExtension(extension));
   }
+  const extensionKeys = Object.freeze([...optIrExtensionByKey.keys()]);
 
   return Object.freeze({
     extensionKeys() {
-      return Object.freeze([...byKey.keys()]);
+      return extensionKeys;
     },
-    validateImport(input: OptIrFactExtensionImportInput): OptIrFactExtensionImportResult {
-      const extension = byKey.get(input.extensionKey);
-      if (extension === undefined) {
-        return { kind: "error", reason: `unknown-extension:${input.extensionKey}` };
+    validateImport(importInput: OptIrFactExtensionImportInput): OptIrFactExtensionImportResult {
+      if (importInput.extensionKey.length === 0) {
+        return { kind: "error", reason: "unknown-extension:" };
       }
-      if (!extension.packetKinds.includes(input.packetKind)) {
+      const extension = optIrExtensionByKey.get(importInput.extensionKey);
+      if (extension === undefined) {
+        return { kind: "error", reason: `unknown-extension:${importInput.extensionKey}` };
+      }
+      if (!extension.packetKinds.includes(importInput.packetKind)) {
         return {
           kind: "error",
-          reason: `unsupported-packet-kind:${input.extensionKey}:${input.packetKind}`,
+          reason: `unsupported-packet-kind:${importInput.extensionKey}:${importInput.packetKind}`,
         };
       }
-      return extension.validateImport(input);
+      return extension.validateImport(importInput);
     },
     extensionFor(extensionKey: string): OptIrFactExtension | undefined {
-      return byKey.get(extensionKey);
+      if (extensionKey.length === 0) return undefined;
+      return optIrExtensionByKey.get(extensionKey);
     },
   });
 }

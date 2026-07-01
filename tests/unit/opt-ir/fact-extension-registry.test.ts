@@ -18,6 +18,7 @@ describe("OptIR fact extension registry", () => {
   });
 
   test("dispatches schema validation by extension key in stable order", () => {
+    const validatedPayloads: unknown[] = [];
     const registry = createOptIrFactExtensionRegistryForTest([
       {
         extensionKey: "branch-probability",
@@ -32,7 +33,10 @@ describe("OptIR fact extension registry", () => {
       {
         extensionKey: "memory-order",
         packetKinds: ["memory-order"],
-        validateImport: () => ({ kind: "ok", typedAnswers: ["extension"] }),
+        validateImport: (input) => {
+          validatedPayloads.push(input.payload);
+          return { kind: "ok", typedAnswers: ["extension"] };
+        },
         indexKeysFor: (record) => [`memory:${record.subjectKey}`],
         preservationRules: ["preserve-through-effect-stable-clone"],
         invalidationRules: ["invalidate-on-effect-rewrite"],
@@ -49,6 +53,7 @@ describe("OptIR fact extension registry", () => {
         payload: { order: "release" },
       }).kind,
     ).toBe("ok");
+    expect(validatedPayloads).toEqual([{ order: "release" }]);
   });
 
   test("extension fact records index payloads without target imports", () => {

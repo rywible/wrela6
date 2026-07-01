@@ -4,6 +4,7 @@ import {
   type AArch64TargetFingerprint,
   EXPECTED_AARCH64_COMPONENT_FINGERPRINTS,
 } from "./target-surface";
+import { stableHash } from "../../../shared/stable-json";
 
 export const WRELA_UEFI_AARCH64_RPI5_PROFILE_ID = "wrela-uefi-aarch64-rpi5-v1";
 
@@ -143,14 +144,4 @@ function stableSerialize(value: AArch64ProductionProfile): string {
     requiredFeatures: [...value.requiredFeatures].sort(),
     tuningModel: value.tuningModel,
   });
-}
-
-function stableHash(value: string): string {
-  let hash = 0xcbf29ce484222325n;
-  for (const character of value) {
-    hash ^= BigInt(character.charCodeAt(0));
-    hash *= 0x100000001b3n;
-    hash &= 0xffffffffffffffffn;
-  }
-  return hash.toString(16).padStart(16, "0");
 }

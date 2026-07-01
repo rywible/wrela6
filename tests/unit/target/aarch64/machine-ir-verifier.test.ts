@@ -748,7 +748,7 @@ describe("AArch64 machine IR verifier suite", () => {
       "AARCH64_FACT_PRESERVATION_INVALID",
     );
     expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
-      "missing-machine-subject:instruction:999|lineage:1|target:target:test|gate:",
+      'missing-machine-subject:instruction:999|extension:legacy.machine-fact|payload:{"fixture":"missing-subject"}|lineage:1|target:target:test|gate:',
     );
   });
 
@@ -788,7 +788,7 @@ describe("AArch64 machine IR verifier suite", () => {
     expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual(
       expect.arrayContaining([
         "missing-target-declaration:target:missing",
-        "missing-machine-subject:memory:40:999|lineage:2|target:target:missing|gate:",
+        "missing-machine-subject:memory:40:999|extension:legacy.machine-fact|payload:{}|lineage:2|target:target:missing|gate:",
       ]),
     );
   });

@@ -15,7 +15,6 @@ import { targetId } from "../../../src/semantic/ids";
 import { proofSemanticsCompanionFake } from "../../support/proof-check/authority-fakes";
 import { expectProofCheckDiagnosticOrderForTest } from "../../support/proof-check/integration-fixtures";
 import {
-  checkProofAndResourcesForClosedFixture,
   checkProofAndResourcesForTest,
   proofCheckClosedFixture,
   withProofCheckAuthoritiesForTest,

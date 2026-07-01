@@ -119,6 +119,19 @@ function machineFactSubjectExists(
       .entries()
       .flatMap((func) => func.callClobbers.map((callClobber) => callClobber.callKey)),
   );
+  const relocations = new Set(
+    program.functions
+      .entries()
+      .flatMap((func) =>
+        func.relocationReferences.map((reference) => Number(reference.relocationId)),
+      ),
+  );
+  const targetDeclarations = new Set(context.preservedFacts?.targetDeclarations ?? []);
+  const droppedFacts = new Set(
+    (context.preservedFacts?.droppedFacts ?? []).map(
+      (record) => `${Number(record.optIrFactId)}:${record.reason}`,
+    ),
+  );
   switch (subject.kind) {
     case "machineFunction":
       return functionIds.has(subject.functionId);
@@ -151,6 +164,12 @@ function machineFactSubjectExists(
     }
     case "region":
       return subject.regionKey.length > 0;
+    case "relocationReference":
+      return relocations.has(subject.relocationId);
+    case "targetDeclaration":
+      return targetDeclarations.has(subject.targetDeclarationKey);
+    case "droppedFact":
+      return droppedFacts.has(subject.droppedFactKey);
   }
 }
 

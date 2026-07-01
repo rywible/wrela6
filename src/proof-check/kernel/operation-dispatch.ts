@@ -12,7 +12,6 @@ import {
   type ProofCheckDiagnostic,
 } from "../diagnostics";
 import {
-  proofCheckOperationKindOf,
   proofCheckProgramPointKey,
   type ProofCheckOperation,
   type ProofCheckOperationKind,
@@ -409,22 +408,6 @@ function operationForExitProgramPoint(input: {
       kind: "exit",
       exit,
     },
-  };
-}
-
-function missingHandlerResult(
-  transition: ProofCheckTransition,
-  operationKind: ProofCheckOperationKind,
-): ProofCheckTransitionResult {
-  return {
-    kind: "error",
-    diagnostics: sortProofCheckDiagnostics([
-      inputContractInvalidDiagnostic({
-        ownerKey: proofCheckOperationKindOwnerKey(operationKind),
-        stableDetail: `missing-handler:${operationKind}`,
-        functionInstanceId: transition.functionInstanceId,
-      }),
-    ]),
   };
 }
 

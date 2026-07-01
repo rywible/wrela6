@@ -15,6 +15,11 @@ import { aarch64MachineProgram } from "../../../../src/target/aarch64/machine-ir
 import { emptyAArch64ProvenanceMap } from "../../../../src/target/aarch64/machine-ir/provenance";
 import { aarch64RelocationReference } from "../../../../src/target/aarch64/machine-ir/relocation-reference";
 import { aarch64SymbolReference } from "../../../../src/target/aarch64/machine-ir/symbol-reference";
+import {
+  aarch64MachineFactRecord,
+  aarch64PreservedFactSet,
+} from "../../../../src/target/aarch64/machine-ir/fact-set";
+import { aarch64MachineFactId } from "../../../../src/target/aarch64/machine-ir/ids";
 
 describe("AArch64 machine IR program model", () => {
   test("machine function tables are deterministic and frozen", () => {
@@ -110,5 +115,47 @@ describe("AArch64 machine IR program model", () => {
     expect(location).toEqual({ kind: "intReg", index: 0 });
     expect(symbol.symbol).toBe(aarch64SymbolId("helper.memcpy"));
     expect(relocation.kind).toBe("CALL26");
+  });
+
+  test("preserved machine facts use code-unit stable-key ordering", () => {
+    const facts = aarch64PreservedFactSet({
+      records: [
+        aarch64MachineFactRecord({
+          factId: aarch64MachineFactId(1),
+          subject: { kind: "symbol", symbol: "a" },
+        }),
+        aarch64MachineFactRecord({
+          factId: aarch64MachineFactId(2),
+          subject: { kind: "symbol", symbol: "B" },
+        }),
+      ],
+    });
+
+    expect(facts.records.map((record) => record.subject)).toEqual([
+      { kind: "symbol", symbol: "B" },
+      { kind: "symbol", symbol: "a" },
+    ]);
+  });
+
+  test("preserved machine facts reject stable-key conflicts with different payloads", () => {
+    const first = aarch64MachineFactRecord({
+      factId: aarch64MachineFactId(1),
+      extensionKey: "security.no-spill",
+      subject: { kind: "virtualRegister", vreg: 7 },
+      payload: { label: "a" },
+      targetDeclarationKeys: ["target.security"],
+    });
+    const second = aarch64MachineFactRecord({
+      factId: aarch64MachineFactId(2),
+      extensionKey: "security.wipe-on-spill",
+      subject: { kind: "virtualRegister", vreg: 7 },
+      payload: { label: "b" },
+      targetDeclarationKeys: ["target.security"],
+    });
+    const forgedConflict = { ...second, stableKey: first.stableKey };
+
+    expect(() => aarch64PreservedFactSet({ records: [first, forgedConflict] })).toThrow(
+      "AArch64 preserved fact stable-key conflict",
+    );
   });
 });

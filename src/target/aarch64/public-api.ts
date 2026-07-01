@@ -10,6 +10,15 @@ import type { AArch64TargetSurface } from "./target-surface/target-surface";
 import type { AArch64SemanticPlugin } from "./select/semantic-superselector";
 import type { AArch64LoweringDebugOutput } from "./lower/pipeline-stages";
 import { lowerOptIrToAArch64Program } from "./lower/lower-program";
+export {
+  AARCH64_BACKEND_STAGE_KEYS,
+  compileAArch64Object,
+  defaultAArch64BackendPipeline,
+} from "./backend/api/compile-aarch64-object";
+export type {
+  CompileAArch64ObjectInput,
+  CompileAArch64ObjectResult,
+} from "./backend/api/compile-aarch64-object";
 
 export interface LowerOptIrToAArch64Input {
   readonly program: OptIrProgram;

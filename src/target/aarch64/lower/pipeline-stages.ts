@@ -59,6 +59,7 @@ export interface AArch64LoweringSelectionRecord {
 
 export interface AArch64FactPreservationMapping {
   readonly optIrFactIds: readonly number[];
+  readonly extensionKey?: string;
   readonly subject: AArch64MachineFactSubject;
   readonly payload?: Readonly<Record<string, unknown>>;
   readonly targetDeclarationKeys?: readonly string[];

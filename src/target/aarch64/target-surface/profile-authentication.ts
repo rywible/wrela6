@@ -10,6 +10,7 @@ import {
   type AArch64TargetSurface,
   EXPECTED_AARCH64_COMPONENT_FINGERPRINTS,
 } from "./target-surface";
+import { stableHash } from "../../../shared/stable-json";
 
 export type AuthenticateAArch64TargetSurfaceResult =
   | {
@@ -88,14 +89,4 @@ function componentFingerprintsEqual(
   return (Object.keys(right) as (keyof AArch64ComponentFingerprints)[]).every(
     (key) => left[key] === right[key],
   );
-}
-
-function stableHash(value: string): string {
-  let hash = 0xcbf29ce484222325n;
-  for (const character of value) {
-    hash ^= BigInt(character.charCodeAt(0));
-    hash *= 0x100000001b3n;
-    hash &= 0xffffffffffffffffn;
-  }
-  return hash.toString(16).padStart(16, "0");
 }

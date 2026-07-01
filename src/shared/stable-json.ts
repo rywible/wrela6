@@ -10,6 +10,16 @@ export function stableDigestHex(value: unknown): string {
   return createHash("sha256").update(stableJson(value), "utf8").digest("hex");
 }
 
+export function stableHash(value: string): string {
+  let hash = 0xcbf29ce484222325n;
+  for (const character of value) {
+    hash ^= BigInt(character.charCodeAt(0));
+    hash *= 0x100000001b3n;
+    hash &= 0xffffffffffffffffn;
+  }
+  return hash.toString(16).padStart(16, "0");
+}
+
 function toStableValue(value: unknown): unknown {
   if (typeof value === "bigint") {
     return value.toString();
