@@ -37,7 +37,8 @@ export type OptIrFactImportTypedAnswer =
   | "layoutOf"
   | "endianOfLayoutAccess"
   | "abiShape"
-  | "provenanceContributor";
+  | "provenanceContributor"
+  | "extension";
 
 export type OptIrFactImportDiagnosticCode =
   | "OPT_IR_FACT_IMPORT_UNKNOWN_KIND"
@@ -184,6 +185,13 @@ const SCHEMAS = {
     requiredDependencies: ["proofMirFact"],
     certificateRule: "core",
     typedAnswers: ["provenanceContributor"],
+  },
+  extension: {
+    kind: "extension",
+    subjectKinds: ["factExtension"],
+    requiredDependencies: ["authorityEntry"],
+    certificateRule: "core",
+    typedAnswers: ["extension"],
   },
 } as const satisfies Record<CheckedPacketFactKind, CheckedFactImportSchema>;
 
@@ -359,6 +367,10 @@ function validateSubjectReferences(
       return hasValue(input.proofMirLookups.privateGenerations, subject.generation)
         ? []
         : [missingProofMirSubject(input, "privateState")];
+    case "factExtension":
+      return subject.extensionKey.length > 0 && subject.subjectKey.length > 0
+        ? []
+        : [missingProofMirSubject(input, "factExtension")];
     case "packetSource": {
       const hasPacket = hasValue(input.proofMirLookups.places, subject.packet);
       const hasSource = hasValue(input.proofMirLookups.places, subject.source);

@@ -36,6 +36,14 @@ export const OPT_IR_OPERATION_KINDS = [
   "vectorCompare",
   "vectorSelect",
   "vectorByteSwap",
+  "semanticAtomic",
+  "semanticFence",
+  "semanticChecksum",
+  "semanticPolynomial",
+  "semanticCryptoMix",
+  "semanticClassifier",
+  "semanticRegionMarker",
+  "fpNumeric",
   "proofErasedMarker",
 ] as const;
 

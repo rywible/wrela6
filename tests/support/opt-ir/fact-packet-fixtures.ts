@@ -6,6 +6,7 @@ import {
   layoutFactKey,
   type CheckedFactDependency,
   type CheckedFactInvalidation,
+  type CheckedExtensionFact,
   type CheckedFactPacket,
   type CheckedFactPacketEntry,
   type CheckedFactScope,
@@ -90,6 +91,12 @@ function subjectForKind(kind: CheckedPacketFactKind, ordinal: number): CheckedFa
       return { kind: "layout", layoutKey: layoutFactKey("layout:fixture") };
     case "origin":
       return { kind: "mirOrigin", proofMirOriginId: proofMirOriginId(ordinal + 1) };
+    case "extension":
+      return {
+        kind: "factExtension",
+        extensionKey: "fixture",
+        subjectKey: `operation:${ordinal + 1}`,
+      };
   }
 }
 
@@ -128,6 +135,12 @@ function dependencyForKind(kind: CheckedPacketFactKind, ordinal: number): Checke
       return { kind: "layoutFact", layoutKey: layoutFactKey("layout:fixture") };
     case "origin":
       return { kind: "proofMirFact", factId: proofMirFactId(ordinal + 1) };
+    case "extension":
+      return {
+        kind: "authorityEntry",
+        fingerprint: authorityFingerprintForTest(ordinal),
+        entryKey: "extension:fixture",
+      };
   }
 }
 
@@ -163,6 +176,40 @@ export function checkedFactPacketEntryForOptIrTest(
   };
 }
 
+export function checkedExtensionFactPacketEntryForOptIrTest(options: {
+  readonly ordinal?: number;
+  readonly subject?: Extract<CheckedFactSubject, { readonly kind: "factExtension" }>;
+  readonly packetKind?: string;
+  readonly authorityFingerprint?: ProofAuthorityFingerprint;
+  readonly payload?: unknown;
+}): CheckedExtensionFact {
+  const ordinal = options.ordinal ?? 0;
+  const subject = options.subject ?? {
+    kind: "factExtension",
+    extensionKey: "fixture",
+    subjectKey: `operation:${ordinal + 1}`,
+  };
+  const authorityFingerprint = options.authorityFingerprint ?? authorityFingerprintForTest(ordinal);
+  return {
+    ...checkedFactPacketEntryForOptIrTest({
+      kind: "extension",
+      ordinal,
+      subject,
+      dependencies: [
+        {
+          kind: "authorityEntry",
+          fingerprint: authorityFingerprint,
+          entryKey: `extension:${subject.extensionKey}`,
+        },
+      ],
+    }),
+    extensionKey: subject.extensionKey,
+    packetKind: options.packetKind ?? subject.extensionKey,
+    authorityFingerprint,
+    payload: options.payload ?? { fixture: true },
+  };
+}
+
 export function checkedFactPacketWithEveryKindForOptIrTest(): CheckedFactPacket {
   return {
     ...emptyCheckedFactPacket(),
@@ -181,5 +228,6 @@ export function checkedFactPacketWithEveryKindForOptIrTest(): CheckedFactPacket 
     exitClosure: [checkedFactPacketEntryForOptIrTest({ kind: "exitClosure", ordinal: 10 })],
     layoutAbi: [checkedFactPacketEntryForOptIrTest({ kind: "layoutAbi", ordinal: 11 })],
     origins: [checkedFactPacketEntryForOptIrTest({ kind: "origin", ordinal: 12 })],
+    extensions: [checkedExtensionFactPacketEntryForOptIrTest({ ordinal: 13 })],
   };
 }

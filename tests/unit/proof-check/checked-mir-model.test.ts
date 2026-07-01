@@ -38,6 +38,7 @@ const checkedFactPacketKeys = [
   "exitClosure",
   "layoutAbi",
   "origins",
+  "extensions",
 ] as const;
 
 function ownershipPacketEntryForTest(): CheckedFactPacketEntry<
@@ -103,6 +104,7 @@ describe("checked fact kind table", () => {
       "exitClosure",
       "layoutAbi",
       "origin",
+      "extension",
     ]);
   });
 

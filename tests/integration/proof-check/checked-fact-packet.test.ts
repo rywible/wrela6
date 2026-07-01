@@ -161,6 +161,7 @@ describe("checked fact packet cross-domain integration", () => {
     "exitClosure",
     "layoutAbi",
     "origins",
+    "extensions",
   ] as const;
 
   test("checked fact packet section keys remain in canonical sorted order", () => {
@@ -177,6 +178,7 @@ describe("checked fact packet cross-domain integration", () => {
     expect(CHECKED_PACKET_FACT_KINDS).toContain("validatedBuffer");
     expect(CHECKED_PACKET_FACT_KINDS).toContain("layoutAbi");
     expect(CHECKED_PACKET_FACT_KINDS).toContain("origin");
+    expect(CHECKED_PACKET_FACT_KINDS).toContain("extension");
   });
 
   test("accepted end-to-end program includes origin facts", () => {

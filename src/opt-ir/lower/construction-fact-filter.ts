@@ -13,10 +13,7 @@ import {
 import { runProofErasureFactPreservation, type OptIrProofErasureFact } from "./proof-erasure";
 import type { ProofMirValueId } from "../../proof-mir/ids";
 import { proofMirValueId } from "../../proof-mir/ids";
-import type {
-  CheckedFactDependency,
-  CheckedFactSubject,
-} from "../../proof-check/model/fact-packet";
+import type { CheckedFactDependency } from "../../proof-check/model/fact-packet";
 
 /**
  * Construction runs proof erasure in two stages:
@@ -292,7 +289,7 @@ function erasedProofMirValueDependencies(
 }
 
 function subjectProofMirValueKeys(
-  subject: CheckedFactSubject,
+  subject: OptIrFactRecord["subject"],
   erasedProofMirValues: ReadonlySet<string>,
 ): readonly string[] {
   if (subject.kind !== "value") {

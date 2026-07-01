@@ -177,6 +177,25 @@ benchmark data during ordinary compilation. In debug and scorecard runs,
 policies should emit decision logs so the scorecard can audit whether policy
 choices and score bucket movement agree.
 
+Late backend phases may need facts that are not useful until physical registers,
+stack slots, prologues, branch relaxation, and object relocations exist. That is
+still part of the same proof authority boundary. Ownership lifetimes, session
+membership, non-escape, bounded cardinality, initialized-prefix, private-state
+generation, terminal-cleanup, internal-call eligibility, core-owner, security,
+and relocation/linkage facts should be carried as explicit target-neutral facts
+until AArch64 machine IR re-keys them to machine subjects. The backend may spend
+those facts through the preserved machine fact set, but it must not inspect
+source, HIR, proof-checker, layout, or OptIR pass internals to rediscover them.
+Facts that become correctness-load-bearing in allocation, frame layout,
+security, constant-time lowering, or object relocation must have typed payload
+schemas, lineage, invalidation rules, and verifier ownership before a backend
+may use them to remove a conservative codegen backstop.
+
+The AArch64 backend's concrete fact-family map and rewrite-transfer rules live
+in `docs/design/aarch64-backend-design.md`; this pipeline document owns the
+phase-seam rule that those facts must remain explicit data, not rediscovered
+compiler internals.
+
 ## Repository Shape
 
 ```text
@@ -1371,7 +1390,7 @@ The AArch64 backend owns:
 
 - target register set
 - ABI classification for parameters and returns
-- instruction selection
+- final physical instruction selection and legalization
 - register allocation
 - stack frame layout
 - prologue and epilogue generation
@@ -1379,14 +1398,15 @@ The AArch64 backend owns:
 - instruction encoding
 - relocation generation
 
-The AArch64 backend can be deliberately conservative:
-
-- no global optimization in the backend; whole-image optimization belongs in
-  OptIR
-- simple linear-scan or local register allocation
-- conservative stack slots
-- direct calls and indirect calls
-- integer/pointer operations before richer target-specific selection
+The canonical production backend contract is
+`docs/design/aarch64-backend-design.md`. That document supersedes older
+bootstrap language that allowed a simple linear-scan or local allocator as an
+accepted backend. Whole-image semantic optimization still belongs in OptIR, but
+the accepted `wrela-uefi-aarch64-rpi5-v1` backend is production grade on day
+one: global deterministic allocation, verified stack frames, post-allocation
+scheduling, direct encoding, relocations, veneers, unwind records, object
+verification, closed-image ABI handling, and security label conservation are
+part of the production target.
 
 UEFI firmware calls are indirect calls through loaded function pointers. The
 compiler emits the call sequence according to the target ABI.
@@ -1741,7 +1761,8 @@ The detailed design is in
 
 - lower optimized OptIR operations to target-owned AArch64 machine IR
 - select AArch64 scalar and vector instruction patterns from optimized OptIR
-- lower ABI parameter and return handling into target-owned ABI locations
+- lower ABI parameter and return handling into ABI intent records and
+  provisional public-boundary bindings
 - lower optimized memory regions to stack frame objects, global symbols,
   firmware-table accesses, runtime-owned memory, or packet/source addresses
 - preserve relocation references, symbol references, debug/source origins, and
@@ -1750,7 +1771,8 @@ The detailed design is in
   clear repeated lowering abstraction below OptIR
 
 Output: AArch64 machine IR with virtual registers, symbols, frame objects, ABI
-locations, concrete calls, branches, constants, and relocation references.
+intent records, provisional public-boundary bindings, concrete calls, branches,
+constants, and relocation references.
 
 ### Proof MIR Pipeline Extension Gates
 
@@ -2120,7 +2142,7 @@ Repeated builds produce identical bytes for identical inputs.
   workbench derived from checked MIR plus certified facts and checked
   optimization evidence.
 - Keep OptIR above physical target choices such as registers, stack slots,
-  instruction encodings, and ABI location assignment.
+  instruction encodings, and final ABI location assignment.
 - Skip a generic LIR while AArch64 is the only backend; introduce one only when
   repeated target-independent lowering below OptIR appears.
 - Prefer staged whole-program inlining: mandatory semantic inlining first,

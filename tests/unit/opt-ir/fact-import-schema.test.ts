@@ -39,6 +39,7 @@ const EXPECTED_TYPED_ANSWERS = {
   exitClosure: ["terminalBehavior", "provesImpossible"],
   layoutAbi: ["layoutOf", "endianOfLayoutAccess", "abiShape"],
   origin: ["provenanceContributor"],
+  extension: ["extension"],
 } as const;
 
 function expectImportError(result: CheckedFactImportValidationResult): readonly string[] {

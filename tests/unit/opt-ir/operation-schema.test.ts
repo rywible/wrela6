@@ -65,6 +65,14 @@ describe("OptIR operation schema ids", () => {
       "vectorCompare",
       "vectorSelect",
       "vectorByteSwap",
+      "semanticAtomic",
+      "semanticFence",
+      "semanticChecksum",
+      "semanticPolynomial",
+      "semanticCryptoMix",
+      "semanticClassifier",
+      "semanticRegionMarker",
+      "fpNumeric",
       "proofErasedMarker",
     ]);
 

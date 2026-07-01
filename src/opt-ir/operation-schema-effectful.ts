@@ -28,6 +28,14 @@ export type EffectfulOptIrOperationKind = Extract<
   | "vectorCompare"
   | "vectorSelect"
   | "vectorByteSwap"
+  | "semanticAtomic"
+  | "semanticFence"
+  | "semanticChecksum"
+  | "semanticPolynomial"
+  | "semanticCryptoMix"
+  | "semanticClassifier"
+  | "semanticRegionMarker"
+  | "fpNumeric"
   | "proofErasedMarker"
 >;
 
@@ -73,12 +81,16 @@ export type OptIrCanonicalFormName =
   | "canonical-memory-access"
   | "canonical-proof-erased-marker"
   | "canonical-vector-memory-access"
-  | "canonical-vector-operation";
+  | "canonical-vector-operation"
+  | "canonical-semantic-operation"
+  | "canonical-fp-numeric-operation";
 
 export type OptIrLoweringRequirementName =
   | "erase-before-runtime-lowering"
   | "lower-through-call-surface"
   | "lower-through-memory-surface"
+  | "lower-through-semantic-surface"
+  | "lower-through-fp-numeric-surface"
   | "lower-through-vector-surface";
 
 export interface EffectfulOptIrOperationSchema {
@@ -109,6 +121,14 @@ export const EFFECTFUL_OPT_IR_OPERATION_SCHEMA_KINDS = [
   "vectorCompare",
   "vectorSelect",
   "vectorByteSwap",
+  "semanticAtomic",
+  "semanticFence",
+  "semanticChecksum",
+  "semanticPolynomial",
+  "semanticCryptoMix",
+  "semanticClassifier",
+  "semanticRegionMarker",
+  "fpNumeric",
   "proofErasedMarker",
 ] as const satisfies readonly EffectfulOptIrOperationKind[];
 
@@ -146,6 +166,7 @@ const PROOF_ERASED_NO_RESULT = catalogEntry(OPT_IR_TYPE_RULE_IDS, 10, "proof-era
 const PURE_EFFECT = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 0, "pure");
 const READ_REGION_VERSION = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 1, "read-region-version");
 const WRITE_REGION_VERSION = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 2, "write-region-version");
+const ORDERED_REGION_TOKENS = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 3, "ordered-region-tokens");
 const CALL_SUMMARY_EFFECTS = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 4, "call-summary-effects");
 const PROOF_ERASED_NO_EFFECT = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 6, "proof-erased-no-effect");
 
@@ -317,6 +338,102 @@ export const EFFECTFUL_OPT_IR_OPERATION_SCHEMAS = [
     interpreterRule: optIrInterpreterRuleId("vector-byte-swap"),
     canonicalForm: "canonical-vector-operation",
     loweringRequirement: "lower-through-vector-surface",
+  }),
+  schema({
+    kind: "semanticAtomic",
+    operandSchema: ["sourceValues"],
+    resultSchema: "unit",
+    typeRule: VECTOR_LANE_RESULT,
+    semanticsRule: optIrSemanticsRuleId("semantic-atomic"),
+    effectSchema: "writeRegionVersion",
+    effectRule: WRITE_REGION_VERSION,
+    interpreterRule: optIrInterpreterRuleId("semantic-atomic"),
+    canonicalForm: "canonical-semantic-operation",
+    loweringRequirement: "lower-through-semantic-surface",
+  }),
+  schema({
+    kind: "semanticFence",
+    operandSchema: ["sourceValues"],
+    resultSchema: "unit",
+    typeRule: MEMORY_STORE_UNIT,
+    semanticsRule: optIrSemanticsRuleId("semantic-fence"),
+    effectSchema: "writeRegionVersion",
+    effectRule: ORDERED_REGION_TOKENS,
+    interpreterRule: optIrInterpreterRuleId("semantic-fence"),
+    canonicalForm: "canonical-semantic-operation",
+    loweringRequirement: "lower-through-semantic-surface",
+  }),
+  schema({
+    kind: "semanticChecksum",
+    operandSchema: ["sourceValues"],
+    resultSchema: "vectorLaneResult",
+    typeRule: VECTOR_LANE_RESULT,
+    semanticsRule: optIrSemanticsRuleId("semantic-checksum"),
+    effectSchema: "pure",
+    effectRule: PURE_EFFECT,
+    interpreterRule: optIrInterpreterRuleId("semantic-checksum"),
+    canonicalForm: "canonical-semantic-operation",
+    loweringRequirement: "lower-through-semantic-surface",
+  }),
+  schema({
+    kind: "semanticPolynomial",
+    operandSchema: ["sourceValues"],
+    resultSchema: "vectorLaneResult",
+    typeRule: VECTOR_LANE_RESULT,
+    semanticsRule: optIrSemanticsRuleId("semantic-polynomial"),
+    effectSchema: "pure",
+    effectRule: PURE_EFFECT,
+    interpreterRule: optIrInterpreterRuleId("semantic-polynomial"),
+    canonicalForm: "canonical-semantic-operation",
+    loweringRequirement: "lower-through-semantic-surface",
+  }),
+  schema({
+    kind: "semanticCryptoMix",
+    operandSchema: ["sourceValues"],
+    resultSchema: "vectorLaneResult",
+    typeRule: VECTOR_LANE_RESULT,
+    semanticsRule: optIrSemanticsRuleId("semantic-crypto-mix"),
+    effectSchema: "pure",
+    effectRule: PURE_EFFECT,
+    interpreterRule: optIrInterpreterRuleId("semantic-crypto-mix"),
+    canonicalForm: "canonical-semantic-operation",
+    loweringRequirement: "lower-through-semantic-surface",
+  }),
+  schema({
+    kind: "semanticClassifier",
+    operandSchema: ["sourceValues"],
+    resultSchema: "vectorLaneResult",
+    typeRule: VECTOR_LANE_RESULT,
+    semanticsRule: optIrSemanticsRuleId("semantic-classifier"),
+    effectSchema: "pure",
+    effectRule: PURE_EFFECT,
+    interpreterRule: optIrInterpreterRuleId("semantic-classifier"),
+    canonicalForm: "canonical-semantic-operation",
+    loweringRequirement: "lower-through-semantic-surface",
+  }),
+  schema({
+    kind: "semanticRegionMarker",
+    operandSchema: ["sourceValues"],
+    resultSchema: "none",
+    typeRule: PROOF_ERASED_NO_RESULT,
+    semanticsRule: optIrSemanticsRuleId("semantic-region-marker"),
+    effectSchema: "pure",
+    effectRule: PURE_EFFECT,
+    interpreterRule: optIrInterpreterRuleId("semantic-region-marker"),
+    canonicalForm: "canonical-semantic-operation",
+    loweringRequirement: "lower-through-semantic-surface",
+  }),
+  schema({
+    kind: "fpNumeric",
+    operandSchema: ["sourceValues"],
+    resultSchema: "vectorLaneResult",
+    typeRule: VECTOR_LANE_RESULT,
+    semanticsRule: optIrSemanticsRuleId("fp-numeric"),
+    effectSchema: "pure",
+    effectRule: PURE_EFFECT,
+    interpreterRule: optIrInterpreterRuleId("fp-numeric"),
+    canonicalForm: "canonical-fp-numeric-operation",
+    loweringRequirement: "lower-through-fp-numeric-surface",
   }),
   schema({
     kind: "proofErasedMarker",

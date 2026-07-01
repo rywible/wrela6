@@ -37,6 +37,7 @@ export const CHECKED_PACKET_FACT_KINDS = [
   "exitClosure",
   "layoutAbi",
   "origin",
+  "extension",
 ] as const;
 
 export type CheckedPacketFactKind = (typeof CHECKED_PACKET_FACT_KINDS)[number];
@@ -125,7 +126,12 @@ export type CheckedFactSubject =
       readonly generation: ProofMirPrivateStateGenerationId;
     }
   | { readonly kind: "terminal"; readonly terminalKey: CheckedTerminalClosureKey }
-  | { readonly kind: "mirOrigin"; readonly proofMirOriginId: ProofMirOriginId };
+  | { readonly kind: "mirOrigin"; readonly proofMirOriginId: ProofMirOriginId }
+  | {
+      readonly kind: "factExtension";
+      readonly extensionKey: string;
+      readonly subjectKey: string;
+    };
 
 export type CheckedFactDependency =
   | { readonly kind: "proofMirFact"; readonly factId: ProofMirFactId }
@@ -222,6 +228,12 @@ export type CheckedTerminalClosureFact = CheckedFactPacketEntry<
 export type CheckedExitClosureFact = CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject>;
 export type CheckedLayoutAbiFact = CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject>;
 export type CheckedOriginPacketFact = CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject>;
+export type CheckedExtensionFact = CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject> & {
+  readonly extensionKey: string;
+  readonly packetKind: string;
+  readonly authorityFingerprint: ProofAuthorityFingerprint;
+  readonly payload: unknown;
+};
 
 export interface CheckedFactPacket {
   readonly ownership: readonly CheckedOwnershipFact[];
@@ -237,6 +249,7 @@ export interface CheckedFactPacket {
   readonly exitClosure: readonly CheckedExitClosureFact[];
   readonly layoutAbi: readonly CheckedLayoutAbiFact[];
   readonly origins: readonly CheckedOriginPacketFact[];
+  readonly extensions: readonly CheckedExtensionFact[];
 }
 
 export function checkedFactKindId(value: string): CheckedFactKindId {
@@ -268,5 +281,6 @@ export function emptyCheckedFactPacket(): CheckedFactPacket {
     exitClosure: [],
     layoutAbi: [],
     origins: [],
+    extensions: [],
   };
 }

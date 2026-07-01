@@ -220,6 +220,7 @@ export function sanitizeCheckedFactPacketDependencies(input: {
     exitClosure: sanitizePacketSection(input.packet.exitClosure, authority),
     layoutAbi: sanitizePacketSection(input.packet.layoutAbi, authority),
     origins: input.packet.origins,
+    extensions: input.packet.extensions,
   };
 }
 

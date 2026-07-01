@@ -7,22 +7,23 @@ construction and optimization and before the AArch64 backend's register
 allocation and encoding. It consumes one optimized OptIR program, the
 preserved certified fact set that survived optimization, and an authenticated
 AArch64 target surface. It returns target-owned AArch64 machine IR: virtual
-registers, machine blocks, selected instructions, ABI parameter and return
-locations, stack frame objects, region-backed addresses, concrete calls and
-branches, materialized constants, symbol references, and relocation references.
+registers, machine blocks, selected instructions, ABI intent records and
+provisional public-boundary bindings, stack frame objects, region-backed
+addresses, concrete calls and branches, materialized constants, symbol
+references, and relocation references.
 
 Optimized OptIR is the rewrite workbench's final artifact. AArch64 machine IR
 is the first artifact that commits to physical target structure. This phase is
-the boundary between them. It selects AArch64 instruction patterns, places ABI
-values in target locations, lowers explicit OptIR memory regions to concrete
-address bases, and then performs target machine planning over virtual
-registers: dependency construction, machine CSE, barrier insertion, prefetch
-planning, rematerialization marking, branch/switch shaping, and pre-register
-allocation scheduling. It does not allocate physical registers, lay out final
-frame offsets, generate encodings, or write objects. The output still names
-values by virtual register so the backend allocator owns the physical register
-choice, but the instruction stream is already a deliberate AArch64 schedule
-candidate rather than a raw opcode dump.
+the boundary between them. It selects AArch64 instruction patterns, records ABI
+intent and provisional public-boundary bindings, lowers explicit OptIR memory
+regions to concrete address bases, and then performs target machine planning
+over virtual registers: dependency construction, machine CSE, barrier insertion,
+prefetch planning, rematerialization marking, branch/switch shaping, and
+pre-register allocation scheduling. It does not allocate physical registers, lay
+out final frame offsets, finalize private ABI conventions, generate encodings,
+or write objects. The output still names values by virtual register so the
+backend allocator owns the physical register choice, and the backend owns final
+ABI reconciliation after the closed-image plan is available.
 
 The phase has one job, expressed in four commitments:
 
@@ -33,7 +34,8 @@ selection:
   produce machine IR over virtual registers with stable, deterministic shape
 
 placement:
-  lower ABI parameters, returns, and call arguments into target ABI locations
+  lower ABI parameters, returns, and call arguments into ABI intent records and
+  provisional public-boundary bindings
   lower OptIR regions to frame objects, global symbols, firmware-table bases,
   runtime-owned memory, or packet/source addresses
 
@@ -90,8 +92,8 @@ OptIR pass is gone and must not be resurrected here.
 - Emit one instruction stream for that profile with no runtime feature
   detection, instruction variants, function multiversioning, or dispatch.
 - Lower ABI parameters, returns, indirect results, and call arguments into
-  target-owned ABI locations from authenticated ABI facts, not from re-derived
-  source types.
+  target-owned ABI intent records and provisional public-boundary bindings from
+  authenticated ABI facts, not from re-derived source types.
 - Lower OptIR memory regions to stack frame objects, read-only or read-write
   global symbols, firmware-table accesses, runtime-owned memory, or
   packet/source addresses, preserving zero-copy validated-buffer views.
@@ -274,7 +276,8 @@ design draws the boundary explicitly so the two phases do not overlap:
 ```text
 this phase (OptIR -> AArch64 machine IR):
   instruction selection into machine IR over virtual registers
-  ABI location assignment for parameters, returns, and call arguments
+  ABI intent records and provisional public-boundary bindings for parameters,
+    returns, and call arguments
   region lowering to frame objects, symbols, and address bases
   constant materialization and terminator/branch lowering
   target machine planning before register allocation:
@@ -910,8 +913,8 @@ AArch64MachineProgram
 AArch64MachineFunction
   symbol                 // function symbol with linkage
   virtualRegisters       // typed virtual regs in gpr/fpr-vector/predicate classes
-  parameters             // incoming ABI locations bound to virtual registers
-  returns                // ABI return locations
+  parameters             // incoming ABI intent records bound to virtual registers
+  returns                // ABI return intent records
   frame                  // frame objects (sizes/alignments, not final offsets)
   blocks
   callClobberRecords     // ABI register clobbers plus fact-informed memory effects
@@ -1735,7 +1738,14 @@ single-copy atomicity, access count, or architectural device behavior.
 
 Some facts needed for a production-grade backend are not optional polish. If the
 current OptIR fact model lacks them, the OptIR handoff must grow them before the
-corresponding machine pattern becomes production-legal:
+corresponding machine pattern becomes production-legal.
+
+The backend-spent fact families, transfer rules, and physical rewrite ownership
+are canonical in `docs/design/aarch64-backend-design.md`. This section owns the
+lowering-side obligation: create, preserve, verify, and re-key the
+target-neutral facts into machine subjects before the backend sees them.
+
+The initial required set:
 
 - memory-order lattice and region memory type, so LSE suffixes and barriers are
   chosen from semantics rather than from a binary ordered/not-ordered token
@@ -1930,27 +1940,29 @@ Armv8.0-A lowering"; it is "every supported operation has a deterministic legal
 lowering for `wrela-uefi-aarch64-rpi5-v1`, and unsupported profiles fail before
 selection begins."
 
-## ABI Lowering
+## ABI Intent Lowering
 
-ABI lowering places values in target-owned locations from authenticated ABI
-facts, never from re-derived source types:
+ABI lowering in this phase records target-owned ABI intent from authenticated
+ABI facts, never from re-derived source types. It does not finalize private
+conventions or decide the final public/private boundary; the backend does that
+after it receives `AArch64ClosedImageBackendPlan`.
 
-- function entry binds each incoming parameter ABI location (integer register,
-  vector register, indirect-result pointer, or stack argument slot) to a virtual
-  register
-- function exit moves return values into the ABI return locations, including the
-  indirect-result pointer for large aggregates
-- call sites marshal arguments into the callee's ABI locations and read results
-  from the callee's return locations
-- aggregate classification, register pairs, and stack argument areas follow the
-  target AAPCS64 surface; this phase reads the classification, it does not invent
-  it
-- ordinary AAPCS64 calls clobber the full caller-saved GPR and vector/FP
-  register sets, regardless of memory-effect facts; memory-effect facts refine
+- function entry records each incoming parameter classification (integer
+  register class, vector register class, indirect-result pointer, or stack
+  argument slot) and binds the logical incoming value to a virtual register
+- function exit records return classifications, including indirect-result
+  requirements for large aggregates
+- call sites record argument and result classifications plus provisional
+  public-boundary bindings when the boundary is already known to be public
+- aggregate classification, register pairs, and stack argument area requirements
+  follow the target AAPCS64 surface; this phase reads the classification, it
+  does not invent it
+- ordinary AAPCS64 calls carry a provisional full caller-saved GPR and vector/FP
+  clobber summary, regardless of memory-effect facts; memory-effect facts refine
   memory dependencies only
-- compiler-owned internal calls may use a narrower register-clobber convention
-  only when the target ABI surface authenticates that convention and every
-  caller/callee in the closed set agrees to it
+- compiler-owned internal calls carry internal-call eligibility and clobber
+  authority facts, but final narrow clobbers require the backend's closed-image
+  plan
 - multi-register values, i128 products, widening multiply results, and ABI pair
   arguments/returns are represented as register tuples or tied operands so the
   allocator cannot split a value in a way the ABI or instruction forbids
@@ -2009,10 +2021,10 @@ phase lowers them to concrete machine call sequences:
   classification, outgoing arguments, stack state, vector-state obligations,
   security labels, and frame teardown facts prove the tail-call shape legal;
   otherwise the call lowers as `bl`/`blr` plus an ordinary return path
-- each call marshals arguments into ABI locations, reads results from return
-  locations, carries the ABI register clobbers required by the callee convention,
-  and carries separate memory/effect summaries informed by the call's platform,
-  device, runtime, and capability facts
+- each call records argument/result ABI intent, provisional public-boundary
+  bindings, the ABI register clobbers required by a known public callee
+  convention, and separate memory/effect summaries informed by the call's
+  platform, device, runtime, and capability facts
 - variadic or firmware-specific ABI calls are supported only when the UEFI
   platform catalog names the exact ABI rule and argument classification;
   otherwise they are rejected as unsupported platform primitives
@@ -2260,7 +2272,8 @@ AArch64MachineProgram
   selected scalar and vector instructions
   local, window, and semantic-superselection provenance records
   machine dependency graph, schedule plan, barriers, prefetches, and remat hints
-  ABI parameter, return, and call-argument locations
+  ABI parameter, return, and call-argument intent records plus provisional
+  public-boundary bindings
   frame objects with sizes and alignments
   region-backed addresses, global symbols, and constants
   concrete direct and indirect calls, branches, switches, and traps
@@ -2273,6 +2286,10 @@ AArch64PreservedFactSet
   memory-order, region-memory-type, branch-probability, FP-contraction,
   FP-environment, vector-state, security/zeroization, UEFI image/device, and
   call-clobber facts needed by late target passes
+  ownership-lifetime, session-membership, non-escape, initialized-prefix,
+  bounded-cardinality, private-state-generation, terminal-cleanup,
+  internal-call-eligibility, core-owner, and rematerialization-authority facts
+  when upstream phases proved them and optimization preserved them
   dropped-fact records in debug builds
 
 AArch64ProvenanceMap
@@ -2287,6 +2304,29 @@ dropped. It owns register allocation, frame finalization, prologue/epilogue,
 post-allocation cleanup, encoding, and relocation generation while preserving
 the machine dependencies, barriers, schedule constraints, rematerialization
 metadata, and fact gates emitted here.
+
+The backend-facing fact list is intentionally broader than the facts selection
+itself needs. Selection needs enough facts to choose legal A64 instructions.
+The backend needs enough facts to keep those choices profitable after physical
+registers, stack slots, prologues, epilogues, branch relaxation, and relocation
+holes exist. If the target-neutral fact substrate cannot yet express a required
+late fact, the earlier phase that owns the proof should add a target-neutral
+fact extension and this phase should re-key it to machine subjects. The backend
+must not reach backward into proof, layout, OptIR pass, or source-level data to
+recover a fact that was not explicitly handed through this contract.
+
+Machine fact preservation is a typed contract, not an opaque metadata dump. The
+generic `AArch64MachineFactRecord` envelope may carry records during early
+implementation, but each backend-spent fact family must have a closed payload
+schema, allowed subject set, lineage rule, invalidation rule, and verifier
+family before the backend may use it as optimization or allocation authority.
+Malformed or stale late facts are backend input-contract errors, not hints to
+ignore silently.
+
+The detailed backend transfer contract lives in
+`docs/design/aarch64-backend-design.md`; this phase's responsibility is to emit
+facts that satisfy that contract, not to let the backend rediscover facts from
+OptIR internals.
 
 ## Deferring A Shared Target-Independent LIR
 
@@ -2496,8 +2536,9 @@ The implementation should proceed in narrow, verifiable slices:
 
 1. Define machine-IR IDs, virtual registers and register classes, machine types,
    machine program/function/block/instruction records, operands, frame objects,
-   ABI locations, symbol and relocation references, `NZCV`/vector-state
-   resources, memory-order records, scheduling metadata, rematerialization
+   ABI intent records, provisional public-boundary bindings, symbol and
+   relocation references, `NZCV`/vector-state resources, memory-order records,
+   scheduling metadata, rematerialization
    metadata, security metadata, FP environment records, provenance, diagnostics,
    typed A64 instruction-schema records, and the structural machine-IR verifier.
 2. Implement the machine-IR interpreter for closed machine operation semantics
@@ -2514,7 +2555,8 @@ The implementation should proceed in narrow, verifiable slices:
    dereferenceable/prefetchable footprint containment, call-clobber convention
    authority, vector-state ownership, upstream typed payloads, preservation
    rules, invalidation rules, extension verifiers, machine-fact subject
-   re-keying, and target-surface declaration records.
+   re-keying, dropped-fact records, backend-importable payload schemas, and
+   target-surface declaration records.
 5. Implement `wrela-uefi-aarch64-rpi5-v1` profile authentication: exact
    baseline, Raspberry Pi 5-class instruction set, UEFI PE/COFF image profile,
    VirtIO device model, required features, excluded instruction families, tuning

@@ -180,6 +180,105 @@ const proofCheckImportForbiddenPatterns = expandImportBoundaryPatterns(
 
 const optIrImportForbiddenPatterns = expandImportBoundaryPatterns(optIrForbiddenModulePathPatterns);
 
+export type AArch64TargetImportPolicyDiagnosticCode =
+  | "AARCH64_TARGET_HOST_STATE_IMPORT"
+  | "AARCH64_TARGET_OPT_IR_PASS_INTERNAL_IMPORT"
+  | "AARCH64_TARGET_ENCODER_LINKER_OBJECT_IMPORT"
+  | "AARCH64_TARGET_REGISTER_ALLOCATOR_INTERNAL_IMPORT";
+
+const aarch64TargetImportPolicyMessages: Record<AArch64TargetImportPolicyDiagnosticCode, string> = {
+  AARCH64_TARGET_HOST_STATE_IMPORT:
+    "src/target/aarch64 must not import filesystem APIs, Bun APIs, process APIs, OS APIs, or host runtime state.",
+  AARCH64_TARGET_OPT_IR_PASS_INTERNAL_IMPORT:
+    "src/target/aarch64 must not import OptIR pass internals.",
+  AARCH64_TARGET_ENCODER_LINKER_OBJECT_IMPORT:
+    "src/target/aarch64 machine IR lowering must not import encoder, linker, PE-COFF, relocation generation, or object/image writer internals.",
+  AARCH64_TARGET_REGISTER_ALLOCATOR_INTERNAL_IMPORT:
+    "src/target/aarch64 machine IR lowering must not import register allocator internals.",
+};
+
+const aarch64HostStateModulePattern =
+  /^(?:bun(?::|$)|node:(?:fs|path|os|process)|fs$|path$|os$|process$|node:fs|node:path|node:os|node:process)/;
+
+function normalizedModuleSpecifier(value: string): string {
+  return normalizePath(value).replaceAll("../", "/").replaceAll("./", "/");
+}
+
+function isAArch64TargetSource(filePath: string): boolean {
+  return normalizePath(filePath).startsWith("src/target/aarch64/");
+}
+
+function checkAArch64ImportBoundary(input: {
+  importer: string;
+  imported: string;
+}): AArch64TargetImportPolicyDiagnosticCode[] {
+  if (!isAArch64TargetSource(input.importer)) {
+    return [];
+  }
+
+  const imported = normalizedModuleSpecifier(input.imported);
+  const diagnostics: AArch64TargetImportPolicyDiagnosticCode[] = [];
+
+  if (aarch64HostStateModulePattern.test(input.imported)) {
+    diagnostics.push("AARCH64_TARGET_HOST_STATE_IMPORT");
+  }
+  if (/\/opt-ir\/passes(?:\/|$)/.test(imported)) {
+    diagnostics.push("AARCH64_TARGET_OPT_IR_PASS_INTERNAL_IMPORT");
+  }
+  if (
+    /\/(?:codegen|encoder|linker|object-writer|object_writer|image-writer|image_writer|pe-coff)(?:\/|$)/i.test(
+      imported,
+    )
+  ) {
+    diagnostics.push("AARCH64_TARGET_ENCODER_LINKER_OBJECT_IMPORT");
+  }
+  if (/\/register-(?:allocator|allocation)(?:\/|$)/i.test(imported)) {
+    diagnostics.push("AARCH64_TARGET_REGISTER_ALLOCATOR_INTERNAL_IMPORT");
+  }
+
+  return diagnostics;
+}
+
+function importedSpecifiers(sourceText: string): readonly string[] {
+  const specifiers: string[] = [];
+  const importPatterns = [
+    /from\s+["']([^"']+)["']/g,
+    /import\s+["']([^"']+)["']/g,
+    /import\s+\w+\s*=\s*require\(\s*["']([^"']+)["']\s*\)/g,
+  ] as const;
+
+  for (const pattern of importPatterns) {
+    let match = pattern.exec(sourceText);
+    while (match !== null) {
+      const imported = match[1];
+      if (imported !== undefined) {
+        specifiers.push(imported);
+      }
+      match = pattern.exec(sourceText);
+    }
+  }
+
+  return specifiers;
+}
+
+function checkAArch64ImportBoundaryForFile(
+  filePath: string,
+  sourceText: string,
+): PolicyViolation[] {
+  const violations: PolicyViolation[] = [];
+  for (const imported of importedSpecifiers(sourceText)) {
+    for (const code of checkAArch64ImportBoundary({ importer: filePath, imported })) {
+      violations.push({
+        filePath,
+        line: 1,
+        column: 1,
+        message: aarch64TargetImportPolicyMessages[code],
+      });
+    }
+  }
+  return violations;
+}
+
 function checkLayoutImportBoundary(filePath: string, sourceText: string): PolicyViolation[] {
   const normalizedPath = normalizePath(filePath);
   if (!normalizedPath.startsWith("src/layout/")) {
@@ -333,6 +432,7 @@ export function checkPolicyFileText(filePath: string, sourceText: string): Polic
     ...checkProofMirImportBoundary(filePath, sourceText),
     ...checkProofCheckImportBoundary(filePath, sourceText),
     ...checkOptIrImportBoundary(filePath, sourceText),
+    ...checkAArch64ImportBoundaryForFile(filePath, sourceText),
     ...checkTextPolicies(filePath, sourceText),
   ];
 }
@@ -342,6 +442,13 @@ export function checkPolicyTextForTest(input: {
   sourceText: string;
 }): PolicyViolation[] {
   return checkPolicyFileText(input.filePath, input.sourceText);
+}
+
+export function checkImportPolicyForTest(input: {
+  importer: string;
+  imported: string;
+}): AArch64TargetImportPolicyDiagnosticCode[] {
+  return checkAArch64ImportBoundary(input);
 }
 
 export async function runPolicyCheck(): Promise<void> {

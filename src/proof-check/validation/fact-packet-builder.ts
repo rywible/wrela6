@@ -7,6 +7,7 @@ import {
   type CheckedFactPacket,
   type CheckedFactPacketEntry,
   type CheckedFactSubject,
+  type CheckedExtensionFact,
   type CheckedOriginFact,
   type CheckedPacketFactKind,
   CHECKED_PACKET_FACT_KINDS,
@@ -116,9 +117,7 @@ function isCheckedPacketFactKind(kind: string): kind is CheckedPacketFactKind {
   return (CHECKED_PACKET_FACT_KINDS as readonly string[]).includes(kind);
 }
 
-function packetArrayKeyForFactKind(
-  factKind: CheckedPacketFactKind,
-): keyof Omit<CheckedFactPacket, "origins"> | "origins" {
+function packetArrayKeyForFactKind(factKind: CheckedPacketFactKind): keyof CheckedFactPacket {
   switch (factKind) {
     case "ownership":
       return "ownership";
@@ -146,6 +145,8 @@ function packetArrayKeyForFactKind(
       return "layoutAbi";
     case "origin":
       return "origins";
+    case "extension":
+      return "extensions";
     default: {
       const unreachable: never = factKind;
       return unreachable;
@@ -248,6 +249,12 @@ export function buildCheckedFactPacket(
       };
     }
     const factKind = factKindString;
+    if (factKind === "extension") {
+      const extensionValidation = validateExtensionEntryShape(entry);
+      if (extensionValidation.kind === "error") {
+        return extensionValidation;
+      }
+    }
     const arrayKey = packetArrayKeyForFactKind(factKind);
     if (arrayKey === "origins") {
       continue;
@@ -289,7 +296,41 @@ export function buildCheckedFactPacket(
     exitClosure: sortCheckedFactPacketEntriesForPacket(partitioned.get("exitClosure") ?? []),
     layoutAbi: sortCheckedFactPacketEntriesForPacket(partitioned.get("layoutAbi") ?? []),
     origins: originEntriesResult.entries,
+    extensions: checkedExtensionEntriesForPacket(partitioned.get("extensions") ?? []),
   };
 
   return { kind: "ok", packet: assembled };
+}
+
+function validateExtensionEntryShape(
+  entry: CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject>,
+): { readonly kind: "ok" } | { readonly kind: "error"; readonly stableDetail: string } {
+  if (entry.subject.kind !== "factExtension") {
+    return {
+      kind: "error",
+      stableDetail: `staged-extension-entry-invalid-subject:${checkedFactSubjectKey(entry.subject)}`,
+    };
+  }
+  const candidate = entry as Partial<CheckedExtensionFact>;
+  if (
+    candidate.extensionKey !== entry.subject.extensionKey ||
+    candidate.packetKind === undefined ||
+    candidate.packetKind.length === 0 ||
+    candidate.authorityFingerprint === undefined ||
+    !("payload" in candidate)
+  ) {
+    return {
+      kind: "error",
+      stableDetail: `staged-extension-entry-missing-fields:${entry.subject.extensionKey}:${entry.subject.subjectKey}`,
+    };
+  }
+  return { kind: "ok" };
+}
+
+function checkedExtensionEntriesForPacket(
+  entries: readonly CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject>[],
+): readonly CheckedExtensionFact[] {
+  return sortCheckedFactPacketEntriesForPacket(entries).map(
+    (entry) => entry as CheckedExtensionFact,
+  );
 }

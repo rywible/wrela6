@@ -27,6 +27,11 @@ import {
   optIrOperationSemanticsMetadataForKind,
   type OptIrOperationSemanticsMetadata,
 } from "./operation-semantics";
+import {
+  optIrCanonicalContract,
+  type OptIrNumericContract,
+  type OptIrSemanticContract,
+} from "./operation-contracts";
 import type { OptIrRegionVolatility } from "./regions";
 import { optIrBooleanType, type OptIrType } from "./types";
 
@@ -183,6 +188,22 @@ export type OptIrOperation =
   | (OptIrOperationBase<"vectorByteSwap"> & {
       readonly vector: OptIrValueId;
       readonly endian: OptIrEndian;
+    })
+  | (OptIrOperationBase<
+      | "semanticAtomic"
+      | "semanticFence"
+      | "semanticChecksum"
+      | "semanticPolynomial"
+      | "semanticCryptoMix"
+      | "semanticClassifier"
+      | "semanticRegionMarker"
+    > & {
+      readonly sourceValueIds: readonly OptIrValueId[];
+      readonly semanticContract: OptIrSemanticContract;
+    })
+  | (OptIrOperationBase<"fpNumeric"> & {
+      readonly sourceValueIds: readonly OptIrValueId[];
+      readonly numericContract: OptIrNumericContract;
     })
   | (OptIrOperationBase<"proofErasedMarker"> & { readonly erasedProof: string });
 
@@ -877,6 +898,130 @@ export function optIrVectorByteSwapOperation(input: {
       originId: input.originId,
     },
     { vector: input.vector, endian: input.endian },
+  ) as OptIrOperation;
+}
+
+function optIrSemanticOperation(
+  kind:
+    | "semanticAtomic"
+    | "semanticFence"
+    | "semanticChecksum"
+    | "semanticPolynomial"
+    | "semanticCryptoMix"
+    | "semanticClassifier"
+    | "semanticRegionMarker",
+  input: {
+    readonly operationId: OptIrOperationId;
+    readonly operands: readonly OptIrValueId[];
+    readonly resultIds: readonly OptIrValueId[];
+    readonly resultTypes: readonly OptIrType[];
+    readonly semanticContract: Readonly<Record<string, unknown>>;
+    readonly originId: OptIrOriginId;
+  },
+): OptIrOperation {
+  return operation(
+    {
+      kind,
+      operationId: input.operationId,
+      operandIds: input.operands,
+      resultIds: input.resultIds,
+      resultTypes: input.resultTypes,
+      originId: input.originId,
+    },
+    {
+      sourceValueIds: Object.freeze([...input.operands]),
+      semanticContract: optIrCanonicalContract(input.semanticContract, kind),
+    },
+  ) as OptIrOperation;
+}
+
+export function optIrSemanticAtomicOperation(input: {
+  readonly operationId: OptIrOperationId;
+  readonly operands: readonly OptIrValueId[];
+  readonly resultIds: readonly OptIrValueId[];
+  readonly resultTypes: readonly OptIrType[];
+  readonly semanticContract: Readonly<Record<string, unknown>>;
+  readonly originId: OptIrOriginId;
+}): OptIrOperation {
+  return optIrSemanticOperation("semanticAtomic", input);
+}
+
+export function optIrSemanticChecksumOperation(input: {
+  readonly operationId: OptIrOperationId;
+  readonly operands: readonly OptIrValueId[];
+  readonly resultIds: readonly OptIrValueId[];
+  readonly resultTypes: readonly OptIrType[];
+  readonly semanticContract: Readonly<Record<string, unknown>>;
+  readonly originId: OptIrOriginId;
+}): OptIrOperation {
+  return optIrSemanticOperation("semanticChecksum", input);
+}
+
+export function optIrSemanticPolynomialOperation(input: {
+  readonly operationId: OptIrOperationId;
+  readonly operands: readonly OptIrValueId[];
+  readonly resultIds: readonly OptIrValueId[];
+  readonly resultTypes: readonly OptIrType[];
+  readonly semanticContract: Readonly<Record<string, unknown>>;
+  readonly originId: OptIrOriginId;
+}): OptIrOperation {
+  return optIrSemanticOperation("semanticPolynomial", input);
+}
+
+export function optIrSemanticCryptoMixOperation(input: {
+  readonly operationId: OptIrOperationId;
+  readonly operands: readonly OptIrValueId[];
+  readonly resultIds: readonly OptIrValueId[];
+  readonly resultTypes: readonly OptIrType[];
+  readonly semanticContract: Readonly<Record<string, unknown>>;
+  readonly originId: OptIrOriginId;
+}): OptIrOperation {
+  return optIrSemanticOperation("semanticCryptoMix", input);
+}
+
+export function optIrSemanticClassifierOperation(input: {
+  readonly operationId: OptIrOperationId;
+  readonly operands: readonly OptIrValueId[];
+  readonly resultIds: readonly OptIrValueId[];
+  readonly resultTypes: readonly OptIrType[];
+  readonly semanticContract: Readonly<Record<string, unknown>>;
+  readonly originId: OptIrOriginId;
+}): OptIrOperation {
+  return optIrSemanticOperation("semanticClassifier", input);
+}
+
+export function optIrSemanticFenceOperation(input: {
+  readonly operationId: OptIrOperationId;
+  readonly operands: readonly OptIrValueId[];
+  readonly resultIds: readonly OptIrValueId[];
+  readonly resultTypes: readonly OptIrType[];
+  readonly semanticContract: Readonly<Record<string, unknown>>;
+  readonly originId: OptIrOriginId;
+}): OptIrOperation {
+  return optIrSemanticOperation("semanticFence", input);
+}
+
+export function optIrFpNumericOperation(input: {
+  readonly operationId: OptIrOperationId;
+  readonly operands: readonly OptIrValueId[];
+  readonly resultIds: readonly OptIrValueId[];
+  readonly resultTypes: readonly OptIrType[];
+  readonly numericContract: Readonly<Record<string, unknown>>;
+  readonly originId: OptIrOriginId;
+}): OptIrOperation {
+  return operation(
+    {
+      kind: "fpNumeric",
+      operationId: input.operationId,
+      operandIds: input.operands,
+      resultIds: input.resultIds,
+      resultTypes: input.resultTypes,
+      originId: input.originId,
+    },
+    {
+      sourceValueIds: Object.freeze([...input.operands]),
+      numericContract: optIrCanonicalContract(input.numericContract, "fpNumeric"),
+    },
   ) as OptIrOperation;
 }
 

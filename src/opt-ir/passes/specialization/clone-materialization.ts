@@ -11,6 +11,10 @@ import {
 } from "../../ids";
 import { optIrConstantOperation, type OptIrOperation } from "../../operations";
 import type { OptIrFunction, OptIrProgram } from "../../program";
+import {
+  isOptIrSourceValueOperation,
+  rewriteOptIrSourceValueOperationOperands,
+} from "../../source-value-operations";
 import type { OptIrTerminator } from "../../terminators";
 import type { OptIrCloneStaticOperand } from "./clone-signature";
 
@@ -310,6 +314,12 @@ function rewriteClonedOperation(
       operation.resultIds.map((valueId) => substituteValue(valueIdMap, valueId)),
     ),
   };
+  if (isOptIrSourceValueOperation(operation)) {
+    return Object.freeze({
+      ...rewriteOptIrSourceValueOperationOperands(operation, base.operandIds, base.resultIds),
+      operationId: base.operationId,
+    });
+  }
   switch (operation.kind) {
     case "constant":
     case "memoryLoad":
@@ -390,22 +400,6 @@ function rewriteClonedOperation(
         ...(operation.mask === undefined
           ? {}
           : { mask: substituteValue(valueIdMap, operation.mask) }),
-      });
-    case "vectorShuffle":
-    case "vectorCompare":
-      return Object.freeze({
-        ...base,
-        sourceValueIds: Object.freeze(
-          operation.sourceValueIds.map((valueId) => substituteValue(valueIdMap, valueId)),
-        ),
-      });
-    case "vectorSelect":
-      return Object.freeze({
-        ...base,
-        mask: substituteValue(valueIdMap, operation.mask),
-        sourceValueIds: Object.freeze(
-          operation.sourceValueIds.map((valueId) => substituteValue(valueIdMap, valueId)),
-        ),
       });
     case "vectorByteSwap":
       return Object.freeze({

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { optIrDiagnosticCode } from "../../../src/opt-ir/diagnostics";
 import { optIrValueId } from "../../../src/opt-ir/ids";
+import type { OptIrOperation } from "../../../src/opt-ir/operations";
 import {
   cfgEditWithMissingReferencesForTest,
   optIrProgramWithBlockArgumentMismatchForTest,
@@ -91,6 +92,26 @@ describe("OptIR verifier suite", () => {
     expect(result.kind).toBe("error");
     expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
       optIrDiagnosticCode("OPT_IR_OPERATION_METADATA_MISMATCH"),
+    );
+  });
+
+  test("operation schema verifier rejects missing required operation results", () => {
+    const fixture = validVerifierProgramForTest();
+    const malformedConstant = {
+      ...fixture.operations[0],
+      resultIds: [],
+      resultTypes: [],
+    } as OptIrOperation;
+    const result = verifyOptIrProgramForTest(
+      optIrVerifierInputForTest({
+        program: fixture.program,
+        operations: [malformedConstant, fixture.operations[1] as OptIrOperation],
+      }),
+    );
+
+    expect(result.kind).toBe("error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+      "result-count:constant:0:1",
     );
   });
 

@@ -184,6 +184,8 @@ function subjectForImportKind(kind: CheckedPacketFactKind): CheckedFactSubject {
       return { kind: "layout", layoutKey: layoutFactKey("layout:fixture") };
     case "origin":
       return { kind: "mirOrigin", proofMirOriginId: proofMirOriginId(1) };
+    case "extension":
+      return { kind: "factExtension", extensionKey: "fixture", subjectKey: "operation:1" };
   }
 }
 
@@ -250,5 +252,13 @@ function dependenciesForImportKind(kind: CheckedPacketFactKind): readonly Checke
       return [{ kind: "layoutFact", layoutKey: layoutFactKey("layout:fixture") }];
     case "origin":
       return [{ kind: "proofMirFact", factId: proofMirFactId(1) }];
+    case "extension":
+      return [
+        {
+          kind: "authorityEntry",
+          fingerprint: factImportAuthorityFingerprintForTest(),
+          entryKey: "extension:fixture",
+        },
+      ];
   }
 }

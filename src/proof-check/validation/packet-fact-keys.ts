@@ -31,6 +31,8 @@ export function checkedFactSubjectKey(subject: CheckedFactSubject): string {
       return `terminal:${String(subject.terminalKey)}`;
     case "mirOrigin":
       return `mirOrigin:${String(subject.proofMirOriginId)}`;
+    case "factExtension":
+      return `factExtension:${subject.extensionKey}:${subject.subjectKey}`;
     default: {
       const unreachable: never = subject;
       return unreachable;

@@ -255,6 +255,36 @@ describe("buildCheckedFactPacket", () => {
     expect(result.stableDetail).toContain("staged-entry-unknown-fact-kind:forged");
   });
 
+  test("rejects malformed extension entries before packet assembly", () => {
+    const extensionSubject = {
+      kind: "factExtension" as const,
+      extensionKey: "memory-order",
+      subjectKey: "operation:1",
+    };
+    const extension = stagedEntryForKind(checkedFactKindId("extension"), {
+      subject: extensionSubject,
+      certificate: { kind: "core", id: proofCheckCoreCertificateId(4) },
+    });
+
+    const result = buildCheckedFactPacket({
+      acceptedFunctions: [checkedFunctionForTest()],
+      stagedEntries: [extension],
+      certificates: [
+        coreCertificateForTest(
+          proofCheckCoreCertificateId(4),
+          checkedFactSubjectKey(extensionSubject),
+        ),
+        ...originEntryCertificatesForStagedEntries([extension]),
+      ],
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") return;
+    expect(result.stableDetail).toBe(
+      "staged-extension-entry-missing-fields:memory-order:operation:1",
+    );
+  });
+
   test("rejects staged entries outside accepted functions", () => {
     const result = buildCheckedFactPacket({
       acceptedFunctions: [checkedFunctionForTest(monoInstanceId("fn:accepted"))],

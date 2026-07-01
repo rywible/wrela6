@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { optIrOperationId, optIrValueId } from "../../../src/opt-ir/ids";
-import { computeValueNumbers } from "../../../src/opt-ir/analyses/value-numbering";
+import { optIrOperationId, optIrOriginId, optIrValueId } from "../../../src/opt-ir/ids";
+import { computeValueNumbers, valueNumberFor } from "../../../src/opt-ir/analyses/value-numbering";
+import { optIrSemanticChecksumOperation } from "../../../src/opt-ir/operations";
+import { optIrUnsignedIntegerType } from "../../../src/opt-ir/types";
 import { runGvn } from "../../../src/opt-ir/passes/gvn";
 import {
   programWithNonCommonableOperationsForTest,
@@ -90,5 +92,35 @@ describe("OptIR GVN", () => {
       "operation:5",
       "value:14",
     ]);
+  });
+
+  test("semantic contract value numbers use canonical construction keys", () => {
+    const resultType = optIrUnsignedIntegerType(32);
+    const first = optIrSemanticChecksumOperation({
+      operationId: optIrOperationId(11),
+      operands: [optIrValueId(1)],
+      resultIds: [optIrValueId(2)],
+      resultTypes: [resultType],
+      semanticContract: {
+        widthBits: 32,
+        nested: { right: 2, left: 1 },
+        polynomial: 0x1edc_6f41n,
+      },
+      originId: optIrOriginId(11),
+    });
+    const second = optIrSemanticChecksumOperation({
+      operationId: optIrOperationId(12),
+      operands: [optIrValueId(1)],
+      resultIds: [optIrValueId(3)],
+      resultTypes: [resultType],
+      semanticContract: {
+        polynomial: 0x1edc_6f41n,
+        nested: { left: 1, right: 2 },
+        widthBits: 32,
+      },
+      originId: optIrOriginId(12),
+    });
+
+    expect(valueNumberFor(first)).toBe(valueNumberFor(second));
   });
 });

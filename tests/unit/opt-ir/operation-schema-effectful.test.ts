@@ -20,6 +20,14 @@ const EXPECTED_EFFECTFUL_KINDS = [
   "vectorCompare",
   "vectorSelect",
   "vectorByteSwap",
+  "semanticAtomic",
+  "semanticFence",
+  "semanticChecksum",
+  "semanticPolynomial",
+  "semanticCryptoMix",
+  "semanticClassifier",
+  "semanticRegionMarker",
+  "fpNumeric",
   "proofErasedMarker",
 ] as const;
 
@@ -127,6 +135,16 @@ describe("effectful OptIR operation schemas", () => {
       effectRule: "proof-erased-no-effect",
       interpreterRule: "no-runtime-op",
       loweringRequirement: "erase-before-runtime-lowering",
+    });
+  });
+
+  test("semantic fence is an ordered effect boundary rather than pure metadata", () => {
+    expect(optIrEffectfulOperationSchemaByKind("semanticFence")).toMatchObject({
+      resultSchema: "unit",
+      effectSchema: "writeRegionVersion",
+      effectRule: "ordered-region-tokens",
+      interpreterRule: "semantic-fence",
+      loweringRequirement: "lower-through-semantic-surface",
     });
   });
 });

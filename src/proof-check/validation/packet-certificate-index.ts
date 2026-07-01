@@ -39,6 +39,7 @@ export const ALLOWED_SUBJECT_KINDS_BY_FACT_KIND: Readonly<
   terminalClosure: ["terminal"],
   exitClosure: ["place", "function"],
   layoutAbi: ["layout"],
+  extension: ["factExtension"],
   origin: [
     "mirOrigin",
     "place",
@@ -70,6 +71,7 @@ export const CORE_CERTIFICATE_RULES_BY_FACT_KIND: Readonly<
   terminalClosure: ["exitClosure"],
   exitClosure: ["exitClosure"],
   layoutAbi: ["layoutReadRequirement", "initialState"],
+  extension: ["coreEntailment", "authorityMembership"],
   origin: ["initialState", "coreEntailment"],
 };
 

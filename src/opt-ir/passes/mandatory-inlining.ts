@@ -20,6 +20,10 @@ import {
   type OptIrInlinePolicySummary,
 } from "../policy/inline-policy";
 import type { OptIrFunction } from "../program";
+import {
+  isOptIrSourceValueOperation,
+  rewriteOptIrSourceValueOperationOperands,
+} from "../source-value-operations";
 
 type OptIrSourceCallOperation = OptIrOperation & {
   readonly kind: "sourceCall";
@@ -278,6 +282,9 @@ function rewriteOperationValues(
     operandIds: Object.freeze(operandIds),
     resultIds: Object.freeze(resultIds),
   };
+  if (isOptIrSourceValueOperation(operation)) {
+    return rewriteOptIrSourceValueOperationOperands(operation, operandIds, resultIds);
+  }
   switch (operation.kind) {
     case "constant":
     case "memoryLoad":
@@ -358,22 +365,6 @@ function rewriteOperationValues(
         ...(operation.mask === undefined
           ? {}
           : { mask: substituteValue(substitution, operation.mask) }),
-      });
-    case "vectorShuffle":
-    case "vectorCompare":
-      return Object.freeze({
-        ...base,
-        sourceValueIds: Object.freeze(
-          operation.sourceValueIds.map((valueId) => substituteValue(substitution, valueId)),
-        ),
-      });
-    case "vectorSelect":
-      return Object.freeze({
-        ...base,
-        mask: substituteValue(substitution, operation.mask),
-        sourceValueIds: Object.freeze(
-          operation.sourceValueIds.map((valueId) => substituteValue(substitution, valueId)),
-        ),
       });
     case "vectorByteSwap":
       return Object.freeze({

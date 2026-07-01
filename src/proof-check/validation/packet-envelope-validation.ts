@@ -42,6 +42,7 @@ const ALLOWED_CERTIFICATE_KINDS_BY_FACT_KIND: Readonly<
   terminalClosure: ["semantics"],
   exitClosure: ["core"],
   layoutAbi: ["core"],
+  extension: ["core", "semantics"],
   origin: ["core", "summaryInstantiation"],
 };
 

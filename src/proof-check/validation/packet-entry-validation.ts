@@ -294,6 +294,7 @@ export function packetEntryArrays(
     ...packet.exitClosure,
     ...packet.layoutAbi,
     ...packet.origins,
+    ...packet.extensions,
   ];
 }
 

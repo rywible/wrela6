@@ -1,6 +1,7 @@
 import { optIrConstantStableKey } from "../constants";
 import type { OptIrOperationId, OptIrValueId } from "../ids";
 import type { OptIrMemoryAccessDescriptor, OptIrOperation } from "../operations";
+import { optIrContractStableKey } from "../operation-contracts";
 import type { OptIrProgram } from "../program";
 import { optIrTypeStableKey } from "../types";
 
@@ -156,6 +157,16 @@ function attributesKey(operation: OptIrOperation): string {
       return `target:${JSON.stringify(operation.target)}`;
     case "vectorShuffle":
       return `shuffle:${operation.shuffleIndices.join(",")}`;
+    case "semanticAtomic":
+    case "semanticFence":
+    case "semanticChecksum":
+    case "semanticPolynomial":
+    case "semanticCryptoMix":
+    case "semanticClassifier":
+    case "semanticRegionMarker":
+      return `semantic:${optIrContractStableKey(operation.semanticContract)}`;
+    case "fpNumeric":
+      return `numeric:${optIrContractStableKey(operation.numericContract)}`;
     case "proofErasedMarker":
       return `proof:${operation.erasedProof}`;
     case "booleanNot":

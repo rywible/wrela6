@@ -6,6 +6,7 @@ import type {
   CheckedFactPacketEntry,
   CheckedFactScope,
   CheckedFactSubject,
+  CheckedExtensionFact,
   CheckedPacketFactId,
   CheckedPacketFactKind,
 } from "../../proof-check/model/fact-packet";
@@ -24,6 +25,7 @@ import {
   type OptIrFactImportTypedAnswer,
 } from "./fact-import-schema";
 import type { OptIrFactLineage } from "./fact-lineage";
+import type { OptIrExtensionFactSubject } from "./fact-extension-registry";
 
 export interface OptIrFactSet {
   readonly records: readonly OptIrFactRecord[];
@@ -34,7 +36,7 @@ export interface OptIrFactRecord {
   readonly factId: OptIrFactId;
   readonly packetFactId: CheckedPacketFactId;
   readonly packetKind: CheckedPacketFactKind;
-  readonly subject: CheckedFactSubject;
+  readonly subject: CheckedFactSubject | OptIrExtensionFactSubject;
   readonly subjectKey: string;
   readonly scope: CheckedFactScope;
   readonly scopeKey: string;
@@ -49,6 +51,10 @@ export interface OptIrFactRecord {
   readonly typedAnswers: readonly OptIrFactImportTypedAnswer[];
   readonly explanation: OptIrFactExplanation;
   readonly lineage: OptIrFactLineage;
+  readonly extensionKey?: string;
+  readonly extensionPacketKind?: string;
+  readonly extensionPayload?: unknown;
+  readonly extensionAuthority?: string;
 }
 
 export interface OptIrFactExplanation {
@@ -95,6 +101,7 @@ const PACKET_FACT_FIELDS = [
   ["exitClosure", "exitClosure"],
   ["layoutAbi", "layoutAbi"],
   ["origin", "origins"],
+  ["extension", "extensions"],
 ] as const satisfies readonly (readonly [CheckedPacketFactKind, keyof CheckedFactPacket])[];
 
 export function importCheckedFactPacketIntoOptIrFactSet(
@@ -138,12 +145,14 @@ export function importCheckedFactPacketIntoOptIrFactSet(
       }
 
       const factId = optIrFactId(pendingRecords.length);
+      const extensionFields =
+        packetKind === "extension" ? extensionRecordFields(entry as CheckedExtensionFact) : {};
       pendingRecords.push({
         factId,
         packetFactId: entry.factId,
         packetKind,
         subject: entry.subject,
-        subjectKey: subjectKey(entry.subject),
+        subjectKey: extensionFields.subjectKey ?? subjectKey(entry.subject),
         scope: entry.scope,
         scopeKey: scopeKey(entry.scope),
         certificate: entry.certificate,
@@ -164,6 +173,7 @@ export function importCheckedFactPacketIntoOptIrFactSet(
           packetKindId: entry.kind,
           packetFactId: entry.factId,
         },
+        ...extensionFields,
       });
     }
   }
@@ -205,6 +215,45 @@ function freezeFactRecord(record: OptIrFactRecord): OptIrFactRecord {
       dependencyExplanations: Object.freeze([...record.explanation.dependencyExplanations]),
     }),
   });
+}
+
+function extensionRecordFields(entry: CheckedExtensionFact): Partial<OptIrFactRecord> {
+  if (entry.subject.kind !== "factExtension") {
+    return {};
+  }
+  return {
+    subjectKey: entry.subject.subjectKey,
+    extensionKey: entry.extensionKey,
+    extensionPacketKind: entry.packetKind,
+    extensionPayload: freezeUnknownPayload(entry.payload),
+    extensionAuthority: authorityFingerprintKey(entry.authorityFingerprint),
+  };
+}
+
+function freezeUnknownPayload(payload: unknown): unknown {
+  if (Array.isArray(payload)) {
+    return Object.freeze(payload.map(freezeUnknownPayload));
+  }
+  if (payload !== null && typeof payload === "object") {
+    return Object.freeze(
+      Object.fromEntries(
+        Object.entries(payload).map(([key, value]) => [key, freezeUnknownPayload(value)]),
+      ),
+    );
+  }
+  return payload;
+}
+
+function authorityFingerprintKey(
+  fingerprint: CheckedExtensionFact["authorityFingerprint"],
+): string {
+  return [
+    fingerprint.authorityKind,
+    fingerprint.targetId,
+    fingerprint.version,
+    fingerprint.digestAlgorithm,
+    fingerprint.digestHex,
+  ].join(":");
 }
 
 function buildIndexes(records: readonly OptIrFactRecord[]): OptIrFactIndexes {
@@ -294,7 +343,7 @@ function factImportDiagnostic(
   };
 }
 
-function subjectKey(subject: CheckedFactSubject): string {
+function subjectKey(subject: CheckedFactSubject | OptIrExtensionFactSubject): string {
   switch (subject.kind) {
     case "place":
       return `place:${String(subject.placeId)}`;
@@ -320,6 +369,20 @@ function subjectKey(subject: CheckedFactSubject): string {
       return `terminal:${subject.terminalKey}`;
     case "mirOrigin":
       return `mirOrigin:${String(subject.proofMirOriginId)}`;
+    case "factExtension":
+      return `factExtension:${subject.extensionKey}:${subject.subjectKey}`;
+    case "operation":
+      return `operation:${String(subject.operationId)}`;
+    case "optIrValue":
+      return `value:${String(subject.valueId)}`;
+    case "optIrRegion":
+      return `region:${String(subject.regionId)}`;
+    case "optIrFunction":
+      return `function:${String(subject.functionId)}`;
+    case "optIrEdge":
+      return `edge:${String(subject.edgeId)}`;
+    case "optIrCall":
+      return `call:${String(subject.callId)}`;
   }
 }
 

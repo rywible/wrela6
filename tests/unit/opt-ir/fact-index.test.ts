@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 
 import { monoInstanceId } from "../../../src/mono/ids";
 import { checkedTerminalClosureKey } from "../../../src/proof-check/model/certificates";
-import { emptyCheckedFactPacket } from "../../../src/proof-check/model/fact-packet";
+import {
+  emptyCheckedFactPacket,
+  type CheckedExtensionFact,
+} from "../../../src/proof-check/model/fact-packet";
 import {
   proofMirCallId,
   proofMirControlEdgeId,
@@ -17,8 +20,11 @@ import {
 } from "../../../src/opt-ir/facts/fact-index";
 import { createOptIrFactQuery } from "../../../src/opt-ir/facts/fact-query";
 import { optIrFactId } from "../../../src/opt-ir/ids";
-import { checkedFactPacketEntryForTest } from "../../support/opt-ir/fact-import-fixtures";
-import { completeFactImportValidationInputForTest } from "../../support/opt-ir/fact-import-fixtures";
+import {
+  checkedFactPacketEntryForTest,
+  completeFactImportValidationInputForTest,
+  factImportAuthorityFingerprintForTest,
+} from "../../support/opt-ir/fact-import-fixtures";
 
 function expectFactSet(result: OptIrFactSetImportResult) {
   expect(result.kind).toBe("ok");
@@ -178,6 +184,70 @@ describe("OptIR fact set", () => {
     expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual([
       "noalias:1:OPT_IR_FACT_IMPORT_DUPLICATE_PACKET_FACT_ID:duplicatePacketFactId:1",
     ]);
+  });
+
+  test("extension fact import preserves native extension subjects and payloads", () => {
+    const authorityFingerprint = factImportAuthorityFingerprintForTest();
+    const extension = {
+      ...checkedFactPacketEntryForTest({
+        kind: "extension",
+        ordinal: 8,
+        subject: {
+          kind: "factExtension",
+          extensionKey: "memory-order",
+          subjectKey: "operation:9",
+        },
+        dependencies: [
+          {
+            kind: "authorityEntry",
+            fingerprint: authorityFingerprint,
+            entryKey: "extension:memory-order",
+          },
+        ],
+      }),
+      extensionKey: "memory-order",
+      packetKind: "memory-order",
+      authorityFingerprint,
+      payload: {
+        accessKind: "store",
+        order: "release",
+        publicationShape: "virtioAvailIndexPublication",
+      },
+    } satisfies CheckedExtensionFact;
+    const baseInput = completeFactImportValidationInputForTest({
+      kind: "extension",
+      entry: extension,
+    });
+
+    const factSet = expectFactSet(
+      importCheckedFactPacketIntoOptIrFactSet({
+        handoff: baseInput.handoff,
+        packet: {
+          ...emptyCheckedFactPacket(),
+          extensions: [extension],
+        },
+        proofMirLookups: baseInput.proofMirLookups,
+        layoutFacts: baseInput.layoutFacts,
+      }),
+    );
+    const record = factSet.records[0];
+    if (record === undefined) {
+      throw new Error("Expected imported extension fact record.");
+    }
+
+    expect(record.subjectKey).toBe("operation:9");
+    expect(record.extensionKey).toBe("memory-order");
+    expect(record.extensionPacketKind).toBe("memory-order");
+    expect(record.extensionPayload).toEqual({
+      accessKind: "store",
+      order: "release",
+      publicationShape: "virtioAvailIndexPublication",
+    });
+    expect(record.extensionAuthority).toBe(
+      "platform:opt-ir-fixture-target:v1:sha256:0101010101010101010101010101010101010101010101010101010101010101",
+    );
+    expect(factSet.indexes.bySubjectKey["operation:9"]?.map(Number)).toEqual([0]);
+    expect(factSet.indexes.byTypedAnswer.extension?.map(Number)).toEqual([0]);
   });
 
   test("layout and bounds queries answer from imported fact indexes with stable facts used", () => {

@@ -95,6 +95,9 @@ export function createOptIrFactQuery(factSet: OptIrFactSet): OptIrFactQuery {
     endianOfLayoutAccess(input: OptIrEndianOfLayoutAccessInput) {
       return layout.endianOfLayoutAccess(input);
     },
+    byteRangeForLayout(layoutKey: LayoutFactKey) {
+      return layout.byteRangeForLayout(layoutKey);
+    },
     abiShape(layoutKey: LayoutFactKey) {
       return abi.abiShape(layoutKey);
     },

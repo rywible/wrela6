@@ -7,6 +7,10 @@ import {
 import type { OptIrBlockId, OptIrEdgeId, OptIrOperationId, OptIrValueId } from "../ids";
 import type { OptIrOperation } from "../operations";
 import type { OptIrFunction } from "../program";
+import {
+  isOptIrSourceValueOperation,
+  rewriteOptIrSourceValueOperationOperands,
+} from "../source-value-operations";
 import { optIrTerminatorSuccessorEdges, type OptIrTerminator } from "../terminators";
 
 export interface CfgSimplificationInput {
@@ -471,6 +475,10 @@ function rewriteOperation(
     return operation;
   }
 
+  if (isOptIrSourceValueOperation(operation)) {
+    return rewriteOptIrSourceValueOperationOperands(operation, operandIds);
+  }
+
   switch (operation.kind) {
     case "constant":
     case "memoryLoad":
@@ -551,16 +559,6 @@ function rewriteOperation(
         vector: operandIds[0] ?? operation.vector,
         storeValue: operandIds[1] ?? operation.storeValue,
         mask: operation.mask === undefined ? undefined : operandIds[2],
-      };
-    case "vectorShuffle":
-    case "vectorCompare":
-      return { ...operation, operandIds, sourceValueIds: operandIds };
-    case "vectorSelect":
-      return {
-        ...operation,
-        operandIds,
-        mask: operandIds[0] ?? operation.mask,
-        sourceValueIds: operandIds.slice(1),
       };
     case "vectorByteSwap":
       return {
