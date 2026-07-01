@@ -1595,6 +1595,327 @@ The scorecard infrastructure should have ordinary tests:
 
 The expensive representative corpus is not part of normal `agent:check`.
 
+## Target Tuning Stance: Generic Out-Of-Order AArch64
+
+The scorecard, and the local policies it audits, target a **generic modern
+out-of-order AArch64** shape, not a specific core such as the Raspberry Pi 5
+Cortex-A76. The analogy is `-mtune=generic`, not `-mtune=cortex-a76`.
+Micro-tuning to one pipeline is explicitly a non-goal: the overwhelming
+majority of achievable codegen quality is instruction-set-level and transfers
+across the whole application-class AArch64 family (A76/A78/X-series/Neoverse/
+Apple), while per-core pipeline tuning is diminishing-returns and fragile.
+
+Consequences for the register / selectability cost model:
+
+```text
+model the critical path, not a latency sum:
+  an out-of-order core hides independent-instruction latency.
+  the relevant static quantities are
+    - dependency-chain length (critical path) through a hot block
+    - port / issue throughput pressure
+  a naive sum-of-op-latencies is the wrong shape for this class.
+
+use latency *classes*, not exact cycle counts:
+  alu ~1, mul ~3-4, load-use ~4-5, divide expensive/variable,
+  fp/simd moderate. exact numbers differ per core; the *ranking* of what
+  is expensive is stable across the class, and ranking is all the
+  scorecard needs (see "Ranking Proxy, Not Cycle Oracle").
+```
+
+Two things are pinned deliberately and are **not** microarchitectural tuning:
+
+```text
+ISA feature baseline (a selection decision, not a tuning decision):
+  compile to a fixed AArch64 feature level (the RPi5 A76 guarantees
+  ARMv8.2-A plus LSE atomics, fp16, dotprod, ...). This governs which
+  instructions may be selected and is portable across everything at that
+  feature level.
+  actively prefer LSE atomics (ldadd/swp/cas) over load/store-exclusive
+  retry loops, especially on virtio / concurrency paths.
+
+static scheduling is low-ROI for this class:
+  a wide OoO core reorders dynamically, so static scheduling matters far
+  less than on in-order cores. de-prioritize aggressive post-RA
+  scheduling; instead emit canonical fusable adjacencies (cmp immediately
+  before b.cond, adrp before add) so generic macro-op fusion fires without
+  a per-core fusion table.
+  NOTE: this reasoning depends on the target class being OoO. If an
+  in-order little/embedded core is ever added to scope, static scheduling
+  becomes important again.
+```
+
+Net implication for measurement: the primary quality signals are
+**microarchitecture-independent** — instruction count, spills, reloads, moves,
+redundant barriers, and dependency-chain length. Fewer of each is better on
+every core in the class.
+
+## Measurement Tiers And Benchmark Oracles
+
+Scores are a cheap proxy; they must be anchored to real execution to stay
+honest. Use a spectrum of oracles, cheapest to truest:
+
+```text
+tier 1  static score (this scorecard):
+  measures code shape (critical path + port pressure, countable metrics).
+  ~free, deterministic, runs anywhere.
+  does NOT capture data-dependent effects (cache, branch outcomes).
+
+tier 2  emulator dynamic instruction count (QEMU, TCG plugins):
+  measures executed-instruction counts, memory access patterns, and actual
+  taken paths for a fixed input.
+  cheap, deterministic, portable, no hardware.
+  captures real control flow / trip counts; NOT cycles, NOT real cache timing.
+  this is the recommended everyday experiment oracle.
+
+tier 3  cycle simulation (gem5 with an A76-class OoO config):
+  models cycles, cache hierarchy, branch misprediction.
+  slow; automate on a small fixture set as a periodic anchor.
+
+tier 4  real hardware (Raspberry Pi 5, or any application-class AArch64):
+  ground truth. cheap board; periodic calibration and final judge.
+```
+
+The point of the tiers: run tier 1/2 constantly for breadth and ranking, and
+periodically re-anchor against tier 3/4 so the cheap proxy does not drift.
+Because the project targets one ISA class and emits runnable images, tier 3/4
+are unusually accessible, which is what makes the cheap loop sustainable.
+
+QEMU is a _functional_ emulator, not a timing model. Specifics that matter:
+
+```text
+qemu-system-aarch64 -M virt:
+  the `virt` machine is the canonical virtio platform and matches the
+  appliance target directly. images boot and run deterministically.
+
+what QEMU gives:
+  dynamic instruction count / type histograms  -> yes (libinsn plugin)
+  memory access + branch traces                -> yes (libmem, bb plugins)
+  cache misses                                 -> MODELED ESTIMATE ONLY
+                                                  (libcache plugin: a
+                                                  configurable toy cache,
+                                                  not the A76 cache, no timing)
+  cycles                                       -> NO. QEMU has no pipeline model.
+
+TCG vs HVF (mutually exclusive for measurement):
+  TCG (software translation, default): slower, but TCG plugins work.
+    this is the mode used for counting.
+  -accel hvf (Hypervisor.framework, e.g. on an Apple-silicon Mac):
+    runs the guest on host cores -> fast, but NO plugins (nothing is
+    translated) and it is the HOST microarchitecture, not AArch64-class
+    tuning. use only for fast functional / correctness runs.
+
+-icount is not cycles:
+  icount gives deterministic virtual time from a fixed
+  instructions-per-cycle assumption; treat it as instruction count, never
+  as real cycles.
+
+build note:
+  TCG plugins require QEMU built with `--enable-plugins`; the common
+  Homebrew bottle has not always shipped that, so building QEMU from source
+  may be required. example plugins live in contrib/plugins/ (libinsn,
+  libmem, libcache, libbb).
+```
+
+An Apple-silicon Mac is a fine everyday tier-2 host in TCG mode: deterministic
+instruction counts + modeled-cache estimates, clearly labeled as such and never
+reported as cycles.
+
+## Ranking Proxy, Not Cycle Oracle
+
+The scorecard's job is to order compiler policies the way real hardware would,
+not to predict absolute cycles. Rank correlation is the target, and it is a much
+weaker (and achievable) requirement than cycle accuracy: a model can have large
+absolute error and still rank changes correctly if its error is consistent.
+
+The static machine model can be made accurate where it matters and is
+structurally blind where it does not:
+
+```text
+can be modeled well (portable across the OoO class):
+  throughput / port pressure of hot blocks
+  critical dependency-chain length
+  -> for cache-resident, well-predicted, straight-line/loop-body code, a
+     generic OoO model ranks changes tightly.
+
+structurally uncapturable by any static score of the code:
+  cache hit/miss behavior (data-dependent; dominates real wall-clock)
+  branch misprediction (data-dependent)
+  actual trip counts and taken paths (data-dependent)
+  -> these are why tier-2+ oracles exist. they are about not executing, not
+     about which machine is targeted. targeting one core does not close this
+     gap; only running the code does.
+```
+
+Because the score becomes an optimization target, it is subject to Goodhart: an
+optimizer will find and exploit the seams where the proxy and reality diverge.
+The scorecard must therefore operate as a **closed loop**, not a standalone
+oracle:
+
+```text
+open loop (wrong):
+  optimize against the static score forever -> overfits the proxy, real
+  performance silently diverges.
+
+closed loop (right):
+  cheap proxy (tier 1/2) for breadth and search,
+  periodic re-anchoring against tier 3/4 on held-out cases,
+  recalibrate weights when proxy / benchmark rank order disagrees.
+```
+
+The existing "Search Guardrails", benchmark-anchor disclosure, and
+held-out-case rules are the mechanism for this loop; this section states the
+intent behind them.
+
+The appliance domain narrows the irreducible gap: a fixed image, fixed virtio
+configuration, and known input distribution make cache/branch behavior far more
+stable and characterizable than for general-purpose software. Encode the
+important inputs as explicit scorecard input shapes so the proxy tracks the
+workloads that actually run.
+
+## Implementation Plan: Countable Metrics First
+
+The full design (nine-bucket OptIrScore, nine-bucket RegisterScore, weighted
+scalar reduction, registerability / selectability heuristics, ablation /
+interaction analysis, stability probes, concordance, ML) is the destination,
+not the first commit. Build a thin, anchored slice first and use it before
+adding speculative machinery.
+
+```text
+phase 1 (build now):
+  objective, countable metrics on artifacts the pipeline already produces:
+    instruction count, spill stores, spill reloads, spill slots,
+    moves / parallel copies, coalesced edges, dmb/dsb count,
+    remaining bounds/validation checks, stack bytes, code size,
+    critical dependency-chain length.
+  before/after per fixture, with directional expectations and baselines.
+  wire ONE tier-2 anchor immediately (QEMU libinsn instruction count on a
+  couple of fixtures) so the countable core is calibrated from day one.
+
+phase 2 (defer until there are >=2 real policies to compare AND a calibration
+anchor exists):
+  the weighted scalar OptIrScore / RegisterScore reductions,
+  the pre-allocation registerability / selectability heuristics,
+  ablation / interaction / threshold-sweep machinery,
+  stability probes, policy / scorecard concordance, and any ML.
+```
+
+Rationale: the countable metrics are near-ground-truth and
+microarchitecture-independent, they map one-to-one onto the concrete optimizer
+work items in the repository snapshot below, and they avoid building an
+elaborate scoring framework before there is an optimization worth scoring or an
+anchor to calibrate against.
+
+## Current Repository State (2026-07-01 snapshot)
+
+This section records where the pipeline sits at the time of writing so the
+scorecard's first fixtures and metrics can target real gaps. It is a dated
+snapshot from a codegen-quality review, not a stable contract; expect it to age.
+
+Baseline fact: there are **no codegen-quality tests and no benchmark harness
+today**. Existing tests assert byte-correctness, not quality (spill counts,
+schedule length, instruction counts). The scorecard is greenfield and is the
+prerequisite instrument for all optimizer / allocator work — it is the first
+thing to build.
+
+Pipeline: `opt-ir` optimizer -> `select/` instruction selection ->
+`lower/`+`plan/` machine-IR construction -> `backend/` allocation / scheduling /
+encoding. The `opt-ir` / `select` / `lower` / `plan` stages are committed; the
+`backend/` is new work.
+
+Optimizer (`src/opt-ir`):
+
+```text
+real and load-bearing:
+  constant folding, CFG simplification (branch-fold / unreachable / merge),
+  SCCP reachability + constant-branch folding, DCE, copy propagation,
+  exact-range load-forwarding + dead-store elimination,
+  single-block pure-callee inlining,
+  whole-program specialization / partial evaluation with function cloning,
+  egraph translation-validation.
+
+inert / weak (primary scorecard targets):
+  LICM, SROA / scalar-replacement, stack-promotion are non-transforming
+    stubs (return the program unchanged).
+  GVN removes duplicate ops but does not rewrite uses -> no real CSE.
+  SCCP / range analysis understand only integer add.
+  no strength reduction, reassociation, if-conversion, unrolling, tail calls.
+  egraph and vectorizers are narrow and fact-gated (rarely fire on ordinary
+    code).
+  the "fixpoint" schedule executes as a single linear pass.
+  cost model is not target-aware (egraph extraction cost = node counts).
+```
+
+Instruction selection (`src/target/aarch64/select`, `lower/*`):
+
+```text
+the select/ + pattern-tiler layer is largely a bookkeeping facade
+  (returns labels / records); real selection is a flat one-op-to-template
+  macro-expander with no tiling and no cost model.
+missing fusions that most hurt codegen:
+  immediate folding into ALU / compare (constants become separate movz/movk),
+  cmp + b.cond / cbz / tbz fusion (compares go cmp + cset + cbnz + b),
+  csel / ccmp (if-conversion),
+  shifted-register operands and madd / msub,
+  bitfield ops (bfi / ubfx / sbfx), bic / orn,
+  scaled / indexed addressing (only jump tables use register-offset loads).
+several of these are not yet expressible in the opcode catalog.
+good today: movz/movk constant synthesis, base+imm addressing, narrow
+  ldp/stp peephole, adrp page-base CSE, native udiv/sdiv, fact-gated scalar
+  fmadd, PIC jump tables.
+```
+
+Lowering + planning (`src/target/aarch64/lower`, `plan/`):
+
+```text
+correct AAPCS64 classification; cycle-safe SSA destruction but copy-heavy
+  with no coalescing / affinity (defers everything to a downstream coalescer
+  that does not exist).
+barriers over-inserted: redundant dmb around already-LDAR/STLR SC accesses,
+  per-access dsb on device runs -> a net penalty on the virtio hot path.
+adrp page-base CSE degenerates to same-symbol dedup (no true page sharing).
+rematerialization marking is gated backwards (skips high-pressure sites).
+pre-RA scheduler is an identity / topological order with no target model.
+no tail calls; literal-pool planning does not do pool-vs-move cost choice.
+```
+
+Backend (new, `src/target/aarch64/backend`):
+
+```text
+register allocator: first-fit linear scan, NOT graph coloring; the
+  interference graph is built but not used for coloring.
+NO coalescing anywhere (the single biggest RA quality lever after spilling).
+spill-cost / loop-depth / use-density heuristics exist but the pipeline
+  never populates them -> spill victims chosen effectively arbitrarily.
+rematerialization capped at 16-bit constants (addresses / wide constants
+  spill instead).
+post-RA scheduler is a real list-scheduler shell running as an identity sort,
+  with load-latency hiding OFF by default.
+peepholes: a single ldr,ldr -> ldp rule, also OFF by default.
+pseudo-expansion is a dead no-op ({ pseudos: [] }, result ignored).
+```
+
+Substrate that already helps (the differentiators to build on):
+
+```text
+the fact / certificate system (bounds, noalias, layout, security labels),
+the closed-image plan + private conventions (seed of a custom whole-image
+  ABI / no forced calling convention),
+translation-validation, and pervasive determinism discipline.
+```
+
+Mapping current gaps to scorecard signals (what will detect the fixes):
+
+```text
+coalescing              -> copy_score / move + parallel-copy counts
+real GVN (RAUW)         -> work_score, instruction count
+LICM (real)             -> work_score on loop-body blocks (hotness-weighted)
+barrier fix             -> memory_score / effect_barrier, dmb/dsb count
+immediate folding       -> selectability, instruction count
+cmp/branch fusion, csel -> selectability, control_score, branch count
+cost-driven spilling    -> spill_score (hot_spill, call_crossing_spill)
+broader remat           -> spill_score down, materialization credits
+```
+
 ## Design Defaults
 
 - Call the subsystem `OptimizationScorecard`.
@@ -1621,3 +1942,21 @@ The expensive representative corpus is not part of normal `agent:check`.
 - Require search recommendations to disclose whether benchmark anchors exist.
 - Use scorecard results to improve compiler policy through human-reviewed
   changes, not automatic compile-time toggles.
+- Target generic modern out-of-order AArch64 (`-mtune=generic` analog), not a
+  specific core; model critical-path length + port pressure, not latency sums.
+- Pin the ISA feature baseline (ARMv8.2-A + LSE / fp16 / dotprod) separately
+  from tuning, and prefer LSE atomics; this is a selection decision, not
+  microarchitectural tuning.
+- De-prioritize static scheduling because the target class is out-of-order;
+  emit canonical fusable adjacencies (cmp before b.cond, adrp before add).
+- Prefer microarchitecture-independent countable metrics (instruction count,
+  spills, reloads, moves, redundant barriers, dependency-chain length) as the
+  trustworthy core; treat weighted scalar scores as summaries over them.
+- Implement countable metrics first; defer the weighted scalar scores and the
+  registerability / selectability heuristics until there are at least two real
+  policies to compare and a calibration anchor exists.
+- Use QEMU (`-M virt`, TCG mode, libinsn / libmem / libcache plugins) as the
+  everyday dynamic-instruction-count oracle; never report its output as cycles.
+- Use gem5 (A76-class config) and a real Raspberry Pi 5 as periodic tier-3 / 4
+  anchors; the scorecard is a ranking proxy inside a closed calibration loop,
+  not a standalone oracle.
