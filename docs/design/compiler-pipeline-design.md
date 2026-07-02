@@ -4,10 +4,10 @@
 
 The compiler should turn a `uefi image` declaration and its reachable modules
 into one self-contained AArch64 `.efi` file. The final artifact contains the
-whole image: project source, any reachable vendored or replacement standard
-library source, compiler-owned runtime support, generated sections,
-relocations, and PE/COFF headers. No external C runtime, C object files, system
-linker, or foreign startup code participates in the build.
+whole image: project source, any reachable stdlib source from the selected
+source root, compiler-owned runtime support, generated sections, relocations,
+and PE/COFF headers. No external C runtime, C object files, system linker, or
+foreign startup code participates in the build.
 
 The compiler is still allowed to call UEFI firmware services. Those calls are
 not outside C calls; they are direct ABI calls through firmware-provided
@@ -88,8 +88,8 @@ Load-bearing risks:
   means serious proof checking should happen after monomorphization and layout
   facts exist
 - the platform primitive and compiler-runtime boundaries must be small and
-  explicit enough that a replacement standard library cannot accidentally rely
-  on compiler magic
+  explicit enough that custom ordinary source cannot accidentally rely on
+  compiler magic
 - OptIR optimizations must preserve the authority of the checked fact packet;
   an optimization pass must not silently assume proof facts that were not
   certified or derived from certified facts by a checked pass invariant
@@ -134,7 +134,8 @@ Source files and package roots
   -> internal object model
   -> internal linker
   -> PE/COFF EFI writer
-  -> one .efi file
+  -> UEFI AArch64 target driver
+  -> one firmware-runnable .efi image
 ```
 
 Opt-in development tooling observes selected pipeline boundaries:
@@ -165,7 +166,8 @@ AArch64-owned machine IR. A generic LIR should exist only when multiple
 backends need a shared target-independent lowering point below OptIR.
 
 The standard library participates in this shape as source. The module graph may
-load a default vendored stdlib, a user fork, or no stdlib at all. After module
+load the compiler-shipped sysroot stdlib from `stdlib/wrela-std`, an
+ejected/user-edited stdlib source tree, or no stdlib at all. After module
 loading, stdlib modules and project modules follow the same frontend, semantic,
 HIR, proof, and codegen path.
 
@@ -373,9 +375,12 @@ tests/
 
 ## Standard Library And Platform Primitive Boundary
 
-The standard library is replaceable source. The compiler may ship a convenient
-default stdlib, and the CLI may vendor it into new projects, but the language
-model must not depend on that stdlib having special authority.
+The standard library is replaceable source. The repository and distributed
+toolchain maintain the canonical stdlib source at `stdlib/wrela-std`, and the
+compiler edge may add that tree as a toolchain sysroot source root. The CLI may
+also offer an explicit eject/copy flow that copies the same source into a
+project under `src/wrela-std`, but the language model must not depend on either
+source tree having special authority.
 
 Design rule:
 
@@ -393,41 +398,51 @@ Any operation the stdlib can perform must be expressible as:
   plus proof/type obligations checked against target primitive contracts.
 ```
 
-That makes the shipped stdlib one library distribution rather than a trusted
-compiler extension. If the Wrela language model and platform primitive
-contracts are sound, users can build different stdlibs for different domains
-without changing the compiler.
+That makes the shipped stdlib one source distribution rather than a trusted
+compiler extension. Users may inspect the sysroot source, eject/copy it into a
+project, edit that copy, fork it, or write a small project-specific
+replacement. The compiler-owned `platform fn` implementations are not
+replaceable by source; source can only declare a matching handle that certifies
+against the selected target catalog.
 
-Examples:
+Repository and project shapes:
 
 ```text
-wrela-std-default
-  ergonomic general-purpose library
+stdlib/wrela-std
+  canonical compiler-shipped Wrela source maintained in this repository and
+  installed as part of the toolchain sysroot
 
-wrela-std-uefi-minimal
-  tiny boot/image library with little or no allocation
+stdlib/wrela-std/core
+  target-independent source utilities
 
-wrela-std-verified
-  proof-first library with stronger APIs and heavier specifications
+stdlib/wrela-std/target/uefi
+  UEFI wrappers and `platform fn` declarations
 
-wrela-std-embedded
-  device-specific memory, interrupt, and resource wrappers
+user-project/src/wrela-std
+  optional ejected copy for inspection, customization, or pinning
 
-company-internal-std
-  domain-specific protocols, allocators, and platform policies
+user-project/src/company-std
+  user-owned source tree that may declare the same platform fns if desired
 ```
 
 ### Project Shape
 
-`wrela init --target uefi-aarch64` can create a project that vendors the default
-stdlib as source:
+`wrela init --target uefi-aarch64` can create a small project without copying
+the stdlib into the project:
 
 ```text
 project/
   wrela.toml
   src/
     image.wrela
-  vendor/
+```
+
+The compiler edge supplies the installed toolchain sysroot as an explicit
+source root:
+
+```text
+toolchain/
+  stdlib/
     wrela-std/
       core/
       target/
@@ -435,13 +450,30 @@ project/
         uefi/
 ```
 
-The first module resolver can keep stdlib pathing simple: vendored stdlib source
-lives at ordinary source paths such as `std/...`, and imports resolve through
-the same path-based module rules as project modules.
+An explicit eject/copy flow may copy that same tree into the project when a
+user wants local inspection, customization, or pinning:
+
+```text
+project/
+  wrela.toml
+  src/
+    image.wrela
+    wrela-std/
+      core/
+      target/
+        aarch64/
+        uefi/
+```
+
+The first module resolver can keep stdlib pathing simple: stdlib source lives
+in ordinary source roots, and imports resolve through the same path-based
+module rules as project modules.
 
 ```text
 source roots:
-  project root containing app/ and std/
+  project src/
+  toolchain stdlib/wrela-std/ unless disabled or overridden
+  optional project src/wrela-std/ ejected copy when explicitly selected
 
 target:
   uefi-aarch64
@@ -459,24 +491,28 @@ The module graph resolver sees source roots:
 project roots
   ordinary source files owned by the user's project
 
-vendored stdlib paths
-  ordinary source files checked into the project tree
+toolchain stdlib/wrela-std paths
+  ordinary source files installed with the compiler toolchain
+
+optional src/wrela-std paths
+  ordinary source files copied into the project tree by an eject/customize flow
 ```
 
-Name resolution must not ask whether a module is "the real stdlib" to decide
-whether an operation is allowed. A stdlib module, project module, or replacement
-stdlib module may call the same platform function only by resolving the same
-source declaration and satisfying the same type and proof obligations. The
-platform function itself must match a selected target primitive by simple name.
+Name resolution must not ask whether a module came from the toolchain sysroot
+or from an ejected project copy to decide whether an operation is allowed. A
+stdlib module, project module, or other ordinary source module may declare or
+call the same platform function only by satisfying the same type and proof
+obligations. The platform function itself must match a selected target
+primitive by simple name.
 
 ```text
 project module
-  imports std.memory
+  imports the source module provided by stdlib/wrela-std/core/memory.wr
 
-default std module
+stdlib/wrela-std module
   declares platform fn volatile_load_u32
 
-replacement std module
+project module
   declares platform fn volatile_load_u32
 
 all three callers:
@@ -533,11 +569,12 @@ capability, or override the lowering contract. If a source declaration is
 wrong, the compiler rejects that declaration before HIR construction; it does
 not reinterpret source text as the authority.
 
-Freestanding platform declarations may appear in any source module, including a
-replacement stdlib or a no-stdlib project module. Multiple source declarations
-may bind the same primitive if each independently certifies against the same
-catalog entry. Methods do not bind directly to target primitives; they wrap
-freestanding platform functions as ordinary checked source:
+Freestanding platform declarations may appear in any source module, including
+the toolchain `stdlib/wrela-std`, an ejected `src/wrela-std`, or a project
+module that does not import the shipped stdlib. Multiple source declarations may
+bind the same primitive if each independently certifies against the same catalog
+entry. Methods do not bind directly to target primitives; they wrap freestanding
+platform functions as ordinary checked source:
 
 ```wr
 class Register32:
@@ -576,9 +613,9 @@ target_uefi
   status conversion primitives
 ```
 
-The default stdlib should mostly wrap these families in safer, domain-shaped
-APIs. Replacement stdlibs can choose very different wrappers or expose the
-platform functions more directly.
+The compiler-shipped stdlib source should mostly wrap these families in safer,
+domain-shaped APIs. User-edited or project-specific source can choose very
+different wrappers or expose the platform functions more directly.
 
 Platform primitive entries describe behavior owned by the target platform or
 firmware. For UEFI, a platform primitive is a checked doorway to firmware-owned
@@ -950,7 +987,8 @@ primitive catalog; they should not perform filesystem discovery.
 ```text
 Compiler edge
   source root
-  vendored stdlib source paths
+  selected stdlib source root:
+    toolchain stdlib/wrela-std, explicit ejected copy, user source tree, or none
   core type catalog
   selected target
   platform primitive catalog for selected target
@@ -1380,9 +1418,9 @@ Runtime support operation families:
 - UTF-16 string constants for firmware output
 - small integer conversion helpers
 
-The default stdlib may wrap these candidates in ordinary Wrela APIs, but the
-wrapper is not trusted by the compiler. No runtime support operation may depend
-on libc, compiler-rt, or external object files.
+The compiler-shipped stdlib source may wrap these candidates in ordinary Wrela
+APIs, but the wrapper is not trusted by the compiler. No runtime support
+operation may depend on libc, compiler-rt, or external object files.
 
 ## AArch64 Backend
 
@@ -1524,17 +1562,18 @@ efi_entry(image_handle, system_table)
 ```
 
 The UEFI platform primitive catalog should start with the firmware operations
-the default stdlib and image entry need, such as console output, boot-services
-memory allocation, memory-map retrieval, event/timer operations, and
-exit-boot-services. Each primitive entry records the source signature it
-certifies, required facts, consumed and produced capabilities, effects, ABI
-shape, and lowering rule.
+the selected stdlib source root and image entry need, such as console output,
+boot-services memory allocation, memory-map retrieval, event/timer operations,
+watchdog control, and exit-boot-services. Each primitive entry records the
+source signature it certifies, required facts, consumed and produced
+capabilities, effects, ABI shape, and lowering rule.
 
 The UEFI compiler-runtime catalog should start with compiler-owned helpers for
-panic/abort, coroutine/yield machinery, validated-buffer helper reads,
-entry-capability initialization, and move-ring or cross-core transfer machinery
-when those language features lower to helper code instead of direct inline
-instructions.
+panic/abort, status conversion, firmware string materialization,
+validated-buffer helper reads, and entry-capability initialization. Coroutine,
+move-ring, cross-core transfer, and UEFI MP Services support are not v1
+behavior; they require a separate UEFI execution-model design before any helper
+is enabled.
 
 ## Implementation Sequence
 
@@ -1550,8 +1589,10 @@ the checker rather than a standalone implementation phase.
 
 - shared source text, spans, and diagnostics
 - project manifest and explicit source path loading at the compiler edge
-- vendored `std` source pathing for new projects and support for replacement
-  source files
+- maintain compiler-shipped stdlib source under repository/toolchain
+  `stdlib/wrela-std`
+- add the toolchain stdlib source root by default, with explicit no-stdlib and
+  ejected/user stdlib source-root modes
 - core builtin type catalog
 - selected-target platform primitive catalog
 - selected-target compiler-runtime helper catalog
@@ -1559,8 +1600,8 @@ the checker rather than a standalone implementation phase.
 - parser and lossless CST
 - module graph parser across loaded source paths
 
-Output: parsed module graph with source-preserving CSTs for project, vendored,
-and replacement stdlib source modules, plus combined frontend diagnostics.
+Output: parsed module graph with source-preserving CSTs for project modules and
+the selected stdlib source root, plus combined frontend diagnostics.
 
 ### 2. AST Views And Item Index
 
@@ -1575,7 +1616,7 @@ and parameters.
 ### 3. Name Resolution
 
 - imports and module-qualified names
-- source module paths, including vendored `std` source
+- source module paths, including the selected stdlib source root
 - declaration scopes
 - type names, function names, fields, enum cases, and image devices
 - core builtin type names in type position
@@ -1630,7 +1671,7 @@ that later phases instantiate and check.
 
 - start from the image root
 - collect reachable functions and types
-- include reachable project, vendored, replacement stdlib, and package modules
+- include reachable project, selected stdlib, and package modules
 - instantiate generics
 - instantiate proof-relevant HIR metadata such as resource kinds, obligation
   IDs, session/brand IDs, call-site requirements, and platform primitive contract
@@ -1842,6 +1883,8 @@ Output: one `.efi` file.
 
 Output: a UEFI AArch64 image that can be run under firmware.
 
+Detailed design: `docs/design/uefi-aarch64-target-driver-design.md`.
+
 ### 16. Optimization Scorecard And Policy Auditing
 
 - add opt-in `optimization:score` development command outside the default
@@ -1872,11 +1915,10 @@ compile-time authority.
 ### 17. Full Image Validation
 
 - compile representative `uefi image` programs
-- compile with the default vendored stdlib
-- compile with a tiny replacement stdlib that declares and wraps the same
-  platform primitives
-- compile a no-stdlib program that declares required `platform fn` boundaries
-  directly where allowed
+- compile with the compiler-shipped sysroot stdlib from `stdlib/wrela-std`
+- compile with an explicit ejected copy under `src/wrela-std`
+- compile an equivalent source tree that does not import the shipped stdlib but
+  declares and wraps the same platform primitives directly where allowed
 - run parser/semantic/proof/OptIR/codegen integration tests
 - run binary structure checks
 - run QEMU/OVMF smoke tests
@@ -2083,9 +2125,9 @@ it before a bad `.efi` is emitted.
   deterministic output.
 - Unit tests for optimization score arithmetic, reports, baseline schema
   handling, and policy-decision log extraction.
-- Integration tests that compile equivalent programs through default stdlib,
-  replacement stdlib, and direct platform-function wrappers where the language
-  permits.
+- Integration tests that compile equivalent programs through toolchain
+  `stdlib/wrela-std` wrappers, explicit ejected `src/wrela-std` wrappers, and
+  direct platform-function wrappers where the language permits.
 - Opt-in optimization scorecard runs over representative OptIR and register
   selection fixtures.
 - Negative tests proving stdlib modules cannot bypass platform primitive
@@ -2102,8 +2144,9 @@ Required invariants:
 CST reconstructs source exactly.
 HIR nodes keep source origins.
 Project modules and stdlib modules follow the same semantic rules.
-Replacement stdlibs can declare and wrap the same platform primitives as the
-default stdlib.
+Any ordinary source module can declare and wrap the same platform primitives as
+the selected stdlib if its declarations certify against the selected target
+catalog.
 No source module can redefine a target primitive contract; it can only declare a
 matching `platform fn` binding.
 Source `platform fn` declarations are untrusted handles until certified against
@@ -2180,9 +2223,11 @@ Repeated builds produce identical bytes for identical inputs.
 
 - Optimization scorecard details:
   `docs/design/opt-ir-cost-semantics-design.md`
+- UEFI AArch64 target-driver design:
+  `docs/design/uefi-aarch64-target-driver-design.md`
 - UEFI Specification: image loading, image entry, system table, and AArch64 UEFI
-  behavior: <https://uefi.org/specs/UEFI/2.10/02_Overview.html> and
-  <https://uefi.org/specs/UEFI/2.10/04_EFI_System_Table.html>
+  behavior: <https://uefi.org/specs/UEFI/2.11/02_Overview.html> and
+  <https://uefi.org/specs/UEFI/2.11/04_EFI_System_Table.html>
 - PE/COFF format reference:
   <https://learn.microsoft.com/en-us/windows/win32/debug/pe-format>
 - Arm AArch64 procedure call standard:

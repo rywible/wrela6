@@ -72,8 +72,9 @@ their work without re-walking CSTs or trusting source-written platform claims.
 - This phase does not prove moves, consumes, loans, `take` closure, terminal
   closure, predicate fact availability, `requires` discharge, or validated
   buffer proofs.
-- This phase does not give stdlib source any private compiler authority. A
-  vendored or replacement stdlib is checked as ordinary source.
+- This phase does not give stdlib source any private compiler authority. The
+  toolchain `stdlib/wrela-std` source root, an ejected `src/wrela-std` copy, or
+  a project-specific stdlib source tree is checked as ordinary source.
 - This phase does not lower platform primitives. It certifies source handles
   against catalog contracts and leaves lowering IDs attached for later phases.
 - This phase does not implement incremental compilation.
@@ -1118,9 +1119,9 @@ Integration tests should parse small module graphs and use fake target surfaces:
 
 - a single valid `uefi image`
 - multiple images with explicit root selection
-- vendored stdlib source declaring ordinary wrappers around certified platform
-  functions
-- replacement stdlib source receiving no special privilege
+- toolchain `stdlib/wrela-std` source declaring ordinary wrappers around
+  certified platform functions
+- ejected or project-specific stdlib source receiving no special privilege
 - a source `platform fn` that name-resolves but fails certification
 - a target-unavailable primitive used by an otherwise valid source declaration
 - an image device unavailable for the selected image profile
