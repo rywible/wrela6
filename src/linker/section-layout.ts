@@ -82,7 +82,7 @@ export function layoutImageSections(
   const sections: LinkedImageSection[] = [];
   const contributions: SectionContribution[] = [];
   const provenance: LinkedByteProvenance[] = [];
-  let nextSectionRva = 0;
+  let nextSectionRva = input.target.constants.firstSectionRva;
 
   for (const outputSectionKey of sectionOrder) {
     const group = outputGroups.get(outputSectionKey);

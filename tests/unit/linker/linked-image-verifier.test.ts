@@ -20,7 +20,7 @@ describe("verifyLinkedImageLayout", () => {
   test("accepts a complete linked image layout and the slow validator agrees", () => {
     const layout = completeLayoutForTest();
 
-    const result = verifyLinkedImageLayout(layout);
+    const result = verifyLinkedImageLayout({ layout, target: targetSurfaceForTest() });
 
     expect(result.kind).toBe("ok");
     expectSlowLinkedImageValidation(layout);
@@ -72,6 +72,19 @@ describe("verifyLinkedImageLayout", () => {
 
     expect(expectStableDetails(corrupted)).toContain(
       "image-layout:section-rva-overlap:.text:.data:4096:4112:4104:4112",
+    );
+  });
+
+  test("catches first section RVAs below the target header reservation", () => {
+    const corrupted = mutateLayout(completeLayoutForTest(), {
+      sections: (sections) =>
+        sections.map((section) =>
+          section.stableKey === ".text" ? { ...section, rva: 0 } : section,
+        ),
+    });
+
+    expect(expectStableDetails(corrupted)).toContain(
+      "image-layout:first-section-rva-below-policy:.text:0:4096",
     );
   });
 
@@ -366,7 +379,7 @@ describe("verifyLinkedImageLayout", () => {
   test("production verifier accepts scaled pageoffset-12l encoded values", () => {
     const layout = layoutWithMainAtOffset(8, "pageoffset-12l", 1n, [0, 4, 0, 0], 8);
 
-    const result = verifyLinkedImageLayout(layout);
+    const result = verifyLinkedImageLayout({ layout, target: targetSurfaceForTest() });
 
     expect(result.kind).toBe("ok");
   });
@@ -456,7 +469,7 @@ function mutateLayout(
 }
 
 function expectStableDetails(layout: AArch64LinkedImageLayout): string[] {
-  const result = verifyLinkedImageLayout(layout);
+  const result = verifyLinkedImageLayout({ layout, target: targetSurfaceForTest() });
   expect(result.kind).toBe("error");
   if (result.kind !== "error") throw new Error("expected verifier error");
   return result.diagnostics.map((diagnostic) => diagnostic.stableDetail);

@@ -86,7 +86,7 @@ test("provider output is normalized and linked as a veneer module", () => {
     sourceRelocationKey: "module:test:far-branch:caller:reloc:reloc:far-branch",
     targetSymbolKey: "module:test:far-branch:target:symbol:target",
     targetLinkageName: "FarBranch.target",
-    targetRva: 4,
+    targetRva: 0x1004,
     addend: 134_217_728n,
   });
 });
@@ -278,7 +278,7 @@ test("delegated branches with non-range relocation errors fail instead of reques
   expect(providerCalls).toBe(0);
   if (result.kind !== "error") throw new Error("expected relocation error");
   expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual([
-    "relocation:encoding-failed:relocation:unaligned-branch-distance:module:test:far-branch:caller:reloc:reloc:far-branch:6:module:test:far-branch:caller:.text:reloc:far-branch:branch26:module:test:far-branch:target:symbol:target:patch-rva:0:target-rva:4:addend:2:allowed:-134217728..134217724",
+    "relocation:encoding-failed:relocation:unaligned-branch-distance:module:test:far-branch:caller:reloc:reloc:far-branch:6:module:test:far-branch:caller:.text:reloc:far-branch:branch26:module:test:far-branch:target:symbol:target:patch-rva:4096:target-rva:4100:addend:2:allowed:-134217728..134217724",
   ]);
 });
 

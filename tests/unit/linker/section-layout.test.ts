@@ -102,7 +102,25 @@ describe("layoutImageSections", () => {
       "module:test:sort:z:section:.text.z",
       "module:test:sort:z:section:.data.z",
     ]);
-    expect(result.value.sections.map((section) => section.rva)).toEqual([0, 4096]);
+    expect(result.value.sections.map((section) => section.rva)).toEqual([0x1000, 0x2000]);
+  });
+
+  test("places the first linked section at the target first section RVA", () => {
+    const result = layoutImageSections({
+      target: targetSurfaceForTest(),
+      graph: normalizedGraphForTest({
+        objectModules: [
+          objectModuleForLinkTest({
+            moduleKey: "module:test:first-section",
+            sections: [textSectionForLinkTest({ stableKey: ".text.boot" })],
+          }),
+        ],
+      }),
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error("expected section layout");
+    expect(result.value.sections[0]?.rva).toBe(0x1000);
   });
 
   test("orders sections deterministically for policy-equivalent section flag insertion order", () => {
@@ -123,7 +141,7 @@ describe("layoutImageSections", () => {
     expect(reversed.value.sections.map(sectionRvaLabel)).toEqual(
       canonical.value.sections.map(sectionRvaLabel),
     );
-    expect(reversed.value.sections.map(sectionRvaLabel)).toEqual([".text:0", ".data:4096"]);
+    expect(reversed.value.sections.map(sectionRvaLabel)).toEqual([".text:4096", ".data:8192"]);
   });
 
   test("shifts object byte provenance to linked RVAs and preserves source fields", () => {
@@ -137,7 +155,7 @@ describe("layoutImageSections", () => {
     expect(result.value.provenance).toContainEqual({
       stableKey: "module:test:boot:provenance:provenance:.text",
       sectionKey: ".text",
-      rva: 0,
+      rva: 0x1000,
       byteLength: 4,
       sourceModuleKey: "module:test:boot",
       sourceObjectSectionKey: ".text",
@@ -172,7 +190,7 @@ describe("layoutImageSections", () => {
 
     expect(result.kind).toBe("error");
     expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
-      "section-layout:image-size-exceeds-policy:4:0",
+      "section-layout:image-size-exceeds-policy:4100:0",
     );
   });
 

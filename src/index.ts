@@ -6,6 +6,8 @@ export * as linker from "./linker";
 export * as layout from "./layout";
 export * as mono from "./mono";
 export * from "./opt-ir";
+export * from "./pe-coff";
+export * as peCoff from "./pe-coff";
 export * as optIr from "./opt-ir";
 export * as proofMir from "./proof-mir";
 export * as proofCheck from "./proof-check";

@@ -91,15 +91,15 @@ describe("AArch64 linked image layout integration", () => {
         relocationKey: "module:test:data-ref:reloc:absolute-target",
         family: "addr64",
         patchSectionKey: ".data",
-        baseRelocationKey: "base-reloc:dir64:.data:4096",
+        baseRelocationKey: "base-reloc:dir64:.data:8192",
       }),
     );
     expect(result.layout.baseRelocations).toEqual([
       {
-        stableKey: "base-reloc:dir64:.data:4096",
+        stableKey: "base-reloc:dir64:.data:8192",
         kind: "dir64",
         sectionKey: ".data",
-        rva: 0x1000,
+        rva: 0x2000,
         widthBytes: 8,
         sourceRelocationKey: "module:test:data-ref:reloc:absolute-target",
       },

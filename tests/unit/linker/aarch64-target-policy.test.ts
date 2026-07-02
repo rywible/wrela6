@@ -49,6 +49,7 @@ describe("authenticateAArch64LinkerTargetSurface", () => {
     expect(result.value.constants).toEqual({
       preferredImageBase: 0n,
       sectionAlignmentBytes: 4096,
+      firstSectionRva: 4096,
       machine: 0xaa64,
       subsystem: 10,
       maxImageSizeBytes: 128 * 1024 * 1024,
@@ -68,7 +69,86 @@ describe("authenticateAArch64LinkerTargetSurface", () => {
     expect(result.value.entryPolicy.requiresBootHandoff).toBe(true);
     expect(result.value.entryPolicy.requiredEntrySectionClass).toBe("executable");
     expect(result.value.baseRelocationPolicy.kindByFamily.addr64).toBe("dir64");
-    expect(result.value.targetPolicyFingerprint).toBe("stable-hash:c58c72c5e64e85f9");
+    expect(result.value.targetPolicyFingerprint).toBe("stable-hash:2d6a89a3c30bd9cc");
+  });
+
+  test("rejects invalid first section RVA constants deterministically", () => {
+    const cases = [
+      {
+        constants: {
+          ...WRELA_UEFI_AARCH64_RPI5_LINKER_CONSTANTS,
+          firstSectionRva: 4097,
+        },
+        stableDetail: "target-policy:invalid-constant:firstSectionRva:4097",
+      },
+      {
+        constants: {
+          ...WRELA_UEFI_AARCH64_RPI5_LINKER_CONSTANTS,
+          firstSectionRva: -4096,
+        },
+        stableDetail: "target-policy:invalid-constant:firstSectionRva:-4096",
+      },
+      {
+        constants: {
+          ...WRELA_UEFI_AARCH64_RPI5_LINKER_CONSTANTS,
+          firstSectionRva: 4096.5,
+        },
+        stableDetail: "target-policy:invalid-constant:firstSectionRva:4096.5",
+      },
+    ] as const;
+
+    for (const entry of cases) {
+      const result = authenticateAArch64LinkerTargetSurface(
+        productionTargetInputForTest({ constants: entry.constants }),
+      );
+
+      expect(result.kind).toBe("error");
+      if (result.kind !== "error") throw new Error("expected firstSectionRva policy error");
+      expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+        entry.stableDetail,
+      );
+    }
+  });
+
+  test("rejects missing first section RVA constants", () => {
+    const { firstSectionRva: _firstSectionRva, ...constants } =
+      WRELA_UEFI_AARCH64_RPI5_LINKER_CONSTANTS as typeof WRELA_UEFI_AARCH64_RPI5_LINKER_CONSTANTS & {
+        readonly firstSectionRva?: number;
+      };
+
+    const result = authenticateAArch64LinkerTargetSurface(
+      productionTargetInputForTest({
+        constants: constants as unknown as AArch64LinkerTargetConstants,
+      }),
+    );
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("expected missing firstSectionRva policy error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+      "target-policy:missing-constant:firstSectionRva",
+    );
+  });
+
+  test("rejects a changed first section RVA as part of the fingerprinted target policy", () => {
+    const baseline = authenticateAArch64LinkerTargetSurface();
+    const shifted = authenticateAArch64LinkerTargetSurface(
+      productionTargetInputForTest({
+        constants: {
+          ...WRELA_UEFI_AARCH64_RPI5_LINKER_CONSTANTS,
+          firstSectionRva: 8192,
+        },
+      }),
+    );
+
+    expect(baseline.kind).toBe("ok");
+    expect(shifted.kind).toBe("error");
+    if (baseline.kind !== "ok" || shifted.kind !== "error") {
+      throw new Error("expected baseline ok and shifted policy error");
+    }
+    expect(shifted.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+      "target-policy:invalid-constant:firstSectionRva:8192",
+    );
+    expect(baseline.value.constants.firstSectionRva).toBe(4096);
   });
 
   test("returns immutable lookup tables without map mutators", () => {

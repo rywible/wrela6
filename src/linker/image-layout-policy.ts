@@ -25,6 +25,7 @@ import type {
 export interface AArch64LinkerTargetConstants {
   readonly preferredImageBase: bigint;
   readonly sectionAlignmentBytes: number;
+  readonly firstSectionRva: number;
   readonly machine: number;
   readonly subsystem: number;
   readonly maxImageSizeBytes: number;
@@ -246,6 +247,7 @@ function validateConstants(constants: AArch64LinkerTargetConstants): readonly Li
   const diagnostics: LinkerDiagnostic[] = [];
   const expected = WRELA_UEFI_AARCH64_RPI5_LINKER_CONSTANTS;
   const constantKeys = [
+    "firstSectionRva",
     "machine",
     "maxImageSizeBytes",
     "preferredImageBase",

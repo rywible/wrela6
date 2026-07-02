@@ -396,7 +396,7 @@ export function linkAArch64Image(input: LinkAArch64ImageInput): LinkAArch64Image
     verification: passedVerification,
   });
 
-  const verified = verifyLinkedImageLayout(layout);
+  const verified = verifyLinkedImageLayout({ layout, target });
   if (verified.kind === "error") {
     return orchestrationError({
       diagnostics: verified.diagnostics,

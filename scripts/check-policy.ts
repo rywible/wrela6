@@ -180,6 +180,19 @@ const proofCheckImportForbiddenPatterns = expandImportBoundaryPatterns(
 
 const optIrImportForbiddenPatterns = expandImportBoundaryPatterns(optIrForbiddenModulePathPatterns);
 
+const peCoffImportForbiddenSourceRoots = [
+  "src/frontend/",
+  "src/parser/",
+  "src/layout/",
+  "src/proof/",
+  "src/proof-mir/",
+  "src/proof-check/",
+  "src/opt-ir/",
+  "src/mono/",
+  "src/linker/",
+  "src/target/aarch64/",
+] as const;
+
 export type AArch64TargetImportPolicyDiagnosticCode =
   | "AARCH64_TARGET_HOST_STATE_IMPORT"
   | "AARCH64_TARGET_OPT_IR_PASS_INTERNAL_IMPORT"
@@ -378,6 +391,31 @@ function checkProofCheckImportBoundary(filePath: string, sourceText: string): Po
   return violations;
 }
 
+function checkPeCoffImportBoundary(filePath: string, sourceText: string): PolicyViolation[] {
+  const normalizedPath = normalizePath(filePath);
+  if (
+    normalizedPath === "src/index.ts" ||
+    !peCoffImportForbiddenSourceRoots.some((root) => normalizedPath.startsWith(root))
+  ) {
+    return [];
+  }
+
+  for (const imported of importedSpecifiers(sourceText)) {
+    if (/\/pe-coff(?:\/|$)/i.test(normalizedModuleSpecifier(imported))) {
+      return [
+        {
+          filePath,
+          line: 1,
+          column: 1,
+          message:
+            "Earlier compiler phases and target internals must not import PE/COFF writer modules.",
+        },
+      ];
+    }
+  }
+  return [];
+}
+
 function checkTextPolicies(filePath: string, sourceText: string): PolicyViolation[] {
   const violations: PolicyViolation[] = [];
   const normalizedPath = normalizePath(filePath);
@@ -433,6 +471,7 @@ export function checkPolicyFileText(filePath: string, sourceText: string): Polic
     ...checkProofCheckImportBoundary(filePath, sourceText),
     ...checkOptIrImportBoundary(filePath, sourceText),
     ...checkAArch64ImportBoundaryForFile(filePath, sourceText),
+    ...checkPeCoffImportBoundary(filePath, sourceText),
     ...checkTextPolicies(filePath, sourceText),
   ];
 }

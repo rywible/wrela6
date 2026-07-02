@@ -27,6 +27,14 @@
 - Current linker `src/linker/section-layout.ts` starts `nextSectionRva` at `0`; Task 1 changes that before writer integration tests.
 - Existing linker fixtures in `tests/support/linker/linker-fixtures.ts` already construct manual layouts with `.text` at `0x1000`; they can be reused by writer tests after adding `.pdata`/`.xdata` where needed.
 
+## Implementation Findings Resolved
+
+- Strict parser hardening was extended beyond the original happy-path serializer fixtures: V1 now rejects DOS/header padding drift, non-fixed `e_lfanew`, nonzero section-name padding after the first NUL, base-relocation page RVA misalignment, and trailing bytes after the final raw section.
+- Writer input hardening was tightened after review: exception data directories must be sourced from linked `.pdata`, malformed base-relocation RVAs are rejected before encoding, and the orchestration layer requires a complete authenticated writer target surface rather than accepting fingerprint-only partial objects.
+- File-sink boundary behavior was tightened after review: direct malformed artifact inputs now return deterministic `PeCoffWriterResult` diagnostics instead of throwing before the injected write edge.
+- Parse-back verification was extended to compare all 16 data-directory slots and raw section bytes, so unsupported directory drift and raw padding drift are visible during serializer verification.
+- Byte-writer append paths were changed to avoid argument spreading for large byte/zero runs.
+
 ## Parallelization Map
 
 Tasks are atomic, but not all are independent. Use this dependency map for subagent dispatch:

@@ -23,6 +23,7 @@ import {
   type ResolvedImageSymbol,
   type SectionContribution,
 } from "./linked-image-layout";
+import type { AArch64LinkerTargetSurface } from "./image-layout-policy";
 import { wordToU32Le } from "../target/aarch64/backend/object/encoding-core";
 
 const VERIFIER_KEY = "linked-image-verifier";
@@ -49,9 +50,15 @@ const FAILED_VERIFICATION: LinkerVerificationSummary = Object.freeze({
   ]),
 });
 
+export interface VerifyLinkedImageLayoutInput {
+  readonly layout: AArch64LinkedImageLayout;
+  readonly target: AArch64LinkerTargetSurface;
+}
+
 export function verifyLinkedImageLayout(
-  layout: AArch64LinkedImageLayout,
+  input: VerifyLinkedImageLayoutInput,
 ): LinkerResult<LinkerVerificationSummary> {
+  const layout = input.layout;
   const diagnostics: LinkerDiagnostic[] = [];
   const sectionByKey = new Map(layout.sections.map((section) => [section.stableKey, section]));
   const contributionByKey = contributionIndex(layout.sections);
@@ -61,7 +68,7 @@ export function verifyLinkedImageLayout(
   );
 
   diagnostics.push(...duplicateDiagnostics(layout));
-  diagnostics.push(...sectionDiagnostics(layout.sections));
+  diagnostics.push(...sectionDiagnostics(layout, input.target.constants.firstSectionRva));
   diagnostics.push(...contributionDiagnostics(layout, sectionByKey));
   diagnostics.push(...symbolDiagnostics(layout.symbols, sectionByKey, contributionByKey));
   diagnostics.push(...relocationDiagnostics(layout, sectionByKey, symbolByKey));
@@ -98,7 +105,11 @@ function duplicateDiagnostics(layout: AArch64LinkedImageLayout): readonly Linker
   ];
 }
 
-function sectionDiagnostics(sections: readonly LinkedImageSection[]): readonly LinkerDiagnostic[] {
+function sectionDiagnostics(
+  layout: AArch64LinkedImageLayout,
+  firstSectionRva: number,
+): readonly LinkerDiagnostic[] {
+  const sections = layout.sections;
   const diagnostics: LinkerDiagnostic[] = [];
   for (const section of sections) {
     if (!isNonNegativeInteger(section.rva) || !isPositiveInteger(section.alignmentBytes)) {
@@ -127,6 +138,14 @@ function sectionDiagnostics(sections: readonly LinkedImageSection[]): readonly L
       ? compareCodeUnitStrings(left.stableKey, right.stableKey)
       : rvaComparison;
   });
+  const firstSection = orderedSections[0];
+  if (firstSection !== undefined && firstSection.rva < firstSectionRva) {
+    diagnostics.push(
+      diagnostic(
+        `image-layout:first-section-rva-below-policy:${firstSection.stableKey}:${firstSection.rva}:${firstSectionRva}`,
+      ),
+    );
+  }
   for (let index = 1; index < orderedSections.length; index += 1) {
     const previous = orderedSections[index - 1]!;
     const current = orderedSections[index]!;

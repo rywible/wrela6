@@ -3,6 +3,7 @@ import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
 export const WRELA_UEFI_AARCH64_RPI5_LINKER_CONSTANTS = Object.freeze({
   preferredImageBase: 0n,
   sectionAlignmentBytes: 4096,
+  firstSectionRva: 4096,
   machine: 0xaa64,
   subsystem: 10,
   maxImageSizeBytes: 128 * 1024 * 1024,

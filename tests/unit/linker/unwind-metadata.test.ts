@@ -38,10 +38,10 @@ describe("materializeLinkedUnwindRecords", () => {
       {
         stableKey: "unwind:main",
         functionSymbolKey: "module:test:unwind:symbol:main",
-        functionStartRva: 0,
-        functionEndRva: 4,
+        functionStartRva: 0x1000,
+        functionEndRva: 0x1004,
         unwindInfoSectionKey: ".xdata",
-        unwindInfoRva: 0x2000,
+        unwindInfoRva: 0x3000,
       },
     ]);
     expect(result.value.dataDirectorySources).toEqual([
@@ -49,7 +49,7 @@ describe("materializeLinkedUnwindRecords", () => {
         stableKey: "directory:exception",
         directoryKind: "exception",
         sectionKey: ".pdata",
-        rva: 0x1000,
+        rva: 0x2000,
         sizeBytes: 12,
       },
     ]);
@@ -72,8 +72,8 @@ describe("materializeLinkedUnwindRecords", () => {
       expect.objectContaining({
         stableKey: "unwind:extern:Boot.main",
         functionSymbolKey: "module:test:boot:symbol:main",
-        functionStartRva: 0,
-        functionEndRva: 4,
+        functionStartRva: 0x1000,
+        functionEndRva: 0x1004,
         unwindInfoSectionKey: ".xdata",
       }),
     ]);
@@ -127,8 +127,8 @@ describe("materializeLinkedUnwindRecords", () => {
     if (result.kind !== "ok") throw new Error("expected linked unwind metadata");
     expect(result.value.unwindRecords[0]).toEqual(
       expect.objectContaining({
-        functionStartRva: 0,
-        functionEndRva: 4,
+        functionStartRva: 0x1000,
+        functionEndRva: 0x1004,
       }),
     );
   });
@@ -142,8 +142,8 @@ describe("materializeLinkedUnwindRecords", () => {
     if (result.kind !== "ok") throw new Error("expected linked unwind metadata");
     expect(result.value.unwindRecords[0]).toEqual(
       expect.objectContaining({
-        functionStartRva: 0,
-        functionEndRva: 8,
+        functionStartRva: 0x1000,
+        functionEndRva: 0x1008,
       }),
     );
   });
@@ -227,7 +227,7 @@ describe("materializeLinkedUnwindRecords", () => {
         stableKey: "directory:exception",
         directoryKind: "exception",
         sectionKey: ".pdata.alt",
-        rva: 0x1000,
+        rva: 0x2000,
         sizeBytes: 12,
       },
     ]);

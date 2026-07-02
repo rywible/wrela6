@@ -60,8 +60,8 @@ describe("AArch64 link orchestration", () => {
     ]);
     expect(result.layout.entry.loaderEntryLinkageName).toBe("__wrela_uefi_entry");
     expect(result.layout.entry.wrelaBootLinkageName).toBe("Boot.main");
-    expect(result.layout.entry.loaderEntryRva).toBeGreaterThanOrEqual(0);
-    expect(result.layout.entry.wrelaBootRva).toBeGreaterThanOrEqual(0);
+    expect(result.layout.entry.loaderEntryRva).toBeGreaterThanOrEqual(0x1000);
+    expect(result.layout.entry.wrelaBootRva).toBeGreaterThanOrEqual(0x1000);
     expect(result.layout.unwindRecords.length).toBeGreaterThan(0);
     expect(result.layout.dataDirectorySources.map((source) => source.directoryKind)).toContain(
       "exception",

@@ -32,7 +32,7 @@ describe("materializeResolvedImageSymbols", () => {
       sourceModuleKey: "module:test:symbol-rva",
       sectionKey: ".text",
       contributionKey: "module:test:symbol-rva:section:.text",
-      rva: 12,
+      rva: 0x100c,
       objectOffsetBytes: 8,
     });
   });
@@ -97,7 +97,7 @@ describe("materializeResolvedImageSymbols", () => {
       sourceModuleKey: "module:test:symbol-rva",
       sectionKey: ".text",
       contributionKey: "module:test:symbol-rva:section:.text",
-      rva: 16,
+      rva: 0x1010,
       objectOffsetBytes: 12,
     });
   });
