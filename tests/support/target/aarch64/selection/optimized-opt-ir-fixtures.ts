@@ -278,6 +278,10 @@ export function optimizedOptIrProgramWithEntryParameterForAArch64Test() {
   };
 }
 
+export function optimizedOptIrProgramWithUnitSuccessImageEntryForAArch64Test() {
+  return programWithSingleBlockOperations([], [], optIrOriginId(24));
+}
+
 export function optimizedOptIrProgramWithNineEntryParametersForAArch64Test() {
   const originId = optIrOriginId(25);
   const u64 = optIrUnsignedIntegerType(64);

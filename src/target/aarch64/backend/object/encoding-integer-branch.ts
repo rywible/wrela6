@@ -102,6 +102,12 @@ const REGISTER_THREE_OPERAND_BASES = new Map<string, number>([
   ["lsr", 0x9ac02400],
 ]);
 
+const LOGICAL_SHIFTED_REGISTER_OPCODES = new Set([
+  "and-shifted-register",
+  "orr-shifted-register",
+  "eor-shifted-register",
+]);
+
 const LOGICAL_IMMEDIATE_BASES = new Map<string, number>([
   ["and-logical-immediate", 0x92000000],
   ["orr-logical-immediate", 0xb2000000],
@@ -224,13 +230,11 @@ function encodeThreeRegisterInstruction(input: AArch64EncodeInput, baseWord: num
   const destinationNumber = registerNumber(input, destination.register);
   const leftNumber = registerNumber(input, left.register);
   const rightNumber = registerNumber(input, right.register);
+  const allowZeroSources = LOGICAL_SHIFTED_REGISTER_OPCODES.has(input.instruction.opcode);
   if (
-    destinationNumber < 0 ||
-    destinationNumber > 30 ||
-    leftNumber < 0 ||
-    leftNumber > 30 ||
-    rightNumber < 0 ||
-    rightNumber > 30
+    !isPlainGeneralRegisterNumber(destinationNumber) ||
+    !isThreeRegisterSource(input, left.register, leftNumber, allowZeroSources) ||
+    !isThreeRegisterSource(input, right.register, rightNumber, allowZeroSources)
   ) {
     return encodingError(
       `encoding:illegal-register:${input.instruction.opcode}:${destination.register}:${left.register}:${right.register}`,
@@ -239,6 +243,20 @@ function encodeThreeRegisterInstruction(input: AArch64EncodeInput, baseWord: num
   return encodingOk({
     bytes: writeU32Le(baseWord | (rightNumber << 16) | (leftNumber << 5) | destinationNumber),
   });
+}
+
+function isPlainGeneralRegisterNumber(registerNumberToCheck: number): boolean {
+  return registerNumberToCheck >= 0 && registerNumberToCheck <= 30;
+}
+
+function isThreeRegisterSource(
+  input: AArch64EncodeInput,
+  register: string,
+  registerNumberToCheck: number,
+  allowZeroRegister: boolean,
+): boolean {
+  if (isPlainGeneralRegisterNumber(registerNumberToCheck)) return true;
+  return allowZeroRegister && registerNumberToCheck === 31 && isZeroRegisterAlias(input, register);
 }
 
 function encodeCompareShiftedRegister(input: AArch64EncodeInput) {

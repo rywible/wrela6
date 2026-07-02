@@ -1,0 +1,4 @@
+// Ordinary stdlib source wrapper; target authority comes from certified platform contracts.
+pub enum Result:
+    Ok
+    Err

@@ -1,0 +1,5 @@
+// Ordinary stdlib source wrapper; target authority comes from certified platform contracts.
+platform fn set_watchdog_timer(timeout_seconds: U64) -> UefiStatus
+
+pub fn disable_watchdog() -> UefiStatus:
+    set_watchdog_timer(0)

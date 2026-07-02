@@ -35,7 +35,7 @@ describe("AArch64 backend input contract", () => {
     expect(result.kind).toBe("error");
     if (result.kind !== "error") throw new Error("expected stale target error");
     expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual([
-      "input-contract:stale-target:ca732f536c8fc87c:stale:target",
+      "input-contract:stale-target:50f07ea064366f24:stale:target",
     ]);
   });
 

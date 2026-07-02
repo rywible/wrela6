@@ -191,6 +191,18 @@ export abstract class AArch64OperationMaterializerBase {
   }
 
   protected syntheticRegister(label: string, type: AArch64MachineType): AArch64VirtualRegister {
+    return this.syntheticRegisterWithOrigin(
+      label,
+      type,
+      `opt-ir:${String(this.operation.operationId)}:${label}:${this.nextSyntheticRegisterOffset}`,
+    );
+  }
+
+  protected syntheticRegisterWithOrigin(
+    label: string,
+    type: AArch64MachineType,
+    stableOriginKey: string,
+  ): AArch64VirtualRegister {
     const register = aarch64VirtualRegister({
       vreg: aarch64VirtualRegisterId(
         1_000_000 +
@@ -201,7 +213,7 @@ export abstract class AArch64OperationMaterializerBase {
       type,
       origin: {
         kind: "synthetic",
-        stableKey: `opt-ir:${String(this.operation.operationId)}:${label}:${this.nextSyntheticRegisterOffset}`,
+        stableKey: stableOriginKey,
       },
     });
     this.nextSyntheticRegisterOffset += 1;

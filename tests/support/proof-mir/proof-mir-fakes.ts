@@ -3,6 +3,7 @@ import { targetId } from "../../../src/semantic/ids";
 import { createHash } from "node:crypto";
 import type { ProofAuthorityFingerprint } from "../../../src/proof-check/authority/authority-types";
 import {
+  proofMirRuntimeOperationId,
   runtimeCatalog,
   type ProofMirRuntimeAbiReference,
   type ProofMirRuntimeCatalog,
@@ -109,6 +110,17 @@ function defaultEffectSchemasForLoweringOwner(
     case "panicAbort":
       return [{ kind: "doesNotReturn" }];
     case "validatedBufferHelper":
+      return [{ kind: "readsMemory", place: { kind: "argument", index: 0 } }];
+    case "uefiStatusConversion":
+    case "uefiEntryContext":
+    case "uefiFirmwareString":
+      return [{ kind: "pure" }];
+    case "uefiBootServices":
+      return [
+        { kind: "advancesPrivateState", place: { kind: "synthetic", name: "uefi.boot-services" } },
+      ];
+    case "uefiConsoleDiagnostic":
+      return [{ kind: "mayPanic" }];
     case "coroutineFrame":
     case "moveRingCoreTransfer":
     case "targetMemoryHelper":
@@ -166,6 +178,73 @@ export function proofMirRuntimeCatalogFake(
     );
   }
   return result.catalog;
+}
+
+export function proofMirRuntimeCatalogWithUefiOperations(
+  overrides: { readonly operations?: readonly ProofMirRuntimeOperation[] } = {},
+): ProofMirRuntimeCatalog {
+  const targetAvailability = {
+    kind: "target" as const,
+    targetId: targetId("wrela-uefi-aarch64-rpi5-v1"),
+  };
+  const operations = overrides.operations ?? [
+    proofMirRuntimeOperationFake({
+      runtimeId: proofMirRuntimeOperationId(1000),
+      name: "uefi.status.from-boot-result",
+      authorityKey: "uefi.status.from-boot-result",
+      loweringOwner: "uefiStatusConversion",
+      targetAvailability,
+    }),
+    proofMirRuntimeOperationFake({
+      runtimeId: proofMirRuntimeOperationId(1001),
+      name: "uefi.panic.to-status",
+      authorityKey: "uefi.panic.to-status",
+      loweringOwner: "uefiStatusConversion",
+      targetAvailability,
+    }),
+    proofMirRuntimeOperationFake({
+      runtimeId: proofMirRuntimeOperationId(1002),
+      name: "uefi.entry.initialize-context",
+      authorityKey: "uefi.entry.initialize-context",
+      loweringOwner: "uefiEntryContext",
+      targetAvailability,
+    }),
+    proofMirRuntimeOperationFake({
+      runtimeId: proofMirRuntimeOperationId(1003),
+      name: "uefi.console.write-ascii-debug",
+      authorityKey: "uefi.console.write-ascii-debug",
+      loweringOwner: "uefiConsoleDiagnostic",
+      targetAvailability,
+    }),
+    proofMirRuntimeOperationFake({
+      runtimeId: proofMirRuntimeOperationId(1004),
+      name: "uefi.string.utf16-static",
+      authorityKey: "uefi.string.utf16-static",
+      loweringOwner: "uefiFirmwareString",
+      targetAvailability,
+    }),
+    proofMirRuntimeOperationFake({
+      runtimeId: proofMirRuntimeOperationId(1005),
+      name: "runtime.validated-buffer.read-slow",
+      authorityKey: "runtime.validated-buffer.read-slow",
+      loweringOwner: "validatedBufferHelper",
+      targetAvailability,
+    }),
+    proofMirRuntimeOperationFake({
+      runtimeId: proofMirRuntimeOperationId(1006),
+      name: "uefi.boot.exit-boot-services-with-fresh-map",
+      authorityKey: "uefi.boot.exit-boot-services-with-fresh-map",
+      loweringOwner: "uefiBootServices",
+      targetAvailability,
+    }),
+  ];
+
+  return proofMirRuntimeCatalogFake({
+    targetId: targetId("wrela-uefi-aarch64-rpi5-v1"),
+    operations,
+    fingerprintName: "proof-mir-runtime:uefi-test",
+    targetName: "wrela-uefi-aarch64-rpi5-v1",
+  });
 }
 
 export function proofMirRuntimeCallContractFake(

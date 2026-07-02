@@ -17,8 +17,10 @@ import { recordAArch64StagePlanning } from "./stage-helpers";
 import { lowerSwitchTerminator } from "./switch-terminator-lowering";
 import {
   returnAbiRegister,
+  terminatorConstantInstructions,
   terminatorCopyInstruction,
   terminatorInstruction,
+  unitSuccessReturnAbiRegister,
 } from "./terminator-instruction-helpers";
 
 export type AArch64TerminatorShape = "b" | "b-cond" | "cbz" | "tbz" | "ret" | "trap" | "jump-table";
@@ -73,6 +75,10 @@ export function lowerTerminator(input: {
   readonly valueRegisters: ReadonlyMap<OptIrValueId, AArch64VirtualRegister>;
   readonly blockParametersByBlock: ReadonlyMap<OptIrBlockId, readonly OptIrBlockParameter[]>;
   readonly returnLocations: readonly AArch64AbiLocation[];
+  readonly unitSuccessReturn?: {
+    readonly location: AArch64AbiLocation;
+    readonly value: bigint;
+  };
 }): LowerAArch64TerminatorResult {
   if (input.terminator === undefined) {
     return {
@@ -171,6 +177,33 @@ export function lowerTerminator(input: {
         blockParametersByBlock: input.blockParametersByBlock,
       });
     case "return": {
+      if (input.terminator.values.length === 0 && input.unitSuccessReturn !== undefined) {
+        const abiReturnRegister = unitSuccessReturnAbiRegister({
+          operationId: input.terminator.operationId,
+          location: input.unitSuccessReturn.location,
+        });
+        const instructions = terminatorConstantInstructions({
+          operationId: input.terminator.operationId,
+          register: abiReturnRegister,
+          value: input.unitSuccessReturn.value,
+          sequenceIndex: 0,
+          label: `abi-return:${abiLocationKey(input.unitSuccessReturn.location)}:unit-success`,
+        });
+        return {
+          kind: "ok",
+          instructions,
+          edgeBlocks: [],
+          virtualRegisters: [abiReturnRegister],
+          jumpTables: [],
+          selectionRecords: [],
+          instruction: terminatorInstruction(
+            input.terminator.operationId,
+            "ret",
+            [useVreg(abiReturnRegister, abiReturnRegister.type)],
+            instructions.length,
+          ),
+        };
+      }
       const instructions: AArch64MachineInstruction[] = [];
       const virtualRegisters: AArch64VirtualRegister[] = [];
       const abiReturnRegisters: AArch64VirtualRegister[] = [];

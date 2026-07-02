@@ -4,6 +4,7 @@ export type {
   SelectProofMirRuntimeCatalogResult,
 } from "./target-runtime-selection";
 export * as aarch64 from "./aarch64";
+export * as uefiAarch64 from "./uefi-aarch64";
 export {
   lowerOptIrToAArch64,
   compileAArch64Object,

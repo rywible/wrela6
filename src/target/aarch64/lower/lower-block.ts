@@ -40,6 +40,10 @@ export function lowerAArch64BlockShell(input: {
   readonly valueRegisters: ReadonlyMap<OptIrValueId, AArch64VirtualRegister>;
   readonly blockParametersByBlock?: ReadonlyMap<OptIrBlockId, readonly OptIrBlockParameter[]>;
   readonly returnLocations: readonly AArch64AbiLocation[];
+  readonly unitSuccessReturn?: {
+    readonly location: AArch64AbiLocation;
+    readonly value: bigint;
+  };
   readonly materializationContext?: AArch64OperationMaterializationContext;
 }): LowerAArch64BlockShellResult {
   const instructions: AArch64MachineInstruction[] = [];
@@ -75,6 +79,9 @@ export function lowerAArch64BlockShell(input: {
     valueRegisters: input.valueRegisters,
     blockParametersByBlock: input.blockParametersByBlock ?? new Map(),
     returnLocations: input.returnLocations,
+    ...(input.unitSuccessReturn === undefined
+      ? {}
+      : { unitSuccessReturn: input.unitSuccessReturn }),
   });
   if (terminator.kind === "error") {
     return terminator;

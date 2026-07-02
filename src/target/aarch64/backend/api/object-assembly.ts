@@ -97,7 +97,10 @@ export function aarch64ObjectSymbolsForLayout(
       }),
     );
   }
-  const externalSymbols = new Set(externalPublicCalleeSymbols(machineProgram, plan, relocations));
+  const externalSymbols = new Set([
+    ...externalPublicCalleeSymbols(machineProgram, plan, relocations),
+    ...externalRelocationLinkageNames(machineProgram, layoutSymbols, relocations),
+  ]);
   for (const boundary of plan.publicAbiBoundaries.records) {
     if (
       functionSymbols.has(boundary.caller) &&
@@ -113,6 +116,17 @@ export function aarch64ObjectSymbolsForLayout(
         }),
       );
     }
+  }
+  for (const externalSymbol of externalSymbols) {
+    if (symbols.has(externalSymbol)) continue;
+    symbols.set(
+      externalSymbol,
+      aarch64ObjectSymbol({
+        kind: "external-declaration",
+        stableKey: externalSymbol,
+        linkageName: externalSymbol,
+      }),
+    );
   }
   for (const layoutSymbol of layoutSymbols) {
     const stableKey = String(layoutSymbol.stableKey);
@@ -188,6 +202,34 @@ function externalPublicCalleeSymbols(
       )
       .sort(compareCodeUnitStrings),
   );
+}
+
+function externalRelocationLinkageNames(
+  machineProgram: AArch64MachineProgram,
+  layoutSymbols: readonly AArch64ObjectModule["symbols"][number][],
+  relocations: readonly AArch64ObjectModule["relocations"][number][],
+): readonly string[] {
+  const functionSymbols = new Set(
+    machineProgram.functions.entries().map((machineFunction) => String(machineFunction.symbol)),
+  );
+  const layoutSymbolNames = new Set(
+    layoutSymbols.flatMap((symbol) => [
+      String(symbol.stableKey),
+      ...(symbol.kind === "global-definition" || symbol.kind === "external-declaration"
+        ? [symbol.linkageName]
+        : []),
+    ]),
+  );
+  const externalSymbols = new Set<string>();
+
+  for (const relocation of relocations) {
+    if (relocation.target.kind !== "linkage-name") continue;
+    const linkageName = relocation.target.linkageName;
+    if (functionSymbols.has(linkageName) || layoutSymbolNames.has(linkageName)) continue;
+    externalSymbols.add(linkageName);
+  }
+
+  return Object.freeze([...externalSymbols].sort(compareCodeUnitStrings));
 }
 
 export function aarch64UnwindRecordsForProgram(

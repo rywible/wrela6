@@ -1,0 +1,6 @@
+use write_smoke_marker from wrela_std.target.uefi.console
+
+uefi image SmokeBasic:
+
+fn boot() -> Unit:
+    write_smoke_marker()

@@ -1,0 +1,10 @@
+// Ejected ordinary project source copy; target authority comes from certified platform contracts.
+pub enum UefiStatus:
+    success
+    load_error
+    invalid_parameter
+    unsupported
+    buffer_too_small
+    device_error
+    aborted
+    security_violation

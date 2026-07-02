@@ -128,6 +128,7 @@ export function uefiImageProfileFake(overrides?: { entryFunctionName?: string })
 
 export function primitiveSpecFake(overrides?: {
   name?: string;
+  targetName?: string;
   signature?: import("../../../src/semantic/surface/platform-surface").TargetFunctionSignature;
   proofContract?: import("../../../src/semantic/surface/platform-surface").TargetProofContractSurface;
   primitiveFamilyId?: import("../../../src/semantic/ids").PlatformPrimitiveFamilyId;
@@ -137,7 +138,7 @@ export function primitiveSpecFake(overrides?: {
     primitiveId: platformPrimitiveId(name),
     contractId: platformContractId(`${name}_contract`),
     availability: {
-      targetId: targetId("uefi-aarch64"),
+      targetId: targetId(overrides?.targetName ?? "uefi-aarch64"),
       profiles: [imageProfileId("uefi")],
       features: [],
     },
@@ -180,6 +181,32 @@ export function semanticTargetSurfaceFake(input?: {
     imageProfiles: input?.profiles ?? [uefiImageProfileFake()],
     deviceSurfaces: input?.devices ?? [],
     ...(input?.targetTypeKinds !== undefined ? { targetTypeKinds: input.targetTypeKinds } : {}),
+  });
+}
+
+export function semanticTargetSurfaceWithUefiPrimitives(
+  overrides: { readonly primitives?: readonly PlatformPrimitiveSpec[] } = {},
+): SemanticTargetSurface {
+  const uefiTargetId = targetId("wrela-uefi-aarch64-rpi5-v1");
+  const primitives =
+    overrides.primitives ??
+    [
+      "uefi.console.outputString",
+      "uefi.boot.allocatePool",
+      "uefi.boot.freePool",
+      "uefi.boot.getMemoryMap",
+      "uefi.boot.exitBootServices",
+      "uefi.boot.setWatchdogTimer",
+      "uefi.boot.stall",
+      "uefi.boot.exit",
+      "uefi.protocol.locate",
+    ].map((name) => primitiveSpecFake({ name, targetName: uefiTargetId }));
+
+  return semanticTargetSurface({
+    targetId: uefiTargetId,
+    platformPrimitives: platformPrimitiveCatalog(primitives),
+    imageProfiles: [uefiImageProfileFake()],
+    deviceSurfaces: [],
   });
 }
 

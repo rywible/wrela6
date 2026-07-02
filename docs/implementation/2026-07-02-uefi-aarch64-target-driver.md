@@ -27,6 +27,31 @@
 - `src/runtime/runtime-catalog-types.ts` already defines `ProofMirRuntimeCatalog` and `ProofMirRuntimeOperation`; this phase must key runtime materialization by those records instead of creating a parallel runtime catalog.
 - `src/semantic/surface/platform-surface.ts` already defines `SemanticTargetSurface` and `PlatformPrimitiveSpec`; this phase must key firmware primitive lowering by those records instead of making a second platform catalog.
 
+## Implementation Findings
+
+- The repository currently has real frontend parsing, OptIR fixtures, AArch64 lowering/backend, linker, and PE writer APIs, but it does not yet expose a production adapter chain from parsed source through typed HIR, monomorphization, layout facts, proof MIR, proof checking, and optimized OptIR. The UEFI target driver therefore implements Task 12B as explicit dependency-injected stages: tests and higher-level orchestration can exercise the real OptIR-to-PE binary spine with injected fixture stages, while production defaults parse frontend input and then fail closed with stable diagnostics at the first unwired compiler bridge. This preserves the target-driver contracts without inventing fake semantic or OptIR generation.
+- A fresh implementation review found that firmware platform calls must bind the UEFI image handle and system table through the boot entry ABI context, not by synthesizing ordinary undefined virtual registers. The AArch64 lowering now maps authenticated hidden firmware arguments to ABI-defined synthetic registers whose stable keys match the entry context (`uefi.imageHandle`, `uefi.systemTable`), and function-entry copy resolution/verifier logic recognizes those as public-entry ABI values.
+- The same review found that the real smoke script must not try to compile the source fixture with production defaults, because the source-to-OptIR bridge is intentionally absent. Task 15 is therefore implemented as a true post-compile smoke command: QEMU config still comes from explicit QEMU/AAVMF environment variables, while the CLI consumes an explicit prebuilt EFI image at `WRELA_UEFI_AARCH64_SMOKE_EFI` and feeds only those bytes to the QEMU harness.
+- Final review hardening found three target-surface gaps. The runtime catalog fingerprint is now derived from selected catalog content and authenticated; `uefi.boot.exitBootServices` is cataloged as the fresh-map compiler-runtime helper that is actually emitted; and source boot results use a concrete target-owned status-code ABI where no-value image-entry returns explicitly produce source success before the status helper maps through the closed EFI status table.
+- Independent signoff review also found two entry-object hardening issues. The entry-initialize-context helper now saves and restores `x30` around its nested firmware call on every return path, and the UEFI entry thunk encoder now uses the injected backend target's encoding catalog and register model instead of global RPi5 backend catalogs.
+- Final smoke-report review found an auditability gap: artifact-backed QEMU smoke reports and compile-time smoke placeholders now include the authenticated target-driver fingerprint. Prebuilt-image smoke remains metadata-free because it intentionally consumes raw bytes without a target-driver artifact.
+- Final target-authentication review found that shape-only firmware tables and metadata-only firmware ABI fingerprints were too weak. Firmware table validation now pins the exact canonical TCB offset/value/availability records, and the firmware ABI surface is bound to the authenticated AArch64 ABI fingerprint and backend register-model fingerprint for this v1 target.
+- The real-QEMU signoff review found that hidden UEFI context virtual registers must be function-scoped, not materializer-instance scoped; multiple firmware calls in one image entry now reuse the same `uefi.systemTable`/`uefi.imageHandle` synthetic registers.
+- The same signoff review found that `uefiShellSuccessMarker` must imply the expected console marker. QEMU planning and classification now derive the marker from that field, while explicit `expectedConsoleMarkers` remain additional required markers.
+- A later signoff review found that the boot contract validator was not enforced on the injected OptIR binary-spine path. `runUefiAArch64BinarySpine` now rejects source-visible image-entry parameters before AArch64 lowering.
+- That review also found the canonical semantic platform primitive signatures were placeholder `void` signatures. The canonical UEFI semantic target now carries target-owned signature shapes for the v1 platform primitives, including `outputString(Utf16Static) -> Status`.
+- The stdlib source-root tests now prove parse-time import resolution: toolchain and ejected stdlib roots map modules under the `wrela_std` prefix, package parsing discovers `use ... from wrela_std...`, and missing package-local imports fail closed.
+- A subsequent independent review found that firmware result rules were adapted but not enforced, runtime-services table calls could use an uninitialized base, and binary-spine failures dropped their stage trail. AArch64 firmware lowering now enforces result-rule arity before copying ABI return values, the UEFI adapter loads `SystemTable.RuntimeServices` for runtime-service calls, and binary-spine failed verification records include the passed/failed stage trail.
+- Final signoff hardening found that static `CHAR16` source arguments must be certified data, not arbitrary source registers, and that local smoke skips must not hide invalid smoke requests. Console output lowering now fails closed unless a static `CHAR16` pointer record is provided for the OptIR value and materializes that symbol address into the firmware call; QEMU `allowSkip` only downgrades missing config/tool cases; and semantic platform catalog fingerprints sort primitive entries before hashing.
+- Final review hardening also cross-checks compiler-runtime platform lowerings against authenticated runtime materializations, makes the entry thunk factory honor the linker-provided boot linkage name, and wires firmware string materialization into console lowering through a required image-readonly NUL-terminated static `CHAR16` pointer contract. Concrete static `CHAR16` pointer lowering now materializes symbol-address relocations rather than call-site string buffers.
+- The real-QEMU follow-up review found the static `CHAR16` contract stopped at lowering. Optimized OptIR artifacts now carry certified static string data plus value-to-pointer records, the binary spine materializes those strings as verified read-only AArch64 object modules, and the AArch64 object path declares external data symbols and pairs PAGE/PAGEOFF relocations before object verification.
+- The QEMU smoke classifier was hardened so an EFI app cannot pass by printing the same marker that the shell uses. Real QEMU smoke now relies on a nonce-qualified UEFI Shell `start` success marker for the unit-success image, can require extra app markers when configured, observes shell failure markers first, and keeps invalid smoke requests as failures even with local skip enabled.
+- Target-driver authentication now pins the selected AArch64 target, backend target, linker target, and PE/COFF writer fingerprints at the authentication boundary, so stale component surfaces are rejected before orchestration.
+- Runtime helper materialization was split into object assembly and instruction-encoding modules, keeping both files below the maintainability threshold while preserving the emitted helper bytes and pure target-driver audit coverage.
+- Fresh final review found that runtime helper objects could still be emitted after their runtime materialization records were removed. Runtime materialization authentication now requires the full canonical v1 materialization set and rejects canonical runtime IDs whose linkage, convention, or materialization kind drift from the selected target-owned record.
+- Final QEMU harness review found that the standalone smoke CLI treated missing required environment as success even though its request is fail-closed, and that a TERM-ignoring child could hold the harness promise open. The CLI now exits nonzero for missing QEMU/firmware/artifact configuration, and the host runner escalates harness termination from `SIGTERM` to a bounded `SIGKILL` fallback.
+- Final compile-verification review found that `compileUefiAArch64Image` still collapsed successful and failed lower orchestration into coarse `package-pipeline`/`binary-spine` runs. The public compile verification summary now promotes the explicit inner stage trail (`frontend` through `opt-ir`, then `aarch64-lowering` through `pe-coff-writer`) and preserves all passed stages plus the failed stage when either lower adapter fails.
+
 ## Parallelization Map
 
 Use this dependency map when dispatching subagents. A task can be picked up once all named dependencies have landed and its tests pass locally.
@@ -135,8 +160,10 @@ src/target/uefi-aarch64/
   entry-thunk.ts
   watchdog-policy.ts
   firmware-strings.ts
+  static-char16-objects.ts
   exit-boot-services.ts
   firmware-lowering.ts
+  runtime-helper-instructions.ts
   runtime-helper-objects.ts
   package-input.ts
   package-pipeline.ts
@@ -168,6 +195,7 @@ tests/unit/target/uefi-aarch64/
   entry-thunk.test.ts
   watchdog-policy.test.ts
   firmware-strings.test.ts
+  static-char16-objects.test.ts
   exit-boot-services.test.ts
   firmware-lowering.test.ts
   runtime-helper-objects.test.ts
@@ -3729,11 +3757,27 @@ Expected: pass.
 
 - `UefiAArch64SmokeRequest` and `UefiAArch64QemuSmokeConfig` match the design.
 - Planner requires explicit QEMU and firmware paths for non-skip requested smoke unless discovery is injected by config.
-- Planner writes image path as `EFI/BOOT/BOOTAA64.EFI`.
+- Planner writes image path as `EFI/BOOT/BOOTAA64.EFI` for direct fallback-boot smoke runs.
+- When `uefiShellSuccessMarker` is requested, planner writes the image at
+  `EFI/WRELA/SMOKEAA64.EFI` and writes root `startup.nsh`; EDK2 BDS does not
+  fall through to Shell after a successful default-path `BOOTAA64.EFI` start.
+- The Shell script runs the smoke image and emits the expected marker only when
+  `%lasterror% == 0`, so the marker is causally tied to `StartImage` returning
+  success rather than to QEMU merely reaching Shell.
+- `uefiShellSuccessMarker.marker` is automatically included in the observed
+  marker set; callers do not need to duplicate it in `expectedConsoleMarkers`.
 - Command includes `-machine virt`, AArch64 CPU, memory, `-serial mon:stdio`, `-display none`, read-only pflash firmware code, and FAT ESP drive. It includes writable efivars pflash only when `firmwareVarsTemplatePath` is configured and copied by the host runner.
 - Fake runner passes when all markers appear and termination is `kill-after-marker`.
 - Fake runner fails on timeout, missing marker, process cleanup failure, or missing tools when `allowSkip` is false.
 - QEMU output never feeds image byte generation.
+
+**Implementation finding:** The current package-pipeline smoke dependency is an
+optimized-OptIR fixture, not a full source-to-OptIR lowering of
+`tests/fixtures/uefi-aarch64/smoke-basic/src/image.wr`. The previous fixture
+returned source result code `2`, which the entry bridge correctly converted to
+`EFI_INVALID_PARAMETER`; real EDK2 reported `StartImage` failure. The smoke
+fixture now uses a unit-success image entry, while the real QEMU marker is
+emitted by `startup.nsh` after Shell observes `%lasterror% == 0`.
 
 - [ ] **Step 1: Write failing QEMU smoke tests**
 
@@ -3947,7 +3991,8 @@ Expected: pass.
 **Acceptance Criteria:**
 
 - `bun run smoke:uefi-aarch64` exists.
-- The real smoke runner reads only documented environment variables: `WRELA_QEMU_AARCH64`, `WRELA_QEMU_AARCH64_EFI_CODE`, and `WRELA_QEMU_AARCH64_EFI_VARS_TEMPLATE`.
+- The real smoke runner reads only documented environment variables: `WRELA_QEMU_AARCH64`, `WRELA_QEMU_AARCH64_EFI_CODE`, `WRELA_QEMU_AARCH64_EFI_VARS_TEMPLATE`, and `WRELA_UEFI_AARCH64_SMOKE_EFI`.
+- `scripts/smoke-uefi-aarch64.ts` consumes the prebuilt EFI image from `WRELA_UEFI_AARCH64_SMOKE_EFI`; it does not invoke source compilation.
 - Missing tools produce a skipped report when `allowSkip: true` and an error when `allowSkip: false`.
 - Runner creates and cleans a temporary ESP directory through an injected host-effects interface.
 - Runner copies firmware vars template when configured.
@@ -4316,8 +4361,9 @@ Expected: `git diff --check` has no output and `bun run agent:check` exits `0`.
 - [ ] `SetWatchdogTimer` is present and production default disables the watchdog before source boot code.
 - [ ] `GetMemoryMap`/`ExitBootServices` helper policy is bounded and fail-closed.
 - [ ] Static firmware strings emit deterministic NUL-terminated `CHAR16` data.
+- [ ] Certified static `CHAR16` OptIR records are linked as read-only data objects in the PE binary spine.
 - [ ] Toolchain stdlib lives at `stdlib/wrela-std`; ejected copies live under project `src/wrela-std`.
 - [ ] Stdlib source has no target authority by path.
-- [ ] QEMU smoke is opt-in, marker-based by default, and never feeds byte generation.
+- [ ] QEMU smoke is opt-in, shell-gated by a non-spoofable success marker, and never feeds byte generation.
 - [ ] The final artifact is deterministic and has target-driver metadata.
 - [ ] `bun run agent:check` passes.

@@ -141,16 +141,18 @@ function entryObjectFactoryForTest(
     createEntryObject: () => ({
       kind: "ok",
       codeBytes: input.entryCodeBytes ?? branchToLinkageNameBytes,
-      relocation: {
-        stableKey: "reloc:entry:branch-to-boot",
-        offsetBytes: 0,
-        widthBytes: 4,
-        family: "branch26",
-        instructionPatch: {
-          bitRange: [0, 25],
-          encodingOwner: { opcode: "bl", catalogEntryKey: "encoding:bl" },
+      relocations: [
+        {
+          stableKey: "reloc:entry:branch-to-boot",
+          offsetBytes: 0,
+          widthBytes: 4,
+          family: "branch26",
+          instructionPatch: {
+            bitRange: [0, 25],
+            encodingOwner: { opcode: "bl", catalogEntryKey: "encoding:bl" },
+          },
         },
-      },
+      ],
     }),
     createUnwindObjects: () => ({
       kind: "ok",

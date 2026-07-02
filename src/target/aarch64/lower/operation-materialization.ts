@@ -25,6 +25,7 @@ import {
 import { selectAArch64VectorOperation } from "../select/vector-selection";
 import { aarch64OperationSupportForKind } from "../target-surface/operation-matrix";
 import type { AArch64AbiTargetSurface } from "../target-surface/target-surface";
+import type { AArch64FirmwareLoweringContext } from "./firmware-platform-call-contract";
 import {
   classifierOpcodeForContract,
   factBigInt,
@@ -83,6 +84,7 @@ export interface AArch64OperationMaterializationContext {
   readonly fpEnvironment?: AArch64FpEnvironmentPolicy;
   readonly factQuery?: AArch64FactQuery;
   readonly operationSupportContracts?: ReadonlyMap<number, AArch64OperationSupportContract>;
+  readonly firmware?: AArch64FirmwareLoweringContext;
   readonly regionAddressBasisForRegion?: (
     regionId: OptIrRegionId,
   ) => AArch64RegionAddressBasisDecision | undefined;

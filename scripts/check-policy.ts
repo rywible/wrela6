@@ -212,6 +212,8 @@ const aarch64TargetImportPolicyMessages: Record<AArch64TargetImportPolicyDiagnos
 
 const aarch64HostStateModulePattern =
   /^(?:bun(?::|$)|node:(?:fs|path|os|process)|fs$|path$|os$|process$|node:fs|node:path|node:os|node:process)/;
+const uefiAArch64HostStateModulePattern =
+  /^(?:bun(?::|$)|node:(?:fs|path|os|process|child_process)|fs$|path$|os$|process$|child_process$|node:fs|node:path|node:os|node:process|node:child_process)/;
 
 function normalizedModuleSpecifier(value: string): string {
   return normalizePath(value).replaceAll("../", "/").replaceAll("./", "/");
@@ -286,6 +288,65 @@ function checkAArch64ImportBoundaryForFile(
         line: 1,
         column: 1,
         message: aarch64TargetImportPolicyMessages[code],
+      });
+    }
+  }
+  return violations;
+}
+
+function isPureUefiAArch64TargetSource(filePath: string): boolean {
+  const normalizedPath = normalizePath(filePath);
+  return (
+    normalizedPath.startsWith("src/target/uefi-aarch64/") &&
+    !normalizedPath.endsWith("qemu-smoke-host.ts")
+  );
+}
+
+function isEarlierCompilerPhaseForUefiBoundary(filePath: string): boolean {
+  const normalizedPath = normalizePath(filePath);
+  return [
+    "src/frontend/",
+    "src/semantic/",
+    "src/hir/",
+    "src/mono/",
+    "src/layout/",
+    "src/proof-mir/",
+    "src/proof-check/",
+    "src/opt-ir/",
+    "src/linker/",
+    "src/pe-coff/",
+    "src/target/aarch64/",
+  ].some((root) => normalizedPath.startsWith(root));
+}
+
+function checkUefiAArch64ImportBoundaryForFile(
+  filePath: string,
+  sourceText: string,
+): PolicyViolation[] {
+  const violations: PolicyViolation[] = [];
+  for (const imported of importedSpecifiers(sourceText)) {
+    if (
+      isPureUefiAArch64TargetSource(filePath) &&
+      uefiAArch64HostStateModulePattern.test(imported)
+    ) {
+      violations.push({
+        filePath,
+        line: 1,
+        column: 1,
+        message:
+          "Pure UEFI AArch64 target-driver modules must not import filesystem, process, OS, subprocess, Bun, or host runtime modules.",
+      });
+    }
+    if (
+      isEarlierCompilerPhaseForUefiBoundary(filePath) &&
+      /(?:\/target\/uefi-aarch64|\/uefi-aarch64)(?:\/|$)/.test(normalizedModuleSpecifier(imported))
+    ) {
+      violations.push({
+        filePath,
+        line: 1,
+        column: 1,
+        message:
+          "Earlier compiler phases and lower target layers must not import the UEFI AArch64 target driver.",
       });
     }
   }
@@ -471,6 +532,7 @@ export function checkPolicyFileText(filePath: string, sourceText: string): Polic
     ...checkProofCheckImportBoundary(filePath, sourceText),
     ...checkOptIrImportBoundary(filePath, sourceText),
     ...checkAArch64ImportBoundaryForFile(filePath, sourceText),
+    ...checkUefiAArch64ImportBoundaryForFile(filePath, sourceText),
     ...checkPeCoffImportBoundary(filePath, sourceText),
     ...checkTextPolicies(filePath, sourceText),
   ];

@@ -938,6 +938,10 @@ WRELA_QEMU_AARCH64_EFI_CODE
 WRELA_QEMU_AARCH64_EFI_VARS_TEMPLATE
 ```
 
+The checked-in smoke command reads only those variables. When QEMU or AAVMF is
+not configured, default verification reports a skipped smoke result instead of
+requiring firmware on every developer machine.
+
 If those variables are absent, the smoke test may search conservative common
 paths for developer convenience, but any discovered path must be reported in
 the smoke report.

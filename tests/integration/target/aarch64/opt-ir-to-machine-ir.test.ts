@@ -651,7 +651,11 @@ describe("OptIR to AArch64 machine IR integration", () => {
       (instruction) => String(instruction.opcode) === "stlr",
     );
     expect(storeRelease?.operands.map((operand) => operand.role)).toEqual(["use", "memoryBase"]);
-    expect(opcodes(result).slice(-3, -1)).toEqual(["stlr", "dmb"]);
+    const storeReleaseIndex = opcodes(result).indexOf("stlr");
+    expect(opcodes(result).slice(storeReleaseIndex, storeReleaseIndex + 2)).toEqual([
+      "stlr",
+      "dmb",
+    ]);
   });
 
   test("image-device regions derive device memory type without region memory-type facts", () => {

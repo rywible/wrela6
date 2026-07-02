@@ -174,6 +174,74 @@ describe("AArch64 integer and branch encoder", () => {
     expect([...add.value.bytes]).toEqual([0xff, 0x43, 0x00, 0x91]);
   });
 
+  test("encodes stack pointer address materialization into the fifth public argument register", () => {
+    const result = encodeAArch64PhysicalInstructionWithFamilies(
+      {
+        catalog: RPI5_BACKEND_CATALOGS.encodingCatalog,
+        registerModel: RPI5_BACKEND_CATALOGS.registerModel,
+        instruction: {
+          opcode: "add-immediate",
+          operands: [
+            { kind: "register", register: "x4" },
+            { kind: "register", register: "sp" },
+            { kind: "immediate", value: 24n },
+          ],
+        },
+      },
+      aarch64IntegerBranchEncoderFamilies,
+    );
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error("expected add encoding");
+    expect([...result.value.bytes]).toEqual([0xe4, 0x63, 0x00, 0x91]);
+  });
+
+  test("encodes logical shifted-register copy alias with zero register source", () => {
+    const result = encodeAArch64PhysicalInstructionWithFamilies(
+      {
+        catalog: RPI5_BACKEND_CATALOGS.encodingCatalog,
+        registerModel: RPI5_BACKEND_CATALOGS.registerModel,
+        instruction: {
+          opcode: "orr-shifted-register",
+          operands: [
+            { kind: "register", register: "x0" },
+            { kind: "register", register: "xzr" },
+            { kind: "register", register: "x2" },
+          ],
+        },
+      },
+      aarch64IntegerBranchEncoderFamilies,
+    );
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error("expected orr encoding");
+    expect([...result.value.bytes]).toEqual([0xe0, 0x03, 0x02, 0xaa]);
+  });
+
+  test("rejects zero register source for arithmetic shifted-register instructions", () => {
+    const result = encodeAArch64PhysicalInstructionWithFamilies(
+      {
+        catalog: RPI5_BACKEND_CATALOGS.encodingCatalog,
+        registerModel: RPI5_BACKEND_CATALOGS.registerModel,
+        instruction: {
+          opcode: "add-shifted-register",
+          operands: [
+            { kind: "register", register: "x0" },
+            { kind: "register", register: "xzr" },
+            { kind: "register", register: "x2" },
+          ],
+        },
+      },
+      aarch64IntegerBranchEncoderFamilies,
+    );
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("expected add encoding error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual([
+      "encoding:illegal-register:add-shifted-register:x0:xzr:x2",
+    ]);
+  });
+
   test("rejects add and sub immediate with zero-register aliases of SP", () => {
     for (const opcode of ["add-immediate", "sub-immediate"]) {
       const result = encodeAArch64PhysicalInstructionWithFamilies(

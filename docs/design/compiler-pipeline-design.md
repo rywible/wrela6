@@ -382,6 +382,12 @@ also offer an explicit eject/copy flow that copies the same source into a
 project under `src/wrela-std`, but the language model must not depend on either
 source tree having special authority.
 
+The canonical stdlib source maintained by this repository lives at
+`stdlib/wrela-std`. For normal compilation the compiler edge adds that tree as
+a toolchain source root. Users may eject a copy under project `src/wrela-std`,
+but both trees are ordinary source. Target authority still comes only from
+certified `platform fn` declarations matched to the selected target surface.
+
 Design rule:
 
 ```text

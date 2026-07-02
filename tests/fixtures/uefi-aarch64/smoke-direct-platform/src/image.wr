@@ -1,0 +1,6 @@
+platform fn output_string(message: Utf16Static) -> UefiStatus
+
+uefi image SmokeDirectPlatform:
+
+fn boot() -> UefiStatus:
+    output_string(utf16_static("WRELA_UEFI_SMOKE_OK\r\n"))

@@ -15,3 +15,15 @@ export * as runtime from "./runtime";
 export * as semantic from "./semantic";
 export * as shared from "./shared";
 export * as target from "./target";
+export {
+  compileUefiAArch64Image,
+  createUefiAArch64TargetMetadata,
+  fingerprintUefiAArch64ImageBytes,
+} from "./target/uefi-aarch64";
+export type {
+  CompileUefiAArch64ImageInput,
+  CompileUefiAArch64ImageResult,
+  UefiAArch64ArtifactSink,
+  UefiAArch64ImageArtifact,
+  UefiAArch64TargetMetadata,
+} from "./target/uefi-aarch64";

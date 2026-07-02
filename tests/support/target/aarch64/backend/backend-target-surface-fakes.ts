@@ -310,6 +310,7 @@ function defaultRegisterRecords(x18Policy: "reserved" | "allocatable") {
     },
     { stableKey: "x19", encodingNumber: 19, aliasSet: "x", isAllocatable: true },
     { stableKey: "x20", encodingNumber: 20, aliasSet: "x", isAllocatable: true },
+    { stableKey: "x29", encodingNumber: 29, aliasSet: "x", isAllocatable: false },
     { stableKey: "x30", encodingNumber: 30, aliasSet: "x", isAllocatable: false },
     { stableKey: "sp", encodingNumber: 31, aliasSet: "sp", isAllocatable: false },
   ]);

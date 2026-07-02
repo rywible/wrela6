@@ -204,16 +204,18 @@ function syntheticObjectFactoryForTest(): AArch64SyntheticObjectFactory {
     createEntryObject: () => ({
       kind: "ok" as const,
       codeBytes: entryCodeBytes,
-      relocation: {
-        stableKey: "reloc:entry:branch-to-boot",
-        offsetBytes: 0,
-        widthBytes: 4,
-        family: "branch26",
-        instructionPatch: {
-          bitRange: [0, 25] as const,
-          encodingOwner: { opcode: "bl", catalogEntryKey: "encoding:bl" },
+      relocations: [
+        {
+          stableKey: "reloc:entry:branch-to-boot",
+          offsetBytes: 0,
+          widthBytes: 4,
+          family: "branch26",
+          instructionPatch: {
+            bitRange: [0, 25] as const,
+            encodingOwner: { opcode: "bl", catalogEntryKey: "encoding:bl" },
+          },
         },
-      },
+      ],
     }),
     createUnwindObjects: () => ({
       kind: "ok" as const,

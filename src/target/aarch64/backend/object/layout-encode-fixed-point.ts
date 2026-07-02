@@ -60,6 +60,7 @@ import {
   relocationEncodingOwnerForOpcode,
 } from "./relocation-encoding-owner";
 import { relocationTargetForSymbolReference } from "./relocation-records";
+import { pairAArch64PageRelocations } from "./layout-relocation-pairing";
 
 export interface AArch64LayoutPhysicalInstruction extends AArch64PhysicalInstructionToEncode {
   readonly stableKey: string;
@@ -426,12 +427,14 @@ function renderLayoutIteration(
       .sort((left, right) => compareCodeUnitStrings(left.stableKey, right.stableKey)),
   );
   const sortedRelocations = Object.freeze(
-    relocations
-      .map((relocation) => ({
-        ...relocation,
-        target: relocationTargetForSymbol(String(relocation.targetSymbol), symbols),
-      }))
-      .sort((left, right) => compareCodeUnitStrings(left.stableKey, right.stableKey)),
+    [
+      ...pairAArch64PageRelocations(
+        relocations.map((relocation) => ({
+          ...relocation,
+          target: relocationTargetForSymbol(String(relocation.targetSymbol), symbols),
+        })),
+      ),
+    ].sort((left, right) => compareCodeUnitStrings(left.stableKey, right.stableKey)),
   );
   const sortedByteProvenance = Object.freeze(
     [...byteProvenance].sort((left, right) => {

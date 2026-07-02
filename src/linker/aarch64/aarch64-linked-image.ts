@@ -17,6 +17,7 @@ import type {
 } from "../linked-image-layout";
 import type { NormalizedLinkGraph, NormalizedObjectModule } from "../object-normalization";
 import type { AArch64ObjectSymbol } from "../../target/aarch64/backend/object/object-module";
+import { AARCH64_UNWIND_PROVIDER_KEY } from "./aarch64-entry-objects";
 
 export interface MaterializeLinkedUnwindRecordsInput {
   readonly target: AArch64LinkerTargetSurface;
@@ -102,7 +103,7 @@ export function materializeLinkedUnwindRecords(
       }
 
       if (
-        module.syntheticProviderKey === undefined &&
+        module.syntheticProviderKey !== AARCH64_UNWIND_PROVIDER_KEY &&
         syntheticUnwindFunctionSymbols.has(functionSymbol.symbol.symbolKey)
       ) {
         continue;

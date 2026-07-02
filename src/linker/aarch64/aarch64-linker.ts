@@ -209,7 +209,7 @@ export function materializeAArch64SyntheticObjectsForLink(
     const providerResult = provider.provideObjects({
       target: input.target,
       entry: Object.freeze({ ...input.entry }),
-      objectModules: Object.freeze([...baseModules]),
+      objectModules: Object.freeze([...baseModules, ...syntheticModules]),
       diagnosticMode: input.diagnosticMode,
     });
 

@@ -123,6 +123,52 @@ describe("AArch64 layout and encode fixed point", () => {
     ]);
   });
 
+  test("pairs pagebase and low12 relocations emitted for address materialization", () => {
+    const result = runAArch64LayoutEncodeFixedPoint({
+      fragments: [
+        {
+          stableKey: "text.main",
+          sectionKey: ".text",
+          instructions: [
+            {
+              stableKey: "adrp:data",
+              siteKey: "adrp:data",
+              opcode: "adrp",
+              operands: [
+                { kind: "register", register: "x0" },
+                { kind: "relocation-target", target: "data.symbol" },
+              ],
+              relocation: { family: "pagebase-rel21", target: "data.symbol" },
+            },
+            {
+              stableKey: "add:data",
+              siteKey: "add:data",
+              opcode: "add-pageoff",
+              operands: [
+                { kind: "register", register: "x0" },
+                { kind: "register", register: "x0" },
+                { kind: "relocation-low12", target: "data.symbol", addend: 0n },
+              ],
+              relocation: { family: "pageoffset-12a", target: "data.symbol" },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error("expected paired page relocations");
+    const pagebase = result.value.objectRelocations.find(
+      (relocation) => relocation.family === "pagebase-rel21",
+    );
+    const low12 = result.value.objectRelocations.find(
+      (relocation) => relocation.family === "pageoffset-12a",
+    );
+
+    expect(String(pagebase?.pairedRelocationKey)).toBe(String(low12?.stableKey));
+    expect(String(low12?.pairedRelocationKey)).toBe(String(pagebase?.stableKey));
+  });
+
   test("widens compare-and-branch sites through an inverted skip branch", () => {
     const result = runAArch64LayoutEncodeFixedPoint({
       fragments: [

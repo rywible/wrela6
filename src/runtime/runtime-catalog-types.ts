@@ -19,7 +19,12 @@ export type ProofMirRuntimeLoweringOwner =
   | "validatedBufferHelper"
   | "coroutineFrame"
   | "moveRingCoreTransfer"
-  | "targetMemoryHelper";
+  | "targetMemoryHelper"
+  | "uefiStatusConversion"
+  | "uefiEntryContext"
+  | "uefiBootServices"
+  | "uefiFirmwareString"
+  | "uefiConsoleDiagnostic";
 
 export type ProofMirRuntimeTargetAvailability =
   | { readonly kind: "allTargets" }

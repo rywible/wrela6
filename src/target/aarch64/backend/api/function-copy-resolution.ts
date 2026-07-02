@@ -52,7 +52,7 @@ export function parallelCopiesForFunctionEntry(
   return Object.freeze(
     machineFunction.parameters
       .flatMap((parameter): AArch64ParallelCopy[] => {
-        const vreg = vregFromAbiValueKey(parameter.valueKey);
+        const vreg = vregForAbiValueKey(machineFunction, parameter.valueKey);
         const sourceRegister = registerForMachineAbiLocation(parameter.location);
         if (vreg === undefined || sourceRegister === undefined) return [];
         const destinationRegister = firstAllocatedRegisterForVreg(allocation, vreg);
@@ -133,6 +133,24 @@ function registerForMachineAbiLocation(location: AArch64MachineAbiLocation): str
 function vregFromAbiValueKey(valueKey: string): number | undefined {
   const match = /^(?:vreg:|v)(\d+)$/.exec(valueKey);
   return match?.[1] === undefined ? undefined : Number(match[1]);
+}
+
+function vregForAbiValueKey(
+  machineFunction: AArch64MachineFunction,
+  valueKey: string,
+): number | undefined {
+  const direct = vregFromAbiValueKey(valueKey);
+  if (direct !== undefined) return direct;
+  const register = machineFunction.virtualRegisters.find((candidate) => {
+    if (candidate.origin?.kind === "synthetic") {
+      return candidate.origin.stableKey === valueKey;
+    }
+    if (candidate.origin?.kind === "optIrValue") {
+      return `optir.value:${String(candidate.origin.valueId)}` === valueKey;
+    }
+    return false;
+  });
+  return register?.vreg;
 }
 
 function physicalMoveInstructionForResolvedCopy(

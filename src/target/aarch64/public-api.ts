@@ -9,6 +9,7 @@ import type { AArch64PreservedFactSet } from "./machine-ir/fact-set";
 import type { AArch64TargetSurface } from "./target-surface/target-surface";
 import type { AArch64SemanticPlugin } from "./select/semantic-superselector";
 import type { AArch64LoweringDebugOutput } from "./lower/pipeline-stages";
+import type { AArch64FirmwareLoweringOptions } from "./lower/firmware-platform-call-contract";
 import { lowerOptIrToAArch64Program } from "./lower/lower-program";
 export {
   AARCH64_BACKEND_STAGE_KEYS,
@@ -33,6 +34,7 @@ export interface AArch64LoweringOptions {
   readonly debugTrace?: boolean;
   readonly deterministicDump?: boolean;
   readonly semanticPlugins?: readonly AArch64SemanticPlugin[];
+  readonly firmware?: AArch64FirmwareLoweringOptions;
 }
 
 export type LowerOptIrToAArch64Result =

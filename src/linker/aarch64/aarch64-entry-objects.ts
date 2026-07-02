@@ -1,4 +1,5 @@
 import { linkerDiagnostic, sortLinkerDiagnostics, type LinkerDiagnostic } from "../diagnostics";
+import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
 import {
   type AArch64LinkInputModule,
   type AArch64SyntheticObjectProvider,
@@ -16,6 +17,7 @@ import {
   aarch64ObjectUnwindRecord,
   type AArch64ObjectModule,
   type AArch64ObjectInstructionPatch,
+  type AArch64ObjectUnwindRecord,
 } from "../../target/aarch64/backend/object/object-module";
 import { verifyAArch64ObjectModule } from "../../target/aarch64/backend/verify/encoding-object-verifier";
 import type { AArch64BackendDiagnostic } from "../../target/aarch64/backend/api/diagnostics";
@@ -49,7 +51,8 @@ export type AArch64SyntheticEntryObjectFactoryResult =
   | {
       readonly kind: "ok";
       readonly codeBytes: readonly number[];
-      readonly relocation: AArch64EntryObjectRelocationFactoryOutput;
+      readonly relocations: readonly AArch64EntryObjectRelocationFactoryOutput[];
+      readonly unwindRecords?: readonly AArch64ObjectUnwindRecord[];
     }
   | AArch64SyntheticObjectFactoryError;
 
@@ -58,6 +61,7 @@ export interface AArch64EntryObjectRelocationFactoryOutput {
   readonly offsetBytes: number;
   readonly widthBytes: number;
   readonly family: string;
+  readonly targetLinkageName?: string;
   readonly addend?: bigint;
   readonly instructionPatch: AArch64ObjectInstructionPatch;
 }
@@ -105,9 +109,11 @@ export interface AArch64SyntheticObjectFactoryError {
   readonly diagnostics: readonly LinkerDiagnostic[];
 }
 
+export const AARCH64_UNWIND_PROVIDER_KEY = "aarch64-unwind";
+
 const ENTRY_PROVIDER_KEY = "uefi-entry";
 const ENTRY_OBJECT_KEY = "entry";
-const UNWIND_PROVIDER_KEY = "aarch64-unwind";
+const UNWIND_PROVIDER_KEY = AARCH64_UNWIND_PROVIDER_KEY;
 
 export function createAArch64UefiEntrySyntheticObjectProvider(
   input: CreateAArch64SyntheticObjectProviderInput,
@@ -162,6 +168,7 @@ function provideEntryObject(
         stableKey: externalSymbolKey(input.entry.wrelaBootLinkageName),
         linkageName: input.entry.wrelaBootLinkageName,
       }),
+      ...externalRelocationSymbols(input, factoryResult),
       aarch64ObjectSymbol({
         kind: "global-definition",
         stableKey: "symbol:__wrela_uefi_entry",
@@ -170,21 +177,8 @@ function provideEntryObject(
         offsetBytes: 0,
       }),
     ],
-    relocations: [
-      aarch64ObjectRelocation({
-        stableKey: factoryResult.relocation.stableKey,
-        sectionKey: ".text",
-        offsetBytes: factoryResult.relocation.offsetBytes,
-        widthBytes: factoryResult.relocation.widthBytes,
-        family: factoryResult.relocation.family,
-        target: {
-          kind: "linkage-name",
-          linkageName: input.entry.wrelaBootLinkageName,
-        },
-        addend: factoryResult.relocation.addend,
-        instructionPatch: factoryResult.relocation.instructionPatch,
-      }),
-    ],
+    relocations: entryRelocations(input, factoryResult),
+    unwindRecords: factoryResult.unwindRecords ?? [],
   });
 
   return verifiedOkModules(
@@ -196,6 +190,46 @@ function provideEntryObject(
       },
     ],
     provider,
+  );
+}
+
+function entryRelocations(
+  input: AArch64SyntheticObjectProviderInput,
+  factoryResult: Extract<AArch64SyntheticEntryObjectFactoryResult, { readonly kind: "ok" }>,
+): ReturnType<typeof aarch64ObjectRelocation>[] {
+  return factoryResult.relocations.map((relocation) =>
+    aarch64ObjectRelocation({
+      stableKey: relocation.stableKey,
+      sectionKey: ".text",
+      offsetBytes: relocation.offsetBytes,
+      widthBytes: relocation.widthBytes,
+      family: relocation.family,
+      target: {
+        kind: "linkage-name",
+        linkageName: relocation.targetLinkageName ?? input.entry.wrelaBootLinkageName,
+      },
+      addend: relocation.addend,
+      instructionPatch: relocation.instructionPatch,
+    }),
+  );
+}
+
+function externalRelocationSymbols(
+  input: AArch64SyntheticObjectProviderInput,
+  factoryResult: Extract<AArch64SyntheticEntryObjectFactoryResult, { readonly kind: "ok" }>,
+) {
+  const linkageNames = new Set(
+    factoryResult.relocations.map(
+      (relocation) => relocation.targetLinkageName ?? input.entry.wrelaBootLinkageName,
+    ),
+  );
+  linkageNames.delete(input.entry.wrelaBootLinkageName);
+  return [...linkageNames].sort(compareCodeUnitStrings).map((linkageName) =>
+    aarch64ObjectSymbol({
+      kind: "external-declaration",
+      stableKey: externalSymbolKey(linkageName),
+      linkageName,
+    }),
   );
 }
 

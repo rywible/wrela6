@@ -542,7 +542,8 @@ function abiDefinedRegisters(func: AArch64MachineFunction): Set<unknown> {
           (register.origin?.kind === "optIrValue" &&
             parameterValueKeys.has(`optir.value:${String(register.origin.valueId)}`)) ||
           (register.origin?.kind === "synthetic" &&
-            register.origin.stableKey.includes(":abi-return:")),
+            (register.origin.stableKey.includes(":abi-return:") ||
+              parameterValueKeys.has(register.origin.stableKey))),
       )
       .map((register) => register.vreg),
   );

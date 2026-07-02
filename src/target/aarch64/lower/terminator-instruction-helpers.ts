@@ -18,6 +18,7 @@ import {
   aarch64VirtualRegister,
   type AArch64VirtualRegister,
 } from "../machine-ir/virtual-register";
+import { aarch64IntMachineType } from "../machine-ir/machine-types";
 import { planAArch64MoveWideConstant } from "./constant-materialization";
 import { AARCH64_LOWERING_ID_STRIDE } from "./lowering-id-stride";
 import { abiLocationKey } from "./materialization-contracts";
@@ -61,6 +62,25 @@ export function returnAbiRegister(input: {
     origin: {
       kind: "synthetic",
       stableKey: `opt-ir-terminator:${String(input.operationId)}:abi-return:${abiLocationKey(input.location)}:${input.index}`,
+    },
+  });
+}
+
+export function unitSuccessReturnAbiRegister(input: {
+  readonly operationId: OptIrOperationId;
+  readonly location: AArch64AbiLocation;
+}): AArch64VirtualRegister {
+  return aarch64VirtualRegister({
+    vreg: aarch64VirtualRegisterId(
+      3_000_000_000 + Number(input.operationId) * AARCH64_LOWERING_ID_STRIDE,
+    ),
+    registerClass: "gpr64",
+    type: aarch64IntMachineType(64),
+    origin: {
+      kind: "synthetic",
+      stableKey: `opt-ir-terminator:${String(input.operationId)}:abi-return:${abiLocationKey(
+        input.location,
+      )}:unit-success`,
     },
   });
 }

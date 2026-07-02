@@ -1,0 +1,2 @@
+// Ejected ordinary project source copy; target authority comes from certified platform contracts.
+platform fn exit_boot_services_with_fresh_map() -> UefiStatus

@@ -53,6 +53,10 @@ describe("lexer public api", () => {
     expect(typeof wrela.authenticateAArch64PeCoffEfiWriterTargetSurface).toBe("function");
     expect(typeof wrela.peCoff.writeAArch64PeCoffEfiImage).toBe("function");
     expect(typeof wrela.peCoff.createPeCoffEfiFileSink).toBe("function");
+    expect(wrela.target.uefiAarch64).toBeDefined();
+    expect(typeof wrela.target.uefiAarch64.uefiAArch64TargetDiagnostic).toBe("function");
+    expect(typeof wrela.compileUefiAArch64Image).toBe("function");
+    expect(typeof wrela.target.uefiAarch64.compileUefiAArch64Image).toBe("function");
   });
 });
 

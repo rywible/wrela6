@@ -9,12 +9,14 @@ import { stableHash } from "../../../shared/stable-json";
 export const WRELA_UEFI_AARCH64_RPI5_PROFILE_ID = "wrela-uefi-aarch64-rpi5-v1";
 
 export const WRELA_UEFI_AARCH64_RPI5_REQUIRED_FEATURES = [
+  "BASE_A64",
   "Armv8.2-A",
   "FEAT_LSE",
   "FEAT_CRC32",
   "FEAT_AdvSIMD",
   "FEAT_FP",
   "FEAT_AES",
+  "FEAT_SHA",
   "FEAT_SHA1",
   "FEAT_SHA256",
   "FEAT_PMULL",

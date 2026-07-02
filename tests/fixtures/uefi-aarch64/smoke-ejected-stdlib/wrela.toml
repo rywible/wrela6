@@ -1,0 +1,3 @@
+# Documentation-only fixture metadata. Tests pass explicit structured package input options.
+target = "wrela-uefi-aarch64-rpi5-v1"
+stdlib = "project-ejected"

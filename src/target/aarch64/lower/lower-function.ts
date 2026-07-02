@@ -72,6 +72,7 @@ export function lowerAArch64FunctionShell(input: {
   readonly abi: AArch64AbiTargetSurface;
   readonly materializationContext?: AArch64OperationMaterializationContext;
 }): LowerAArch64FunctionShellResult {
+  const materializationContext = materializationContextForFunction(input.materializationContext);
   const registerTable = valueRegistersForFunction({
     sourceFunction: input.sourceFunction,
     operations: input.operations,
@@ -167,7 +168,7 @@ export function lowerAArch64FunctionShell(input: {
     sourceFunction: input.sourceFunction,
     operations: input.operations,
     valueRegisters: registerTable.valueRegisters,
-    materializationContext: input.materializationContext,
+    materializationContext,
   });
   if (frameObjects.kind === "error") {
     return {
@@ -189,6 +190,10 @@ export function lowerAArch64FunctionShell(input: {
   const jumpTables: AArch64MachineFunction["jumpTablePlan"][number][] = [];
   const relocationReferences: AArch64MachineFunction["relocationReferences"][number][] = [];
   const selectionRecords: AArch64LoweringSelectionRecord[] = [];
+  const unitSuccessReturn =
+    input.sourceFunction.externalRoot?.reason === "imageEntry" && returns.locations.length === 0
+      ? { location: { kind: "intReg" as const, index: 0 }, value: 0n }
+      : undefined;
   for (const block of input.sourceFunction.blocks) {
     const lowered = lowerAArch64BlockShell({
       block,
@@ -198,7 +203,8 @@ export function lowerAArch64FunctionShell(input: {
       valueRegisters: registerTable.valueRegisters,
       blockParametersByBlock,
       returnLocations: returns.locations,
-      materializationContext: input.materializationContext,
+      ...(unitSuccessReturn === undefined ? {} : { unitSuccessReturn }),
+      materializationContext,
     });
     if (lowered.kind === "error") {
       return {
@@ -236,6 +242,22 @@ export function lowerAArch64FunctionShell(input: {
       provenance: [`opt-ir-function:${String(input.sourceFunction.functionId)}`],
     }),
     selectionRecords,
+  };
+}
+
+function materializationContextForFunction(
+  context: AArch64OperationMaterializationContext | undefined,
+): AArch64OperationMaterializationContext | undefined {
+  if (context === undefined) return undefined;
+  return {
+    ...context,
+    firmware:
+      context.firmware === undefined
+        ? undefined
+        : {
+            ...context.firmware,
+            contextRegisters: new Map(),
+          },
   };
 }
 
@@ -669,6 +691,13 @@ function createAArch64MaterializationContext(
     factQuery: createAArch64FactQuery(state.facts),
     operationSupportContracts: state.operationSupportContracts,
     relocationTargetFingerprint: state.target.relocation.relocationFingerprint,
+    firmware:
+      state.options.firmware === undefined
+        ? undefined
+        : {
+            ...state.options.firmware,
+            contextRegisters: new Map(),
+          },
     regionAddressBasisForRegion: (regionId) =>
       resolveAArch64RegionAddressBasisForState(state, regionId),
     regionMemoryTypeForRegion: (regionId) => regionMemoryTypeForRegion(state, regionId),
