@@ -10,6 +10,7 @@ export type AArch64BackendLiveRangeId = AArch64BackendStableId<"AArch64BackendLi
 export type AArch64AllocationSegmentId = AArch64BackendStableId<"AArch64AllocationSegmentId">;
 export type AArch64BackendFrameSlotId = AArch64BackendStableId<"AArch64BackendFrameSlotId">;
 export type AArch64ObjectSectionId = AArch64BackendStableId<"AArch64ObjectSectionId">;
+export type AArch64ObjectSectionClassKey = AArch64BackendStableId<"AArch64ObjectSectionClassKey">;
 export type AArch64ObjectFragmentId = AArch64BackendStableId<"AArch64ObjectFragmentId">;
 export type AArch64ObjectRelocationId = AArch64BackendStableId<"AArch64ObjectRelocationId">;
 export type AArch64LiteralPoolId = AArch64BackendStableId<"AArch64LiteralPoolId">;
@@ -46,6 +47,9 @@ export function aarch64BackendFrameSlotId(value: string): AArch64BackendFrameSlo
 }
 export function aarch64ObjectSectionId(value: string): AArch64ObjectSectionId {
   return backendStableId(value, "AArch64ObjectSectionId");
+}
+export function aarch64ObjectSectionClassKey(value: string): AArch64ObjectSectionClassKey {
+  return backendStableId(value, "AArch64ObjectSectionClassKey");
 }
 export function aarch64ObjectFragmentId(value: string): AArch64ObjectFragmentId {
   return backendStableId(value, "AArch64ObjectFragmentId");

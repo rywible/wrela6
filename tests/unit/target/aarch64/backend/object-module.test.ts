@@ -61,7 +61,7 @@ describe("AArch64 backend object module", () => {
 
   test("does not synthesize zero-length provenance for empty sections", () => {
     const module = aarch64ObjectModuleForTest({
-      sections: [sectionForTest({ stableKey: ".extern", bytes: [] })],
+      sections: [sectionForTest({ stableKey: ".empty", bytes: [] })],
       symbols: [],
       relocations: [],
     });
@@ -69,9 +69,81 @@ describe("AArch64 backend object module", () => {
     expect(module.byteProvenance).toEqual([]);
   });
 
+  test("external declarations have no section placement", () => {
+    const module = aarch64ObjectModuleForTest({
+      symbols: [
+        symbolForTest({
+          stableKey: "extern.helper",
+          kind: "external-declaration",
+          linkageName: "helper",
+        }),
+      ],
+    });
+
+    expect(module.symbols).toEqual([
+      expect.objectContaining({
+        stableKey: "extern.helper",
+        kind: "external-declaration",
+        linkageName: "helper",
+      }),
+    ]);
+    expect(module.symbols[0]).not.toHaveProperty("sectionKey");
+    expect(module.symbols[0]).not.toHaveProperty("offsetBytes");
+  });
+
+  test("local definitions do not carry linkage names", () => {
+    const module = aarch64ObjectModuleForTest({
+      sections: [sectionForTest({ stableKey: ".text", bytes: [0, 0, 0, 0] })],
+      symbols: [
+        symbolForTest({
+          stableKey: "label.local",
+          kind: "local-definition",
+          sectionKey: ".text",
+          offsetBytes: 4,
+        }),
+      ],
+    });
+
+    expect(module.symbols).toEqual([
+      expect.objectContaining({
+        stableKey: "label.local",
+        kind: "local-definition",
+        sectionKey: ".text",
+        offsetBytes: 4,
+      }),
+    ]);
+    expect(module.symbols[0]).not.toHaveProperty("linkageName");
+  });
+
+  test("global definitions carry linkage names", () => {
+    const module = aarch64ObjectModuleForTest({
+      sections: [sectionForTest({ stableKey: ".text", bytes: [0, 0, 0, 0] })],
+      symbols: [
+        symbolForTest({
+          stableKey: "fn.main",
+          kind: "global-definition",
+          linkageName: "main",
+          sectionKey: ".text",
+          offsetBytes: 0,
+        }),
+      ],
+    });
+
+    expect(module.symbols).toEqual([
+      expect.objectContaining({
+        stableKey: "fn.main",
+        kind: "global-definition",
+        linkageName: "main",
+        sectionKey: ".text",
+        offsetBytes: 0,
+      }),
+    ]);
+  });
+
   test("rejects incomplete byte provenance coverage", () => {
     const section = aarch64ObjectSection({
       stableKey: "text",
+      classKey: "executable-text",
       bytes: [0, 0, 0, 0],
       alignmentBytes: 1,
     });
@@ -81,13 +153,16 @@ describe("AArch64 backend object module", () => {
       offsetBytes: 0,
       widthBytes: 4,
       family: "branch26",
+      target: { kind: "linkage-name", linkageName: "symbol" },
       targetSymbol: "symbol",
+      bitRange: [0, 25],
     });
     const symbol = aarch64ObjectSymbol({
+      kind: "global-definition",
       stableKey: "s0",
+      linkageName: "s0",
       sectionKey: "text",
       offsetBytes: 0,
-      isGlobal: true,
     });
 
     expect(() =>
@@ -102,6 +177,28 @@ describe("AArch64 backend object module", () => {
         ],
       }),
     ).toThrow("Byte provenance");
+  });
+
+  test("rejects duplicate byte provenance stable keys even when offsets differ", () => {
+    expect(() =>
+      aarch64ObjectModuleForTest({
+        sections: [sectionForTest({ stableKey: "text", bytes: [0, 0, 0, 0] })],
+        byteProvenance: [
+          byteProvenanceForTest({
+            stableKey: "bytes:duplicate",
+            sectionKey: "text",
+            startOffsetBytes: 0,
+            byteLength: 2,
+          }),
+          byteProvenanceForTest({
+            stableKey: "bytes:duplicate",
+            sectionKey: "text",
+            startOffsetBytes: 2,
+            byteLength: 2,
+          }),
+        ],
+      }),
+    ).toThrow("Conflicting byte-provenance stable key: bytes:duplicate.");
   });
 
   test("keeps records deeply frozen and metadata stable and deterministic", () => {
@@ -132,6 +229,103 @@ describe("AArch64 backend object module", () => {
     });
   });
 
+  test("preserves structured relocation addends and pair partners", () => {
+    const module = aarch64ObjectModuleForTest({
+      sections: [sectionForTest("text.a")],
+      symbols: [
+        symbolForTest({ stableKey: "target", kind: "local-definition", sectionKey: "text.a" }),
+      ],
+      relocations: [
+        relocationForTest({
+          stableKey: "reloc:page",
+          family: "pagebase-rel21",
+          target: { kind: "symbol-stable-key", stableKey: "target" },
+          targetSymbol: "target",
+          addend: 16n,
+          bitRange: [5, 30],
+          pairedRelocationKey: "reloc:low12",
+        }),
+        relocationForTest({
+          stableKey: "reloc:low12",
+          family: "pageoffset-12a",
+          target: { kind: "symbol-stable-key", stableKey: "target" },
+          targetSymbol: "target",
+          addend: 16n,
+          bitRange: [10, 21],
+          pairedRelocationKey: "reloc:page",
+        }),
+      ],
+    });
+
+    expect(module.relocations.map((relocation) => relocation.addend)).toEqual([16n, 16n]);
+    expect(module.relocations.map((relocation) => String(relocation.pairedRelocationKey))).toEqual([
+      "reloc:page",
+      "reloc:low12",
+    ]);
+  });
+
+  test("rejects conflicting structured relocation target and compatibility targetSymbol", () => {
+    expect(() =>
+      aarch64ObjectModuleForTest({
+        sections: [sectionForTest("text.a")],
+        symbols: [
+          symbolForTest({
+            stableKey: "target",
+            kind: "local-definition",
+            sectionKey: "text.a",
+          }),
+        ],
+        relocations: [
+          relocationForTest({
+            stableKey: "reloc:conflict",
+            target: { kind: "linkage-name", linkageName: "other.target" },
+            targetSymbol: "target",
+          }),
+        ],
+      }),
+    ).toThrow("Relocation target conflicts with targetSymbol: target.");
+  });
+
+  test("classifies compatibility local target symbols by stable key across object sections", () => {
+    const module = aarch64ObjectModuleForTest({
+      sections: [sectionForTest("text.a"), sectionForTest("data.a")],
+      symbols: [
+        symbolForTest({
+          stableKey: "local.data",
+          kind: "local-definition",
+          sectionKey: "data.a",
+        }),
+      ],
+      relocations: [
+        relocationForTest({
+          stableKey: "reloc:local-data",
+          sectionKey: "text.a",
+          targetSymbol: "local.data",
+        }),
+      ],
+    });
+
+    expect(module.relocations[0]?.target).toEqual({
+      kind: "symbol-stable-key",
+      stableKey: "local.data",
+    });
+  });
+
+  test("rejects non-bigint relocation addends", () => {
+    expect(() =>
+      aarch64ObjectRelocation({
+        stableKey: "reloc:bad-addend",
+        sectionKey: "text",
+        offsetBytes: 0,
+        widthBytes: 4,
+        family: "branch26",
+        target: { kind: "linkage-name", linkageName: "target" },
+        addend: 1 as unknown as bigint,
+        bitRange: [0, 25],
+      }),
+    ).toThrow("relocation addend must be a bigint.");
+  });
+
   test("module fingerprints include emitted bytes and record payloads", () => {
     const first = aarch64ObjectModuleForTest({
       sections: [sectionForTest({ stableKey: ".text", bytes: [0xe0, 0x00, 0x80, 0xd2] })],
@@ -145,6 +339,54 @@ describe("AArch64 backend object module", () => {
     );
     expect(first.deterministicMetadata.moduleFingerprint).not.toBe(
       second.deterministicMetadata.moduleFingerprint,
+    );
+  });
+
+  test("requires non-empty trimmed section class keys", () => {
+    expect(() =>
+      aarch64ObjectSection({
+        stableKey: "text",
+        classKey: "",
+        bytes: [0, 0, 0, 0],
+      }),
+    ).toThrow("AArch64ObjectSectionClassKey stable key must be non-empty and trimmed.");
+
+    expect(() =>
+      aarch64ObjectSection({
+        stableKey: "text",
+        classKey: " executable-text",
+        bytes: [0, 0, 0, 0],
+      }),
+    ).toThrow("AArch64ObjectSectionClassKey stable key must be non-empty and trimmed.");
+  });
+
+  test("includes section class keys in deterministic fingerprints", () => {
+    const text = aarch64ObjectModuleForTest({
+      sections: [
+        sectionForTest({
+          stableKey: ".same",
+          classKey: "executable-text",
+          bytes: [0, 0, 0, 0],
+        }),
+      ],
+    });
+    const data = aarch64ObjectModuleForTest({
+      sections: [
+        sectionForTest({
+          stableKey: ".same",
+          classKey: "writable-data",
+          bytes: [0, 0, 0, 0],
+        }),
+      ],
+    });
+
+    expect(String(text.sections[0]!.classKey)).toBe("executable-text");
+    expect(String(data.sections[0]!.classKey)).toBe("writable-data");
+    expect(text.deterministicMetadata.sectionFingerprint).not.toBe(
+      data.deterministicMetadata.sectionFingerprint,
+    );
+    expect(text.deterministicMetadata.moduleFingerprint).not.toBe(
+      data.deterministicMetadata.moduleFingerprint,
     );
   });
 });

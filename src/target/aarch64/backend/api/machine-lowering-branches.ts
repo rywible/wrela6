@@ -60,7 +60,7 @@ export function blockLabelInstruction(
     operands: Object.freeze([]),
     definedSymbol: Object.freeze({
       stableKey: blockSymbolKey(functionKey, blockId),
-      isGlobal: false,
+      kind: "local-definition",
     }),
   });
 }

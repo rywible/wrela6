@@ -28,7 +28,6 @@ import type { AArch64BackendDiagnostic, AArch64BackendDiagnosticMode } from "./d
 import {
   annotateAArch64ByteProvenance,
   aarch64FactSpendingFromFacts,
-  aarch64ObjectSectionsForLayout,
   aarch64ObjectSecurityInputFromFacts,
   aarch64ObjectSymbolsForLayout,
   aarch64UnwindRecordsForProgram,
@@ -126,12 +125,7 @@ export function compileAArch64Object(input: CompileAArch64ObjectInput): CompileA
     );
   }
   const verification = passedAArch64BackendVerification();
-  const objectSections = aarch64ObjectSectionsForLayout(
-    layout.value.sections,
-    input.machineProgram,
-    input.closedImagePlan,
-    layout.value.objectRelocations,
-  );
+  const objectSections = Object.freeze([...layout.value.sections]);
   const objectSymbols = aarch64ObjectSymbolsForLayout(
     objectSections,
     layout.value.symbols,

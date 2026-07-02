@@ -10,7 +10,10 @@ import {
   verifyAArch64SecurityLabelConservation,
   type AArch64SecurityLabelConservationInput,
 } from "../facts/security-label-conservation";
-import type { AArch64ObjectModule } from "../object/object-module";
+import {
+  AARCH64_OBJECT_SECTION_CLASS_EXECUTABLE_TEXT,
+  type AArch64ObjectModule,
+} from "../object/object-module";
 import { RPI5_BACKEND_CATALOGS } from "../catalogs/rpi5-backend-catalog-data";
 import type { AArch64BackendTargetSurface } from "../api/backend-target-surface";
 import type {
@@ -24,6 +27,13 @@ import {
   isWithinAArch64SignedScaledBranchReach,
 } from "../object/branch-reach";
 import { wordToU32Le } from "../object/encoding-core";
+import { isAArch64InstructionRelocationFamily } from "../object/relocation-records";
+import {
+  verifyRelocationContract,
+  verifySectionClasses,
+  verifySymbolContract,
+} from "./object-verifier-contract";
+import { verifyUniqueByteProvenanceStableKeys } from "./object-verifier-byte-provenance";
 
 export interface AArch64ObjectVerifierInput {
   readonly objectModule: AArch64ObjectModule;
@@ -48,6 +58,11 @@ interface AArch64CatalogPatternOwner {
 }
 
 interface AArch64ObjectVerifierIndexes {
+  readonly symbolByStableKey: ReadonlyMap<string, AArch64ObjectModule["symbols"][number]>;
+  readonly symbolsByLinkageName: ReadonlyMap<
+    string,
+    readonly AArch64ObjectModule["symbols"][number][]
+  >;
   readonly byteProvenanceBySection: ReadonlyMap<string, readonly AArch64ByteProvenanceRecord[]>;
   readonly byteProvenanceBySectionAndStableKey: ReadonlyMap<
     string,
@@ -92,8 +107,13 @@ export function verifyAArch64ObjectModule(
     ),
   );
   diagnostics.push(...verifySymbolPlacement(module, sections));
+  diagnostics.push(...verifySectionClasses(module));
+  diagnostics.push(...verifySymbolContract(module));
+  diagnostics.push(...verifyUniqueLinkageNames(indexes));
+  diagnostics.push(...verifyUniqueByteProvenanceStableKeys(module));
 
   for (const section of module.sections) {
+    if (!isExecutableTextSection(section)) continue;
     const literalPoolRangesForSection =
       literalPoolRangesBySection.get(String(section.stableKey)) ?? [];
     const alignmentPaddingRangesForSection =
@@ -132,6 +152,7 @@ export function verifyAArch64ObjectModule(
   }
 
   for (const relocation of module.relocations) {
+    diagnostics.push(...verifyRelocationContract(relocation, module));
     const section = sections.get(String(relocation.sectionKey));
     if (section === undefined) {
       diagnostics.push(
@@ -148,7 +169,7 @@ export function verifyAArch64ObjectModule(
         ),
       );
     }
-    if (isInstructionRelocationFamily(relocation.family) && relocation.widthBytes !== 4) {
+    if (isAArch64InstructionRelocationFamily(relocation.family) && relocation.widthBytes !== 4) {
       diagnostics.push(
         diagnostic(
           `object-verifier:relocation-width-invalid:${relocation.stableKey}:${relocation.family}:${relocation.widthBytes}`,
@@ -170,18 +191,28 @@ export function verifyAArch64ObjectModule(
           `object-verifier:relocation-family-unmapped:${relocation.stableKey}:${relocation.family}`,
         ),
       );
-    } else {
+    } else if (isAArch64InstructionRelocationFamily(relocation.family)) {
       diagnostics.push(...verifyRelocationPatchOwner(relocation, section.bytes, indexes));
     }
-    const targetSymbol = symbols.get(relocation.targetSymbol);
-    if (targetSymbol === undefined) {
+    const targetResolution = resolveRelocationTargetSymbol(relocation, indexes);
+    if (targetResolution.kind === "missing") {
       diagnostics.push(
         diagnostic(
-          `object-verifier:symbol-missing:${relocation.stableKey}:${relocation.targetSymbol}`,
+          `object-verifier:symbol-missing:${relocation.stableKey}:${relocationTargetDiagnosticKey(relocation)}`,
         ),
       );
     } else {
-      diagnostics.push(...verifyRelocationRangeAndAddendPolicy(relocation, targetSymbol, section));
+      if (targetResolution.kind === "ambiguous") {
+        diagnostics.push(
+          diagnostic(
+            `object-verifier:linkage-target-ambiguous:${relocation.stableKey}:${targetResolution.linkageName}:${targetResolution.symbolKeys.join(",")}`,
+          ),
+        );
+        continue;
+      }
+      diagnostics.push(
+        ...verifyRelocationRangeAndAddendPolicy(relocation, targetResolution.symbol, section),
+      );
     }
   }
 
@@ -303,6 +334,17 @@ function objectVerifierIndexes(
   module: AArch64ObjectModule,
   encodingCatalog: AArch64EncodingCatalog,
 ): AArch64ObjectVerifierIndexes {
+  const symbolByStableKey = new Map(
+    module.symbols.map((symbol) => [String(symbol.stableKey), symbol] as const),
+  );
+  const symbolsByLinkageName = new Map<string, AArch64ObjectModule["symbols"][number][]>();
+  for (const symbol of module.symbols) {
+    if (symbol.kind === "local-definition") continue;
+    symbolsByLinkageName.set(symbol.linkageName, [
+      ...(symbolsByLinkageName.get(symbol.linkageName) ?? []),
+      symbol,
+    ]);
+  }
   const byteProvenanceBySection = new Map<string, AArch64ByteProvenanceRecord[]>();
   const byteProvenanceBySectionAndStableKey = new Map<
     string,
@@ -334,6 +376,17 @@ function objectVerifierIndexes(
   }
 
   return Object.freeze({
+    symbolByStableKey,
+    symbolsByLinkageName: new Map(
+      [...symbolsByLinkageName.entries()].map(([linkageName, symbols]) => [
+        linkageName,
+        Object.freeze(
+          [...symbols].sort((left, right) =>
+            compareCodeUnitStrings(String(left.stableKey), String(right.stableKey)),
+          ),
+        ),
+      ]),
+    ),
     byteProvenanceBySection: frozenBySection,
     byteProvenanceBySectionAndStableKey: new Map(
       [...byteProvenanceBySectionAndStableKey.entries()].map(([sectionKey, records]) => [
@@ -343,6 +396,25 @@ function objectVerifierIndexes(
     ),
     catalogPatterns: catalogPatternOwners(encodingCatalog),
   });
+}
+
+function verifyUniqueLinkageNames(
+  indexes: AArch64ObjectVerifierIndexes,
+): readonly AArch64BackendDiagnostic[] {
+  const diagnostics: AArch64BackendDiagnostic[] = [];
+  for (const [linkageName, symbols] of [...indexes.symbolsByLinkageName.entries()].sort(
+    ([left], [right]) => compareCodeUnitStrings(left, right),
+  )) {
+    if (symbols.length <= 1) continue;
+    diagnostics.push(
+      diagnostic(
+        `object-verifier:duplicate-linkage-name:${linkageName}:${symbols
+          .map((symbol) => String(symbol.stableKey))
+          .join(",")}`,
+      ),
+    );
+  }
+  return diagnostics;
 }
 
 function catalogPatternOwners(
@@ -376,6 +448,10 @@ function byteProvenanceRecordForStableKey(
   return indexes.byteProvenanceBySectionAndStableKey.get(String(sectionKey))?.get(stableKey);
 }
 
+function isExecutableTextSection(section: AArch64ObjectModule["sections"][number]): boolean {
+  return section.classKey === AARCH64_OBJECT_SECTION_CLASS_EXECUTABLE_TEXT;
+}
+
 function verifyRelocationPatchOwner(
   relocation: AArch64ObjectModule["relocations"][number],
   sectionBytes: readonly number[],
@@ -402,14 +478,15 @@ function verifyRelocationPatchOwner(
       ),
     ];
   }
+  const bitRange = relocation.instructionPatch?.bitRange;
   if (
-    relocation.bitRange !== undefined &&
-    (relocation.bitRange[0] !== entry.relocationHole.bitRange[0] ||
-      relocation.bitRange[1] !== entry.relocationHole.bitRange[1])
+    bitRange !== undefined &&
+    (bitRange[0] !== entry.relocationHole.bitRange[0] ||
+      bitRange[1] !== entry.relocationHole.bitRange[1])
   ) {
     return [
       diagnostic(
-        `object-verifier:relocation-owner-bit-range-mismatch:${relocation.stableKey}:${relocation.family}:opcode:${opcode}:expected:${entry.relocationHole.bitRange[0]}-${entry.relocationHole.bitRange[1]}:actual:${relocation.bitRange[0]}-${relocation.bitRange[1]}`,
+        `object-verifier:relocation-owner-bit-range-mismatch:${relocation.stableKey}:${relocation.family}:opcode:${opcode}:expected:${entry.relocationHole.bitRange[0]}-${entry.relocationHole.bitRange[1]}:actual:${bitRange[0]}-${bitRange[1]}`,
       ),
     ];
   }
@@ -422,6 +499,7 @@ function verifySymbolPlacement(
 ): readonly AArch64BackendDiagnostic[] {
   const diagnostics: AArch64BackendDiagnostic[] = [];
   for (const symbol of module.symbols) {
+    if (symbol.kind === "external-declaration") continue;
     const section = sections.get(String(symbol.sectionKey));
     if (section === undefined) {
       diagnostics.push(
@@ -447,8 +525,8 @@ function verifyRelocationPatchOwnerRegion(
   section: AArch64ObjectModule["sections"][number],
   indexes: AArch64ObjectVerifierIndexes,
 ): readonly AArch64BackendDiagnostic[] {
-  if (section.fragments.length === 0) return [];
   const patchEnd = relocation.offsetBytes + relocation.widthBytes;
+  if (patchEnd > section.bytes.length) return [];
   const fragmentOwner = section.fragments.find(
     (fragment) =>
       relocation.offsetBytes >= fragment.startOffsetBytes &&
@@ -476,6 +554,7 @@ function verifyRelocationRangeAndAddendPolicy(
   section: AArch64ObjectModule["sections"][number],
 ): readonly AArch64BackendDiagnostic[] {
   const diagnostics: AArch64BackendDiagnostic[] = [];
+  if (targetSymbol.kind === "external-declaration") return diagnostics;
   if (String(relocation.sectionKey) !== String(targetSymbol.sectionKey)) return diagnostics;
   const distanceBytes = targetSymbol.offsetBytes - relocation.offsetBytes;
   const reachBytes = aarch64RelocationReachBytes(relocation.family);
@@ -526,7 +605,10 @@ function encodedPageOffset12(
   }
   const word = wordToU32Le(sectionBytes.slice(relocation.offsetBytes, relocation.offsetBytes + 4));
   const field = (word >>> 10) & 0xfff;
-  if (relocation.family === "pageoffset-12l") return field * 8;
+  if (relocation.family === "pageoffset-12l") {
+    const accessScaleBytes = relocation.instructionPatch?.encodingOwner?.accessScaleBytes;
+    return accessScaleBytes === undefined ? undefined : field * accessScaleBytes;
+  }
   return field;
 }
 
@@ -656,25 +738,61 @@ function verifyVeneerRelocation(
       ),
     );
   }
-  if (
-    relocation.bitRange === undefined ||
-    relocation.bitRange[0] !== 0 ||
-    relocation.bitRange[1] !== 25
-  ) {
+  const bitRange = relocation.instructionPatch?.bitRange;
+  if (bitRange === undefined || bitRange[0] !== 0 || bitRange[1] !== 25) {
     diagnostics.push(
       diagnostic(
-        `object-verifier:veneer-relocation-bit-range-invalid:${veneer.stableKey}:${relocation.bitRange?.[0] ?? "missing"}-${relocation.bitRange?.[1] ?? "missing"}`,
+        `object-verifier:veneer-relocation-bit-range-invalid:${veneer.stableKey}:${bitRange?.[0] ?? "missing"}-${bitRange?.[1] ?? "missing"}`,
       ),
     );
   }
-  if (relocation.targetSymbol !== veneer.targetKey) {
+  if (relocationTargetDiagnosticKey(relocation) !== veneer.targetKey) {
     diagnostics.push(
       diagnostic(
-        `object-verifier:veneer-relocation-target-mismatch:${veneer.stableKey}:${relocation.targetSymbol}:expected:${veneer.targetKey}`,
+        `object-verifier:veneer-relocation-target-mismatch:${veneer.stableKey}:${relocationTargetDiagnosticKey(relocation)}:expected:${veneer.targetKey}`,
       ),
     );
   }
   return diagnostics;
+}
+
+type RelocationTargetSymbolResolution =
+  | { readonly kind: "resolved"; readonly symbol: AArch64ObjectModule["symbols"][number] }
+  | { readonly kind: "missing" }
+  | {
+      readonly kind: "ambiguous";
+      readonly linkageName: string;
+      readonly symbolKeys: readonly string[];
+    };
+
+function resolveRelocationTargetSymbol(
+  relocation: AArch64ObjectModule["relocations"][number],
+  indexes: AArch64ObjectVerifierIndexes,
+): RelocationTargetSymbolResolution {
+  const target = relocation.target;
+  if (target.kind === "symbol-stable-key") {
+    const symbol = indexes.symbolByStableKey.get(target.stableKey);
+    return symbol === undefined ? { kind: "missing" } : { kind: "resolved", symbol };
+  }
+  const symbols = indexes.symbolsByLinkageName.get(target.linkageName) ?? [];
+  if (symbols.length === 0) return { kind: "missing" };
+  if (symbols.length > 1) {
+    return {
+      kind: "ambiguous",
+      linkageName: target.linkageName,
+      symbolKeys: Object.freeze(symbols.map((symbol) => String(symbol.stableKey))),
+    };
+  }
+  const symbol = symbols[0];
+  return symbol === undefined ? { kind: "missing" } : { kind: "resolved", symbol };
+}
+
+function relocationTargetDiagnosticKey(
+  relocation: AArch64ObjectModule["relocations"][number],
+): string {
+  return relocation.target.kind === "symbol-stable-key"
+    ? relocation.target.stableKey
+    : relocation.target.linkageName;
 }
 
 function verifyVeneerRange(
@@ -682,6 +800,7 @@ function verifyVeneerRange(
   targetSymbol: AArch64ObjectModule["symbols"][number],
   indexes: AArch64ObjectVerifierIndexes,
 ): readonly AArch64BackendDiagnostic[] {
+  if (targetSymbol.kind === "external-declaration") return [];
   if (String(veneer.sectionKey) !== String(targetSymbol.sectionKey)) return [];
   const record = byteProvenanceRecordForStableKey(
     indexes,
@@ -802,12 +921,6 @@ function verifyByteProvenance(
     }
   }
   return diagnostics;
-}
-
-function isInstructionRelocationFamily(family: string): boolean {
-  return (
-    family.startsWith("branch") || family.startsWith("pagebase") || family.startsWith("pageoffset")
-  );
 }
 
 function isKnownUnwindFrameShape(frameShape: string): boolean {

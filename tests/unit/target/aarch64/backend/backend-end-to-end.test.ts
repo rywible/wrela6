@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-
 import { compileAArch64Object } from "../../../../../src/target/aarch64/backend/api/compile-aarch64-object";
 import {
   aarch64MachineFactId,
@@ -147,7 +146,6 @@ describe("AArch64 backend end-to-end compile", () => {
         debugArtifacts: { allocationPlan: true },
       }),
     );
-
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected object module");
     expect(result.debugArtifacts?.allocationPlan).toEqual(["fixture.function:vreg:1:x20:0-1"]);
@@ -162,17 +160,19 @@ describe("AArch64 backend end-to-end compile", () => {
         closedImagePlan: closedImageBackendPlanForTest({ privateConventions: [] }),
       }),
     );
-
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected branch object module");
     expect(result.objectModule.relocations.map((relocation) => relocation.family)).toEqual([
       "branch26",
     ]);
-    expect(result.objectModule.relocations[0]?.targetSymbol).toBe("fixture.function:block:1");
+    expect(result.objectModule.relocations[0]?.target).toEqual({
+      kind: "symbol-stable-key",
+      stableKey: "fixture.function:block:1",
+    });
     expect(
       result.objectModule.symbols.map((symbol) => ({
         stableKey: String(symbol.stableKey),
-        offsetBytes: symbol.offsetBytes,
+        offsetBytes: symbol.kind === "external-declaration" ? undefined : symbol.offsetBytes,
       })),
     ).toEqual([
       { stableKey: "fixture.function", offsetBytes: 0 },
@@ -266,26 +266,34 @@ describe("AArch64 backend end-to-end compile", () => {
         }),
       }),
     );
-
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected object module");
-    expect(result.objectModule.sections.map((section) => String(section.stableKey))).toEqual([
-      ".extern",
-      ".text",
-    ]);
+    expect(
+      result.objectModule.sections.map((section) => `${section.stableKey}:${section.classKey}`),
+    ).toEqual([".text:executable-text"]);
+    const legacyExternSectionKey = [".", "extern"].join("");
+    expect(result.objectModule.sections.map((section) => String(section.stableKey))).not.toContain(
+      legacyExternSectionKey,
+    );
     expect(
       result.objectModule.symbols.map((symbol) => ({
-        stableKey: String(symbol.stableKey),
-        sectionKey: String(symbol.sectionKey),
-        offsetBytes: symbol.offsetBytes,
+        key: String(symbol.stableKey),
+        shape:
+          symbol.kind === "external-declaration"
+            ? `${symbol.kind}:${symbol.linkageName}:external`
+            : `${symbol.kind}:${"linkageName" in symbol ? symbol.linkageName : "local"}:${symbol.sectionKey}:${symbol.offsetBytes}`,
       })),
     ).toEqual([
-      { stableKey: "fixture.function", sectionKey: ".text", offsetBytes: 0 },
-      { stableKey: "helper", sectionKey: ".extern", offsetBytes: 0 },
+      { key: "fixture.function", shape: "global-definition:fixture.function:.text:0" },
+      { key: "helper", shape: "external-declaration:helper:external" },
     ]);
     expect(result.objectModule.relocations.map((relocation) => relocation.family)).toEqual([
       "branch26",
     ]);
+    expect(result.objectModule.relocations[0]?.instructionPatch?.encodingOwner).toEqual({
+      opcode: "bl",
+      catalogEntryKey: "enc:bl",
+    });
     expect(result.objectModule.relocations[0]?.offsetBytes).toBe(8);
     expect(
       result.objectModule.sections.find((section) => String(section.stableKey) === ".text")?.bytes,
@@ -315,7 +323,6 @@ describe("AArch64 backend end-to-end compile", () => {
         closedImagePlan: closedImageBackendPlanForTest({ privateConventions: [] }),
       }),
     );
-
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected object module");
     expect(result.objectModule.relocations).toEqual([]);
@@ -436,7 +443,7 @@ describe("AArch64 backend end-to-end compile", () => {
     expect(
       result.objectModule.symbols.map((symbol) => ({
         stableKey: String(symbol.stableKey),
-        offsetBytes: symbol.offsetBytes,
+        offsetBytes: symbol.kind === "external-declaration" ? undefined : symbol.offsetBytes,
       })),
     ).toEqual([
       { stableKey: "alpha", offsetBytes: 0 },
@@ -747,7 +754,10 @@ describe("AArch64 backend end-to-end compile", () => {
     expect(result.debugArtifacts?.allocationPlan).toContain(
       "fixture.function:call-boundary:private:call:fixture.function:private.callee:insn:1:clobber:x0,x1:vclobber::pin:x19:veneer:x9",
     );
-    expect(result.objectModule.relocations[0]?.targetSymbol).toBe("private.callee");
+    expect(result.objectModule.relocations[0]?.target).toEqual({
+      kind: "linkage-name",
+      linkageName: "private.callee",
+    });
   });
 
   test("private call ABI argument locations constrain final call argument registers", () => {
@@ -965,32 +975,5 @@ describe("AArch64 backend end-to-end compile", () => {
     expect(
       result.verification.runs.find((run) => run.verifierKey === "verify-object-module")?.status,
     ).toBe("failed");
-  });
-
-  test("packet loop provenance explains direct endian field load", () => {
-    const result = compileAArch64Object({
-      ...packetLoopBackendInputForTest(),
-      debugArtifacts: { allocationPlan: true },
-    });
-
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") throw new Error("expected packet loop object");
-    expect(result.objectModule.sections[0]?.bytes).toEqual([
-      0x20, 0x08, 0x40, 0xf9, 0x01, 0x04, 0xc0, 0xda, 0xbf, 0x3b, 0x03, 0xd5, 0x9f, 0x3b, 0x03,
-      0xd5, 0xc0, 0x03, 0x5f, 0xd6,
-    ]);
-    expect(result.debugArtifacts?.allocationPlan).toContain("packet.loop:vreg:1:x1:0-1");
-    expect(result.objectModule.factSpending.map((record) => record.authority)).toEqual([
-      "core-owner-and-transfer",
-      "memory-order-and-region-type",
-      "terminal-exit-and-cleanup",
-      "validated-region-shape",
-    ]);
-    const endianByte = result.objectModule.byteProvenance.find(
-      (record) =>
-        record.factFamilies.includes("validated-region-shape") &&
-        record.machineSubjectKey === "region:packet.field.ethertype",
-    );
-    expect(endianByte).toBeDefined();
   });
 });

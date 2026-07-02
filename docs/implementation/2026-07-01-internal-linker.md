@@ -1717,6 +1717,7 @@ test("returns no partial layout when symbol resolution fails", () => {
 **AC:**
 
 - `linkAArch64Image` and linked layout types are importable from the project public API.
+- Implementation note: the root public API and `src/linker` export the linker API; `src/target/aarch64/index.ts` intentionally does not re-export linker symbols because `scripts/check-policy.ts` forbids target modules from importing the linker subsystem.
 - Integration test links a small backend object and checks `.text`, loader entry RVA, applied branch relocation, unwind metadata, and layout fingerprint.
 - Integration test links two modules where one references the other's global definition.
 - Integration test links an `addr64` data reference and verifies a `dir64` base relocation.
@@ -1766,6 +1767,32 @@ bun test ./tests/unit/linker/linker-property.test.ts
 bun test ./tests/integration/public-api.test.ts
 bun run agent:check
 ```
+
+## Post-Implementation Findings
+
+- Linker-owned veneer recovery now only delegates explicit `branch26` out-of-range relocation diagnostics. Other relocation encode failures, such as unaligned branch addends, remain relocation failures and are not masked by veneer generation.
+- Authenticated linker target constants canonicalize `sectionFlags` in the production section order before layout uses them, so policy-equivalent surfaces with different object insertion order produce identical section RVAs.
+- The public `verify-input-objects` stage composes the backend object verifier with linker input-shape checks. `normalizeAArch64LinkInputs` remains graph-shape normalization for internal tests, and fixed-point veneer graph rebuilds explicitly verify the rebuilt object set before normalization.
+- Retargeted caller objects declare synthetic veneer linkages as external symbols, keeping rebuilt object modules valid under the backend object verifier.
+- The backend object verifier now decodes only executable-text sections as instructions and applies catalog patch-owner checks only to instruction relocation families, so writable data sections with `addr64` relocations remain valid object input.
+- Linked image construction preserves section order as writer-owned virtual section order instead of sorting final sections by stable key; duplicate section stable keys are still rejected.
+- The public linker barrel exports the production UEFI entry and unwind synthetic object provider helpers and their factory contract types.
+- Linked image verification decodes actual patched section bytes back into relocation encoded values, so corrupted bytes plus corrupted `patchedBytes` metadata cannot satisfy relocation verification by agreeing with each other.
+- Linked image metadata recomputation now reports deterministic diagnostics for malformed duplicate-record layouts instead of throwing out of the verifier.
+- Link input byte-provenance coverage uses sorted interval scans, preserving gap checks while diagnosing overlapping provenance without per-byte coverage sets.
+- Fixed-point graph rebuild retargets linker-owned veneer modules as well as original modules, so nested veneer requests update the delegating veneer relocation instead of leaving it pointed at the far target.
+- Linked image verification no longer uses the `addr32` test escape hatch; v1 `addr32` absolute relocations remain rejected in both production and slow verifier paths.
+- Relocation application rejects duplicate `addr64` base relocation keys before linked-image construction, so public linking reports an `apply-relocations` diagnostic instead of throwing on duplicate base relocation metadata.
+- Backend object verification requires pair keys for low-12 relocation families as well as `pagebase-rel21`, keeping malformed low-12-only objects out of the linker normalization boundary.
+- Public linker input and synthetic-provider output paths reject malformed module entries with deterministic linker diagnostics before dereferencing object-module fields.
+- Public linker input and synthetic-provider output paths also reject malformed object-module surfaces, including non-array object-module lists, missing `objectModule` fields, and provider results without a concrete module array.
+- Linker-owned veneer providers receive the original source/target context and provider output must include an onward relocation to the original target linkage before the caller branch is retargeted to the veneer.
+- Public object-module surface validation now requires deterministic metadata with a module fingerprint before normalization freezes modules, keeping malformed caller and provider outputs on diagnostic paths instead of TypeError paths.
+- Synthetic unwind objects represent backend unwind source records during final linked-image metadata materialization, so original source records are not materialized a second time when a synthetic unwind module exists for the same function.
+- Byte provenance stable keys are unique at both object construction and backend verifier boundaries, preventing malformed object surfaces from reaching linked-image provenance construction as duplicate stable keys.
+- Backend object verification decodes `pageoffset-12l` relocation fields with the relocation encoding owner's `accessScaleBytes`, matching the linker relocation math instead of assuming 64-bit loads.
+- Synthetic provider preflight validates the provider list and provider entry surfaces before invoking provider callbacks, keeping malformed provider inputs on deterministic `materialize-synthetic-objects` diagnostics.
+- The linker import-boundary test resolves relative import specifiers before applying segment-based subsystem checks, covering barrel imports and the real `opt-ir/passes` path.
 
 ## Completion Checklist
 

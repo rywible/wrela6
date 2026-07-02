@@ -7,6 +7,7 @@ import {
   type AArch64BackendResult,
 } from "../api/diagnostics";
 import {
+  AARCH64_OBJECT_SECTION_CLASS_EXECUTABLE_TEXT,
   aarch64ObjectByteProvenance,
   aarch64ObjectFragment,
   aarch64ObjectLiteralPoolEntry,
@@ -18,6 +19,7 @@ import {
   type AArch64ByteProvenanceRecord,
   type AArch64ObjectLiteralPoolEntry,
   type AArch64ObjectModule,
+  type AArch64ObjectRelocationEncodingOwner,
   type AArch64ObjectRelocation,
   type AArch64ObjectSection,
   type AArch64ObjectSymbol,
@@ -52,6 +54,12 @@ import {
   encodeExpandedInvertAndBranch,
   encodeExpandedTestAndBranch,
 } from "./layout-branch-expansion";
+import { linkerVeneerRequestForInstruction } from "./layout-linker-veneers";
+import {
+  relocationEncodingOwnerForInstruction,
+  relocationEncodingOwnerForOpcode,
+} from "./relocation-encoding-owner";
+import { relocationTargetForSymbolReference } from "./relocation-records";
 
 export interface AArch64LayoutPhysicalInstruction extends AArch64PhysicalInstructionToEncode {
   readonly stableKey: string;
@@ -59,7 +67,8 @@ export interface AArch64LayoutPhysicalInstruction extends AArch64PhysicalInstruc
   readonly forcedBytes?: readonly number[];
   readonly definedSymbol?: {
     readonly stableKey: string;
-    readonly isGlobal?: boolean;
+    readonly kind?: "local-definition" | "global-definition";
+    readonly linkageName?: string;
   };
   readonly branch?: {
     readonly kind: AArch64BranchSiteKind;
@@ -118,9 +127,10 @@ export function runAArch64LayoutEncodeFixedPoint(input: {
   readonly closedImagePlanFingerprint?: string;
   readonly symbols?: readonly {
     readonly stableKey: string;
+    readonly kind?: "local-definition" | "global-definition";
+    readonly linkageName?: string;
     readonly sectionKey: string;
     readonly offsetBytes?: number;
-    readonly isGlobal?: boolean;
   }[];
 }): AArch64BackendResult<AArch64LayoutEncodeFixedPointOutput> {
   const fragmentInputs = [...input.fragments].sort(compareFragments);
@@ -246,9 +256,10 @@ function renderLayoutIteration(
   const currentSiteOffsets = new Map<string, AArch64BranchSiteOffset>();
   const definedSymbols: {
     readonly stableKey: string;
+    readonly kind?: "local-definition" | "global-definition";
+    readonly linkageName?: string;
     readonly sectionKey: string;
     readonly offsetBytes: number;
-    readonly isGlobal?: boolean;
   }[] = [];
 
   for (const fragment of renderInput.fragmentInputs) {
@@ -274,9 +285,10 @@ function renderLayoutIteration(
       if (instruction.definedSymbol !== undefined) {
         definedSymbols.push({
           stableKey: instruction.definedSymbol.stableKey,
+          kind: instruction.definedSymbol.kind ?? "local-definition",
+          linkageName: instruction.definedSymbol.linkageName,
           sectionKey: fragment.sectionKey,
           offsetBytes: instructionOffset,
-          isGlobal: instruction.definedSymbol.isGlobal,
         });
         if (instruction.opcode === "label") continue;
       }
@@ -311,6 +323,10 @@ function renderLayoutIteration(
       }
       appendBytes(section, encoded.value.bytes);
       if (encoded.value.relocationHole !== undefined) {
+        const encodingOwner = relocationEncodingOwnerForInstruction(
+          instruction,
+          renderInput.input.encodingCatalog ?? RPI5_BACKEND_CATALOGS.encodingCatalog,
+        );
         relocations.push(
           objectRelocation({
             stableKey: `reloc:${siteKey}`,
@@ -319,8 +335,18 @@ function renderLayoutIteration(
             offsetBytes: instructionOffset + encoded.value.relocationHole.patchOffsetBytes,
             widthBytes: 4,
             family: encoded.value.relocationHole.family,
+            target: relocationTargetForSymbol(encoded.value.relocationHole.target, [
+              ...(renderInput.input.symbols ?? []),
+              ...definedSymbols,
+            ]),
             targetSymbol: encoded.value.relocationHole.target,
+            addend: 0n,
             bitRange: encoded.value.relocationHole.bitRange,
+            encodingOwner,
+            linkerVeneer: linkerVeneerRequestForInstruction(
+              instruction,
+              renderInput.branchStateBySite.get(siteKey),
+            ),
           }),
         );
       }
@@ -368,7 +394,13 @@ function renderLayoutIteration(
   const veneerPlans = veneerResult.value;
   const literalPools = appendLiteralPools(sectionBuilders, literalIslands, byteProvenance);
   if (literalPools.kind === "error") return literalPools;
-  const veneerOutput = appendVeneers(sectionBuilders, veneerPlans, relocations, byteProvenance);
+  const veneerOutput = appendVeneers(
+    sectionBuilders,
+    veneerPlans,
+    relocations,
+    byteProvenance,
+    renderInput.input.encodingCatalog ?? RPI5_BACKEND_CATALOGS.encodingCatalog,
+  );
   const veneers = veneerOutput.records;
   const sections = Object.freeze(
     [...sectionBuilders.values()].map(freezeSection).sort(compareSections),
@@ -376,17 +408,30 @@ function renderLayoutIteration(
   const symbols = Object.freeze(
     [...(renderInput.input.symbols ?? []), ...definedSymbols, ...veneerOutput.symbols]
       .map((symbol) =>
-        aarch64ObjectSymbol({
-          stableKey: symbol.stableKey,
-          sectionKey: symbol.sectionKey,
-          offsetBytes: symbol.offsetBytes ?? 0,
-          isGlobal: symbol.isGlobal ?? true,
-        }),
+        symbol.kind === "local-definition"
+          ? aarch64ObjectSymbol({
+              kind: "local-definition",
+              stableKey: symbol.stableKey,
+              sectionKey: symbol.sectionKey,
+              offsetBytes: symbol.offsetBytes ?? 0,
+            })
+          : aarch64ObjectSymbol({
+              kind: "global-definition",
+              stableKey: symbol.stableKey,
+              linkageName: symbol.linkageName ?? symbol.stableKey,
+              sectionKey: symbol.sectionKey,
+              offsetBytes: symbol.offsetBytes ?? 0,
+            }),
       )
       .sort((left, right) => compareCodeUnitStrings(left.stableKey, right.stableKey)),
   );
   const sortedRelocations = Object.freeze(
-    [...relocations].sort((left, right) => compareCodeUnitStrings(left.stableKey, right.stableKey)),
+    relocations
+      .map((relocation) => ({
+        ...relocation,
+        target: relocationTargetForSymbol(String(relocation.targetSymbol), symbols),
+      }))
+      .sort((left, right) => compareCodeUnitStrings(left.stableKey, right.stableKey)),
   );
   const sortedByteProvenance = Object.freeze(
     [...byteProvenance].sort((left, right) => {
@@ -595,8 +640,12 @@ function objectRelocation(input: {
   readonly offsetBytes: number;
   readonly widthBytes: number;
   readonly family: string;
+  readonly target: AArch64ObjectRelocation["target"];
   readonly targetSymbol: string;
+  readonly addend: bigint;
   readonly bitRange: readonly [number, number];
+  readonly encodingOwner?: AArch64ObjectRelocationEncodingOwner;
+  readonly linkerVeneer?: AArch64ObjectRelocation["linkerVeneer"];
 }): AArch64LayoutObjectRelocation {
   return Object.freeze({
     ...aarch64ObjectRelocation(input),
@@ -604,6 +653,22 @@ function objectRelocation(input: {
     patchOffsetBytes: input.offsetBytes,
     bitRange: input.bitRange,
   });
+}
+
+function relocationTargetForSymbol(
+  targetSymbol: string,
+  symbols: readonly {
+    readonly stableKey: string;
+    readonly kind?: "local-definition" | "global-definition" | "external-declaration";
+    readonly linkageName?: string;
+  }[],
+): AArch64ObjectRelocation["target"] {
+  return (
+    relocationTargetForSymbolReference({
+      targetSymbol,
+      symbols,
+    }) ?? { kind: "linkage-name", linkageName: targetSymbol }
+  );
 }
 
 function sectionBuilder(builders: Map<string, SectionBuilder>, stableKey: string): SectionBuilder {
@@ -732,21 +797,22 @@ function appendVeneers(
   veneers: readonly AArch64VeneerPlanRecord[],
   relocations: AArch64LayoutObjectRelocation[],
   byteProvenance: AArch64ByteProvenanceRecord[],
+  encodingCatalog: AArch64EncodingCatalog,
 ): {
   readonly records: readonly AArch64ObjectVeneer[];
   readonly symbols: readonly {
     readonly stableKey: string;
+    readonly kind: "local-definition";
     readonly sectionKey: string;
     readonly offsetBytes: number;
-    readonly isGlobal: boolean;
   }[];
 } {
   const records: AArch64ObjectVeneer[] = [];
   const symbols: {
     readonly stableKey: string;
+    readonly kind: "local-definition";
     readonly sectionKey: string;
     readonly offsetBytes: number;
-    readonly isGlobal: boolean;
   }[] = [];
   for (const veneer of veneers) {
     if (veneer.ownership !== "backend-owned") continue;
@@ -761,15 +827,23 @@ function appendVeneers(
         offsetBytes: offset,
         widthBytes: 4,
         family: veneer.relocationFamily,
+        target: { kind: "linkage-name", linkageName: veneer.targetKey },
         targetSymbol: veneer.targetKey,
+        addend: 0n,
         bitRange: [0, 25],
+        encodingOwner: relocationEncodingOwnerForOpcode(
+          "b",
+          veneer.relocationFamily,
+          undefined,
+          encodingCatalog,
+        ),
       }),
     );
     symbols.push({
       stableKey: veneer.stableKey,
+      kind: "local-definition",
       sectionKey: veneer.sectionKey,
       offsetBytes: offset,
-      isGlobal: false,
     });
     records.push(
       aarch64ObjectVeneer({
@@ -801,6 +875,7 @@ function appendVeneers(
 function freezeSection(section: SectionBuilder): AArch64ObjectSection {
   return aarch64ObjectSection({
     stableKey: section.stableKey,
+    classKey: AARCH64_OBJECT_SECTION_CLASS_EXECUTABLE_TEXT,
     alignmentBytes: 4,
     bytes: section.bytes,
     fragments: section.fragments,

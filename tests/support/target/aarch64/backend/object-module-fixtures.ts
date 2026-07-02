@@ -1,4 +1,5 @@
 import {
+  AARCH64_OBJECT_SECTION_CLASS_EXECUTABLE_TEXT,
   aarch64ObjectByteProvenance,
   aarch64ObjectLiteralPoolEntry,
   aarch64ObjectFragment,
@@ -17,6 +18,7 @@ import {
 
 export interface ObjectSectionForTestOptions {
   readonly stableKey: string;
+  readonly classKey?: string;
   readonly alignmentBytes?: number;
   readonly bytes?: readonly number[];
   readonly fragments?: readonly {
@@ -32,15 +34,20 @@ export interface ObjectRelocationForTestOptions {
   readonly offsetBytes?: number;
   readonly widthBytes?: number;
   readonly family?: string;
+  readonly target?: Parameters<typeof aarch64ObjectRelocation>[0]["target"];
   readonly targetSymbol?: string;
+  readonly addend?: bigint;
   readonly bitRange?: readonly [number, number];
+  readonly encodingOwner?: Parameters<typeof aarch64ObjectRelocation>[0]["encodingOwner"];
+  readonly pairedRelocationKey?: string;
 }
 
 export interface ObjectSymbolForTestOptions {
   readonly stableKey: string;
+  readonly kind?: "local-definition" | "global-definition" | "external-declaration";
+  readonly linkageName?: string;
   readonly sectionKey?: string;
   readonly offsetBytes?: number;
-  readonly isGlobal?: boolean;
 }
 
 export interface ObjectByteProvenanceForTestOptions {
@@ -68,12 +75,25 @@ export function sectionForTest(
 ) {
   const fixture: ObjectSectionForTestOptions =
     typeof input === "string" ? { stableKey: input } : input;
+  const bytes = fixture.bytes ?? [0, 0, 0, 0];
+  const fragments =
+    fixture.fragments ??
+    (bytes.length === 0
+      ? []
+      : [
+          {
+            stableKey: `${fixture.stableKey}:fragment`,
+            startOffsetBytes: 0,
+            sizeBytes: bytes.length,
+          },
+        ]);
 
   return aarch64ObjectSection({
     stableKey: fixture.stableKey,
+    classKey: fixture.classKey ?? AARCH64_OBJECT_SECTION_CLASS_EXECUTABLE_TEXT,
     alignmentBytes: fixture.alignmentBytes ?? 4,
-    bytes: fixture.bytes ?? [0, 0, 0, 0],
-    fragments: (fixture.fragments ?? []).map((fragment) =>
+    bytes,
+    fragments: fragments.map((fragment) =>
       aarch64ObjectFragment({
         stableKey: fragment.stableKey,
         sectionKey: fixture.stableKey,
@@ -103,20 +123,68 @@ export function relocationForTest(input: string | ObjectRelocationForTestOptions
     offsetBytes: fixture.offsetBytes ?? 0,
     widthBytes: fixture.widthBytes ?? 4,
     family: fixture.family ?? "branch26",
+    target: fixture.target,
     targetSymbol: fixture.targetSymbol ?? `${fixture.stableKey}.target`,
-    bitRange: fixture.bitRange,
+    addend: fixture.addend,
+    bitRange: fixture.bitRange ?? [0, 25],
+    encodingOwner: fixture.encodingOwner ?? encodingOwnerForRelocationFixture(fixture.family),
+    pairedRelocationKey: fixture.pairedRelocationKey,
   });
+}
+
+function encodingOwnerForRelocationFixture(
+  family: string | undefined,
+): Parameters<typeof aarch64ObjectRelocation>[0]["encodingOwner"] {
+  switch (family ?? "branch26") {
+    case "branch26":
+      return { opcode: "b", catalogEntryKey: "encoding:b" };
+    case "branch19":
+      return { opcode: "b.cond", catalogEntryKey: "encoding:b.cond" };
+    case "branch14":
+      return { opcode: "tbz", catalogEntryKey: "encoding:tbz" };
+    case "pagebase-rel21":
+      return { opcode: "adrp", catalogEntryKey: "encoding:adrp" };
+    case "pageoffset-12a":
+      return { opcode: "add-pageoff", catalogEntryKey: "encoding:add-pageoff" };
+    case "pageoffset-12l":
+      return {
+        opcode: "ldr-unsigned-immediate",
+        catalogEntryKey: "encoding:ldr-unsigned-immediate",
+        accessScaleBytes: 8,
+      };
+    default:
+      return undefined;
+  }
 }
 
 export function symbolForTest(input: string | ObjectSymbolForTestOptions) {
   const fixture: ObjectSymbolForTestOptions =
     typeof input === "string" ? { stableKey: input, sectionKey: "text.a", offsetBytes: 0 } : input;
+  const kind = fixture.kind ?? "global-definition";
+
+  if (kind === "external-declaration") {
+    return aarch64ObjectSymbol({
+      kind,
+      stableKey: fixture.stableKey,
+      linkageName: fixture.linkageName ?? fixture.stableKey,
+    });
+  }
+
+  if (kind === "local-definition") {
+    return aarch64ObjectSymbol({
+      kind,
+      stableKey: fixture.stableKey,
+      sectionKey: fixture.sectionKey ?? "text.a",
+      offsetBytes: fixture.offsetBytes ?? 0,
+    });
+  }
 
   return aarch64ObjectSymbol({
+    kind,
     stableKey: fixture.stableKey,
+    linkageName: fixture.linkageName ?? fixture.stableKey,
     sectionKey: fixture.sectionKey ?? "text.a",
     offsetBytes: fixture.offsetBytes ?? 0,
-    isGlobal: fixture.isGlobal ?? true,
   });
 }
 

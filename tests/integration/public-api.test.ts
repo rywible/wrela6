@@ -44,6 +44,20 @@ describe("lexer public api", () => {
     expect(TriviaKind).toBeDefined();
     expect(wrela.hir).toBeDefined();
     expect(typeof wrela.hir.lowerTypedHir).toBe("function");
+    expect(wrela.linker).toBeDefined();
+    expect(typeof wrela.linkAArch64Image).toBe("function");
+    expect(typeof wrela.linker.linkAArch64Image).toBe("function");
+    expect(typeof wrela.linker.authenticateAArch64LinkerTargetSurface).toBe("function");
+  });
+});
+
+describe("linker public api", () => {
+  test("exports the AArch64 linker from root and linker barrels", () => {
+    expect(typeof wrela.linkAArch64Image).toBe("function");
+    expect(typeof wrela.linker.createAArch64LinkedImageLayout).toBe("function");
+    expect(typeof wrela.linker.createAArch64UefiEntrySyntheticObjectProvider).toBe("function");
+    expect(typeof wrela.linker.createAArch64UnwindSyntheticObjectProvider).toBe("function");
+    expect(typeof wrela.linker.authenticateAArch64LinkerTargetSurface).toBe("function");
   });
 });
 

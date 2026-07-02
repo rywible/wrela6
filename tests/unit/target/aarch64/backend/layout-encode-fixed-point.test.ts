@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { AARCH64_OBJECT_SECTION_CLASS_EXECUTABLE_TEXT } from "../../../../../src/target/aarch64/backend/object/object-module";
 import { runAArch64LayoutEncodeFixedPoint } from "../../../../../src/target/aarch64/backend/object/layout-encode-fixed-point";
 
 describe("AArch64 layout and encode fixed point", () => {
@@ -18,6 +19,7 @@ describe("AArch64 layout and encode fixed point", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected layout");
     expect(result.value.iterations).toBe(1);
+    expect(result.value.sections[0]!.classKey).toBe(AARCH64_OBJECT_SECTION_CLASS_EXECUTABLE_TEXT);
     expect(result.value.sections[0]!.bytes).toEqual([0xe0, 0x00, 0x80, 0xd2]);
     expect(result.value.byteProvenance.map((record) => record.stableKey)).toEqual([
       "byte:.text:movz:main",
@@ -86,7 +88,7 @@ describe("AArch64 layout and encode fixed point", () => {
               stableKey: "label:entry",
               opcode: "label",
               operands: [],
-              definedSymbol: { stableKey: "entry", isGlobal: false },
+              definedSymbol: { stableKey: "entry", kind: "local-definition" },
             },
             {
               stableKey: "branch:limit",
@@ -280,7 +282,7 @@ describe("AArch64 layout and encode fixed point", () => {
               stableKey: "label:entry",
               opcode: "label",
               operands: [],
-              definedSymbol: { stableKey: "entry", isGlobal: false },
+              definedSymbol: { stableKey: "entry", kind: "local-definition" },
             },
           ],
         },
@@ -504,30 +506,86 @@ describe("AArch64 layout and encode fixed point", () => {
     expect(
       result.value.symbols.find((symbol) => String(symbol.stableKey) === "veneer:call:far"),
     ).toMatchObject({
+      kind: "local-definition",
       sectionKey: ".text",
       offsetBytes: 16,
-      isGlobal: false,
     });
-    expect(result.value.objectRelocations).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          stableKey: "reloc:call:far",
-          siteKey: "call:far",
-          offsetBytes: 4,
-          family: "branch26",
-          targetSymbol: "veneer:call:far",
+    expect(result.value.objectRelocations).toContainEqual(
+      expect.objectContaining({
+        stableKey: "reloc:call:far",
+        siteKey: "call:far",
+        offsetBytes: 4,
+        family: "branch26",
+        targetSymbol: "veneer:call:far",
+        target: { kind: "symbol-stable-key", stableKey: "veneer:call:far" },
+        instructionPatch: expect.objectContaining({
           bitRange: [0, 25],
         }),
-        expect.objectContaining({
-          stableKey: "reloc:veneer:call:far",
-          siteKey: "veneer:call:far",
-          offsetBytes: 16,
-          family: "branch26",
-          targetSymbol: "far",
-          bitRange: [0, 25],
-        }),
-      ]),
+      }),
     );
+    expect(result.value.objectRelocations).toContainEqual(
+      expect.objectContaining({
+        stableKey: "reloc:veneer:call:far",
+        siteKey: "veneer:call:far",
+        offsetBytes: 16,
+        family: "branch26",
+        targetSymbol: "far",
+        target: { kind: "linkage-name", linkageName: "far" },
+        instructionPatch: {
+          bitRange: [0, 25],
+          encodingOwner: { opcode: "b", catalogEntryKey: "encoding:b" },
+        },
+      }),
+    );
+  });
+
+  test("linker-owned veneer requests carry branch site kind and security metadata", () => {
+    const result = runAArch64LayoutEncodeFixedPoint({
+      fragments: [
+        {
+          stableKey: "text.main",
+          sectionKey: ".text",
+          instructions: [
+            {
+              stableKey: "call:far",
+              siteKey: "call:far",
+              opcode: "bl",
+              operands: [{ kind: "relocation-target", target: "far" }],
+              relocation: { family: "branch26", target: "far" },
+              provenanceSource: "prov:call:far",
+              security: {
+                branchConditionSubjectKey: "subject:z",
+                tableIndexSubjectKey: "subject:a",
+                helperArgumentSubjectKeys: ["subject:m"],
+              },
+              branch: {
+                kind: "bl",
+                targetKey: "far",
+                distanceBytes: 200_000_000,
+                veneerPolicy: "linker-owned",
+              },
+            },
+          ],
+        },
+      ],
+      symbols: [{ stableKey: "far", sectionKey: ".text" }],
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error("expected linker-owned veneer request");
+    expect(result.value.branchDecisions).toEqual([{ siteKey: "call:far", state: "linker-owned" }]);
+    expect(result.value.objectRelocations[0]).toMatchObject({
+      stableKey: "reloc:call:far",
+      family: "branch26",
+      target: { kind: "linkage-name", linkageName: "far" },
+      linkerVeneer: {
+        siteKind: "branch26-call",
+        scratchRegisters: [],
+        securityLabels: ["subject:a", "subject:m", "subject:z"],
+        provenanceKeys: ["prov:call:far"],
+        maxSourceReachBytes: 128 * 1024 * 1024,
+      },
+    });
   });
 
   test("rejects backend-owned veneer requests without declared veneer site metadata", () => {

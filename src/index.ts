@@ -1,6 +1,8 @@
 export * from "./frontend";
 export * as frontend from "./frontend";
 export * as hir from "./hir";
+export * from "./linker";
+export * as linker from "./linker";
 export * as layout from "./layout";
 export * as mono from "./mono";
 export * from "./opt-ir";

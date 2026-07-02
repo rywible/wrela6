@@ -11,25 +11,55 @@ import {
   verifierRun,
   type AArch64BackendVerificationSummary,
 } from "../api/verification-summary";
+import {
+  aarch64ObjectRelocation,
+  relocationTargetForSymbolReference,
+  relocationTargetsAreEquivalent,
+  type AArch64ObjectRelocation,
+  type AArch64ObjectRelocationTarget,
+} from "./relocation-records";
+
+export { aarch64ObjectRelocation };
+export type {
+  AArch64ObjectRelocation,
+  AArch64ObjectLinkerVeneerRequest,
+  AArch64ObjectRelocationEncodingOwner,
+  AArch64ObjectInstructionPatch,
+  AArch64ObjectRelocationTarget,
+} from "./relocation-records";
 
 export { verifierRun };
 import {
   aarch64LiteralPoolId,
   aarch64ObjectFragmentId,
-  aarch64ObjectRelocationId,
+  aarch64ObjectSectionClassKey,
   aarch64ObjectSectionId,
   aarch64ObjectSymbolId,
   aarch64VeneerId,
   type AArch64LiteralPoolId,
   type AArch64ObjectFragmentId,
-  type AArch64ObjectRelocationId,
+  type AArch64ObjectSectionClassKey,
   type AArch64ObjectSectionId,
   type AArch64ObjectSymbolId,
   type AArch64VeneerId,
 } from "../api/ids";
 
+export const AARCH64_OBJECT_SECTION_CLASS_EXECUTABLE_TEXT =
+  aarch64ObjectSectionClassKey("executable-text");
+export const AARCH64_OBJECT_SECTION_CLASS_READ_ONLY_DATA =
+  aarch64ObjectSectionClassKey("read-only-data");
+export const AARCH64_OBJECT_SECTION_CLASS_WRITABLE_DATA =
+  aarch64ObjectSectionClassKey("writable-data");
+export const AARCH64_OBJECT_SECTION_CLASS_UNWIND_PDATA =
+  aarch64ObjectSectionClassKey("unwind-pdata");
+export const AARCH64_OBJECT_SECTION_CLASS_UNWIND_XDATA =
+  aarch64ObjectSectionClassKey("unwind-xdata");
+export const AARCH64_OBJECT_SECTION_CLASS_DEBUG_PROVENANCE =
+  aarch64ObjectSectionClassKey("debug-provenance");
+
 export interface AArch64ObjectSection {
   readonly stableKey: AArch64ObjectSectionId;
+  readonly classKey: AArch64ObjectSectionClassKey;
   readonly alignmentBytes: number;
   readonly bytes: readonly number[];
   readonly fragments: readonly AArch64ObjectFragment[];
@@ -42,22 +72,25 @@ export interface AArch64ObjectFragment {
   readonly sizeBytes: number;
 }
 
-export interface AArch64ObjectSymbol {
-  readonly stableKey: AArch64ObjectSymbolId;
-  readonly sectionKey: AArch64ObjectSectionId;
-  readonly offsetBytes: number;
-  readonly isGlobal: boolean;
-}
-
-export interface AArch64ObjectRelocation {
-  readonly stableKey: AArch64ObjectRelocationId;
-  readonly sectionKey: AArch64ObjectSectionId;
-  readonly offsetBytes: number;
-  readonly widthBytes: number;
-  readonly family: string;
-  readonly targetSymbol: string;
-  readonly bitRange?: readonly [number, number];
-}
+export type AArch64ObjectSymbol =
+  | {
+      readonly kind: "local-definition";
+      readonly stableKey: AArch64ObjectSymbolId;
+      readonly sectionKey: AArch64ObjectSectionId;
+      readonly offsetBytes: number;
+    }
+  | {
+      readonly kind: "global-definition";
+      readonly stableKey: AArch64ObjectSymbolId;
+      readonly linkageName: string;
+      readonly sectionKey: AArch64ObjectSectionId;
+      readonly offsetBytes: number;
+    }
+  | {
+      readonly kind: "external-declaration";
+      readonly stableKey: AArch64ObjectSymbolId;
+      readonly linkageName: string;
+    };
 
 export interface AArch64ObjectLiteralPoolEntry {
   readonly stableKey: AArch64LiteralPoolId;
@@ -158,6 +191,7 @@ export function aarch64ObjectModule(input: {
     (input.sections ?? []).map((section) =>
       aarch64ObjectSection({
         stableKey: section.stableKey,
+        classKey: section.classKey,
         alignmentBytes: section.alignmentBytes,
         bytes: section.bytes,
         fragments: section.fragments,
@@ -168,14 +202,7 @@ export function aarch64ObjectModule(input: {
   );
 
   const symbols = normalizeAndFreezeRecords(
-    (input.symbols ?? []).map((symbol) =>
-      aarch64ObjectSymbol({
-        stableKey: symbol.stableKey,
-        sectionKey: symbol.sectionKey,
-        offsetBytes: symbol.offsetBytes,
-        isGlobal: symbol.isGlobal,
-      }),
-    ),
+    (input.symbols ?? []).map((symbol) => normalizeObjectSymbol(symbol)),
     "symbol",
     (symbol) => symbol.stableKey,
   );
@@ -188,8 +215,12 @@ export function aarch64ObjectModule(input: {
         offsetBytes: relocation.offsetBytes,
         widthBytes: relocation.widthBytes,
         family: relocation.family,
+        target: normalizedRelocationTarget(relocation, symbols),
         targetSymbol: relocation.targetSymbol,
-        bitRange: relocation.bitRange,
+        addend: relocation.addend,
+        instructionPatch: relocation.instructionPatch,
+        pairedRelocationKey: relocation.pairedRelocationKey,
+        linkerVeneer: relocation.linkerVeneer,
       }),
     ),
     "relocation",
@@ -299,8 +330,50 @@ export function aarch64ObjectModule(input: {
   });
 }
 
+function normalizedRelocationTarget(
+  relocation: {
+    readonly target?: AArch64ObjectRelocationTarget;
+    readonly targetSymbol?: string;
+    readonly sectionKey: AArch64ObjectSectionId;
+  },
+  symbols: readonly AArch64ObjectSymbol[],
+): AArch64ObjectRelocationTarget | undefined {
+  const compatibilityTarget = relocationTargetForSymbolReference({
+    targetSymbol: relocation.targetSymbol,
+    symbols,
+  });
+  if (relocation.target === undefined) return compatibilityTarget;
+  if (isLegacyConstructorCompatibilityTarget(relocation, compatibilityTarget)) {
+    return compatibilityTarget;
+  }
+  if (
+    compatibilityTarget !== undefined &&
+    !relocationTargetsAreEquivalent(relocation.target, compatibilityTarget)
+  ) {
+    throw new RangeError(
+      `Relocation target conflicts with targetSymbol: ${relocation.targetSymbol}.`,
+    );
+  }
+  return relocation.target;
+}
+
+function isLegacyConstructorCompatibilityTarget(
+  relocation: {
+    readonly target?: AArch64ObjectRelocationTarget;
+    readonly targetSymbol?: string;
+  },
+  compatibilityTarget: AArch64ObjectRelocationTarget | undefined,
+): boolean {
+  return (
+    relocation.target?.kind === "linkage-name" &&
+    relocation.target.linkageName === relocation.targetSymbol &&
+    compatibilityTarget?.kind === "symbol-stable-key"
+  );
+}
+
 export function aarch64ObjectSection(input: {
   readonly stableKey: string;
+  readonly classKey: string;
   readonly alignmentBytes?: number;
   readonly bytes?: readonly number[];
   readonly fragments?: readonly {
@@ -315,6 +388,7 @@ export function aarch64ObjectSection(input: {
   }
 
   const sectionKey = aarch64ObjectSectionId(input.stableKey);
+  const classKey = aarch64ObjectSectionClassKey(input.classKey);
   const bytes = freezeBytes(input.bytes ?? []);
   const fragments = normalizeAndFreezeRecords(
     (input.fragments ?? []).map((fragment) =>
@@ -331,6 +405,7 @@ export function aarch64ObjectSection(input: {
 
   return Object.freeze({
     stableKey: sectionKey,
+    classKey,
     alignmentBytes,
     bytes,
     fragments,
@@ -358,58 +433,78 @@ export function aarch64ObjectFragment(input: {
   });
 }
 
-export function aarch64ObjectSymbol(input: {
-  readonly stableKey: string;
-  readonly sectionKey: string;
-  readonly offsetBytes: number;
-  readonly isGlobal?: boolean;
-}): AArch64ObjectSymbol {
+export function aarch64ObjectSymbol(
+  input:
+    | {
+        readonly kind: "local-definition";
+        readonly stableKey: string;
+        readonly sectionKey: string;
+        readonly offsetBytes: number;
+      }
+    | {
+        readonly kind: "global-definition";
+        readonly stableKey: string;
+        readonly linkageName: string;
+        readonly sectionKey: string;
+        readonly offsetBytes: number;
+      }
+    | {
+        readonly kind: "external-declaration";
+        readonly stableKey: string;
+        readonly linkageName: string;
+      },
+): AArch64ObjectSymbol {
+  if (input.kind === "external-declaration") {
+    return Object.freeze({
+      kind: input.kind,
+      stableKey: aarch64ObjectSymbolId(input.stableKey),
+      linkageName: input.linkageName,
+    });
+  }
   if (!Number.isInteger(input.offsetBytes) || input.offsetBytes < 0) {
     throw new RangeError("symbol offset must be a non-negative integer.");
   }
+  if (input.kind === "local-definition") {
+    return Object.freeze({
+      kind: input.kind,
+      stableKey: aarch64ObjectSymbolId(input.stableKey),
+      sectionKey: aarch64ObjectSectionId(input.sectionKey),
+      offsetBytes: input.offsetBytes,
+    });
+  }
   return Object.freeze({
+    kind: input.kind,
     stableKey: aarch64ObjectSymbolId(input.stableKey),
+    linkageName: input.linkageName,
     sectionKey: aarch64ObjectSectionId(input.sectionKey),
     offsetBytes: input.offsetBytes,
-    isGlobal: input.isGlobal ?? false,
   });
 }
 
-export function aarch64ObjectRelocation(input: {
-  readonly stableKey: string;
-  readonly sectionKey: string;
-  readonly offsetBytes: number;
-  readonly widthBytes: number;
-  readonly family: string;
-  readonly targetSymbol: string;
-  readonly bitRange?: readonly [number, number];
-}): AArch64ObjectRelocation {
-  if (!Number.isInteger(input.offsetBytes) || input.offsetBytes < 0) {
-    throw new RangeError("relocation offset must be a non-negative integer.");
+function normalizeObjectSymbol(symbol: AArch64ObjectSymbol): AArch64ObjectSymbol {
+  switch (symbol.kind) {
+    case "local-definition":
+      return aarch64ObjectSymbol({
+        kind: symbol.kind,
+        stableKey: symbol.stableKey,
+        sectionKey: symbol.sectionKey,
+        offsetBytes: symbol.offsetBytes,
+      });
+    case "global-definition":
+      return aarch64ObjectSymbol({
+        kind: symbol.kind,
+        stableKey: symbol.stableKey,
+        linkageName: symbol.linkageName,
+        sectionKey: symbol.sectionKey,
+        offsetBytes: symbol.offsetBytes,
+      });
+    case "external-declaration":
+      return aarch64ObjectSymbol({
+        kind: symbol.kind,
+        stableKey: symbol.stableKey,
+        linkageName: symbol.linkageName,
+      });
   }
-  if (!Number.isInteger(input.widthBytes) || input.widthBytes <= 0) {
-    throw new RangeError("relocation width must be a positive integer.");
-  }
-  if (
-    input.bitRange !== undefined &&
-    (!Number.isInteger(input.bitRange[0]) ||
-      !Number.isInteger(input.bitRange[1]) ||
-      input.bitRange[0] < 0 ||
-      input.bitRange[1] < input.bitRange[0])
-  ) {
-    throw new RangeError("relocation bitRange must be an ordered non-negative integer pair.");
-  }
-  return Object.freeze({
-    stableKey: aarch64ObjectRelocationId(input.stableKey),
-    sectionKey: aarch64ObjectSectionId(input.sectionKey),
-    offsetBytes: input.offsetBytes,
-    widthBytes: input.widthBytes,
-    family: input.family,
-    targetSymbol: input.targetSymbol,
-    ...(input.bitRange === undefined
-      ? {}
-      : { bitRange: Object.freeze([input.bitRange[0], input.bitRange[1]] as const) }),
-  });
 }
 
 export function aarch64ObjectLiteralPoolEntry(input: {
@@ -531,6 +626,7 @@ export function aarch64ObjectModuleDeterministicMetadata(input: {
     stableJson(
       input.sections.map((section) => ({
         stableKey: section.stableKey,
+        classKey: section.classKey,
         alignmentBytes: section.alignmentBytes,
         bytes: section.bytes,
         fragments: section.fragments.map((fragment) => ({
@@ -545,10 +641,15 @@ export function aarch64ObjectModuleDeterministicMetadata(input: {
   const symbolFingerprint = stableHash(
     stableJson(
       input.symbols.map((symbol) => ({
+        kind: symbol.kind,
         stableKey: symbol.stableKey,
-        sectionKey: symbol.sectionKey,
-        offsetBytes: symbol.offsetBytes,
-        isGlobal: symbol.isGlobal,
+        ...(symbol.kind === "external-declaration"
+          ? { linkageName: symbol.linkageName }
+          : {
+              sectionKey: symbol.sectionKey,
+              offsetBytes: symbol.offsetBytes,
+              ...(symbol.kind === "global-definition" ? { linkageName: symbol.linkageName } : {}),
+            }),
       })),
     ),
   );
@@ -560,8 +661,12 @@ export function aarch64ObjectModuleDeterministicMetadata(input: {
         offsetBytes: entry.offsetBytes,
         widthBytes: entry.widthBytes,
         family: entry.family,
+        target: entry.target,
         targetSymbol: entry.targetSymbol,
-        bitRange: entry.bitRange,
+        addend: entry.addend.toString(),
+        instructionPatch: entry.instructionPatch,
+        pairedRelocationKey: entry.pairedRelocationKey,
+        linkerVeneer: entry.linkerVeneer,
       })),
     ),
   );
@@ -693,7 +798,7 @@ function normalizeAndFreezeByteProvenance(
       }),
     ),
     "byte-provenance",
-    (entry) => `${entry.sectionKey}:${entry.startOffsetBytes}`,
+    (entry) => entry.stableKey,
   );
   verifyByteProvenanceCoverage({
     sections,
@@ -720,6 +825,7 @@ function validateSectionCrossChecks(input: {
   }
 
   for (const symbol of input.symbols) {
+    if (symbol.kind === "external-declaration") continue;
     const sectionLength = sectionLengths.get(symbol.sectionKey);
     if (sectionLength === undefined) {
       throw new RangeError(`Symbol references unknown section: ${symbol.sectionKey}`);

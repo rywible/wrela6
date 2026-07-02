@@ -27,7 +27,8 @@ export interface AArch64PhysicalInstruction {
   readonly fixedRegisterDefs?: readonly string[];
   readonly definedSymbol?: {
     readonly stableKey: string;
-    readonly isGlobal?: boolean;
+    readonly kind?: "local-definition" | "global-definition";
+    readonly linkageName?: string;
   };
   readonly branch?: {
     readonly kind: "b" | "bl" | "b-cond" | "cbz" | "cbnz" | "tbz" | "tbnz";

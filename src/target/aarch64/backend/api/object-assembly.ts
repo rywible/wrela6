@@ -12,7 +12,6 @@ import type {
 import {
   aarch64FactSpendingRecord,
   aarch64ObjectByteProvenance,
-  aarch64ObjectSection,
   aarch64ObjectSymbol,
   aarch64ObjectUnwindRecord,
   type AArch64ByteProvenanceRecord,
@@ -24,62 +23,37 @@ import type { AArch64ClosedImageBackendPlan } from "./closed-image-backend-plan"
 import type { AArch64FunctionBackendArtifact } from "./function-pipeline";
 import type { AArch64BackendSecurityCatalog } from "./backend-catalog-interfaces";
 
-const AARCH64_EXTERNAL_SYMBOL_SECTION = ".extern";
-
 export function initialAArch64ObjectSymbolsForProgram(
   machineProgram: AArch64MachineProgram,
 ): readonly {
   readonly stableKey: string;
+  readonly kind: "global-definition";
+  readonly linkageName: string;
   readonly sectionKey: string;
   readonly offsetBytes: number;
-  readonly isGlobal: boolean;
 }[] {
   const symbols = new Map<
     string,
     {
       readonly stableKey: string;
+      readonly kind: "global-definition";
+      readonly linkageName: string;
       readonly sectionKey: string;
       readonly offsetBytes: number;
-      readonly isGlobal: boolean;
     }
   >();
   for (const machineFunction of machineProgram.functions.entries()) {
     symbols.set(String(machineFunction.symbol), {
       stableKey: String(machineFunction.symbol),
+      kind: "global-definition",
+      linkageName: String(machineFunction.symbol),
       sectionKey: ".text",
       offsetBytes: 0,
-      isGlobal: true,
     });
   }
   return Object.freeze(
     [...symbols.values()].sort((left, right) =>
       compareCodeUnitStrings(left.stableKey, right.stableKey),
-    ),
-  );
-}
-
-export function aarch64ObjectSectionsForLayout(
-  sections: readonly AArch64ObjectModule["sections"][number][],
-  machineProgram: AArch64MachineProgram,
-  plan: AArch64ClosedImageBackendPlan,
-  relocations: readonly AArch64ObjectModule["relocations"][number][],
-): AArch64ObjectModule["sections"] {
-  const externalSymbols = externalPublicCalleeSymbols(machineProgram, plan, relocations);
-  if (externalSymbols.length === 0) return Object.freeze([...sections]);
-  if (sections.some((section) => String(section.stableKey) === AARCH64_EXTERNAL_SYMBOL_SECTION)) {
-    return Object.freeze([...sections]);
-  }
-  return Object.freeze(
-    [
-      ...sections,
-      aarch64ObjectSection({
-        stableKey: AARCH64_EXTERNAL_SYMBOL_SECTION,
-        alignmentBytes: 1,
-        bytes: [],
-        fragments: [],
-      }),
-    ].sort((left, right) =>
-      compareCodeUnitStrings(String(left.stableKey), String(right.stableKey)),
     ),
   );
 }
@@ -115,10 +89,11 @@ export function aarch64ObjectSymbolsForLayout(
     symbols.set(
       symbol,
       aarch64ObjectSymbol({
+        kind: "global-definition",
         stableKey: symbol,
+        linkageName: symbol,
         sectionKey: placement?.sectionKey ?? ".text",
         offsetBytes: placement?.offset ?? 0,
-        isGlobal: true,
       }),
     );
   }
@@ -132,10 +107,9 @@ export function aarch64ObjectSymbolsForLayout(
       symbols.set(
         boundary.callee,
         aarch64ObjectSymbol({
+          kind: "external-declaration",
           stableKey: boundary.callee,
-          sectionKey: AARCH64_EXTERNAL_SYMBOL_SECTION,
-          offsetBytes: 0,
-          isGlobal: true,
+          linkageName: boundary.callee,
         }),
       );
     }
@@ -143,15 +117,45 @@ export function aarch64ObjectSymbolsForLayout(
   for (const layoutSymbol of layoutSymbols) {
     const stableKey = String(layoutSymbol.stableKey);
     if (symbols.has(stableKey)) continue;
-    symbols.set(
-      stableKey,
-      aarch64ObjectSymbol({
-        stableKey,
-        sectionKey: String(layoutSymbol.sectionKey),
-        offsetBytes: layoutSymbol.offsetBytes,
-        isGlobal: layoutSymbol.isGlobal,
-      }),
-    );
+    switch (layoutSymbol.kind) {
+      case "local-definition":
+        symbols.set(
+          stableKey,
+          aarch64ObjectSymbol({
+            kind: layoutSymbol.kind,
+            stableKey,
+            sectionKey: String(layoutSymbol.sectionKey),
+            offsetBytes: layoutSymbol.offsetBytes,
+          }),
+        );
+        break;
+      case "global-definition":
+        symbols.set(
+          stableKey,
+          aarch64ObjectSymbol({
+            kind: layoutSymbol.kind,
+            stableKey,
+            linkageName: layoutSymbol.linkageName,
+            sectionKey: String(layoutSymbol.sectionKey),
+            offsetBytes: layoutSymbol.offsetBytes,
+          }),
+        );
+        break;
+      case "external-declaration":
+        symbols.set(
+          stableKey,
+          aarch64ObjectSymbol({
+            kind: layoutSymbol.kind,
+            stableKey,
+            linkageName: layoutSymbol.linkageName,
+          }),
+        );
+        break;
+      default: {
+        const exhaustive: never = layoutSymbol;
+        throw new Error(`Unsupported object symbol kind: ${String(exhaustive)}`);
+      }
+    }
   }
   return Object.freeze(
     [...symbols.values()].sort((left, right) =>
@@ -168,15 +172,17 @@ function externalPublicCalleeSymbols(
   const functionSymbols = new Set(
     machineProgram.functions.entries().map((machineFunction) => String(machineFunction.symbol)),
   );
-  const relocationTargetSymbols = new Set(
-    relocations.map((relocation) => String(relocation.targetSymbol)),
+  const relocationTargetLinkageNames = new Set(
+    relocations.flatMap((relocation) =>
+      relocation.target.kind === "linkage-name" ? [relocation.target.linkageName] : [],
+    ),
   );
   return Object.freeze(
     plan.publicAbiBoundaries.records
       .flatMap((boundary) =>
         functionSymbols.has(boundary.caller) &&
         !functionSymbols.has(boundary.callee) &&
-        relocationTargetSymbols.has(boundary.callee)
+        relocationTargetLinkageNames.has(boundary.callee)
           ? [boundary.callee]
           : [],
       )
