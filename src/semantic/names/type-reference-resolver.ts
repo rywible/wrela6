@@ -30,6 +30,7 @@ import type { Scope } from "./scope";
 import { resolvedReferenceForItem, scopeBuilder, typeParameterCandidate } from "./scope";
 import * as DiagnosticsModule from "./diagnostics";
 import type { NameResolutionDiagnostic, NameReferenceKind } from "./diagnostics";
+import { buildMemberFunctionScope, findMemberFunctionItem } from "./member-function-scope";
 
 export interface ModuleResolutionContext {
   readonly moduleId: ModuleId;
@@ -520,9 +521,7 @@ function walkTypeLike(
   }
 
   if (hasMemberFunctions(decl)) {
-    for (const memFunc of decl.memberFunctions()) {
-      walkFunction(memFunc, topItem, { ...declCtx, scope: declScope });
-    }
+    walkMemberFunctions(decl.memberFunctions(), topItem, declCtx);
   }
 }
 
@@ -545,8 +544,33 @@ function walkImage(
     }
   }
 
-  for (const memFunc of image.memberFunctions()) {
-    walkFunction(memFunc, topItem, context);
+  walkMemberFunctions(image.memberFunctions(), topItem, context);
+}
+
+function walkMemberFunctions(
+  memberFunctions: readonly FunctionDeclarationView[],
+  ownerItem: ItemRecord | undefined,
+  context: TypeResolutionContext,
+): void {
+  const memberFunctionScope =
+    ownerItem === undefined
+      ? undefined
+      : buildMemberFunctionScope({ index: context.index, ownerItem });
+  const memberContext =
+    memberFunctionScope === undefined
+      ? context
+      : { ...context, scope: chainScope(memberFunctionScope, context.scope) };
+
+  for (const memberFunction of memberFunctions) {
+    const functionItem =
+      ownerItem === undefined
+        ? undefined
+        : findMemberFunctionItem({
+            index: context.index,
+            ownerItem,
+            functionView: memberFunction,
+          });
+    walkFunction(memberFunction, functionItem ?? ownerItem, memberContext);
   }
 }
 

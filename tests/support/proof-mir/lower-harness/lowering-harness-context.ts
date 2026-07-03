@@ -62,9 +62,15 @@ function defaultTargetForLoweringHarness(): ProofMirLoweringTargetContext {
   };
 }
 
-function emptyProgramForLoweringHarness(): MonomorphizedHirProgram {
+function programForLoweringHarness(
+  functionInstance: MonoFunctionInstance,
+): MonomorphizedHirProgram {
   return {
-    functions: { entries: () => [], get: () => undefined },
+    functions: {
+      entries: () => [functionInstance],
+      get: (functionInstanceId: MonoInstanceId) =>
+        functionInstanceId === functionInstance.instanceId ? functionInstance : undefined,
+    },
   } as unknown as MonomorphizedHirProgram;
 }
 
@@ -164,7 +170,7 @@ export function createProofMirLoweringHarnessContext(
   }
   const scopePlaceLowerer = scopePlaceLowererResult.value;
 
-  const program = input.program ?? emptyProgramForLoweringHarness();
+  const program = input.program ?? programForLoweringHarness(input.functionInstance);
   const layout = input.layout ?? ({} as LayoutFactProgram);
   const target = input.target ?? defaultTargetForLoweringHarness();
   const placeBackedLocalNames = input.placeBackedLocalNames ?? new Set<string>();
@@ -268,6 +274,5 @@ export {
   defaultTargetForLoweringHarness,
   emptyCollectLoopCarriedLocalsForLoop,
   emptyPlaceBackedLocals,
-  emptyProgramForLoweringHarness,
   loweringOk,
 };

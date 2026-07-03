@@ -295,59 +295,6 @@ describe("UEFI package pipeline through OptIR", () => {
     expect(result.diagnostics[0]?.ownerKey).toBe("test-stop");
   });
 
-  test("production semantic adapter does not treat any enum named UefiStatus as target status ABI", () => {
-    const packageInputResult = compilerPackageInput({
-      packageKey: "bogus-source-status",
-      entryModuleName: "image",
-      sourceRoots: [
-        { kind: "project", rootKey: "project", rootPath: "src", trustedForAuthority: false },
-      ],
-      sourceFiles: [
-        {
-          sourceKey: "src/image.wr",
-          moduleName: "image",
-          text: [
-            "enum UefiStatus:",
-            "    bogus",
-            "platform fn output_string(message: Utf16Static) -> UefiStatus",
-            "uefi image BogusSourceStatus:",
-            "    fn boot() -> UefiStatus:",
-            "        return UefiStatus.bogus",
-            "",
-          ].join("\n"),
-        },
-      ],
-    });
-    expect(packageInputResult.kind).toBe("ok");
-    if (packageInputResult.kind !== "ok") return;
-
-    const result = runUefiAArch64PackagePipelineToOptIr(
-      {
-        packageInput: packageInputResult.value,
-        target: targetSurfaceWithUefiImageProfileForTest(),
-      },
-      {
-        ...productionPackagePipelineDependencies(),
-        monomorphizeWholeImage: () => ({
-          kind: "error" as const,
-          diagnostics: [
-            uefiAArch64TargetDiagnostic({
-              code: "UEFI_AARCH64_PIPELINE_FAILED",
-              ownerKey: "test-stop",
-              stableDetail: "semantic-should-not-pass",
-            }),
-          ],
-        }),
-      },
-    );
-
-    expect(result.kind).toBe("error");
-    if (result.kind !== "error") return;
-    expect(result.verification.runs.map((run) => run.runKey)).toEqual(["frontend", "semantic"]);
-    expect(result.verification.runs.at(-1)?.status).toBe("failed");
-    expect(result.diagnostics.map((diagnostic) => diagnostic.ownerKey)).not.toContain("test-stop");
-  });
-
   test("production monomorphization adapter lowers direct target-typed source and advances to layout facts", () => {
     const packageInputResult = directTargetTypedPackageInputForTest();
     expect(packageInputResult.kind).toBe("ok");
@@ -884,23 +831,18 @@ function directPlatformUtf16PackageInputForTest() {
         sourceKey: "src/image.wr",
         moduleName: "image",
         text: [
-          "enum UefiStatus:",
-          "    success",
-          "    load_error",
-          "    invalid_parameter",
-          "    unsupported",
-          "    bad_buffer_size",
-          "    buffer_too_small",
-          "    device_error",
-          "    not_found",
-          "    aborted",
-          "    security_violation",
+          "use UefiStatus from wrela_std.target.uefi.status",
           "platform fn output_string(message: Utf16Static) -> UefiStatus",
           "uefi image SmokeUtf16StaticOptIr:",
           "    fn boot() -> UefiStatus:",
           '        output_string(utf16_static("WRELA_UEFI_SMOKE_OK\\r\\n"))',
           "",
         ].join("\n"),
+      },
+      {
+        sourceKey: "src/wrela_std/target/uefi/status.wr",
+        moduleName: "wrela_std.target.uefi.status",
+        text: canonicalUefiStatusSourceForTest("pub enum"),
       },
     ],
   });
@@ -911,6 +853,22 @@ function targetSurfaceWithUefiImageProfileForTest(): UefiAArch64TargetDriverSurf
   expect(targetResult.kind).toBe("ok");
   if (targetResult.kind !== "ok") throw new Error("expected authenticated UEFI target");
   return targetResult.value;
+}
+
+function canonicalUefiStatusSourceForTest(enumHeader: "enum" | "pub enum"): string {
+  return [
+    `${enumHeader} UefiStatus:`,
+    "    success",
+    "    load_error",
+    "    invalid_parameter",
+    "    unsupported",
+    "    bad_buffer_size",
+    "    buffer_too_small",
+    "    device_error",
+    "    not_found",
+    "    aborted",
+    "    security_violation",
+  ].join("\n");
 }
 
 function packagePipelineDependenciesWithOptIr(

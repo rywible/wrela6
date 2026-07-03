@@ -6,6 +6,7 @@ import {
   optIrFactId,
   optIrProgramId,
   type OptIrFactId,
+  type OptIrOperationId,
   type OptIrOriginId,
   type OptIrValueId,
 } from "../ids";
@@ -15,9 +16,10 @@ import type { OptIrFunction } from "../program";
 import type { OptIrTerminator } from "../terminators";
 import { optIrUnitType } from "../types";
 import type { OptIrRegion } from "../regions";
+import type { OptIrTargetSurface } from "../target-surface";
+import type { OptIrType } from "../types";
 import type { LayoutFactProgram } from "../../layout/layout-program";
-import type { TargetId } from "../../semantic/ids";
-import { checkedTypeFingerprint } from "../../semantic/surface/type-model";
+import type { MonoCheckedType } from "../../mono/mono-hir";
 import type { OptIrFactRecord } from "../facts/fact-index";
 import type { ProofMirStatementId, ProofMirValueId } from "../../proof-mir/ids";
 import type { CheckedMirProgram } from "../../proof-check/model/checked-mir";
@@ -26,7 +28,6 @@ import type {
   ProofMirCall,
   ProofMirControlEdge,
   ProofMirFunction,
-  ProofMirPlace,
   ProofMirStatement,
 } from "../../proof-mir/model/graph";
 import { optIrBlockArgumentBuilder } from "./block-argument-builder";
@@ -64,7 +65,6 @@ import {
   byteWidthForType,
   deterministicFunctions,
   entrySignatureParametersForBlock,
-  functionSignatureParameterValueKey,
   integerBinaryOperator,
   integerCompareInputs,
   integerUnaryOperator,
@@ -87,6 +87,18 @@ import {
   statementOriginId,
 } from "./proof-mir-lowering-helpers";
 import type { OptIrSkeletonLoweringResult } from "./lowering-types";
+import { proofMetadataIdKey } from "../../mono/proof-metadata-tables";
+import {
+  aliasProofMirValue,
+  basePlaceValueAliasesForBlock,
+  bindPlaceValueAlias,
+  clonePlaceValueAliases,
+  projectionFieldPath,
+  proofMirPlaceRootAliasKey,
+  propagatedPlaceValueAliasesByBlock,
+  rootValueAliasForPlace,
+  type ProofMirPlaceValueAliases,
+} from "./proof-mir-place-aliases";
 
 export type { OptIrSkeletonLoweringResult } from "./lowering-types";
 export type { OptIrValidatedBufferFactForLowering };
@@ -104,16 +116,14 @@ export {
 
 export function lowerCheckedMirProgram(input: {
   readonly checkedMir: CheckedMirProgram;
-  readonly targetId: TargetId;
-  readonly targetEndian: "little" | "big";
+  readonly target: OptIrTargetSurface;
   readonly validatedBufferFacts: readonly OptIrValidatedBufferFactForLowering[];
   readonly nextGeneratedFactId: OptIrFactId;
 }): OptIrSkeletonLoweringResult {
   const diagnostics: string[] = [];
   const functions = deterministicFunctions(input.checkedMir);
   const result = lowerProofMirFunctions({
-    targetId: input.targetId,
-    targetEndian: input.targetEndian,
+    target: input.target,
     checkedMirLayout: input.checkedMir.mir.layout,
     validatedBufferFacts: input.validatedBufferFacts,
     nextGeneratedFactId: input.nextGeneratedFactId,
@@ -126,7 +136,7 @@ export function lowerCheckedMirProgram(input: {
   return result;
 }
 
-interface ProofMirLoweringContext {
+export interface ProofMirLoweringContext {
   readonly allocator: ReturnType<typeof optIrConstructionIdAllocator<string, string>>;
   readonly provenance: ReturnType<typeof optIrProvenanceBuilder>;
   readonly values: ReturnType<typeof optIrBlockArgumentBuilder>;
@@ -134,7 +144,9 @@ interface ProofMirLoweringContext {
   readonly operations: OptIrOperation[];
   readonly regions: OptIrRegion[];
   readonly regionsByKey: Map<string, OptIrRegion>;
+  readonly validatedSourceValueByPacketRoot: Map<string, OptIrValueId>;
   readonly generatedFacts: OptIrFactRecord[];
+  readonly target: OptIrTargetSurface;
   readonly targetEndian: "little" | "big";
   readonly checkedMirLayout: LayoutFactProgram;
   readonly validatedBufferFacts: readonly OptIrValidatedBufferFactForLowering[];
@@ -145,14 +157,8 @@ interface ProofMirLoweringContext {
   nextGeneratedFactNumber: number;
 }
 
-interface ProofMirPlaceValueAliases {
-  readonly exactPlaceValues: Map<string, OptIrValueId>;
-  readonly rootPlaceValues: Map<string, OptIrValueId>;
-}
-
 function lowerProofMirFunctions(input: {
-  readonly targetId: TargetId;
-  readonly targetEndian: "little" | "big";
+  readonly target: OptIrTargetSurface;
   readonly checkedMirLayout: LayoutFactProgram;
   readonly validatedBufferFacts: readonly OptIrValidatedBufferFactForLowering[];
   readonly nextGeneratedFactId: OptIrFactId;
@@ -182,8 +188,10 @@ function lowerProofMirFunctions(input: {
     operations: [],
     regions: [],
     regionsByKey: new Map(),
+    validatedSourceValueByPacketRoot: new Map(),
     generatedFacts: [],
-    targetEndian: input.targetEndian,
+    target: input.target,
+    targetEndian: input.target.dataModel.endian,
     checkedMirLayout: input.checkedMirLayout,
     validatedBufferFacts: input.validatedBufferFacts,
     validatedBufferAuthorityIndex: validatedBufferFactIndexForLowering(input.validatedBufferFacts),
@@ -217,7 +225,7 @@ function lowerProofMirFunctions(input: {
     kind: "ok",
     program: optIrProgram({
       programId: optIrProgramId(0),
-      targetId: input.targetId,
+      targetId: input.target.targetId,
       functions: optIrFunctionTable(loweredFunctions),
       regions: optIrRegionTable(
         context.regions.map((region) => ({
@@ -244,8 +252,10 @@ function lowerProofMirFunction(
   function_: ProofMirFunction,
   context: ProofMirLoweringContext,
 ): OptIrFunction {
+  const propagatedAliases = propagatedPlaceValueAliasesByBlock(function_, context);
+  seedValidatedSourceValueAliases(function_, context, propagatedAliases);
   const blocks = sortedProofMirBlocks(function_).map((block) =>
-    lowerProofMirBlock(function_, block, context),
+    lowerProofMirBlock(function_, block, context, propagatedAliases.get(String(block.blockId))),
   );
   const edges = sortedProofMirEdges(function_).map((edge, ordinal) =>
     lowerProofMirEdge(function_, edge, ordinal, context),
@@ -269,13 +279,91 @@ function lowerProofMirFunction(
   };
 }
 
+function seedValidatedSourceValueAliases(
+  function_: ProofMirFunction,
+  context: ProofMirLoweringContext,
+  propagatedAliases: ReadonlyMap<string, ProofMirPlaceValueAliases>,
+): void {
+  for (const block of sortedProofMirBlocks(function_)) {
+    const aliases = clonePlaceValueAliases(
+      propagatedAliases.get(String(block.blockId)) ??
+        basePlaceValueAliasesForBlock(function_, block, context),
+    );
+    for (const statement of block.statements) {
+      switch (statement.kind.kind) {
+        case "call": {
+          const result = statement.kind.call.result;
+          if (result?.kind === "valueAndPlace") {
+            bindPlaceValueAlias({
+              function_,
+              aliases,
+              placeId: result.place,
+              valueId: proofMirValueIdFor(function_, result.value, context),
+            });
+          }
+          break;
+        }
+        case "store":
+          bindPlaceValueAlias({
+            function_,
+            aliases,
+            placeId: statement.kind.place,
+            valueId: proofMirValueIdFor(function_, statement.kind.value, context),
+          });
+          break;
+        case "validate":
+          recordValidatedSourceValueAlias({
+            function_,
+            context,
+            aliases,
+            validation: statement.kind.validation,
+          });
+          break;
+      }
+    }
+  }
+}
+
+function recordValidatedSourceValueAlias(input: {
+  readonly function_: ProofMirFunction;
+  readonly context: ProofMirLoweringContext;
+  readonly aliases: ProofMirPlaceValueAliases;
+  readonly validation: Extract<
+    ProofMirStatement["kind"],
+    { readonly kind: "validate" }
+  >["validation"];
+}): void {
+  const packetPlace = input.function_.places.get(input.validation.okPacketPlace);
+  const sourcePlace = input.function_.places.get(input.validation.sourcePlace);
+  if (packetPlace === undefined || sourcePlace === undefined) {
+    return;
+  }
+  const exactSource = input.aliases.exactPlaceValues.get(String(sourcePlace.placeId));
+  const sourceValueId =
+    exactSource ??
+    rootValueAliasForPlace({
+      function_: input.function_,
+      place: sourcePlace,
+      context: input.context,
+      aliases: input.aliases,
+    });
+  if (sourceValueId === undefined) {
+    return;
+  }
+  input.context.validatedSourceValueByPacketRoot.set(
+    proofMirPlaceRootAliasKey(packetPlace.root),
+    sourceValueId,
+  );
+}
+
 function lowerProofMirBlock(
   function_: ProofMirFunction,
   block: ProofMirBlock,
   context: ProofMirLoweringContext,
+  entryAliases: ProofMirPlaceValueAliases | undefined,
 ): OptIrBlock {
   const entryParameterLoadStatementIds = new Set<ProofMirStatementId>();
-  const validationEdgeArgumentValues = validationEdgeArgumentValuesForBlock(function_, block);
+  const incomingEdgeArgumentValues = incomingEdgeArgumentValuesForBlock(function_, block);
   const parameters = [
     ...entrySignatureParametersForBlock(function_, block, context),
     ...block.parameters.map((parameter) =>
@@ -294,22 +382,24 @@ function lowerProofMirBlock(
         }),
       }),
     ),
-    ...validationEdgeArgumentValues.map((valueId) =>
+    ...incomingEdgeArgumentValues.map((valueId) =>
       context.values.parameterFor({
         valueKey: proofMirScopedValueKey(function_.functionInstanceId, valueId),
-        type: proofMirValueType(function_, valueId),
+        type: proofMirValueTypeForLowering(function_, valueId, context),
         incomingRole: "branchArgument",
         runtime: proofMirValueIsRuntime(function_.values.get(valueId)),
         proofOnlyReason: proofMirValueErasureReason(function_.values.get(valueId)),
         originId: context.provenance.originFor({
           functionInstanceId: function_.functionInstanceId,
-          checkedMirNodeKey: `validation-edge-argument:${String(block.blockId)}:${String(valueId)}`,
+          checkedMirNodeKey: `incoming-edge-argument:${String(block.blockId)}:${String(valueId)}`,
           proofMirOriginId: function_.values.get(valueId)?.origin ?? block.origin,
         }),
       }),
     ),
   ];
-  const placeAliases = initialPlaceValueAliasesForBlock(function_, block, context);
+  const placeAliases = clonePlaceValueAliases(
+    entryAliases ?? basePlaceValueAliasesForBlock(function_, block, context),
+  );
   const operationIds = block.statements.flatMap((statement) =>
     lowerProofMirStatement(
       function_,
@@ -345,7 +435,7 @@ function lowerProofMirEdge(
   return {
     edgeId: context.allocator.edgeIdFor(function_.functionInstanceId, String(edge.edgeId)),
     from: context.allocator.blockIdFor(function_.functionInstanceId, String(edge.fromBlockId)),
-    ...(edge.toBlockId === undefined
+    ...(edge.toBlockId === undefined || edge.kind === "returnExit" || edge.kind === "panicExit"
       ? {}
       : {
           toBlock: context.allocator.blockIdFor(
@@ -375,7 +465,7 @@ function lowerProofMirEdgeArguments(
   return arguments_;
 }
 
-function validationEdgeArgumentValuesForBlock(
+function incomingEdgeArgumentValuesForBlock(
   function_: ProofMirFunction,
   block: ProofMirBlock,
 ): readonly ProofMirValueId[] {
@@ -384,7 +474,10 @@ function validationEdgeArgumentValuesForBlock(
   for (const edge of sortedProofMirEdges(function_)) {
     if (
       edge.toBlockId !== block.blockId ||
-      (edge.kind !== "validationOk" && edge.kind !== "validationErr")
+      (edge.kind !== "validationOk" &&
+        edge.kind !== "validationErr" &&
+        edge.kind !== "attemptSuccess" &&
+        edge.kind !== "attemptError")
     ) {
       continue;
     }
@@ -402,198 +495,22 @@ function validationEdgeArgumentValuesForBlock(
   );
 }
 
-function emptyPlaceValueAliases(): ProofMirPlaceValueAliases {
-  return {
-    exactPlaceValues: new Map(),
-    rootPlaceValues: new Map(),
-  };
-}
-
-function initialPlaceValueAliasesForBlock(
-  function_: ProofMirFunction,
-  block: ProofMirBlock,
+function optIrTypeFromMonoForTarget(
+  type: MonoCheckedType,
   context: ProofMirLoweringContext,
-): ProofMirPlaceValueAliases {
-  const aliases = emptyPlaceValueAliases();
-  seedEntryParameterPlaceAliases(function_, block, context, aliases);
-  for (const edge of sortedProofMirEdges(function_)) {
-    if (edge.toBlockId !== block.blockId) {
-      continue;
-    }
-    seedValidationEdgePlaceAliases(function_, edge, context, aliases);
-  }
-  return aliases;
+): OptIrType {
+  return context.target.sourceTypeAbi?.lowerType(type) ?? optIrTypeFromMono(type);
 }
 
-function seedEntryParameterPlaceAliases(
+function proofMirValueTypeForLowering(
   function_: ProofMirFunction,
-  block: ProofMirBlock,
+  valueId: ProofMirValueId,
   context: ProofMirLoweringContext,
-  aliases: ProofMirPlaceValueAliases,
-): void {
-  if (block.blockId !== function_.entryBlockId) {
-    return;
-  }
-  for (const parameter of function_.signature.parameters) {
-    const parameterValueId = context.values.valueIdFor(
-      functionSignatureParameterValueKey(function_, parameter.parameterId),
-    );
-    if (parameterValueId === undefined) {
-      continue;
-    }
-    for (const place of function_.places.entries()) {
-      if (
-        place.root.kind === "parameter" &&
-        place.root.parameterId === parameter.parameterId &&
-        place.projection.length === 0
-      ) {
-        bindPlaceValueAlias({
-          function_,
-          aliases,
-          placeId: place.placeId,
-          valueId: parameterValueId,
-        });
-      }
-    }
-  }
-}
-
-function seedValidationEdgePlaceAliases(
-  function_: ProofMirFunction,
-  edge: ProofMirControlEdge,
-  context: ProofMirLoweringContext,
-  aliases: ProofMirPlaceValueAliases,
-): void {
-  if (edge.kind !== "validationOk" && edge.kind !== "validationErr") {
-    return;
-  }
-
-  const usedArgumentIndexes = new Set<number>();
-  const introducedPlaceIds = edge.effects
-    .filter(
-      (effect): effect is Extract<typeof effect, { readonly kind: "introducePlace" }> =>
-        effect.kind === "introducePlace",
-    )
-    .map((effect) => effect.placeId)
-    .sort((left, right) => compareStableKeys(String(left), String(right)));
-
-  for (const placeId of introducedPlaceIds) {
-    const place = function_.places.get(placeId);
-    if (place === undefined || place.projection.length > 0) {
-      continue;
-    }
-    const argumentIndex = edge.arguments.findIndex((valueId, index) => {
-      if (usedArgumentIndexes.has(index)) {
-        return false;
-      }
-      const value = function_.values.get(valueId);
-      return (
-        value !== undefined &&
-        checkedTypeFingerprint(value.type) === checkedTypeFingerprint(place.type)
-      );
-    });
-    if (argumentIndex < 0) {
-      continue;
-    }
-    usedArgumentIndexes.add(argumentIndex);
-    bindPlaceValueAlias({
-      function_,
-      aliases,
-      placeId,
-      valueId: proofMirValueIdFor(function_, edge.arguments[argumentIndex]!, context),
-    });
-  }
-}
-
-function bindPlaceValueAlias(input: {
-  readonly function_: ProofMirFunction;
-  readonly aliases: ProofMirPlaceValueAliases;
-  readonly placeId: ProofMirPlace["placeId"];
-  readonly valueId: OptIrValueId;
-}): void {
-  const place = input.function_.places.get(input.placeId);
-  if (place === undefined) {
-    return;
-  }
-  input.aliases.exactPlaceValues.set(String(place.placeId), input.valueId);
-  if (place.projection.length === 0) {
-    input.aliases.rootPlaceValues.set(placeRootAliasKey(place.root), input.valueId);
-  }
-}
-
-function rootValueAliasForPlace(input: {
-  readonly function_: ProofMirFunction;
-  readonly place: ProofMirPlace;
-  readonly context: ProofMirLoweringContext;
-  readonly aliases: ProofMirPlaceValueAliases;
-}): OptIrValueId | undefined {
-  const rootAlias = input.aliases.rootPlaceValues.get(placeRootAliasKey(input.place.root));
-  if (rootAlias !== undefined) {
-    return rootAlias;
-  }
-  switch (input.place.root.kind) {
-    case "blockParameter":
-    case "runtimeTemporary":
-      return proofMirValueIdFor(input.function_, input.place.root.valueId, input.context);
-    default:
-      return undefined;
-  }
-}
-
-function placeRootAliasKey(root: ProofMirPlace["root"]): string {
-  switch (root.kind) {
-    case "receiver":
-    case "parameter":
-      return `${root.kind}:${String(root.parameterId)}`;
-    case "local":
-      return `local:${String(root.localId.instanceId)}:${String(root.localId.hirId)}`;
-    case "temporary":
-      return `temporary:${String(root.ordinal)}`;
-    case "imageDevice":
-      return `imageDevice:${String(root.imageId)}:${String(root.fieldId)}`;
-    case "validationPayload":
-      return `validationPayload:${String(root.validationId.instanceId)}:${String(root.validationId.hirId)}`;
-    case "blockParameter":
-      return `blockParameter:${String(root.valueId)}`;
-    case "runtimeTemporary":
-      return `runtimeTemporary:${String(root.valueId)}`;
-    case "error":
-      return "error";
-  }
-}
-
-function projectionFieldPath(place: ProofMirPlace): readonly string[] {
-  return place.projection.map((projection) => {
-    switch (projection.kind) {
-      case "field":
-        return String(projection.fieldId);
-      case "deref":
-        return "deref";
-      case "variant":
-        return `variant:${projection.name}`;
-      case "validatedPacketPayload":
-        return `validatedPacketPayload:${String(projection.validationId.instanceId)}:${String(
-          projection.validationId.hirId,
-        )}`;
-      case "imageDevice":
-        return `imageDevice:${String(projection.fieldId)}`;
-    }
-  });
-}
-
-function aliasProofMirValue(input: {
-  readonly function_: ProofMirFunction;
-  readonly result: ProofMirValueId;
-  readonly targetValueId: OptIrValueId;
-  readonly context: ProofMirLoweringContext;
-}): void {
-  const value = input.function_.values.get(input.result);
-  input.context.values.aliasValue({
-    valueKey: proofMirScopedValueKey(input.function_.functionInstanceId, input.result),
-    targetValueId: input.targetValueId,
-    runtime: proofMirValueIsRuntime(value),
-    proofOnlyReason: proofMirValueErasureReason(value),
-  });
+): OptIrType {
+  const value = function_.values.get(valueId);
+  return value === undefined
+    ? proofMirValueType(function_, valueId)
+    : optIrTypeFromMonoForTarget(value.type, context);
 }
 
 function lowerProofMirLoad(
@@ -624,6 +541,16 @@ function lowerProofMirLoad(
   }
 
   const rootAlias = rootValueAliasForPlace({ function_, place, context, aliases });
+  if (place.projection.length === 0 && rootAlias !== undefined) {
+    aliasProofMirValue({
+      function_,
+      result: load.result,
+      targetValueId: rootAlias,
+      context,
+    });
+    return [];
+  }
+
   if (place.projection.length > 0 && rootAlias !== undefined) {
     return [
       optIrAggregateExtractOperation({
@@ -631,7 +558,7 @@ function lowerProofMirLoad(
         aggregate: rootAlias,
         fieldPath: projectionFieldPath(place),
         resultId: proofMirValueIdFor(function_, load.result, context),
-        resultType: proofMirValueType(function_, load.result),
+        resultType: proofMirValueTypeForLowering(function_, load.result, context),
         originId,
       }),
     ];
@@ -663,7 +590,7 @@ function lowerProofMirStatement(
           resultId: proofMirValueIdFor(function_, statement.kind.value, context),
           constant: context.constantPool.internInteger({
             constantId: optIrConstantId(context.nextConstantId++),
-            type: proofMirValueType(function_, statement.kind.value),
+            type: proofMirValueTypeForLowering(function_, statement.kind.value, context),
             normalizedValue: literalIntegerValue(statement.kind.literal),
           }),
           originId,
@@ -682,7 +609,7 @@ function lowerProofMirStatement(
           resultId,
           operand,
           operator: integerUnaryOperator(statement.kind.operator),
-          resultType: proofMirValueType(function_, statement.kind.result),
+          resultType: proofMirValueTypeForLowering(function_, statement.kind.result, context),
           originId,
         }),
       ];
@@ -691,7 +618,7 @@ function lowerProofMirStatement(
       const left = proofMirValueIdFor(function_, statement.kind.left, context);
       const right = proofMirValueIdFor(function_, statement.kind.right, context);
       const resultId = proofMirValueIdFor(function_, statement.kind.result, context);
-      const resultType = proofMirValueType(function_, statement.kind.result);
+      const resultType = proofMirValueTypeForLowering(function_, statement.kind.result, context);
       const booleanOperator = booleanBinaryOperator(statement.kind.operator, resultType);
       if (booleanOperator !== undefined) {
         return [
@@ -745,21 +672,40 @@ function lowerProofMirStatement(
             proofMirValueIdFor(function_, field.value, context),
           ),
           resultId: proofMirValueIdFor(function_, statement.kind.result, context),
-          resultType: proofMirValueType(function_, statement.kind.result),
+          resultType: proofMirValueTypeForLowering(function_, statement.kind.result, context),
           originId,
         }),
       ];
-    case "call":
-      return [lowerProofMirCall(function_, statement.kind.call, context, originId)];
+    case "call": {
+      const operation = lowerProofMirCall(function_, statement.kind.call, context, originId);
+      const result = statement.kind.call.result;
+      if (result?.kind === "valueAndPlace") {
+        bindPlaceValueAlias({
+          function_,
+          aliases: placeAliases,
+          placeId: result.place,
+          valueId: proofMirValueIdFor(function_, result.value, context),
+        });
+      }
+      return [operation];
+    }
     case "readValidatedBufferField": {
       const read = statement.kind.read;
       const layoutKey = validatedBufferLayoutKey(read.layoutField);
+      const packetPlace =
+        read.packetPlace === undefined ? undefined : function_.places.get(read.packetPlace);
       const lowered = lowerValidatedBufferFieldRead({
         function_,
         read,
         layoutKey,
-        valueType: proofMirValueType(function_, read.result),
-        byteWidth: byteWidthForType(proofMirValueType(function_, read.result)),
+        sourceBaseValueId:
+          packetPlace === undefined
+            ? undefined
+            : context.validatedSourceValueByPacketRoot.get(
+                proofMirPlaceRootAliasKey(packetPlace.root),
+              ),
+        valueType: proofMirValueTypeForLowering(function_, read.result, context),
+        byteWidth: byteWidthForType(proofMirValueTypeForLowering(function_, read.result, context)),
         targetEndian: context.targetEndian,
         layout: context.checkedMirLayout,
         resultId: proofMirValueIdFor(function_, read.result, context),
@@ -855,7 +801,7 @@ function lowerProofMirCall(
     call.result === undefined ? [] : operandValueIds(function_, call.result, context);
   const resultTypes =
     call.result?.kind === "value" || call.result?.kind === "valueAndPlace"
-      ? [proofMirValueType(function_, call.result.value)]
+      ? [proofMirValueTypeForLowering(function_, call.result.value, context)]
       : resultValueIds.map(() => optIrUnitType());
   const common = {
     operationId: nextStatementOperationId(context),
@@ -890,6 +836,101 @@ function lowerProofMirCall(
         ...common,
         target: { kind: "platform", platformKey: String(call.target.primitiveId) },
       });
+  }
+}
+
+function lowerProofMirMatchAttemptTerminator(
+  function_: ProofMirFunction,
+  block: ProofMirBlock,
+  context: ProofMirLoweringContext,
+  originId: OptIrOriginId,
+  operationId: OptIrOperationId,
+): OptIrTerminator {
+  const terminator = block.terminator;
+  if (terminator.kind.kind !== "matchAttempt") {
+    return { kind: "unreachable", operationId, originId };
+  }
+  const attempt = attemptStartInBlock(function_, block, terminator.kind.match.attemptId);
+  const statusValue =
+    attempt === undefined ? undefined : runtimeValueForAttemptOperand(function_, attempt);
+  if (attempt === undefined || statusValue === undefined) {
+    context.diagnostics.push(
+      `terminator:${String(terminator.terminatorId)}:unsupported-attempt:missing-runtime-status`,
+    );
+    return { kind: "unreachable", operationId, originId };
+  }
+  const statusType = proofMirValueTypeForLowering(function_, statusValue, context);
+  if (statusType.kind !== "integer" && statusType.kind !== "boolean") {
+    context.diagnostics.push(
+      `terminator:${String(terminator.terminatorId)}:unsupported-attempt:runtime-status-type:${statusType.kind}`,
+    );
+    return { kind: "unreachable", operationId, originId };
+  }
+
+  return {
+    kind: "switch",
+    operationId,
+    scrutinee: proofMirValueIdFor(function_, statusValue, context),
+    cases: Object.freeze([
+      Object.freeze({
+        label: "0",
+        edge: context.allocator.edgeIdFor(
+          function_.functionInstanceId,
+          String(terminator.kind.match.successTarget.edgeId),
+        ),
+      }),
+    ]),
+    defaultEdge: context.allocator.edgeIdFor(
+      function_.functionInstanceId,
+      String(terminator.kind.match.errorTarget.edgeId),
+    ),
+    originId,
+  };
+}
+
+function attemptStartInBlock(
+  function_: ProofMirFunction,
+  block: ProofMirBlock,
+  attemptId: Extract<
+    ProofMirBlock["terminator"]["kind"],
+    { readonly kind: "matchAttempt" }
+  >["match"]["attemptId"],
+): Extract<ProofMirStatement["kind"], { readonly kind: "attempt" }>["attempt"] | undefined {
+  const attemptKey = proofMetadataIdKey(attemptId);
+  for (const statement of block.statements) {
+    if (statement.kind.kind !== "attempt") {
+      continue;
+    }
+    if (proofMetadataIdKey(statement.kind.attempt.attemptId) === attemptKey) {
+      return statement.kind.attempt;
+    }
+  }
+  return undefined;
+}
+
+function runtimeValueForAttemptOperand(
+  function_: ProofMirFunction,
+  attempt: Extract<ProofMirStatement["kind"], { readonly kind: "attempt" }>["attempt"],
+): ProofMirValueId | undefined {
+  const result = attempt.fallible.result;
+  if (result === undefined) {
+    return undefined;
+  }
+  switch (result.kind) {
+    case "value":
+    case "valueAndPlace":
+      return result.value;
+    case "place": {
+      const place = function_.places.get(result.place);
+      if (
+        place !== undefined &&
+        place.projection.length === 0 &&
+        (place.root.kind === "runtimeTemporary" || place.root.kind === "blockParameter")
+      ) {
+        return place.root.valueId;
+      }
+      return undefined;
+    }
   }
 }
 
@@ -980,6 +1021,7 @@ function lowerProofMirTerminator(
         originId,
       };
     case "matchAttempt":
+      return lowerProofMirMatchAttemptTerminator(function_, block, context, originId, operationId);
     case "yield":
       context.diagnostics.push(
         `terminator:${String(terminator.terminatorId)}:unsupported-kind:${terminator.kind.kind}`,

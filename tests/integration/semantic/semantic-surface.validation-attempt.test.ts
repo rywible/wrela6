@@ -73,6 +73,53 @@ test("real checker emits attempt contracts from explicit source attempt input me
   ]);
 });
 
+test("real checker emits attempt contracts from source Result methods with proof-relevant receivers", () => {
+  const result = checkSemanticSurfaceForTest([
+    [
+      "main.wr",
+      [
+        "class Result[Ok, Err]:",
+        "private class Firmware:",
+        "    fn discover(self) -> Result[bool, u32]",
+        "uefi image Boot:",
+        "    fn main() -> Never",
+      ].join("\n"),
+    ],
+  ]);
+
+  const discover = result.program.functions.entries().find((func) => func.receiver !== undefined);
+  expect(discover).toBeDefined();
+  if (discover === undefined) return;
+  const contracts = result.program.proofSurface.attemptContracts.get(discover.functionId);
+
+  expect(result.diagnostics).toEqual([]);
+  expect(contracts).toHaveLength(1);
+  expect(contracts[0]!.inputs).toEqual([{ kind: "receiver" }]);
+});
+
+test("real checker leaves copy-only Result functions out of capability attempt contracts", () => {
+  const result = checkSemanticSurfaceForTest([
+    [
+      "main.wr",
+      [
+        "class Result[Ok, Err]:",
+        "fn parse_copy(value: u32) -> Result[bool, u32]",
+        "uefi image Boot:",
+        "    fn main() -> Never",
+      ].join("\n"),
+    ],
+  ]);
+
+  const parseCopy = result.program.functions
+    .entries()
+    .find((func) => func.returnType.kind === "applied");
+  expect(parseCopy).toBeDefined();
+  if (parseCopy === undefined) return;
+
+  expect(result.diagnostics).toEqual([]);
+  expect(result.program.proofSurface.attemptContracts.get(parseCopy.functionId)).toEqual([]);
+});
+
 test("real checker emits validation and attempt contracts from exact target platform contracts", () => {
   const u32Type = coreCheckedType(coreTypeId("u32"));
   const boolType = coreCheckedType(coreTypeId("bool"));

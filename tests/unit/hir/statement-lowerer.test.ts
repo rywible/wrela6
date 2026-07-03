@@ -144,6 +144,22 @@ test("ensure with unresolved call does not borrow bool expected type", () => {
   );
 });
 
+test("annotated let provides expected type to object literal initializer", () => {
+  const { context, node } = firstStatement(
+    SyntaxKind.LetStatement,
+    "class Binding:\n    value: u32\nfn process():\n    let binding: Binding = { value: 1 }\n",
+  );
+
+  const statement = lowerStatement({ node, context });
+
+  expect(statement.kind.kind).toBe("let");
+  expect(context.diagnostics.entries().map((diagnostic) => String(diagnostic.code))).not.toContain(
+    "HIR_OBJECT_LITERAL_TYPE_REQUIRED",
+  );
+  if (statement.kind.kind !== "let") throw new Error("expected let statement");
+  expect(statement.kind.statement.local.type).toEqual(context.program.types.entries()[0]!.type);
+});
+
 test("malformed if without condition lowers fail-closed instead of throwing", () => {
   const { context, node } = firstStatement(
     SyntaxKind.IfStatement,

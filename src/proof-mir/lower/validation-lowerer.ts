@@ -57,6 +57,11 @@ interface RecordedProofMirStatement {
   readonly kind: DraftProofMirStatementKind;
 }
 
+interface LoweredValidationArmBlock {
+  readonly finalBlockKey: ProofMirCanonicalKey;
+  readonly reachesEnd: boolean;
+}
+
 export interface CreateProofMirValidationLowererInput {
   readonly statement?: ProofMirStatementLowerer;
   readonly terminal?: ProofMirTerminalLowerer;
@@ -309,13 +314,20 @@ function lowerValidationArmBlock(input: {
   readonly statements: readonly MonoStatement[];
   readonly origin: ProofMirCanonicalKey;
   readonly tailReturn?: ProofMirTailReturnPolicy;
-}): ProofMirLoweringResult<void> {
-  if (input.statementLowerer === undefined || input.terminalLowerer === undefined) {
-    return setEmptyArmUnreachableTerminator({
+}): ProofMirLoweringResult<LoweredValidationArmBlock> {
+  if (
+    (input.statementLowerer === undefined || input.terminalLowerer === undefined) &&
+    input.statements.length > 0
+  ) {
+    const unreachable = setEmptyArmUnreachableTerminator({
       context: input.context,
       blockKey: input.blockKey,
       origin: input.origin,
     });
+    if (unreachable.kind === "error") {
+      return unreachable;
+    }
+    return loweringOk({ finalBlockKey: input.blockKey, reachesEnd: false });
   }
 
   input.context.ssa.registerBlock(input.blockKey);
@@ -335,16 +347,21 @@ function lowerValidationArmBlock(input: {
     tracking.currentBlockRef.blockKey = previousCurrentBlock;
     tracking.continuationBlockRef.blockKey = previousContinuationBlock;
   };
+  const finish = (
+    value: LoweredValidationArmBlock,
+  ): ProofMirLoweringResult<LoweredValidationArmBlock> => {
+    restoreTracking();
+    return loweringOk(value);
+  };
 
   for (const [statementIndex, statement] of input.statements.entries()) {
     if (blockHasExitTerminator(input.context, activeBlockKey)) {
-      restoreTracking();
-      return loweringOk(undefined);
+      return finish({ finalBlockKey: activeBlockKey, reachesEnd: false });
     }
     const lastStatement = statementIndex === input.statements.length - 1;
     const tailReturn = lowerProofMirTailReturnStatement({
       context: input.context,
-      terminalLowerer: input.terminalLowerer,
+      terminalLowerer: input.terminalLowerer!,
       statement,
       blockKey: activeBlockKey,
       lastStatement,
@@ -354,7 +371,7 @@ function lowerValidationArmBlock(input: {
       tailReturn.kind === "lowered"
         ? tailReturn.result
         : statement.kind.kind === "return"
-          ? input.terminalLowerer.lowerReturn({
+          ? input.terminalLowerer!.lowerReturn({
               context: input.context,
               expression: statement.kind.expression,
               blockKey: activeBlockKey,
@@ -375,7 +392,7 @@ function lowerValidationArmBlock(input: {
                   ? { tailReturn: input.tailReturn }
                   : {}),
               })
-            : input.statementLowerer.lowerStatement({
+            : input.statementLowerer!.lowerStatement({
                 context: input.context,
                 statement,
                 blockKey: activeBlockKey,
@@ -390,17 +407,47 @@ function lowerValidationArmBlock(input: {
     }
   }
 
-  if (!blockHasTerminator(input.context, activeBlockKey)) {
-    restoreTracking();
-    return setEmptyArmUnreachableTerminator({
-      context: input.context,
-      blockKey: activeBlockKey,
-      origin: input.origin,
-    });
+  if (blockHasTerminator(input.context, activeBlockKey)) {
+    return finish({ finalBlockKey: activeBlockKey, reachesEnd: false });
   }
 
-  restoreTracking();
-  return loweringOk(undefined);
+  return finish({ finalBlockKey: activeBlockKey, reachesEnd: true });
+}
+
+function wireValidationFallThroughEdge(input: {
+  readonly context: ProofMirLoweringContext;
+  readonly fromBlockKey: ProofMirCanonicalKey;
+  readonly toBlockKey: ProofMirCanonicalKey;
+  readonly originKey: ProofMirCanonicalKey;
+  readonly role: string;
+}): ProofMirLoweringResult<ProofMirCanonicalKey> {
+  const fromScope = input.context.graph.block(input.fromBlockKey).scopeKey;
+  const toScope = input.context.graph.block(input.toBlockKey).scopeKey;
+  const edgeKey = input.context.graph.createNormalEdge({
+    role: input.role,
+    fromBlock: input.fromBlockKey,
+    toBlock: input.toBlockKey,
+    sourceScope: fromScope,
+    targetScope: toScope,
+    origin: input.originKey,
+    argumentKeys: [],
+  });
+  input.context.ssa.registerPredecessorEdge({
+    blockKey: input.toBlockKey,
+    edgeKey,
+    fromBlockKey: input.fromBlockKey,
+    argumentKeysBySsaKey: {},
+  });
+  input.context.ssa.setEdgeArguments({ edgeKey, argumentKeys: [] });
+  const setTerminatorResult = input.context.graph.setTerminator(input.fromBlockKey, {
+    kind: "goto",
+    target: { edge: edgeKey, block: input.toBlockKey },
+    origin: input.originKey,
+  });
+  if (setTerminatorResult.kind === "error") {
+    return setTerminatorResult;
+  }
+  return loweringOk(edgeKey);
 }
 
 function lowerValidationCreationImpl(input: {
@@ -490,6 +537,7 @@ function lowerValidationMatchImpl(input: {
   readonly validation: MonoValidation;
   readonly validateStatement?: DraftProofMirGraphStatementSnapshot;
   readonly terminator: DraftGraphTerminator;
+  readonly continuationBlockKey: ProofMirCanonicalKey;
   readonly okEdge: DraftGraphEdgeView;
   readonly errEdge: DraftGraphEdgeView;
 }> {
@@ -562,6 +610,13 @@ function lowerValidationMatchImpl(input: {
   const statementOrdinal = Number(String(validation.validationId.hirId));
 
   const sourceScopeKey = input.context.graph.block(input.blockKey).scopeKey;
+  const continuationBlockKey = input.context.graph.createBlock({
+    role: "continuation",
+    scope: sourceScopeKey,
+    origin: matchOriginKey,
+    sourceOrigin: `${input.statement.sourceOrigin}:after`,
+  });
+  input.context.ssa.registerBlock(continuationBlockKey);
 
   const okScopeKey = validationArmScopeKey({
     context: input.context,
@@ -589,7 +644,7 @@ function lowerValidationMatchImpl(input: {
     origin: errArmOriginKey,
   });
 
-  const finalizeOkArm = lowerValidationArmBlock({
+  const loweredOkArm = lowerValidationArmBlock({
     context: input.context,
     statementLowerer: input.statementLowerer,
     terminalLowerer: input.terminalLowerer,
@@ -599,10 +654,10 @@ function lowerValidationMatchImpl(input: {
     origin: okArmOriginKey,
     ...(input.tailReturn === undefined ? {} : { tailReturn: input.tailReturn }),
   });
-  if (finalizeOkArm.kind === "error") {
-    return finalizeOkArm;
+  if (loweredOkArm.kind === "error") {
+    return loweredOkArm;
   }
-  const finalizeErrArm = lowerValidationArmBlock({
+  const loweredErrArm = lowerValidationArmBlock({
     context: input.context,
     statementLowerer: input.statementLowerer,
     terminalLowerer: input.terminalLowerer,
@@ -612,8 +667,34 @@ function lowerValidationMatchImpl(input: {
     origin: errArmOriginKey,
     ...(input.tailReturn === undefined ? {} : { tailReturn: input.tailReturn }),
   });
-  if (finalizeErrArm.kind === "error") {
-    return finalizeErrArm;
+  if (loweredErrArm.kind === "error") {
+    return loweredErrArm;
+  }
+
+  if (loweredOkArm.value.reachesEnd) {
+    const wiredOk = wireValidationFallThroughEdge({
+      context: input.context,
+      fromBlockKey: loweredOkArm.value.finalBlockKey,
+      toBlockKey: continuationBlockKey,
+      originKey: okArmOriginKey,
+      role: "validation.continuation:ok",
+    });
+    if (wiredOk.kind === "error") {
+      return wiredOk;
+    }
+  }
+
+  if (loweredErrArm.value.reachesEnd) {
+    const wiredErr = wireValidationFallThroughEdge({
+      context: input.context,
+      fromBlockKey: loweredErrArm.value.finalBlockKey,
+      toBlockKey: continuationBlockKey,
+      originKey: errArmOriginKey,
+      role: "validation.continuation:err",
+    });
+    if (wiredErr.kind === "error") {
+      return wiredErr;
+    }
   }
 
   const okProjectedPlaceKeys =
@@ -712,6 +793,11 @@ function lowerValidationMatchImpl(input: {
     return setTerminatorResult;
   }
 
+  if (input.context.blockTracking !== undefined) {
+    input.context.blockTracking.currentBlockRef.blockKey = continuationBlockKey;
+    input.context.blockTracking.continuationBlockRef.blockKey = undefined;
+  }
+
   void okModelBindings;
   void errModelBindings;
 
@@ -719,6 +805,7 @@ function lowerValidationMatchImpl(input: {
     validation,
     validateStatement: creationResult.value.validateStatement,
     terminator,
+    continuationBlockKey,
     okEdge: input.context.graph.edge(okEdgeKey),
     errEdge: input.context.graph.edge(errEdgeKey),
   });

@@ -15,6 +15,7 @@ import {
   isConsumedDraftOperand,
   type ProofMirDraftOperand,
 } from "./lowering-operands";
+import { syncLoweredPlaceToFunctionDraft } from "./lowering-place-sync";
 import {
   type CallLoweringIdAllocator,
   invalidConsumeOperandDiagnostic,
@@ -124,7 +125,26 @@ export function lowerCallOperand(input: {
   if (lowered.kind === "error") {
     return lowered;
   }
-  if (input.mode === "consume" && !isConsumedDraftOperand(lowered.value)) {
+  let operand = lowered.value;
+  if (operand.kind === "value" && input.operandExpression.place !== undefined) {
+    const loweredPlace = input.context.functionScopePlaceLowerer.lowerMonoPlace({
+      monoPlace: input.operandExpression.place,
+      originKey: input.originKey,
+    });
+    if (loweredPlace.kind === "error") {
+      return loweredPlace;
+    }
+    operand = {
+      kind: "valueAndPlace",
+      value: operand.value,
+      place: syncLoweredPlaceToFunctionDraft({
+        context: input.context,
+        lowered: loweredPlace.value,
+        monoPlace: input.operandExpression.place,
+      }),
+    };
+  }
+  if (input.mode === "consume" && !isConsumedDraftOperand(operand)) {
     return loweringError([
       invalidConsumeOperandDiagnostic({
         functionInstanceId: input.context.functionInstanceId,
@@ -134,7 +154,7 @@ export function lowerCallOperand(input: {
     ]);
   }
   return loweringOk({
-    operand: lowered.value,
+    operand,
     originKey: input.originKey,
   });
 }

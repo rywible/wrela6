@@ -1,7 +1,7 @@
 import type { MonoFunctionInstance, MonomorphizedHirProgram } from "../mono/mono-hir";
-import type { MonoCheckedType } from "../mono/mono-hir";
+import type { MonoCheckedType, MonoTypeInstance } from "../mono/mono-hir";
 import type { ImageProfileId } from "../semantic/ids";
-import { imageProfileId } from "../semantic/ids";
+import { coreTypeId, imageProfileId } from "../semantic/ids";
 import { checkedTypeFingerprint } from "../semantic/surface/type-model";
 import type { MonoInstanceId } from "../mono/ids";
 import type { LayoutBuilderResult } from "./builder-context";
@@ -65,6 +65,7 @@ export interface ClassifySourceImageEntryInput {
   readonly types: LayoutTypeFactTable;
   readonly enums: LayoutEnumFactTable;
   readonly resolver: LayoutTypeResolver;
+  readonly programTypes?: MonomorphizedHirProgram["types"];
 }
 
 export interface ClassifySourceImageEntryValue {
@@ -236,6 +237,111 @@ function classifyAbiValue(
     return { diagnostics: result.diagnostics };
   }
   return { shape: result.shape, diagnostics: [] };
+}
+
+const CANONICAL_RESULT_MODULE_PATHS = new Set([
+  "wrela_std/core/result.wr",
+  "wrela_abi/core/result.wr",
+]);
+
+const CANONICAL_BOOT_ERROR_MODULE_PATHS = new Set([
+  "wrela_std/target/uefi/boot.wr",
+  "wrela_std/target/uefi/firmware.wr",
+  "wrela_abi/target/uefi/boot.wr",
+  "wrela_abi/target/uefi/firmware.wr",
+]);
+
+function hasSourceIdentity(
+  instance: MonoTypeInstance | undefined,
+  input: {
+    readonly sourceName: string;
+    readonly modulePathKeys: ReadonlySet<string>;
+  },
+): boolean {
+  return (
+    instance?.sourceName === input.sourceName &&
+    instance.sourceModulePathKey !== undefined &&
+    input.modulePathKeys.has(instance.sourceModulePathKey)
+  );
+}
+
+function sourceInstanceForType(
+  type: {
+    readonly itemId: MonoTypeInstance["sourceItemId"];
+    readonly typeId: MonoTypeInstance["sourceTypeId"];
+  },
+  programTypes: MonomorphizedHirProgram["types"] | undefined,
+): MonoTypeInstance | undefined {
+  if (programTypes === undefined) return undefined;
+  return programTypes
+    .entries()
+    .find(
+      (instance) =>
+        instance.sourceTypeId === type.typeId &&
+        instance.sourceItemId === type.itemId &&
+        instance.typeArguments.length === 0,
+    );
+}
+
+function isCanonicalUefiBootResultType(input: {
+  readonly returnType: MonoCheckedType;
+  readonly returnTypeKey: LayoutTypeKey;
+  readonly programTypes: MonomorphizedHirProgram["types"] | undefined;
+}): boolean {
+  if (input.returnType.kind !== "applied") return false;
+  if (input.returnType.constructor.kind !== "source") return false;
+  if (input.returnType.arguments.length !== 2) return false;
+  const [okType, errType] = input.returnType.arguments;
+  if (okType?.kind !== "core" || okType.coreTypeId !== coreTypeId("Never")) return false;
+  if (errType?.kind !== "source") return false;
+  if (input.returnTypeKey.kind !== "source" || input.programTypes === undefined) return false;
+
+  const resultInstance = input.programTypes.get(input.returnTypeKey.instanceId);
+  if (
+    !hasSourceIdentity(resultInstance, {
+      sourceName: "Result",
+      modulePathKeys: CANONICAL_RESULT_MODULE_PATHS,
+    })
+  ) {
+    return false;
+  }
+
+  return hasSourceIdentity(sourceInstanceForType(errType, input.programTypes), {
+    sourceName: "BootError",
+    modulePathKeys: CANONICAL_BOOT_ERROR_MODULE_PATHS,
+  });
+}
+
+function classifySourceBootResultCodeReturn(input: {
+  readonly target: LayoutTargetSurface;
+  readonly targetFacts: TargetLayoutFacts;
+  readonly types: LayoutTypeFactTable;
+}): { readonly shape?: LayoutAbiValueShape; readonly diagnostics: readonly LayoutDiagnostic[] } {
+  const typeKey = input.targetFacts.sizeType;
+  const resolved = lookupLayoutForTypeKey(typeKey, input.types, emptyEnumFactTable());
+  if (resolved === undefined) {
+    return {
+      diagnostics: [
+        layoutDiagnostic({
+          severity: "error",
+          code: "LAYOUT_ABI_CLASSIFICATION_FAILED",
+          message: "Missing layout fact for source boot result code classification.",
+          ownerKey: String(imageEntryFacetOwnerKey("source")),
+          rootCauseKey: "image-entry",
+          stableDetail: layoutTypeKeyString(typeKey),
+        }),
+      ],
+    };
+  }
+
+  return classifyAbiValue(input.target, {
+    target: input.targetFacts,
+    callConvention: input.target.abi.sourceCallConvention,
+    use: { kind: "return" },
+    type: typeKey,
+    layout: resolved.layout,
+    ...(resolved.enumFact !== undefined ? { enumFact: resolved.enumFact } : {}),
+  });
 }
 
 function resolveSelectedProfileId(
@@ -460,6 +566,31 @@ export function classifySourceImageEntry(input: ClassifySourceImageEntryInput): 
     return { diagnostics };
   }
 
+  if (
+    isCanonicalUefiBootResultType({
+      returnType: input.entryFunction.signature.returnType,
+      returnTypeKey,
+      programTypes: input.programTypes,
+    })
+  ) {
+    const classifiedBootResult = classifySourceBootResultCodeReturn({
+      target: input.target,
+      targetFacts: input.targetFacts,
+      types: input.types,
+    });
+    diagnostics.push(...classifiedBootResult.diagnostics);
+    if (classifiedBootResult.shape === undefined) {
+      return { diagnostics };
+    }
+    return {
+      value: {
+        arguments: arguments_,
+        returnValue: classifiedBootResult.shape,
+      },
+      diagnostics,
+    };
+  }
+
   const classifiedReturn = classifySourceAbiReturn({
     target: input.target,
     targetFacts: input.targetFacts,
@@ -679,6 +810,7 @@ export function computeImageEntryAbiFact(
     types,
     enums,
     resolver,
+    programTypes: input.program.types,
   });
   diagnostics.push(...source.diagnostics);
   if (source.value === undefined) {

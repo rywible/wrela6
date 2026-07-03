@@ -21,7 +21,7 @@ import { checkGenericSignature } from "./generic-checker";
 import { emptyKindContext, resourceKindForType } from "./resource-kind-checker";
 import type { ResourceKindContext } from "./resource-kind-checker";
 import type { CheckedResourceKind } from "./resource-kind";
-import { joinResourceKinds, resourceKindFingerprint } from "./resource-kind";
+import { isProofRelevantKind, joinResourceKinds, resourceKindFingerprint } from "./resource-kind";
 import { checkImageDevices } from "./image-device-checker";
 import type { CheckedImageDevice } from "./image-device-checker";
 import { checkImageEntry } from "./image-entry-checker";
@@ -338,6 +338,66 @@ function attemptInputKey(input: CheckedAttemptContractSurface["inputs"][number])
   return input.kind === "receiver" ? "receiver" : `parameter:${input.parameterId}`;
 }
 
+function isSourceResultAttemptShape(input: {
+  readonly signature: CheckedFunctionSignature;
+  readonly index: ItemIndex;
+}):
+  | {
+      readonly resultType: CheckedType;
+      readonly okType: CheckedType;
+      readonly errType: CheckedType;
+    }
+  | undefined {
+  const resultType = appliedSourceTypeNamed({
+    type: input.signature.returnType,
+    index: input.index,
+    name: "Result",
+  });
+  if (resultType === undefined || resultType.arguments.length !== 2) return undefined;
+  return {
+    resultType: input.signature.returnType,
+    okType: resultType.arguments[0]!,
+    errType: resultType.arguments[1]!,
+  };
+}
+
+function isAttemptInputResourceKind(kind: CheckedResourceKind): boolean {
+  switch (kind.kind) {
+    case "concrete":
+      return kind.value !== "Copy" && kind.value !== "Never";
+    case "parametric":
+    case "derived":
+      return true;
+    case "error":
+      return false;
+  }
+}
+
+function inferredResultAttemptInputs(
+  signature: CheckedFunctionSignature,
+): readonly CheckedAttemptContractSurface["inputs"][number][] {
+  const inputs: CheckedAttemptContractSurface["inputs"][number][] = [];
+  if (
+    signature.receiver !== undefined &&
+    (isAttemptInputResourceKind(signature.receiver.resourceKind) ||
+      (signature.receiver.resourceKind.kind === "concrete" &&
+        isProofRelevantKind(signature.receiver.resourceKind.value)))
+  ) {
+    inputs.push({ kind: "receiver" });
+  }
+  for (const parameter of signature.parameters) {
+    if (
+      parameter.mode === "consume" ||
+      isAttemptInputResourceKind(parameter.resourceKind) ||
+      (parameter.resourceKind.kind === "concrete" &&
+        isProofRelevantKind(parameter.resourceKind.value))
+    ) {
+      inputs.push({ kind: "parameter", parameterId: parameter.parameterId });
+    }
+  }
+  return inputs;
+}
+
 function sourceValidationContractsFromSignatures(input: {
   readonly signatures: CheckedFunctionSignatureTable;
   readonly index: ItemIndex;
@@ -380,33 +440,52 @@ function sourceAttemptContractsFromSignatures(input: {
 }): CheckedAttemptContractSurface[] {
   const contracts: CheckedAttemptContractSurface[] = [];
   for (const signature of input.signatures.entries()) {
-    const resultType = appliedSourceTypeNamed({
+    const explicitAttemptType = appliedSourceTypeNamed({
       type: signature.returnType,
       index: input.index,
       name: "Attempt",
     });
-    if (resultType === undefined || resultType.arguments.length < 3) continue;
-
-    const inputs: CheckedAttemptContractSurface["inputs"][number][] = [];
-    let allInputsMapped = true;
-    for (const inputType of resultType.arguments.slice(2)) {
-      const position = matchingAttemptInput({ signature, type: inputType });
-      if (position === undefined) {
-        allInputsMapped = false;
-        break;
+    if (explicitAttemptType !== undefined && explicitAttemptType.arguments.length >= 3) {
+      const inputs: CheckedAttemptContractSurface["inputs"][number][] = [];
+      let allInputsMapped = true;
+      for (const inputType of explicitAttemptType.arguments.slice(2)) {
+        const position = matchingAttemptInput({ signature, type: inputType });
+        if (position === undefined) {
+          allInputsMapped = false;
+          break;
+        }
+        inputs.push(position);
       }
-      inputs.push(position);
+      if (!allInputsMapped || inputs.length === 0) continue;
+
+      const uniqueInputKeys = new Set(inputs.map(attemptInputKey));
+      if (uniqueInputKeys.size !== inputs.length) continue;
+
+      contracts.push({
+        fallibleFunctionId: signature.functionId,
+        resultType: signature.returnType,
+        okType: explicitAttemptType.arguments[0]!,
+        errType: explicitAttemptType.arguments[1]!,
+        inputs,
+        span: signature.sourceSpan,
+      });
+      continue;
     }
-    if (!allInputsMapped || inputs.length === 0) continue;
+
+    const resultAttempt = isSourceResultAttemptShape({ signature, index: input.index });
+    if (resultAttempt === undefined) continue;
+
+    const inputs = inferredResultAttemptInputs(signature);
+    if (inputs.length === 0) continue;
 
     const uniqueInputKeys = new Set(inputs.map(attemptInputKey));
     if (uniqueInputKeys.size !== inputs.length) continue;
 
     contracts.push({
       fallibleFunctionId: signature.functionId,
-      resultType: signature.returnType,
-      okType: resultType.arguments[0]!,
-      errType: resultType.arguments[1]!,
+      resultType: resultAttempt.resultType,
+      okType: resultAttempt.okType,
+      errType: resultAttempt.errType,
       inputs,
       span: signature.sourceSpan,
     });

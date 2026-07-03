@@ -767,6 +767,7 @@ export function createProofMirControlFlowLowerer(
           scope: loweringInput.context.graph.block(loweringInput.blockKey).scopeKey,
           origin: originForStatement(loweringInput.context, loweringInput.statement),
         });
+      loweringInput.context.ssa.registerBlock(continuationBlockKey);
       if (input.continuationBlockRef !== undefined) {
         input.continuationBlockRef.blockKey = continuationBlockKey;
       }

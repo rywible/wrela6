@@ -110,7 +110,7 @@ describe("UEFI AArch64 binary spine", () => {
     if (result.kind !== "error") return;
     expect(
       result.diagnostics.some((diagnostic) =>
-        diagnostic.stableDetail.endsWith("entry-contract:source-visible-parameters-must-be-empty"),
+        diagnostic.stableDetail.endsWith("entry-contract:unsupported-source-visible-parameters"),
       ),
     ).toBe(true);
     expect(result.verification.runs).toEqual([

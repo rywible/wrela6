@@ -226,6 +226,10 @@ export function instantiateMonoType(input: InstantiateMonoTypeInput): Instantiat
     instanceId,
     sourceTypeId: sourceType.typeId,
     sourceItemId: sourceType.itemId,
+    ...(sourceType.sourceName !== undefined ? { sourceName: sourceType.sourceName } : {}),
+    ...(sourceType.sourceModulePathKey !== undefined
+      ? { sourceModulePathKey: sourceType.sourceModulePathKey }
+      : {}),
     sourceKind: sourceType.sourceKind,
     typeArguments: input.key.typeArguments,
     fields: fieldInstances,

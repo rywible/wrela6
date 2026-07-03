@@ -313,6 +313,9 @@ function backendMemoryRegionKey(fact: OptIrFactRecord): string {
 }
 
 function backendMemoryOrder(value: unknown, packetKind: string | undefined): string {
+  if (value === undefined) {
+    return packetKind === "barrier-domain" ? "seq_cst" : "relaxed";
+  }
   switch (value) {
     case "relaxed":
       return "relaxed";
@@ -328,11 +331,14 @@ function backendMemoryOrder(value: unknown, packetKind: string | undefined): str
     case "compilerOnlyOrdered":
       return "relaxed";
     default:
-      return packetKind === "barrier-domain" ? "seq_cst" : "relaxed";
+      return `unsupported:${String(value)}`;
   }
 }
 
 function backendRegionMemoryType(value: unknown): string {
+  if (value === undefined) {
+    return "normal";
+  }
   switch (value) {
     case "normalCacheable":
     case "packetSource":
@@ -345,7 +351,7 @@ function backendRegionMemoryType(value: unknown): string {
     case "externalConservative":
       return "volatile";
     default:
-      return "normal";
+      return `unsupported:${String(value)}`;
   }
 }
 

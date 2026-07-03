@@ -212,6 +212,9 @@ describe("ProofMirExpressionLowerer", () => {
     if (lowered.kind !== "ok") return;
 
     expect(["place", "valueAndPlace"]).toContain(lowered.operand.kind);
+    expect(lowered.statements.some((statement) => statement.kind.kind === "constructObject")).toBe(
+      true,
+    );
     expect(lowered.statements.some((statement) => statement.kind.kind === "store")).toBe(true);
   });
 

@@ -7,6 +7,32 @@ const CHECKER_KEY = "proof-fact-reference";
 const INPUT_AUTHORITY = Object.freeze(["compiler-trace"] as const);
 const UEFI_CONSOLE_OUTPUT_STRING = "uefi.console.outputString";
 const UEFI_SET_WATCHDOG_TIMER = "uefi.boot.setWatchdogTimer";
+const PACKET_COUNTER_UEFI_SOURCE_PRECONDITIONS = Object.freeze([
+  Object.freeze({
+    evidenceKey: "platform-call-precondition-reserve-restricted-memory",
+    primitiveId: "uefi.source.reserveRestrictedMemory",
+  }),
+  Object.freeze({
+    evidenceKey: "platform-call-precondition-discover-virtio",
+    primitiveId: "uefi.source.discoverVirtio",
+  }),
+  Object.freeze({
+    evidenceKey: "platform-call-precondition-bind-virtio-net",
+    primitiveId: "uefi.source.bindVirtioNet",
+  }),
+  Object.freeze({
+    evidenceKey: "platform-call-precondition-plan-machine",
+    primitiveId: "uefi.source.planMachine",
+  }),
+  Object.freeze({
+    evidenceKey: "platform-call-precondition-exit-boot-services",
+    primitiveId: "uefi.source.exitBootServices",
+  }),
+  Object.freeze({
+    evidenceKey: "platform-call-precondition-split-network-device",
+    primitiveId: "uefi.source.splitNetworkDevice",
+  }),
+]);
 
 interface ProofFactRequirement {
   readonly evidenceKey: string;
@@ -43,6 +69,14 @@ const PACKET_COUNTER_REQUIREMENTS: readonly ProofFactRequirement[] = Object.free
     (fact) =>
       fact.family === "platform-call-precondition" &&
       includesAny(fact, ["output_string", UEFI_CONSOLE_OUTPUT_STRING]),
+  ),
+  ...PACKET_COUNTER_UEFI_SOURCE_PRECONDITIONS.map((precondition) =>
+    requirement(
+      precondition.evidenceKey,
+      (fact) =>
+        fact.family === "platform-call-precondition" &&
+        includesAny(fact, [precondition.primitiveId]),
+    ),
   ),
   requirement(
     "source-length-limit",
@@ -227,6 +261,7 @@ function structuredProofFacts(
   if (packagePipeline === undefined) return Object.freeze([]);
   return Object.freeze([
     ...proofMirCoverageFacts(packagePipeline),
+    ...checkedValidatedBufferLayoutFacts(packagePipeline),
     ...checkedDomainFacts(packagePipeline),
     ...checkedPlatformPreconditionFacts(packagePipeline),
   ]);
@@ -267,6 +302,105 @@ function proofMirCoverageFacts(
       return [];
     }),
   );
+}
+
+function checkedValidatedBufferLayoutFacts(
+  packagePipeline: Readonly<Record<string, unknown>>,
+): readonly ProofFactRecord[] {
+  const checkedBuffers = recordsAtPath(packagePipeline, [
+    "proofCheck",
+    "checkProofAndResourcesResult",
+    "checked",
+    "facts",
+    "validatedBuffers",
+  ]);
+  const checkedLayoutInstances = checkedValidatedBufferLayoutInstanceIds(checkedBuffers);
+  if (checkedLayoutInstances.size === 0) return Object.freeze([]);
+
+  const layoutBuffers = recordsAtPath(packagePipeline, [
+    "layoutFacts",
+    "computeRepresentationLayoutFactsResult",
+    "facts",
+    "validatedBuffers",
+  ]);
+
+  return Object.freeze(
+    layoutBuffers.flatMap((buffer): ProofFactRecord[] => {
+      if (!isRecord(buffer)) return [];
+      const instanceId = stringField(buffer, "instanceId");
+      if (instanceId === undefined || !checkedLayoutInstances.has(instanceId)) return [];
+
+      const facts: ProofFactRecord[] = [];
+      if (validatedBufferHasFixedFieldThroughByte(buffer, 2n)) {
+        facts.push({
+          family: "validated-buffer-layout",
+          subject: "CounterPacket",
+          detail: `fixed-field-layout-through-byte-2|checked-validated-buffer-layout:${instanceId}`,
+        });
+      }
+      if (validatedBufferHasPayloadBoundary(buffer)) {
+        facts.push({
+          family: "validated-buffer-layout",
+          subject: "CounterPacket",
+          detail: `payload-end|dynamic-payload-boundary|checked-validated-buffer-layout:${instanceId}`,
+        });
+      }
+      return facts;
+    }),
+  );
+}
+
+function checkedValidatedBufferLayoutInstanceIds(
+  checkedBuffers: readonly unknown[],
+): ReadonlySet<string> {
+  const instanceIds = new Set<string>();
+  for (const checkedBuffer of checkedBuffers) {
+    for (const dependency of recordsAtPath(checkedBuffer, ["dependencies"])) {
+      if (!isRecord(dependency) || stringField(dependency, "kind") !== "layoutFact") continue;
+      const layoutKey = stringField(dependency, "layoutKey");
+      if (layoutKey !== undefined) instanceIds.add(layoutKey);
+    }
+  }
+  return instanceIds;
+}
+
+function validatedBufferHasFixedFieldThroughByte(
+  buffer: Readonly<Record<string, unknown>>,
+  endByte: bigint,
+): boolean {
+  return arrayFromUnknown(buffer.layoutFields).some(
+    (field) =>
+      isRecord(field) &&
+      layoutTermConstantValue(field.end) === endByte &&
+      layoutReadRequirementsInclude(field, "layoutFits", endByte),
+  );
+}
+
+function validatedBufferHasPayloadBoundary(buffer: Readonly<Record<string, unknown>>): boolean {
+  return arrayFromUnknown(buffer.layoutFields).some(
+    (field) =>
+      isRecord(field) &&
+      stringField(field, "name") === "payload" &&
+      layoutReadRequirementsInclude(field, "payloadEnd"),
+  );
+}
+
+function layoutReadRequirementsInclude(
+  field: Readonly<Record<string, unknown>>,
+  requirementKind: string,
+  endByte?: bigint,
+): boolean {
+  return arrayFromUnknown(field.readRequires).some((requirement) => {
+    if (!isRecord(requirement) || stringField(requirement, "kind") !== requirementKind) {
+      return false;
+    }
+    return endByte === undefined || layoutTermConstantValue(requirement.end) === endByte;
+  });
+}
+
+function layoutTermConstantValue(value: unknown): bigint | undefined {
+  if (!isRecord(value) || stringField(value, "kind") !== "constant") return undefined;
+  return bigintField(value, "value");
 }
 
 function checkedDomainFacts(
@@ -485,6 +619,16 @@ function recordField(
 ): Readonly<Record<string, unknown>> {
   const value = record[key];
   return isRecord(value) ? value : Object.freeze({});
+}
+
+function bigintField(record: Readonly<Record<string, unknown>>, key: string): bigint | undefined {
+  const value = record[key];
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number" && Number.isInteger(value)) return BigInt(value);
+  if (typeof value !== "string") return undefined;
+  const normalized = value.endsWith("n") ? value.slice(0, -1) : value;
+  if (!/^-?\d+$/.test(normalized)) return undefined;
+  return BigInt(normalized);
 }
 
 function stableValue(value: unknown): string {

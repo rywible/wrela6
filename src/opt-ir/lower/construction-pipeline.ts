@@ -60,8 +60,7 @@ export function runOptIrConstructionPipeline(
 
   const lowering = lowerCheckedMirProgram({
     checkedMir: input.handoff.checkedMir,
-    targetId: input.target.targetId,
-    targetEndian: input.target.dataModel.endian,
+    target: input.target,
     validatedBufferFacts: validatedBufferFactsForLowering(factImport.factSet),
     nextGeneratedFactId: nextGeneratedFactId(factImport.factSet),
   });

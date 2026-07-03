@@ -614,6 +614,7 @@ function applySummaryPlaceEffects(input: {
   readonly bindings: SourceCallOperandBindings | undefined;
   readonly ownerKey: string;
   readonly callerFunctionInstanceId?: MonoInstanceId;
+  readonly placeResolver?: CheckedSourceCallTransferInput["placeResolver"];
 }):
   | CheckedSourceCallTransferResult
   | {
@@ -632,9 +633,6 @@ function applySummaryPlaceEffects(input: {
       case "consumes": {
         const placeKey = resolvePlaceKeyForBinder(effect.place, input.bindings);
         if (placeKey === undefined) {
-          if (effect.kind === "observes" && effect.borrowMode === undefined) {
-            continue;
-          }
           return {
             kind: "error",
             diagnostics: sortProofCheckDiagnostics([
@@ -659,6 +657,7 @@ function applySummaryPlaceEffects(input: {
           resourceKind,
           mode: effect.kind === "observes" ? "observe" : "consume",
           operationOriginKey: input.ownerKey,
+          placeResolver: input.placeResolver,
         });
         if (ownershipResult.kind === "error") {
           return ownershipResult;
@@ -689,6 +688,7 @@ function applySummaryPlaceEffects(input: {
           place: { placeKey },
           operationOriginKey: input.ownerKey,
           invalidates: effect.invalidates,
+          placeResolver: input.placeResolver,
         });
         if (ownershipResult.kind === "error") {
           return ownershipResult;
@@ -880,6 +880,7 @@ export function checkSourceCallTransfer(
     bindings,
     ownerKey,
     callerFunctionInstanceId: input.call.callId.functionInstanceId,
+    placeResolver: input.placeResolver,
   });
   if (effectResult.kind === "error") {
     return effectResult;

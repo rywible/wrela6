@@ -1,4 +1,6 @@
 import type { AArch64MachineFunction } from "../../machine-ir/machine-function";
+import type { AArch64MachineInstruction } from "../../machine-ir/machine-instruction";
+import type { AArch64VirtualRegisterOrigin } from "../../machine-ir/virtual-register";
 import type { AArch64ReconciledCallBoundary } from "../abi/call-boundary-reconciliation";
 import type { AArch64LoweringCallBoundary } from "./machine-lowering";
 
@@ -13,25 +15,24 @@ export function callLocationConstraintsForFunction(
   boundaries: readonly AArch64ReconciledCallBoundary[],
 ): readonly AArch64CallLocationConstraint[] {
   const boundaryByInstructionId = boundaryByCallInstructionId(boundaries);
-  return Object.freeze(
-    orderedMachineInstructions(machineFunction).flatMap(
-      (point): AArch64CallLocationConstraint[] => {
-        const boundary = boundaryByInstructionId.get(point.instructionId);
-        if (boundary === undefined) return [];
-        const argumentVregs = point.instruction.operands.flatMap((operand) =>
-          operand.role === "use" && operand.operand.kind === "vreg"
-            ? [Number(operand.operand.register.vreg)]
-            : [],
-        );
-        return callAssignmentRegisters(boundary.argumentLocations)
-          .slice(0, argumentVregs.length)
-          .flatMap((register, index) => {
-            const vreg = argumentVregs[index];
-            return vreg === undefined ? [] : [{ vreg, instructionOrder: point.order, register }];
-          });
-      },
-    ),
-  );
+  const constraints: AArch64CallLocationConstraint[] = [];
+  let previousCall:
+    | {
+        readonly order: number;
+      }
+    | undefined;
+  for (const point of orderedMachineInstructions(machineFunction)) {
+    if (isCallInstruction(point.instruction)) {
+      const boundary = boundaryByInstructionId.get(point.instructionId);
+      constraints.push(...callArgumentLocationConstraints(point, boundary));
+      previousCall = { order: point.order };
+      continue;
+    }
+    if (previousCall !== undefined) {
+      constraints.push(...callReturnLocationConstraints(point.instruction, previousCall.order));
+    }
+  }
+  return uniqueCallLocationConstraints(constraints);
 }
 
 export function loweringCallBoundaries(
@@ -125,6 +126,122 @@ function orderedMachineInstructions(machineFunction: AArch64MachineFunction): re
     }
   }
   return Object.freeze(points);
+}
+
+function callArgumentLocationConstraints(
+  point: {
+    readonly order: number;
+    readonly instruction: AArch64MachineInstruction;
+  },
+  boundary: AArch64ReconciledCallBoundary | undefined,
+): readonly AArch64CallLocationConstraint[] {
+  const boundaryRegisters = callAssignmentRegisters(boundary?.argumentLocations ?? []);
+  const argumentConstraints = callArgumentOperands(point.instruction).flatMap((operand, index) => {
+    if (operand.operand.kind !== "vreg") return [];
+    const vreg = Number(operand.operand.register.vreg);
+    const register =
+      abiRegisterFromSyntheticOrigin(operand.operand.register.origin, "abi-arg") ??
+      boundaryRegisters[index];
+    return register === undefined ? [] : [{ vreg, instructionOrder: point.order, register }];
+  });
+  return Object.freeze([
+    ...indirectCallTargetLocationConstraints(point, argumentConstraints),
+    ...argumentConstraints,
+  ]);
+}
+
+function indirectCallTargetLocationConstraints(
+  point: {
+    readonly order: number;
+    readonly instruction: AArch64MachineInstruction;
+  },
+  argumentConstraints: readonly AArch64CallLocationConstraint[],
+): readonly AArch64CallLocationConstraint[] {
+  if (String(point.instruction.opcode) !== "blr" || argumentConstraints.length === 0) {
+    return Object.freeze([]);
+  }
+  const target = point.instruction.operands.find(
+    (operand) => operand.role === "use" && operand.operand.kind === "vreg",
+  );
+  return Object.freeze(
+    target?.operand.kind !== "vreg"
+      ? []
+      : [
+          {
+            vreg: Number(target.operand.register.vreg),
+            instructionOrder: point.order,
+            register: "x16",
+          },
+        ],
+  );
+}
+
+function callReturnLocationConstraints(
+  instruction: AArch64MachineInstruction,
+  callOrder: number,
+): readonly AArch64CallLocationConstraint[] {
+  return Object.freeze(
+    instruction.operands.flatMap((operand) => {
+      if (operand.operand.kind !== "vreg") return [];
+      if (!isUseOperand(operand.role)) return [];
+      const register = abiRegisterFromSyntheticOrigin(
+        operand.operand.register.origin,
+        "abi-return",
+      );
+      return register === undefined
+        ? []
+        : [
+            {
+              vreg: Number(operand.operand.register.vreg),
+              instructionOrder: callOrder,
+              register,
+            },
+          ];
+    }),
+  );
+}
+
+function callArgumentOperands(
+  instruction: AArch64MachineInstruction,
+): readonly AArch64MachineInstruction["operands"][number][] {
+  const operands = instruction.operands.filter(
+    (operand) => operand.role === "use" && operand.operand.kind === "vreg",
+  );
+  return String(instruction.opcode) === "blr" ? Object.freeze(operands.slice(1)) : operands;
+}
+
+function abiRegisterFromSyntheticOrigin(
+  origin: AArch64VirtualRegisterOrigin | undefined,
+  prefix: "abi-arg" | "abi-return",
+): string | undefined {
+  if (origin?.kind !== "synthetic") return undefined;
+  const match = new RegExp(`(?:^|:)${prefix}:(intReg|vectorReg):(\\d+):`).exec(origin.stableKey);
+  if (match?.[1] === undefined || match[2] === undefined) return undefined;
+  const registerIndex = Number(match[2]);
+  if (!Number.isInteger(registerIndex)) return undefined;
+  return match[1] === "intReg" ? `x${registerIndex}` : `v${registerIndex}`;
+}
+
+function isCallInstruction(instruction: AArch64MachineInstruction): boolean {
+  const opcode = String(instruction.opcode);
+  return opcode === "bl" || opcode === "blr";
+}
+
+function isUseOperand(role: AArch64MachineInstruction["operands"][number]["role"]): boolean {
+  return role === "use" || role === "tiedDefUse" || role === "memoryBase" || role === "memoryIndex";
+}
+
+function uniqueCallLocationConstraints(
+  constraints: readonly AArch64CallLocationConstraint[],
+): readonly AArch64CallLocationConstraint[] {
+  const byKey = new Map<string, AArch64CallLocationConstraint>();
+  for (const constraint of constraints) {
+    byKey.set(
+      `${constraint.vreg}:${constraint.instructionOrder}:${constraint.register}`,
+      constraint,
+    );
+  }
+  return Object.freeze([...byKey.values()]);
 }
 
 function callAssignmentRegisters(

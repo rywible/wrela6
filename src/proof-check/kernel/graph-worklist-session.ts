@@ -319,7 +319,7 @@ export function runProofCheckGraphWorklistBody(context: {
 
       if (location.kind === "edge") {
         const edge = functionGraph.edges.get(location.edgeId);
-        if (edge === undefined || edge.toBlockId === undefined) {
+        if (edge === undefined) {
           continue;
         }
 
@@ -349,6 +349,10 @@ export function runProofCheckGraphWorklistBody(context: {
         acceptProofCheckBlockEntryState({ staged, blockId: edge.fromBlockId });
 
         if (edge.exit !== undefined) {
+          continue;
+        }
+
+        if (edge.toBlockId === undefined) {
           continue;
         }
 

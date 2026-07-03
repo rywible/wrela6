@@ -72,10 +72,42 @@ describe("PacketCounter full-image fixture corpus", () => {
     const memoryLoads = compiled.trace.packagePipeline.optIr.operations.filter(
       (operation) => operation.kind === "memoryLoad",
     );
-    expect(memoryLoads).toHaveLength(2);
+    const fixturePacketSourceResults = new Set(
+      compiled.trace.packagePipeline.optIr.operations
+        .filter(
+          (operation) =>
+            operation.kind === "platformCall" &&
+            operation.target.kind === "platform" &&
+            operation.target.platformKey === "uefi.validation.fixturePacketSource",
+        )
+        .flatMap((operation) => operation.resultIds),
+    );
+    expect(memoryLoads.length).toBeGreaterThanOrEqual(2);
     expect(
-      memoryLoads.map((operation) => operation.memoryAccess.validatedBuffer?.fieldName),
-    ).toEqual(["2", "3"]);
+      memoryLoads.every(
+        (operation) =>
+          operation.memoryAccess.validatedBuffer !== undefined &&
+          operation.memoryAccess.boundsAuthority.kind === "certifiedFact" &&
+          operation.memoryAccess.valueType.kind === "integer" &&
+          operation.memoryAccess.valueType.signedness === "unsigned" &&
+          operation.memoryAccess.valueType.width === 8,
+      ),
+    ).toBe(true);
+    expect(
+      new Set(
+        memoryLoads.flatMap(
+          (operation) => operation.memoryAccess.validatedBuffer?.readRequires ?? [],
+        ),
+      ),
+    ).toEqual(new Set(["0", "1"]));
+    expect(fixturePacketSourceResults.size).toBeGreaterThanOrEqual(1);
+    expect(
+      memoryLoads.every(
+        (operation) =>
+          operation.operandIds.length === 1 &&
+          fixturePacketSourceResults.has(operation.operandIds[0]!),
+      ),
+    ).toBe(true);
     expect(
       compiled.trace.packagePipeline.optIr.operations.find(
         (operation) => operation.kind === "integerBinary",
@@ -91,7 +123,10 @@ describe("PacketCounter full-image fixture corpus", () => {
       expect(input.kind).toBe("ok");
       if (input.kind !== "ok") continue;
 
-      expectRequiredFixtureModules(input.value.sourceFiles.map((source) => source.moduleName));
+      expectRequiredFixtureModules(
+        input.value.sourceFiles.map((source) => source.moduleName),
+        stdlibMode,
+      );
 
       const parsed = productionPackagePipelineDependencies().parseModuleGraph({
         packageInput: input.value,
@@ -125,7 +160,10 @@ describe("PacketCounter full-image fixture corpus", () => {
     if (input.kind !== "ok") return;
 
     expect(input.value.validationFixturePacketSource).toEqual(packetSource);
-    expectRequiredFixtureModules(input.value.sourceFiles.map((source) => source.moduleName));
+    expectRequiredFixtureModules(
+      input.value.sourceFiles.map((source) => source.moduleName),
+      "toolchain-stdlib",
+    );
     expectPacketValidationSourceReturnsBadBufferSize(input.value.sourceFiles);
 
     const parsed = productionPackagePipelineDependencies().parseModuleGraph({
@@ -163,13 +201,20 @@ const expectedFixtureModuleNames = [
   "packet_counter.counter",
   "packet_counter.fixture_source",
   "packet_counter.packet",
-  "packet_counter.uefi_status",
 ] as const;
 
-function expectRequiredFixtureModules(moduleNames: readonly string[]): void {
+function expectRequiredFixtureModules(
+  moduleNames: readonly string[],
+  stdlibMode: (typeof packetCounterCases)[number][1],
+): void {
   for (const moduleName of expectedFixtureModuleNames) {
     expect(moduleNames).toContain(moduleName);
   }
+  expect(moduleNames).toContain(
+    stdlibMode === "direct-platform"
+      ? "wrela_abi.target.uefi.status"
+      : "packet_counter.uefi_status",
+  );
 }
 
 function badPayloadRequiresBadBufferSize(bytes: readonly number[]): boolean {

@@ -76,6 +76,17 @@ export type AArch64FirmwarePlatformCallLowering =
       readonly stableKey: string;
       readonly fingerprint: string;
       readonly resultRule: Extract<AArch64FirmwareResultRule, { readonly kind: "pointer-result" }>;
+    }
+  | {
+      readonly kind: "constant-status";
+      readonly primitiveId: string;
+      readonly operationKey: string;
+      readonly value: bigint;
+    }
+  | {
+      readonly kind: "zero-runtime";
+      readonly primitiveId: string;
+      readonly operationKey: string;
     };
 
 export interface AArch64FirmwarePlatformCallContext {

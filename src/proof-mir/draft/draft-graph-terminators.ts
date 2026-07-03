@@ -83,12 +83,14 @@ export function createDraftGraphEdgeBuilders(input: CreateDraftGraphEdgeBuilders
   }): ProofMirCanonicalKey;
   createAttemptEdge(input: {
     readonly kind: "attemptSuccess" | "attemptError";
+    readonly role?: string;
     readonly fromBlock: ProofMirCanonicalKey;
     readonly toBlock: ProofMirCanonicalKey;
     readonly sourceScope: ProofMirCanonicalKey;
     readonly targetScope: ProofMirCanonicalKey;
     readonly origin: ProofMirCanonicalKey;
     readonly effects?: readonly DraftProofMirEdgeEffect[];
+    readonly argumentKeys?: readonly ProofMirCanonicalKey[];
   }): ProofMirCanonicalKey;
   createValidationEdge(input: {
     readonly kind: "validationOk" | "validationErr";
@@ -311,15 +313,17 @@ export function createDraftGraphEdgeBuilders(input: CreateDraftGraphEdgeBuilders
 
     createAttemptEdge(edgeMethodInput: {
       readonly kind: "attemptSuccess" | "attemptError";
+      readonly role?: string;
       readonly fromBlock: ProofMirCanonicalKey;
       readonly toBlock: ProofMirCanonicalKey;
       readonly sourceScope: ProofMirCanonicalKey;
       readonly targetScope: ProofMirCanonicalKey;
       readonly origin: ProofMirCanonicalKey;
       readonly effects?: readonly DraftProofMirEdgeEffect[];
+      readonly argumentKeys?: readonly ProofMirCanonicalKey[];
     }): ProofMirCanonicalKey {
       return createEdge({
-        role: edgeMethodInput.kind,
+        role: edgeMethodInput.role ?? edgeMethodInput.kind,
         kind: edgeMethodInput.kind,
         fromBlock: edgeMethodInput.fromBlock,
         toBlock: edgeMethodInput.toBlock,
@@ -327,6 +331,7 @@ export function createDraftGraphEdgeBuilders(input: CreateDraftGraphEdgeBuilders
         targetScope: edgeMethodInput.targetScope,
         origin: edgeMethodInput.origin,
         effects: edgeMethodInput.effects,
+        argumentKeys: edgeMethodInput.argumentKeys,
       });
     },
 

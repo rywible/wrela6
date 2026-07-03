@@ -62,6 +62,7 @@ export interface LowerValidatedBufferFieldReadInput {
     readonly readRequires: readonly ProofMirFactId[];
   };
   readonly layoutKey: LayoutFactKey;
+  readonly sourceBaseValueId?: OptIrValueId;
   readonly valueType: OptIrType;
   readonly byteWidth: number;
   readonly targetEndian: "little" | "big";
@@ -147,6 +148,7 @@ export function lowerValidatedBufferFieldRead(
   const result = optIrMemoryLoadOperation({
     operationId: input.operationId,
     resultId: input.resultId,
+    ...(input.sourceBaseValueId === undefined ? {} : { baseValueId: input.sourceBaseValueId }),
     region: region.payloadRegion.regionId,
     byteOffset: 0n,
     byteWidth: input.byteWidth,

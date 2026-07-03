@@ -62,7 +62,6 @@ export function controlEdgeRecordPayload(record: DraftProofMirControlEdgeRecord)
 export function placeRecordPayload(record: DraftProofMirPlaceRecord): string {
   return [
     record.monoPlaceCanonicalKey,
-    String(record.originKey),
     record.root === undefined ? "" : JSON.stringify(record.root),
     record.projection === undefined ? "" : JSON.stringify(record.projection),
     record.type === undefined ? "" : JSON.stringify(record.type),

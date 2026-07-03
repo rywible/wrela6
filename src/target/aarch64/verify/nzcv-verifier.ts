@@ -29,6 +29,7 @@ export function verifyAArch64Nzcv(
       ]) {
         const usesNzcv = hasNzcvOperand(instruction, "implicitUse");
         const definesNzcv = hasNzcvOperand(instruction, "implicitDef");
+        const clobbersNzcvOnly = definesNzcv && isNzcvClobberOnlyInstruction(instruction);
         if (usesNzcv && state.liveDefinition === undefined) {
           diagnostics.push(
             context.makeDiagnostic({
@@ -52,7 +53,12 @@ export function verifyAArch64Nzcv(
         if (usesNzcv) {
           state = { liveDefinition: undefined, clobberedDefinition: undefined };
         }
-        if (definesNzcv) {
+        if (clobbersNzcvOnly) {
+          state =
+            state.liveDefinition === undefined
+              ? emptyNzcvState()
+              : { ...state, clobberedDefinition: Number(instruction.instructionId) };
+        } else if (definesNzcv) {
           if (state.liveDefinition !== undefined) {
             state = {
               liveDefinition: Number(instruction.instructionId),
@@ -113,10 +119,16 @@ function transferNzcvState(
   for (const instruction of instructions) {
     const usesNzcv = hasNzcvOperand(instruction, "implicitUse");
     const definesNzcv = hasNzcvOperand(instruction, "implicitDef");
+    const clobbersNzcvOnly = definesNzcv && isNzcvClobberOnlyInstruction(instruction);
     if (usesNzcv) {
       state = emptyNzcvState();
     }
-    if (definesNzcv) {
+    if (clobbersNzcvOnly) {
+      state =
+        state.liveDefinition === undefined
+          ? emptyNzcvState()
+          : { ...state, clobberedDefinition: Number(instruction.instructionId) };
+    } else if (definesNzcv) {
       state =
         state.liveDefinition === undefined
           ? { liveDefinition: Number(instruction.instructionId), clobberedDefinition: undefined }
@@ -144,6 +156,10 @@ function sameNzcvState(left: NzcvState | undefined, right: NzcvState): boolean {
     left.liveDefinition === right.liveDefinition &&
     left.clobberedDefinition === right.clobberedDefinition
   );
+}
+
+function isNzcvClobberOnlyInstruction(instruction: AArch64MachineInstruction): boolean {
+  return instruction.opcode === "bl" || instruction.opcode === "blr";
 }
 
 function emptyNzcvState(): NzcvState {

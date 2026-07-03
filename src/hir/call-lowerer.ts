@@ -10,6 +10,7 @@ import {
 import { presentTokenSpan } from "../frontend/ast/syntax-query";
 import type { TypeReferenceView } from "../frontend/ast/type-views";
 import { concreteKind, errorKind } from "../semantic/surface/resource-kind";
+import type { CheckedResourceKind } from "../semantic/surface/resource-kind";
 import {
   appliedType,
   coreCheckedType,
@@ -23,7 +24,7 @@ import type { CertifiedPlatformBinding } from "../semantic/surface/checked-progr
 import type { CheckedFunctionSignature } from "../semantic/surface/checked-program";
 import type { CheckedType } from "../semantic/surface/type-model";
 import { checkedTypesEqual } from "../semantic/surface/type-model";
-import type { FunctionId } from "../semantic/ids";
+import type { FunctionId, ItemId } from "../semantic/ids";
 import type { HirCallArgument, HirCallExpression, HirExpression } from "./hir";
 import type { HirLoweringContext } from "./lowering-context";
 import { currentHirModuleId, hirDiagnostic } from "./lowering-context";
@@ -273,14 +274,49 @@ function resolveCallee(view: CallExpressionView, context: HirLoweringContext): R
         moduleId: currentHirModuleId(context),
         span: memberSpan,
       });
+    const fallbackFunctionId =
+      reference?.kind === "function" || receiver === undefined
+        ? undefined
+        : functionIdForReceiverMember({
+            context,
+            receiver,
+            memberName: callee.memberName() ?? "",
+          });
     return {
       name: callee.memberName() ?? "",
       ...(receiver !== undefined ? { receiver } : {}),
-      ...(reference?.kind === "function" ? { functionId: reference.functionId } : {}),
+      ...(reference?.kind === "function"
+        ? { functionId: reference.functionId }
+        : fallbackFunctionId !== undefined
+          ? { functionId: fallbackFunctionId }
+          : {}),
     };
   }
 
   return { name: "" };
+}
+
+function ownerItemIdForReceiverType(
+  context: HirLoweringContext,
+  type: CheckedType,
+): ItemId | undefined {
+  if (type.kind === "source") return type.itemId;
+  if (type.kind !== "applied" || type.constructor.kind !== "source") return undefined;
+  return context.index.type(type.constructor.typeId)?.itemId;
+}
+
+function functionIdForReceiverMember(input: {
+  readonly context: HirLoweringContext;
+  readonly receiver: HirExpression;
+  readonly memberName: string;
+}): FunctionId | undefined {
+  const ownerItemId = ownerItemIdForReceiverType(input.context, input.receiver.type);
+  if (ownerItemId === undefined) return undefined;
+  return input.context.program.functions.entries().find((signature) => {
+    if (signature.ownerItemId !== ownerItemId) return false;
+    const item = input.context.index.item(signature.itemId);
+    return item?.name === input.memberName;
+  })?.functionId;
 }
 
 function calleeExpression(
@@ -351,7 +387,7 @@ function reportUncertifiedPlatformEnsure(input: {
 function lowerArgumentExpression(
   view: ArgumentView | NamedArgumentView,
   context: HirLoweringContext,
-  expectedType: CheckedType | undefined,
+  expected: ExpectedCallArgument | undefined,
 ): HirExpression {
   const expressionView = view instanceof NamedArgumentView ? view.value() : view.expression();
   if (expressionView === undefined) {
@@ -372,15 +408,23 @@ function lowerArgumentExpression(
   return lowerExpression({
     view: expressionView,
     context,
-    ...(expectedType === undefined ? {} : { expectedType }),
+    ...(expected?.type === undefined ? {} : { expectedType: expected.type }),
+    ...(expected?.resourceKind === undefined
+      ? {}
+      : { expectedResourceKind: expected.resourceKind }),
   });
 }
 
-function expectedTypeForCallArgument(input: {
+interface ExpectedCallArgument {
+  readonly type?: CheckedType;
+  readonly resourceKind?: CheckedResourceKind;
+}
+
+function expectedForCallArgument(input: {
   readonly argument: ArgumentView | NamedArgumentView;
   readonly positionalIndex: number;
   readonly signature: CheckedFunctionSignature | undefined;
-}): CheckedType | undefined {
+}): ExpectedCallArgument | undefined {
   const signature = input.signature;
   if (signature === undefined) return undefined;
   const parameter = (() => {
@@ -391,7 +435,10 @@ function expectedTypeForCallArgument(input: {
     return signature.parameters[input.positionalIndex];
   })();
   if (parameter === undefined) return undefined;
-  return canUseAsCallArgumentExpectedType(parameter.type) ? parameter.type : undefined;
+  return {
+    ...(canUseAsCallArgumentExpectedType(parameter.type) ? { type: parameter.type } : {}),
+    resourceKind: parameter.resourceKind,
+  };
 }
 
 function canUseAsCallArgumentExpectedType(type: CheckedType): boolean {
@@ -523,7 +570,7 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
     const loweredExpression = lowerArgumentExpression(
       sourceArgument,
       input.context,
-      expectedTypeForCallArgument({
+      expectedForCallArgument({
         argument: sourceArgument,
         positionalIndex: positional.length,
         signature: originalSignature,

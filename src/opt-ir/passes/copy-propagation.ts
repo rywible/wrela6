@@ -273,9 +273,10 @@ function rewriteOperation(
 
   switch (operation.kind) {
     case "constant":
-    case "memoryLoad":
     case "proofErasedMarker":
       return operation;
+    case "memoryLoad":
+      return { ...operation, operandIds };
     case "integerUnary":
       return { ...operation, operandIds, operand: operandIds[0] ?? operation.operand };
     case "integerBinary":

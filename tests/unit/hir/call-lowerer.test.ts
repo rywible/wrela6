@@ -287,6 +287,48 @@ test("member call lowers receiver and resolved method callee", () => {
   expect(callExpression.kind.call.receiver?.place).toBeDefined();
 });
 
+test("member call resolves method callee from local receiver type", () => {
+  const result = lowerTypedHirForTest([
+    [
+      "main.wr",
+      [
+        "class Device:",
+        "    fn tick(self) -> u32:",
+        "        return 1",
+        "fn make_device() -> Device:",
+        "    return {}",
+        "fn caller() -> u32:",
+        "    let device = make_device()",
+        "    return device.tick()",
+      ].join("\n"),
+    ],
+  ]);
+
+  expect(result.diagnostics.map((diagnostic) => String(diagnostic.code))).not.toContain(
+    "HIR_CALL_CALLEE_NOT_FUNCTION",
+  );
+  const caller = result.program.functions
+    .entries()
+    .find(
+      (entry) =>
+        entry.signature.parameters.length === 0 && entry.signature.returnType.kind === "core",
+    );
+  const callExpressions =
+    caller?.bodyIndex?.expressions
+      .entries()
+      .filter((expression) => expression.kind.kind === "call") ?? [];
+
+  expect(
+    callExpressions.some((expression) => {
+      if (expression.kind.kind !== "call") return false;
+      return (
+        expression.kind.call.receiver !== undefined &&
+        expression.kind.call.calleeFunctionId !== undefined
+      );
+    }),
+  ).toBe(true);
+});
+
 test("explicit generic type application call lowers type arguments", () => {
   const context = createHirUnitContext(
     "fn identity[T](value: T) -> T\nfn caller() -> u32:\n    identity[u32](1)\n",

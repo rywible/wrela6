@@ -8,6 +8,32 @@ const INPUT_AUTHORITY = Object.freeze(["compiler-trace"] as const);
 const UEFI_CONSOLE_OUTPUT_STRING = "uefi.console.outputString";
 const UEFI_SET_WATCHDOG_TIMER = "uefi.boot.setWatchdogTimer";
 const UEFI_STATUS_BAD_BUFFER_SIZE_VALUE = "4";
+const PACKET_COUNTER_UEFI_SOURCE_CALLS = Object.freeze([
+  Object.freeze({
+    evidenceKey: "uefi-reserve-restricted-memory-platform-call",
+    primitiveId: "uefi.source.reserveRestrictedMemory",
+  }),
+  Object.freeze({
+    evidenceKey: "uefi-discover-virtio-platform-call",
+    primitiveId: "uefi.source.discoverVirtio",
+  }),
+  Object.freeze({
+    evidenceKey: "uefi-bind-virtio-net-platform-call",
+    primitiveId: "uefi.source.bindVirtioNet",
+  }),
+  Object.freeze({
+    evidenceKey: "uefi-plan-machine-platform-call",
+    primitiveId: "uefi.source.planMachine",
+  }),
+  Object.freeze({
+    evidenceKey: "uefi-exit-boot-services-platform-call",
+    primitiveId: "uefi.source.exitBootServices",
+  }),
+  Object.freeze({
+    evidenceKey: "uefi-split-network-device-platform-call",
+    primitiveId: "uefi.source.splitNetworkDevice",
+  }),
+]);
 
 interface OptIrRequirement {
   readonly evidenceKey: string;
@@ -62,6 +88,13 @@ const PACKET_COUNTER_REQUIREMENTS: readonly OptIrRequirement[] = Object.freeze([
     "uefi-console-platform-call",
     () => UEFI_CONSOLE_OUTPUT_STRING,
     (context) => hasConsolePlatformCall(context),
+  ),
+  ...PACKET_COUNTER_UEFI_SOURCE_CALLS.map((call) =>
+    requirement(
+      call.evidenceKey,
+      () => call.primitiveId,
+      (context) => hasPlatformCall(context, call.primitiveId),
+    ),
   ),
   requirement(
     "unsupported-operation-diagnostics",

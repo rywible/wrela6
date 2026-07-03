@@ -64,6 +64,9 @@ export interface AttemptLoweringTestResult {
   readonly terminator?: DraftGraphTerminator;
   readonly successEdge?: DraftGraphEdgeView;
   readonly errorEdge?: DraftGraphEdgeView;
+  readonly successContinuation?: { readonly blockKey: ProofMirCanonicalKey };
+  readonly successValueKey?: ProofMirCanonicalKey;
+  readonly errorTerminator?: DraftGraphTerminator;
   readonly pendingResultPlaceKey?: ProofMirCanonicalKey;
   readonly diagnostics?: readonly ProofMirDiagnostic[];
 }
@@ -314,6 +317,63 @@ export function lowerProofMirAttemptForTest(
     terminator: block.terminator,
     successEdge: successEdgeKey === undefined ? undefined : context.graph.edge(successEdgeKey),
     errorEdge: errorEdgeKey === undefined ? undefined : context.graph.edge(errorEdgeKey),
+    pendingResultPlaceKey: pendingResultCanonicalKey(functionInstanceId, fixture.attempt),
+  };
+}
+
+export function lowerProofMirAttemptValueForTest(
+  fixture: AttemptLowererTestFixture,
+): AttemptLoweringTestResult {
+  const functionInstanceId = fixture.functionInstanceId ?? monoInstanceId("fn:attempt-test");
+  const body: MonoBlock = { statements: [], sourceOrigin: "source:test" };
+  const contextResult = buildAttemptLoweringContextForTest({
+    functionInstanceId,
+    body,
+  });
+  if (contextResult.kind === "error") {
+    return { kind: "error", diagnostics: contextResult.diagnostics };
+  }
+
+  const { context, entryBlockKey } = contextResult.value;
+  const expressionLowerer = fixture.expressionLowerer ?? createProofMirExpressionLowerer();
+
+  const lowerer = createProofMirAttemptLowerer({ expression: expressionLowerer });
+  const lowered = lowerer.lowerAttemptValue({
+    context,
+    attempt: fixture.attempt,
+    blockKey: entryBlockKey,
+    resultType: fixture.attempt.fallibleExpression.type,
+    resultResourceKind: fixture.attempt.fallibleExpression.resourceKind,
+    terminal: false,
+  });
+  if (lowered.kind === "error") {
+    return { kind: "error", diagnostics: lowered.diagnostics };
+  }
+
+  const recorded = lowerer.recorder.entries[0];
+  const block = context.graph.block(entryBlockKey);
+  const successEdgeKey =
+    block.terminator?.kind === "matchAttempt"
+      ? block.terminator.match.successTarget.edge
+      : undefined;
+  const errorBlockKey =
+    block.terminator?.kind === "matchAttempt"
+      ? block.terminator.match.errorTarget.block
+      : undefined;
+  const errorEdgeKey =
+    block.terminator?.kind === "matchAttempt" ? block.terminator.match.errorTarget.edge : undefined;
+
+  return {
+    kind: "ok",
+    statement: recorded,
+    terminator: block.terminator,
+    successEdge: successEdgeKey === undefined ? undefined : context.graph.edge(successEdgeKey),
+    errorEdge: errorEdgeKey === undefined ? undefined : context.graph.edge(errorEdgeKey),
+    successContinuation: { blockKey: lowered.value.blockKey },
+    successValueKey:
+      lowered.value.operand.kind === "value" ? lowered.value.operand.value : undefined,
+    errorTerminator:
+      errorBlockKey === undefined ? undefined : context.graph.block(errorBlockKey).terminator,
     pendingResultPlaceKey: pendingResultCanonicalKey(functionInstanceId, fixture.attempt),
   };
 }

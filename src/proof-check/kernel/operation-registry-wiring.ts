@@ -1,6 +1,7 @@
 export {
   buildProofCheckOperationTransferRegistry,
   createProofCheckPlaceResolver,
+  createProofCheckPlaceResolverForFunction,
   type BuildProofCheckOperationTransferRegistryInput,
   type ProofCheckPlaceResolver,
   type ProofCheckRegistryContext,

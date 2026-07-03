@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { optIrFactId, optIrOperationId, optIrRegionId } from "../../../../src/opt-ir/ids";
 import { optIrFactSetFromRecords } from "../../../../src/opt-ir/facts/fact-index";
 import { footprintFactRecord } from "../../../../src/opt-ir/facts/footprint-facts";
-import { regionMemoryTypeFactRecord } from "../../../../src/opt-ir/facts/memory-order-facts";
+import {
+  memoryOrderFactRecord,
+  regionMemoryTypeFactRecord,
+} from "../../../../src/opt-ir/facts/memory-order-facts";
 import { securityFactRecord } from "../../../../src/opt-ir/facts/security-facts";
 import {
   preserveAArch64Facts,
@@ -166,6 +169,43 @@ describe("AArch64 fact preservation", () => {
         order: "relaxed",
         regionType: "normal",
       },
+    });
+  });
+
+  test("does not silently relax malformed memory-order payloads", () => {
+    const validFact = memoryOrderFactRecord({
+      factId: optIrFactId(1),
+      operationId: optIrOperationId(4),
+      order: "release",
+      accessKind: "store",
+    });
+    const preserved = preserveAArch64Facts({
+      optIrFacts: optIrFactSetFromRecords([
+        {
+          ...validFact,
+          extensionPayload: {
+            accessKind: "store",
+            order: "consumeRelease",
+          },
+        },
+      ]),
+      selectionRecords: [
+        {
+          patternId: "memory.store",
+          inputFacts: [1],
+          machineInstructions: [aarch64MachineInstructionId(40)],
+          factPreservationMappings: [
+            {
+              optIrFactIds: [1],
+              subject: { kind: "memoryOperand", instructionId: 40, operandIndex: 1 },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(preserved.records[0]?.payload).toMatchObject({
+      order: "unsupported:consumeRelease",
     });
   });
 

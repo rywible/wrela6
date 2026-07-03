@@ -1,5 +1,6 @@
 import { stableNumericSeed } from "../stable-numeric-seed";
 import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
+import { stableJson } from "../../shared/stable-json";
 import { proofMirOriginId } from "../../proof-mir/ids";
 import { proofCheckDiagnostic, type ProofCheckDiagnostic } from "../diagnostics";
 import { proofCheckCoreCertificateId, proofCheckPacketFactId } from "../ids";
@@ -25,13 +26,16 @@ import {
 } from "../kernel/state";
 import { findLoanConflict } from "./loans";
 import {
+  canonicalProofCheckPlaceKey,
+  placeKeyForMirPlace,
   type ProofCheckPlaceResolver,
   placeStateForKey,
   proofMirPlaceIdForPlaceKey,
+  tryResolveProofMirPlaceIdForPlaceKey,
   tryResolveProofMirPlaceDependency,
 } from "../kernel/registry/transition-helpers";
 import type { ProofMirValueId } from "../../proof-mir/ids";
-import type { ProofMirFunction } from "../../proof-mir/model/graph";
+import type { ProofMirFunction, ProofMirPlace } from "../../proof-mir/model/graph";
 import {
   compareProofCheckPlaces,
   parseProofCheckStructuredPlacePath,
@@ -151,10 +155,11 @@ function placeStatePatch(
   lifecycle: CheckedPlaceLifecycle,
   placeResolver?: ProofCheckPlaceResolver,
 ): ProofCheckStatePatchEntry {
+  const canonicalPlaceKey = canonicalProofCheckPlaceKey(placeKey, placeResolver);
   return {
     kind: "placeState",
-    place: proofMirPlaceIdForPlaceKey(placeKey, placeResolver),
-    state: { placeKey, lifecycle },
+    place: proofMirPlaceIdForPlaceKey(canonicalPlaceKey, placeResolver),
+    state: { placeKey: canonicalPlaceKey, lifecycle },
   };
 }
 
@@ -255,8 +260,9 @@ function uniqueValueDependencies(
 function directPlaceLifecycle(
   state: ProofCheckState,
   placeKey: string,
+  placeResolver?: ProofCheckPlaceResolver,
 ): CheckedPlaceLifecycle | undefined {
-  return state.places.get(placeKey)?.lifecycle;
+  return placeStateForKey(state, placeKey, placeResolver)?.lifecycle;
 }
 
 function wrapperResourceLeakDiagnostic(input: {
@@ -513,21 +519,68 @@ function requiresConsumeOnTransfer(kind: ProofCheckConcreteResourceKind): boolea
   }
 }
 
-function aggregateUnavailablePatchIfNeeded(input: {
+function projectionsHavePrefix(
+  base: ProofMirPlace["projection"],
+  candidate: ProofMirPlace["projection"],
+): boolean {
+  if (candidate.length < base.length) {
+    return false;
+  }
+  return base.every((projection, index) => stableJson(projection) === stableJson(candidate[index]));
+}
+
+function graphAggregateAncestorPlaceKeys(input: {
   readonly state: ProofCheckState;
   readonly source: ProofCheckStructuredPlace;
   readonly placeResolver?: ProofCheckPlaceResolver;
-}): ProofCheckStatePatchEntry | undefined {
+  readonly functionGraph?: ProofMirFunction;
+}): readonly string[] {
+  if (input.functionGraph === undefined) {
+    return [];
+  }
+  const sourcePlaceId = tryResolveProofMirPlaceIdForPlaceKey(
+    input.source.placeKey,
+    input.placeResolver,
+  );
+  if (sourcePlaceId === undefined) {
+    return [];
+  }
+  const sourcePlace = input.functionGraph.places.get(sourcePlaceId);
+  if (sourcePlace === undefined || sourcePlace.projection.length === 0) {
+    return [];
+  }
+  return input.functionGraph.places
+    .entries()
+    .filter((candidate) => candidate.placeId !== sourcePlaceId)
+    .filter((candidate) => candidate.projection.length < sourcePlace.projection.length)
+    .filter((candidate) => stableJson(candidate.root) === stableJson(sourcePlace.root))
+    .filter((candidate) => projectionsHavePrefix(candidate.projection, sourcePlace.projection))
+    .map((candidate) => placeKeyForMirPlace(candidate.placeId))
+    .filter(
+      (placeKey) => directPlaceLifecycle(input.state, placeKey, input.placeResolver) === "owned",
+    )
+    .sort(compareCodeUnitStrings);
+}
+
+function aggregateUnavailablePatchesIfNeeded(input: {
+  readonly state: ProofCheckState;
+  readonly source: ProofCheckStructuredPlace;
+  readonly placeResolver?: ProofCheckPlaceResolver;
+  readonly functionGraph?: ProofMirFunction;
+}): readonly ProofCheckStatePatchEntry[] {
+  const graphAncestorPatches = graphAggregateAncestorPlaceKeys(input).map((placeKey) =>
+    placeStatePatch(placeKey, "moved", input.placeResolver),
+  );
   const sourcePath = parseProofCheckStructuredPlacePath(input.source);
   if (sourcePath.projections.length === 0) {
-    return undefined;
+    return graphAncestorPatches;
   }
   const aggregateKey = sourcePath.rootKey;
-  const aggregateLifecycle = directPlaceLifecycle(input.state, aggregateKey);
+  const aggregateLifecycle = directPlaceLifecycle(input.state, aggregateKey, input.placeResolver);
   if (aggregateLifecycle !== "owned") {
-    return undefined;
+    return graphAncestorPatches;
   }
-  return placeStatePatch(aggregateKey, "moved", input.placeResolver);
+  return [...graphAncestorPatches, placeStatePatch(aggregateKey, "moved", input.placeResolver)];
 }
 
 function moveFactTransferPatches(input: {
@@ -552,6 +605,7 @@ export function transferMovePlace(
     state: input.state,
     place: input.source,
     operationOriginKey: input.operationOriginKey,
+    placeResolver: input.placeResolver,
   });
   if (useResult.kind === "error") {
     return useResult;
@@ -561,14 +615,13 @@ export function transferMovePlace(
   const patches: ProofCheckStatePatchEntry[] = [
     placeStatePatch(input.source.placeKey, "moved", input.placeResolver),
   ];
-  const aggregatePatch = aggregateUnavailablePatchIfNeeded({
-    state: input.state,
-    source: input.source,
-    placeResolver: input.placeResolver,
-  });
-  if (aggregatePatch !== undefined) {
-    patches.push(aggregatePatch);
-  }
+  patches.push(
+    ...aggregateUnavailablePatchesIfNeeded({
+      state: input.state,
+      source: input.source,
+      placeResolver: input.placeResolver,
+    }),
+  );
   patches.push(placeStatePatch(input.destination.placeKey, "owned", input.placeResolver));
   patches.push(
     ...moveFactTransferPatches({
@@ -678,14 +731,14 @@ export function transferConsumePlace(
   const patches: ProofCheckStatePatchEntry[] = [
     placeStatePatch(input.place.placeKey, "consumed", input.placeResolver),
   ];
-  const aggregatePatch = aggregateUnavailablePatchIfNeeded({
-    state: input.state,
-    source: input.place,
-    placeResolver: input.placeResolver,
-  });
-  if (aggregatePatch !== undefined) {
-    patches.push(aggregatePatch);
-  }
+  patches.push(
+    ...aggregateUnavailablePatchesIfNeeded({
+      state: input.state,
+      source: input.place,
+      placeResolver: input.placeResolver,
+      functionGraph: input.functionGraph,
+    }),
+  );
 
   for (const fact of factsForPlace(input.state, input.place.placeKey)) {
     patches.push(factDropPatch(fact));
@@ -742,12 +795,14 @@ export function applySummaryPlaceEffect(
         place: input.place,
         resourceKind: input.resourceKind,
         operationOriginKey: input.operationOriginKey,
+        placeResolver: input.placeResolver,
       });
     }
     return checkUsePlace({
       state: input.state,
       place: input.place,
       operationOriginKey: input.operationOriginKey,
+      placeResolver: input.placeResolver,
     });
   }
 

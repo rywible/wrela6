@@ -66,10 +66,13 @@ describe("budgeted whole-program inlining", () => {
     });
 
     expect(result.program.functions.get(optIrFunctionId(1))?.blocks[0]?.operations).toEqual([
-      add.operationId,
+      call.operationId,
     ]);
-    expect(result.operations.map((operation) => operation.operationId)).toEqual([add.operationId]);
-    expect(result.operations[0]).toMatchObject({
+    expect(result.program.functions.get(optIrFunctionId(2))).toBeUndefined();
+    expect(result.operations.map((operation) => operation.operationId)).toEqual([call.operationId]);
+    expect(
+      result.operations.find((operation) => operation.operationId === call.operationId),
+    ).toMatchObject({
       operandIds: [optIrValueId(1), optIrValueId(2)],
       resultIds: [optIrValueId(20)],
       left: optIrValueId(1),
@@ -173,6 +176,52 @@ describe("budgeted whole-program inlining", () => {
       ]),
     );
     expect(result.worklist).toEqual([]);
+  });
+
+  test("inlines source wrappers around non-terminal platform calls", () => {
+    const call = sourceCall(10, "platform.wrapper", [1], [20]);
+    const platformCall = optIrPlatformCallOperation({
+      operationId: optIrOperationId(30),
+      callId: optIrCallId(30),
+      target: { kind: "platform", platformKey: "uefi.console.outputString" },
+      argumentIds: [optIrValueId(100)],
+      resultIds: [optIrValueId(40)],
+      resultTypes: [integer32],
+      originId: optIrOriginId(30),
+    });
+    const program = programForTest([
+      functionWithOperations({ functionId: 1, instance: "caller", operations: [call.operationId] }),
+      functionWithOperations({
+        functionId: 2,
+        instance: "platform.wrapper",
+        parameters: [optIrValueId(100)],
+        operations: [platformCall.operationId],
+        terminatorValues: [optIrValueId(40)],
+      }),
+    ]);
+
+    const result = runWholeProgramInliningForTest({
+      program,
+      operations: [call, platformCall],
+      budget: budgetForTest(10),
+    });
+
+    expect(result.program.functions.get(optIrFunctionId(1))?.blocks[0]?.operations).toEqual([
+      call.operationId,
+    ]);
+    expect(result.program.functions.get(optIrFunctionId(2))).toBeUndefined();
+    expect(
+      result.operations.find((operation) => operation.operationId === call.operationId),
+    ).toMatchObject({
+      kind: "platformCall",
+      callId: optIrCallId(10),
+      argumentIds: [optIrValueId(1)],
+      resultIds: [optIrValueId(20)],
+    });
+    expect(result.decisionLog.entries()[0]).toMatchObject({
+      policyResult: "accepted",
+      stableReason: "inline:accepted",
+    });
   });
 
   test("releases a successful reservation when rewrite legality rejects the candidate", () => {

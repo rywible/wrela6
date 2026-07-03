@@ -46,11 +46,12 @@ export function fullImageQemuSmokeRequestForCase(input: {
   readonly expectedConsoleMarkers: readonly string[];
 }): UefiAArch64QemuSmokeRequest {
   const launchMode = input.launchMode ?? "uefi-shell-startup";
+  const shellReturnExpected = fullImageCaseReturnsToShell(input.caseKey);
   return Object.freeze({
     kind: "qemu",
     allowSkip: true,
     expectedConsoleMarkers: Object.freeze([...input.expectedConsoleMarkers]),
-    ...(launchMode === "uefi-shell-startup"
+    ...(launchMode === "uefi-shell-startup" && shellReturnExpected
       ? {
           uefiShellSuccessMarker: Object.freeze({
             marker: FULL_IMAGE_SHELL_SUCCESS_MARKER,
@@ -60,6 +61,10 @@ export function fullImageQemuSmokeRequestForCase(input: {
       : {}),
     termination: "kill-after-marker",
   });
+}
+
+function fullImageCaseReturnsToShell(caseKey: string): boolean {
+  return !caseKey.startsWith("packet-counter/");
 }
 
 export function classifyAArch64UefiFirmwarePath(

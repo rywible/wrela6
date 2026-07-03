@@ -78,7 +78,7 @@ function crossedValidationCleanupScopeIds(input: {
       (scopeId) => input.functionGraph.scopes.get(scopeId)?.kind === "validationArm",
     ),
   );
-  return validationArmScopeIds.size > 0 ? validationArmScopeIds : new Set(input.exit.crossedScopes);
+  return validationArmScopeIds;
 }
 
 function scopeDescendsFromAny(input: {

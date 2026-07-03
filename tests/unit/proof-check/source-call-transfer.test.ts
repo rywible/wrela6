@@ -194,6 +194,30 @@ describe("checkSourceCallTransfer", () => {
     );
   });
 
+  test("observed inputs without call-site bindings are rejected", () => {
+    const requiredFact = comparisonTerm(valueTerm("argument:0"), "lt", literalInt(8n));
+    const transferInput = proofCheckProgramWithSourceCall({
+      calleeRequiredFact: requiredFact,
+      callerFactTerms: [requiredFact],
+    });
+    if (transferInput.summary === undefined) throw new Error("expected test summary");
+
+    const result = checkSourceCallTransfer({
+      ...transferInput,
+      summary: {
+        ...transferInput.summary,
+        observedInputs: [
+          ...transferInput.summary.observedInputs,
+          { kind: "observes", place: { kind: "argument", index: 1 } },
+        ],
+      },
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") return;
+    expect(result.diagnostics[0]?.stableDetail).toBe("missing-operand-binding:argument:1");
+  });
+
   test("mustDiverge callee summary makes successor source code unreachable", () => {
     const requiredFact = comparisonTerm(valueTerm("argument:0"), "lt", literalInt(8n));
     const transferInput = proofCheckProgramWithSourceCall({

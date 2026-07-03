@@ -3,6 +3,8 @@ import type {
   ClassifyAbiValueInput,
   ClassifyAbiValueResult,
   LayoutAbiLane,
+  LayoutDeviceSurfaceCatalog,
+  LayoutDeviceSurfaceSpec,
   LayoutAbiPointerProvenance,
   LayoutAbiValueShape,
   LayoutImageProfileCatalog,
@@ -21,9 +23,11 @@ import type {
 } from "../../layout";
 import {
   coreTypeId,
+  deviceSurfaceId,
   imageProfileId,
   targetTypeId,
   type CoreTypeId,
+  type DeviceSurfaceId,
   type TargetTypeId,
 } from "../../semantic/ids";
 import { canonicalUefiAArch64SemanticTargetSurface } from "./platform-catalog";
@@ -57,7 +61,7 @@ export function productionUefiAArch64LayoutTargetSurface(
     }),
     coreTypes,
     targetTypes,
-    deviceSurfaces: emptyDeviceSurfaceCatalog(),
+    deviceSurfaces: uefiLayoutDeviceSurfaceCatalog(),
     imageProfiles: uefiLayoutImageProfileCatalog(target),
     wireReadHelpers: uefiLayoutWireReadHelperCatalog(),
     enumPolicy: uefiLayoutEnumPolicy(),
@@ -123,10 +127,18 @@ function primitiveCatalog<PrimitiveId>(
   });
 }
 
-function emptyDeviceSurfaceCatalog(): LayoutTargetSurface["deviceSurfaces"] {
+function uefiLayoutDeviceSurfaceCatalog(): LayoutDeviceSurfaceCatalog {
+  const entries: readonly LayoutDeviceSurfaceSpec[] = Object.freeze([
+    Object.freeze({
+      deviceSurfaceId: deviceSurfaceId("uefi.net0"),
+      representation: Object.freeze({ kind: "zeroSizedCapability" as const }),
+      sourceOrigin: "uefi-aarch64:source-api:NetworkDevice",
+    }),
+  ]);
   return Object.freeze({
-    get: () => undefined,
-    entries: () => Object.freeze([]),
+    get: (deviceSurfaceIdValue: DeviceSurfaceId) =>
+      entries.find((entry) => entry.deviceSurfaceId === deviceSurfaceIdValue),
+    entries: () => entries,
   });
 }
 

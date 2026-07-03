@@ -160,6 +160,17 @@ export interface ProofMirAttemptLoweringInput {
   readonly blockKey: ProofMirCanonicalKey;
 }
 
+export interface ProofMirAttemptValueLoweringInput extends ProofMirAttemptLoweringInput {
+  readonly resultType: MonoCheckedType;
+  readonly resultResourceKind: ConcreteResourceKind;
+  readonly terminal: boolean;
+}
+
+export interface ProofMirAttemptValueLoweringOutput {
+  readonly blockKey: ProofMirCanonicalKey;
+  readonly operand: ProofMirDraftOperand;
+}
+
 export interface ProofMirTakeLoweringInput {
   readonly context: ProofMirLoweringContext;
   readonly statement: MonoTakeStatement;
@@ -250,6 +261,9 @@ export interface ProofMirValidationLowerer {
 
 export interface ProofMirAttemptLowerer {
   lowerAttempt(input: ProofMirAttemptLoweringInput): ProofMirLoweringResult<void>;
+  lowerAttemptValue(
+    input: ProofMirAttemptValueLoweringInput,
+  ): ProofMirLoweringResult<ProofMirAttemptValueLoweringOutput>;
 }
 
 export interface ProofMirTakeLowerer {

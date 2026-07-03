@@ -1,7 +1,9 @@
 import type { CheckedAttemptContractSurface } from "../semantic/surface/proof-contracts";
 import { functionId } from "../semantic/ids";
 import { errorKind } from "../semantic/surface/resource-kind";
-import { errorCheckedType } from "../semantic/surface/type-model";
+import type { CheckedResourceKind } from "../semantic/surface/resource-kind";
+import { checkedTypesEqual, errorCheckedType } from "../semantic/surface/type-model";
+import type { CheckedType } from "../semantic/surface/type-model";
 import type { AttemptExpressionView } from "../frontend/ast/expression-views";
 import type { HirExpression, HirAttempt } from "./hir";
 import type { HirLoweringContext } from "./lowering-context";
@@ -48,6 +50,8 @@ export function lowerAttemptExpression(input: {
   readonly view: AttemptExpressionView | undefined;
   readonly fallibleExpression: HirExpression;
   readonly alternativeExpression?: HirExpression;
+  readonly expectedType?: CheckedType;
+  readonly expectedResourceKind?: CheckedResourceKind;
   readonly context: HirLoweringContext;
   readonly contracts?: readonly CheckedAttemptContractSurface[];
 }): HirExpression {
@@ -93,6 +97,16 @@ export function lowerAttemptExpression(input: {
     input.context.bodyIndex.addExpression(expression);
     return expression;
   }
+  const expressionType =
+    input.expectedType !== undefined && checkedTypesEqual(input.expectedType, contract.resultType)
+      ? contract.resultType
+      : contract.okType;
+  const expressionResourceKind =
+    input.expectedType !== undefined &&
+    checkedTypesEqual(input.expectedType, contract.resultType) &&
+    input.expectedResourceKind !== undefined
+      ? input.expectedResourceKind
+      : resourceKindForCheckedType(input.context, expressionType);
   const attempt: HirAttempt = {
     attemptId: ownedAttemptId(owner, input.context.proofMetadata.count("attempt")),
     attemptExpressionId: input.context.bodyIndex.nextExpressionId(),
@@ -107,8 +121,8 @@ export function lowerAttemptExpression(input: {
   const expression: HirExpression = {
     expressionId: attempt.attemptExpressionId,
     kind: { kind: "attempt", attempt },
-    type: contract.okType,
-    resourceKind: resourceKindForCheckedType(input.context, contract.okType),
+    type: expressionType,
+    resourceKind: expressionResourceKind,
     sourceOrigin: input.fallibleExpression.sourceOrigin,
   };
   input.context.bodyIndex.addExpression(expression);

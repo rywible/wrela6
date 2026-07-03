@@ -16,10 +16,20 @@ import {
   YieldStatementView,
 } from "../frontend/ast/statement-views";
 import { PatternView } from "../frontend/ast/pattern-views";
+import { presentTokenSpan } from "../frontend/ast/syntax-query";
+import type { TypeReferenceView } from "../frontend/ast/type-views";
 import { RedNode } from "../frontend/syntax/red-node";
 import { SyntaxKind } from "../frontend/syntax/syntax-kind";
-import { checkedTypesEqual, coreCheckedType } from "../semantic/surface/type-model";
-import { coreTypeId } from "../semantic/ids";
+import {
+  appliedType,
+  checkedTypesEqual,
+  coreCheckedType,
+  genericParameterCheckedType,
+  sourceCheckedType,
+  targetCheckedType,
+} from "../semantic/surface/type-model";
+import type { CheckedType } from "../semantic/surface/type-model";
+import { coreTypeId, type CoreTypeId, type TargetTypeId, type TypeId } from "../semantic/ids";
 import {
   matchRefinementMatchKey,
   matchRefinementScrutineeKey,
@@ -32,6 +42,7 @@ import { lowerExpression } from "./expression-lowerer";
 import { lowerTakeStatement, classifyForIteration } from "./take-lowerer";
 import { lowerValidationMatch, recordValidationResultAlias } from "./validation-lowerer";
 import { recordEnsureFact, recordMatchRefinement } from "./fact-lowerer";
+import { resourceKindForCheckedType } from "./type-resource-kind";
 
 export interface LowerStatementInput {
   readonly node: RedNode;
@@ -219,6 +230,82 @@ function expectedFunctionReturnType(context: HirLoweringContext) {
     : undefined;
 }
 
+function expectedFunctionReturnKind(context: HirLoweringContext) {
+  return context.ownerFunctionId !== undefined
+    ? context.program.functions.get(context.ownerFunctionId)?.returnKind
+    : undefined;
+}
+
+type CheckedTypeConstructor =
+  | { readonly kind: "source"; readonly typeId: TypeId }
+  | { readonly kind: "core"; readonly coreTypeId: CoreTypeId }
+  | { readonly kind: "target"; readonly targetTypeId: TargetTypeId };
+
+function typeConstructorFor(type: CheckedType): CheckedTypeConstructor | undefined {
+  if (type.kind === "source") return { kind: "source", typeId: type.typeId };
+  if (type.kind === "core") return { kind: "core", coreTypeId: type.coreTypeId };
+  if (type.kind === "target") return { kind: "target", targetTypeId: type.targetTypeId };
+  return undefined;
+}
+
+function typeReferenceSpan(
+  view: TypeReferenceView,
+): { readonly start: number; readonly end: number } | undefined {
+  const segments = view.qualifiedName()?.segments() ?? [];
+  if (segments.length === 0) return undefined;
+  const first = presentTokenSpan(segments[0]);
+  const last = presentTokenSpan(segments[segments.length - 1]);
+  if (first === undefined || last === undefined) return undefined;
+  return { start: first.start, end: last.end };
+}
+
+function typeFromAnnotation(
+  view: TypeReferenceView | undefined,
+  context: HirLoweringContext,
+): CheckedType | undefined {
+  if (view === undefined) return undefined;
+  const span = typeReferenceSpan(view);
+  if (span === undefined) return undefined;
+  const reference =
+    context.referenceLookup.referenceForSpan({
+      moduleId: currentHirModuleId(context),
+      span,
+      kind: "typeName",
+    }) ??
+    context.referenceLookup.referenceForSpan({
+      moduleId: currentHirModuleId(context),
+      span,
+      kind: "typeParameter",
+    });
+
+  let baseType: CheckedType | undefined;
+  if (reference?.kind === "builtinType") {
+    baseType = coreCheckedType(reference.coreTypeId);
+  } else if (reference?.kind === "type") {
+    baseType = sourceCheckedType({ itemId: reference.itemId, typeId: reference.typeId });
+  } else if (reference?.kind === "typeParameter") {
+    baseType = genericParameterCheckedType({ owner: reference.owner, index: reference.index });
+  } else if (reference?.kind === "targetType") {
+    baseType = targetCheckedType(reference.targetTypeId);
+  }
+  if (baseType === undefined) return undefined;
+
+  const argumentTypes = view
+    .typeArguments()
+    .map((argument) => typeFromAnnotation(argument, context))
+    .filter((type): type is CheckedType => type !== undefined);
+  if (argumentTypes.length === 0) return baseType;
+  if (argumentTypes.length !== view.typeArguments().length) return undefined;
+
+  const constructor = typeConstructorFor(baseType);
+  if (constructor === undefined) return undefined;
+  return appliedType({
+    constructor,
+    arguments: argumentTypes,
+    resourceKind: resourceKindForCheckedType(context, baseType),
+  });
+}
+
 function reportStatementTypeMismatch(input: {
   readonly context: HirLoweringContext;
   readonly node: RedNode;
@@ -295,8 +382,18 @@ export function lowerStatement(input: LowerStatementInput): HirStatement {
   const letStatement = LetStatementView.from(node);
   if (letStatement !== undefined) {
     const valueView = letStatement.value();
+    const expectedType = typeFromAnnotation(letStatement.type(), context);
     const value =
-      valueView !== undefined ? lowerExpression({ view: valueView, context }) : undefined;
+      valueView !== undefined
+        ? lowerExpression({
+            view: valueView,
+            context,
+            ...(expectedType !== undefined ? { expectedType } : {}),
+            ...(expectedType !== undefined
+              ? { expectedResourceKind: resourceKindForCheckedType(context, expectedType) }
+              : {}),
+          })
+        : undefined;
     if (value !== undefined) {
       const local = addSourceLocalForPattern({
         context,
@@ -319,7 +416,12 @@ export function lowerStatement(input: LowerStatementInput): HirStatement {
     const valueView = assignment.value();
     if (targetView !== undefined && valueView !== undefined) {
       const target = lowerExpression({ view: targetView, context });
-      const value = lowerExpression({ view: valueView, context, expectedType: target.type });
+      const value = lowerExpression({
+        view: valueView,
+        context,
+        expectedType: target.type,
+        expectedResourceKind: target.resourceKind,
+      });
       if (target.place === undefined) {
         const origin = originForStatement(node, context);
         context.diagnostics.report(
@@ -414,9 +516,10 @@ export function lowerStatement(input: LowerStatementInput): HirStatement {
   if (returnStatement !== undefined) {
     const expressionView = returnStatement.expression();
     const expectedType = expectedFunctionReturnType(context);
+    const expectedResourceKind = expectedFunctionReturnKind(context);
     const expression =
       expressionView !== undefined
-        ? lowerExpression({ view: expressionView, context, expectedType })
+        ? lowerExpression({ view: expressionView, context, expectedType, expectedResourceKind })
         : undefined;
     if (expression !== undefined) {
       reportStatementTypeMismatch({
@@ -438,9 +541,10 @@ export function lowerStatement(input: LowerStatementInput): HirStatement {
   if (yieldStatement !== undefined) {
     const expressionView = yieldStatement.expression();
     const expectedType = expectedFunctionReturnType(context);
+    const expectedResourceKind = expectedFunctionReturnKind(context);
     const expression =
       expressionView !== undefined
-        ? lowerExpression({ view: expressionView, context, expectedType })
+        ? lowerExpression({ view: expressionView, context, expectedType, expectedResourceKind })
         : undefined;
     if (expression !== undefined) {
       reportStatementTypeMismatch({

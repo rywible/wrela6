@@ -154,6 +154,65 @@ describe("AArch64 machine lowering", () => {
     const branch = lowered.instructions.find((instruction) => instruction.opcode === "b-cond");
     expect(branch?.security?.branchConditionSubjectKey).toBe("vreg:0");
   });
+
+  test("preserves indirect-call fixed ABI registers while lowering blr", () => {
+    const lowered = lowerAArch64MachineInstructions(
+      "indirect.call",
+      aarch64MachineFunction({
+        functionId: aarch64MachineFunctionId(3),
+        symbol: aarch64SymbolId("indirect.call"),
+        virtualRegisters: [aarch64Gpr64ForTest(9)],
+        parameters: [],
+        returns: [],
+        frameObjects: [],
+        blocks: [
+          aarch64MachineBlock({
+            blockId: aarch64MachineBlockId(0),
+            frequency: { kind: "entry" },
+            instructions: [
+              aarch64MachineInstruction({
+                instructionId: aarch64MachineInstructionId(30),
+                opcode: aarch64OpcodeFormId("blr"),
+                operands: [
+                  useVreg(aarch64Gpr64ForTest(9), U64),
+                  implicitDefResource({ kind: "NZCV" }),
+                  implicitDefResource({ kind: "FPCR" }),
+                  implicitDefResource({ kind: "FPSR" }),
+                  implicitDefResource({ kind: "vectorState" }),
+                ],
+                flags: { mayTrap: false },
+                origin: syntheticAArch64Origin("lowering.blr"),
+              }),
+            ],
+            terminator: aarch64RetForTest({ instructionId: 31 }),
+          }),
+        ],
+      }),
+      allocationResult({
+        segments: [
+          {
+            liveRangeKey: "live-range:vreg:9",
+            vreg: 9,
+            physical: "x9",
+            startOrder: 0,
+            endOrder: 1,
+            reason: "assigned",
+          },
+        ],
+      }),
+      undefined,
+      [{ instructionId: 30, argumentRegisters: ["x0", "x1"], resultRegisters: ["x0"] }],
+    );
+
+    expect(lowered.kind).toBe("ok");
+    if (lowered.kind !== "ok") throw new Error("expected lowered instructions");
+    const call = lowered.instructions.find((instruction) => instruction.opcode === "blr");
+    expect(call).toMatchObject({
+      operands: [{ kind: "register", register: "x9" }],
+      fixedRegisterUses: ["x0", "x1"],
+      fixedRegisterDefs: ["x0"],
+    });
+  });
 });
 
 function movzForTest(instructionId: number, destination: number) {

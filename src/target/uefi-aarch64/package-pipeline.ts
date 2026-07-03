@@ -47,10 +47,10 @@ import {
   type BuildProofMirResult,
 } from "../../proof-mir/proof-mir-builder";
 import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
-import { buildItemIndex } from "../../semantic/item-index";
+import { buildItemIndex, type ItemIndex } from "../../semantic/item-index";
 import { CoreTypeCatalog, resolveNames } from "../../semantic/names";
 import { checkSemanticSurface } from "../../semantic/surface";
-import { type PlatformPrimitiveId } from "../../semantic/ids";
+import { type PlatformPrimitiveId, type TypeId } from "../../semantic/ids";
 import { uefiAArch64TargetDiagnostic, type UefiAArch64TargetDiagnostic } from "./diagnostics";
 import type {
   CompilerPackageInput,
@@ -86,6 +86,7 @@ import {
   proofMirToCheckInput,
 } from "./package-pipeline-stage-inputs";
 import { packageSemanticTargetSurface } from "./package-pipeline-semantic-target";
+import { uefiAArch64SourceApiBridge } from "./source-api-bridge";
 import {
   passedVerification,
   uefiAArch64Error,
@@ -142,6 +143,7 @@ export interface PackageTypedHirAdapter {
   readonly kind: "typed-hir";
   readonly lowerTypedHirInput: LowerTypedHirInput;
   readonly lowerTypedHirResult: LowerTypedHirResult;
+  readonly sourceApiResultConstructorTypeId?: TypeId;
 }
 
 export interface PackageMonomorphizedImageInput {
@@ -155,6 +157,7 @@ export interface PackageMonomorphizedImageAdapter {
   readonly monomorphizeWholeImageResult: MonomorphizeWholeImageResult & { readonly kind: "ok" };
   readonly reachablePlatformPrimitiveIds: readonly PlatformPrimitiveId[];
   readonly staticChar16Metadata: UefiAArch64StaticChar16IntrinsicMetadata;
+  readonly sourceApiResultConstructorTypeId?: TypeId;
 }
 
 export interface PackageRepresentationLayoutFactsInput {
@@ -169,6 +172,7 @@ export interface PackageRepresentationLayoutFactsAdapter {
     readonly kind: "ok";
   };
   readonly staticChar16Metadata: UefiAArch64StaticChar16IntrinsicMetadata;
+  readonly sourceApiResultConstructorTypeId?: TypeId;
 }
 
 export interface PackageProofMirInput {
@@ -182,6 +186,7 @@ export interface PackageProofMirAdapter {
   readonly buildProofMirInput: BuildProofMirInput;
   readonly buildProofMirResult: BuildProofMirResult & { readonly kind: "ok" };
   readonly staticChar16Metadata: UefiAArch64StaticChar16IntrinsicMetadata;
+  readonly sourceApiResultConstructorTypeId?: TypeId;
 }
 
 export interface PackageProofCheckInput {
@@ -195,6 +200,7 @@ export interface PackageProofCheckAdapter {
   readonly checkProofAndResourcesInput: CheckProofAndResourcesInput;
   readonly checkProofAndResourcesResult: CheckProofAndResourcesResult & { readonly kind: "ok" };
   readonly staticChar16Metadata: UefiAArch64StaticChar16IntrinsicMetadata;
+  readonly sourceApiResultConstructorTypeId?: TypeId;
 }
 
 export interface PackageOptimizedOptIrInput {
@@ -540,9 +546,20 @@ export function lowerTypedHir(
       kind: "typed-hir" as const,
       lowerTypedHirInput,
       lowerTypedHirResult,
+      ...sourceApiResultConstructorTypeId(indexResult.index),
     }),
     diagnostics: [],
   };
+}
+
+function sourceApiResultConstructorTypeId(index: ItemIndex): {
+  readonly sourceApiResultConstructorTypeId?: TypeId;
+} {
+  const bridge = uefiAArch64SourceApiBridge(index);
+  if (bridge?.resultType.kind !== "applied" || bridge.resultType.constructor.kind !== "source") {
+    return {};
+  }
+  return { sourceApiResultConstructorTypeId: bridge.resultType.constructor.typeId };
 }
 
 export function monomorphizeWholeImage(
@@ -583,6 +600,9 @@ export function monomorphizeWholeImage(
         ...monomorphizeWholeImageResult.reachablePlatformPrimitiveIds,
       ]),
       staticChar16Metadata: staticChar16Metadata.value,
+      ...(input.typedHir.sourceApiResultConstructorTypeId === undefined
+        ? {}
+        : { sourceApiResultConstructorTypeId: input.typedHir.sourceApiResultConstructorTypeId }),
     }),
     diagnostics: [],
   };
@@ -617,6 +637,12 @@ export function computeRepresentationLayoutFacts(
       computeRepresentationLayoutFactsInput,
       computeRepresentationLayoutFactsResult,
       staticChar16Metadata: input.monomorphizedImage.staticChar16Metadata,
+      ...(input.monomorphizedImage.sourceApiResultConstructorTypeId === undefined
+        ? {}
+        : {
+            sourceApiResultConstructorTypeId:
+              input.monomorphizedImage.sourceApiResultConstructorTypeId,
+          }),
     }),
     diagnostics: [],
   };
@@ -650,6 +676,12 @@ export function buildProofMir(
       buildProofMirInput,
       buildProofMirResult,
       staticChar16Metadata: input.monomorphizedImage.staticChar16Metadata,
+      ...(input.monomorphizedImage.sourceApiResultConstructorTypeId === undefined
+        ? {}
+        : {
+            sourceApiResultConstructorTypeId:
+              input.monomorphizedImage.sourceApiResultConstructorTypeId,
+          }),
     }),
     diagnostics: [],
   };
@@ -694,6 +726,9 @@ export function checkProofAndResources(
       checkProofAndResourcesInput: authority.value,
       checkProofAndResourcesResult,
       staticChar16Metadata: input.proofMir.staticChar16Metadata,
+      ...(input.proofMir.sourceApiResultConstructorTypeId === undefined
+        ? {}
+        : { sourceApiResultConstructorTypeId: input.proofMir.sourceApiResultConstructorTypeId }),
     }),
     diagnostics: [],
   };
@@ -704,6 +739,12 @@ export function buildOptimizedOptIr(
 ): UefiAArch64PackageStageResult<PackageOptimizedOptIrAdapter> {
   const checkProofAndResourcesResult = input.proofCheck.checkProofAndResourcesResult;
   const layoutFactsResult = input.layoutFacts.computeRepresentationLayoutFactsResult;
+  const targetOptions =
+    input.proofCheck.sourceApiResultConstructorTypeId === undefined
+      ? {}
+      : {
+          sourceApiResultConstructorTypeId: input.proofCheck.sourceApiResultConstructorTypeId,
+        };
 
   const buildOptimizedOptIrInput = Object.freeze({
     handoff: checkProofAndResourcesResult.checkedOptIrHandoff,
@@ -711,7 +752,7 @@ export function buildOptimizedOptIr(
       facts: layoutFactsResult.facts,
       fingerprint: layoutAuthorityFingerprintForProofCheckInput(layoutFactsResult.facts),
     }),
-    target: productionUefiAArch64OptIrTargetSurface(input.target),
+    target: productionUefiAArch64OptIrTargetSurface(input.target, targetOptions),
     options: Object.freeze({ deterministicIds: true }),
     policy: productionOptIrOptimizationPolicy(),
   } satisfies BuildOptimizedOptIrInput);

@@ -1,4 +1,6 @@
 import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
+import { stableJson } from "../../shared/stable-json";
+import type { ProofMirFunction, ProofMirPlace } from "../../proof-mir/model/graph";
 import {
   proofCheckDiagnostic,
   sortProofCheckDiagnostics,
@@ -12,12 +14,20 @@ import {
   type ProofCheckState,
   type ProofCheckStructuredPlace,
 } from "../kernel/state";
+import type { ProofCheckPlaceResolver } from "../kernel/registry/transition-helpers";
+import {
+  canonicalProofCheckPlaceKey,
+  proofMirPlaceIdForPlaceKey,
+  tryResolveProofMirPlaceIdForPlaceKey,
+} from "../kernel/registry/transition-helpers";
 
 export interface AttemptTransferInput {
   readonly state: ProofCheckState;
   readonly attemptKey: string;
   readonly declaredInputs: readonly ProofCheckStructuredPlace[];
+  readonly pendingResultPlace?: ProofCheckStructuredPlace;
   readonly operationOriginKey?: string;
+  readonly placeResolver?: ProofCheckPlaceResolver;
 }
 
 export interface AttemptMatchInput {
@@ -30,7 +40,10 @@ export interface AttemptSuccessEdgeInput {
   readonly originalState: ProofCheckState;
   readonly armState: ProofCheckState;
   readonly declaredInputs: readonly ProofCheckStructuredPlace[];
+  readonly internalConsumedPlaces?: readonly ProofCheckStructuredPlace[];
   readonly operationOriginKey?: string;
+  readonly placeResolver?: ProofCheckPlaceResolver;
+  readonly functionGraph?: ProofMirFunction;
 }
 
 export interface AttemptErrorEdgeInput {
@@ -38,6 +51,7 @@ export interface AttemptErrorEdgeInput {
   readonly edgeState: ProofCheckState;
   readonly declaredInputs: readonly ProofCheckStructuredPlace[];
   readonly operationOriginKey?: string;
+  readonly placeResolver?: ProofCheckPlaceResolver;
 }
 
 export interface AttemptSplitJoinInput {
@@ -96,8 +110,84 @@ function errorAttemptTransfer(diagnostics: readonly ProofCheckDiagnostic[]): Att
 
 function declaredInputPlaceKeys(
   declaredInputs: readonly ProofCheckStructuredPlace[],
+  placeResolver?: ProofCheckPlaceResolver,
 ): ReadonlySet<string> {
-  return new Set(declaredInputs.map((place) => place.placeKey));
+  return new Set(
+    declaredInputs.map((place) => canonicalProofCheckPlaceKey(place.placeKey, placeResolver)),
+  );
+}
+
+function placeProjectionIsStrictPrefix(input: {
+  readonly candidate: ProofMirPlace["projection"];
+  readonly source: ProofMirPlace["projection"];
+}): boolean {
+  if (input.candidate.length >= input.source.length) {
+    return false;
+  }
+  return input.candidate.every(
+    (projection, index) => stableJson(projection) === stableJson(input.source[index]),
+  );
+}
+
+function placeIsGraphAncestorOfDeclaredInput(input: {
+  readonly placeKey: string;
+  readonly declaredInputs: readonly ProofCheckStructuredPlace[];
+  readonly placeResolver?: ProofCheckPlaceResolver;
+  readonly functionGraph?: ProofMirFunction;
+}): boolean {
+  if (input.functionGraph === undefined) {
+    return false;
+  }
+  const candidatePlaceId = tryResolveProofMirPlaceIdForPlaceKey(
+    input.placeKey,
+    input.placeResolver,
+  );
+  if (candidatePlaceId === undefined) {
+    return false;
+  }
+  const candidate = input.functionGraph.places.get(candidatePlaceId);
+  if (candidate === undefined) {
+    return false;
+  }
+
+  for (const declaredInput of input.declaredInputs) {
+    const declaredPlaceId = tryResolveProofMirPlaceIdForPlaceKey(
+      declaredInput.placeKey,
+      input.placeResolver,
+    );
+    if (declaredPlaceId === undefined) {
+      continue;
+    }
+    const declared = input.functionGraph.places.get(declaredPlaceId);
+    if (declared === undefined) {
+      continue;
+    }
+    if (stableJson(candidate.root) !== stableJson(declared.root)) {
+      continue;
+    }
+    if (
+      placeProjectionIsStrictPrefix({
+        candidate: candidate.projection,
+        source: declared.projection,
+      })
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function placeStatePatch(input: {
+  readonly place: ProofCheckStructuredPlace;
+  readonly lifecycle: CheckedPlaceLifecycle;
+  readonly placeResolver?: ProofCheckPlaceResolver;
+}): ProofCheckStatePatchEntry {
+  const placeKey = canonicalProofCheckPlaceKey(input.place.placeKey, input.placeResolver);
+  return {
+    kind: "placeState",
+    place: proofMirPlaceIdForPlaceKey(placeKey, input.placeResolver),
+    state: { placeKey, lifecycle: input.lifecycle },
+  };
 }
 
 function isUsablePlaceLifecycle(lifecycle: CheckedPlaceLifecycle): boolean {
@@ -389,13 +479,49 @@ export function recordAttempt(input: AttemptTransferInput): AttemptTransferResul
 
   const diagnostics: ProofCheckDiagnostic[] = [];
   for (const declaredInput of input.declaredInputs) {
-    const place = input.state.places.get(declaredInput.placeKey);
+    const placeKey = canonicalProofCheckPlaceKey(declaredInput.placeKey, input.placeResolver);
+    const place = input.state.places.get(placeKey);
     if (place === undefined || !isUsablePlaceLifecycle(place.lifecycle)) {
       diagnostics.push(
         invalidAttemptSplitDiagnostic({
           ownerKey,
-          rootCauseKey: declaredInput.placeKey,
-          stableDetail: `attempt:${input.attemptKey}:input-not-usable:${declaredInput.placeKey}`,
+          rootCauseKey: placeKey,
+          stableDetail: `attempt:${input.attemptKey}:input-not-usable:${placeKey}`,
+        }),
+      );
+    }
+  }
+
+  const patches: ProofCheckStatePatchEntry[] = [
+    {
+      kind: "attempt",
+      action: "open",
+      attempt: pendingAttemptForKey(input.attemptKey),
+    },
+  ];
+  if (input.pendingResultPlace !== undefined) {
+    const pendingPlaceKey = canonicalProofCheckPlaceKey(
+      input.pendingResultPlace.placeKey,
+      input.placeResolver,
+    );
+    const pendingPlace = input.state.places.get(pendingPlaceKey);
+    if (
+      pendingPlace === undefined ||
+      (pendingPlace.lifecycle !== "owned" && pendingPlace.lifecycle !== "uninitialized")
+    ) {
+      diagnostics.push(
+        invalidAttemptSplitDiagnostic({
+          ownerKey,
+          rootCauseKey: pendingPlaceKey,
+          stableDetail: `attempt:${input.attemptKey}:pending-result-not-usable:${pendingPlaceKey}`,
+        }),
+      );
+    } else if (pendingPlace.lifecycle === "uninitialized") {
+      patches.push(
+        placeStatePatch({
+          place: input.pendingResultPlace,
+          lifecycle: "owned",
+          placeResolver: input.placeResolver,
         }),
       );
     }
@@ -405,13 +531,7 @@ export function recordAttempt(input: AttemptTransferInput): AttemptTransferResul
     return errorAttemptTransfer(diagnostics);
   }
 
-  return okAttemptTransfer([
-    {
-      kind: "attempt",
-      action: "open",
-      attempt: pendingAttemptForKey(input.attemptKey),
-    },
-  ]);
+  return okAttemptTransfer(patches);
 }
 
 export function matchAttempt(input: AttemptMatchInput): AttemptTransferResult {
@@ -438,7 +558,10 @@ export function matchAttempt(input: AttemptMatchInput): AttemptTransferResult {
 
 export function checkAttemptSuccessEdge(input: AttemptSuccessEdgeInput): AttemptTransferResult {
   const ownerKey = defaultOwnerKey(input.operationOriginKey, "operation:attempt:success");
-  const allowedInputs = declaredInputPlaceKeys(input.declaredInputs);
+  const allowedInputs = declaredInputPlaceKeys(
+    [...input.declaredInputs, ...(input.internalConsumedPlaces ?? [])],
+    input.placeResolver,
+  );
   const diagnostics: ProofCheckDiagnostic[] = [];
 
   for (const placeKey of sortedUnionKeys(
@@ -450,7 +573,15 @@ export function checkAttemptSuccessEdge(input: AttemptSuccessEdgeInput): Attempt
     if (!placeLifecycleChanged(original, current)) {
       continue;
     }
-    if (!allowedInputs.has(placeKey)) {
+    if (
+      !allowedInputs.has(placeKey) &&
+      !placeIsGraphAncestorOfDeclaredInput({
+        placeKey,
+        declaredInputs: input.declaredInputs,
+        placeResolver: input.placeResolver,
+        functionGraph: input.functionGraph,
+      })
+    ) {
       diagnostics.push(
         invalidAttemptSplitDiagnostic({
           ownerKey,
@@ -473,15 +604,19 @@ export function checkAttemptErrorEdge(input: AttemptErrorEdgeInput): AttemptTran
   const diagnostics: ProofCheckDiagnostic[] = [];
 
   for (const declaredInput of input.declaredInputs) {
-    const original = input.originalState.places.get(declaredInput.placeKey);
-    const edgePlace = input.edgeState.places.get(declaredInput.placeKey);
+    const declaredPlaceKey = canonicalProofCheckPlaceKey(
+      declaredInput.placeKey,
+      input.placeResolver,
+    );
+    const original = input.originalState.places.get(declaredPlaceKey);
+    const edgePlace = input.edgeState.places.get(declaredPlaceKey);
     if (original === undefined) {
       if (edgePlace !== undefined) {
         diagnostics.push(
           invalidAttemptSplitDiagnostic({
             ownerKey,
-            rootCauseKey: declaredInput.placeKey,
-            stableDetail: `attempt:error:input-state-mismatch:${declaredInput.placeKey}`,
+            rootCauseKey: declaredPlaceKey,
+            stableDetail: `attempt:error:input-state-mismatch:${declaredPlaceKey}`,
           }),
         );
       }
@@ -491,8 +626,8 @@ export function checkAttemptErrorEdge(input: AttemptErrorEdgeInput): AttemptTran
       diagnostics.push(
         invalidAttemptSplitDiagnostic({
           ownerKey,
-          rootCauseKey: declaredInput.placeKey,
-          stableDetail: `attempt:error:input-state-mismatch:${declaredInput.placeKey}`,
+          rootCauseKey: declaredPlaceKey,
+          stableDetail: `attempt:error:input-state-mismatch:${declaredPlaceKey}`,
         }),
       );
     }

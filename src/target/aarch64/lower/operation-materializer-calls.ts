@@ -199,8 +199,14 @@ export abstract class AArch64CallOperationMaterializer extends AArch64MemoryOper
     operation: OperationOf<"platformCall">,
     lowering: AArch64FirmwarePlatformCallLowering,
   ): { readonly kind: "ok" } | { readonly kind: "error"; readonly stableDetail: string } {
+    if (lowering.kind === "zero-runtime") {
+      return this.materializeZeroRuntimePlatformCall(operation, lowering);
+    }
     if (lowering.kind === "static-readonly-pointer-result") {
       return this.materializeStaticReadonlyPointerResult(operation, lowering);
+    }
+    if (lowering.kind === "constant-status") {
+      return this.materializeConstantStatusPlatformCall(operation, lowering);
     }
     if (lowering.kind === "compiler-runtime-helper") {
       const argumentMarshalling = this.materializeFirmwareCallArguments(
@@ -260,6 +266,54 @@ export abstract class AArch64CallOperationMaterializer extends AArch64MemoryOper
     );
     this.explanation.push(`firmware-platform-call:indirect:${lowering.primitiveId}`);
     return this.materializeFirmwareCallResults(operation, lowering.resultRule);
+  }
+
+  private materializeZeroRuntimePlatformCall(
+    operation: OperationOf<"platformCall">,
+    lowering: Extract<AArch64FirmwarePlatformCallLowering, { readonly kind: "zero-runtime" }>,
+  ): { readonly kind: "ok" } | { readonly kind: "error"; readonly stableDetail: string } {
+    for (let resultIndex = 0; resultIndex < operation.resultIds.length; resultIndex += 1) {
+      const resultType = operation.resultTypes[resultIndex];
+      if (
+        resultType?.kind !== "zeroSized" &&
+        resultType?.kind !== "unit" &&
+        resultType?.kind !== "never"
+      ) {
+        return {
+          kind: "error",
+          stableDetail: `firmware-platform-call-zero-runtime-result:${String(operation.operationId)}:${lowering.primitiveId}:${resultIndex}:${resultType?.kind ?? "<missing>"}`,
+        };
+      }
+      this.emitValueConstant(this.resultRegister(operation, resultIndex), 0n);
+    }
+    this.explanation.push(
+      `firmware-platform-call:zero-runtime:${lowering.primitiveId}:${lowering.operationKey}`,
+    );
+    return { kind: "ok" };
+  }
+
+  private materializeConstantStatusPlatformCall(
+    operation: OperationOf<"platformCall">,
+    lowering: Extract<AArch64FirmwarePlatformCallLowering, { readonly kind: "constant-status" }>,
+  ): { readonly kind: "ok" } | { readonly kind: "error"; readonly stableDetail: string } {
+    if (operation.resultIds.length !== 1) {
+      return {
+        kind: "error",
+        stableDetail: `firmware-platform-call-result-mismatch:${String(operation.operationId)}:constant-status:expected:1:actual:${operation.resultIds.length}`,
+      };
+    }
+    const resultType = operation.resultTypes[0];
+    if (resultType?.kind !== "integer") {
+      return {
+        kind: "error",
+        stableDetail: `firmware-platform-call-constant-status-result:${String(operation.operationId)}:${lowering.primitiveId}:0:${resultType?.kind ?? "<missing>"}`,
+      };
+    }
+    this.emitValueConstant(this.resultRegister(operation, 0), lowering.value);
+    this.explanation.push(
+      `firmware-platform-call:constant-status:${lowering.primitiveId}:${lowering.operationKey}`,
+    );
+    return { kind: "ok" };
   }
 
   private materializeStaticReadonlyPointerResult(

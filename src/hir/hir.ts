@@ -735,6 +735,8 @@ export interface HirEnumCaseRecord {
 export interface HirTypeRecord {
   readonly typeId: TypeId;
   readonly itemId: ItemId;
+  readonly sourceName?: string;
+  readonly sourceModulePathKey?: string;
   readonly sourceKind: SourceItemKind;
   readonly declaredTypeParameters: readonly TypeParameterKey[];
   readonly fieldIds: readonly FieldId[];

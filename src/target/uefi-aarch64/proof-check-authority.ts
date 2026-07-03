@@ -10,12 +10,20 @@ import {
   type ProofSemanticsJudgmentRequest,
   type ProofSemanticsJudgmentResult,
 } from "../../proof-check/authority/semantics-companion";
-import { proofCheckTypeFactCatalog } from "../../proof-check/authority/type-fact-authority";
+import {
+  proofCheckLiveValueScopeId,
+  proofCheckTypeFactCatalog,
+  proofCheckTypeFactLookupStableKey,
+  type ProofCheckTypeFactCatalogEntryDraft,
+  type ProofCheckTypeFactLookup,
+} from "../../proof-check/authority/type-fact-authority";
 import { proofSemanticsCertificateId } from "../../proof-check/ids";
 import type { CheckProofAndResourcesInput } from "../../proof-check/input-contract";
 import type { ProofMirProgram } from "../../proof-mir/model/program";
 import { runtimeCatalog as createProofMirRuntimeCatalog } from "../../runtime/runtime-catalog";
 import type { PlatformPrimitiveSpec } from "../../semantic/surface/platform-surface";
+import { checkedTypeFingerprint } from "../../semantic/surface/type-model";
+import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
 import type { ProofAuthorityFingerprint } from "../../shared/proof-authority-types";
 import { stableDigestHex } from "../../shared/stable-json";
 import {
@@ -117,7 +125,7 @@ export function productionUefiAArch64ProofCheckInputAuthority(input: {
         imageInstanceId: String(input.proofMir.image.imageInstanceId),
       },
     }),
-    entries: [],
+    entries: productionReachableLocalTypeFactEntries(proofMir),
   });
   if (typeFacts.kind === "error") {
     return proofCheckAuthorityError("proof-check-authority", typeFacts.diagnostics);
@@ -135,6 +143,52 @@ export function productionUefiAArch64ProofCheckInputAuthority(input: {
     }),
     verification: passedVerification(PROOF_CHECK_AUTHORITY_VERIFIER_KEY, "input"),
   });
+}
+
+const REACHABLE_LOCAL_LIVE_VALUE_SCOPE = proofCheckLiveValueScopeId("reachable-local");
+
+function collectReachableLocalTypeFactLookups(
+  proofMir: ProofMirProgram,
+): readonly ProofCheckTypeFactLookup[] {
+  const lookups = new Map<string, ProofCheckTypeFactLookup>();
+  for (const functionGraph of proofMir.functions.entries()) {
+    for (const local of functionGraph.locals.entries()) {
+      if (local.resourceKind === "Copy" || local.resourceKind === "Never") {
+        continue;
+      }
+      const lookup: ProofCheckTypeFactLookup = {
+        concreteType: local.type,
+        liveValueScope: REACHABLE_LOCAL_LIVE_VALUE_SCOPE,
+      };
+      lookups.set(proofCheckTypeFactLookupStableKey(lookup), lookup);
+    }
+  }
+  return [...lookups.values()].sort((left, right) =>
+    compareCodeUnitStrings(
+      proofCheckTypeFactLookupStableKey(left),
+      proofCheckTypeFactLookupStableKey(right),
+    ),
+  );
+}
+
+function typeFactEntryForReachableLocal(
+  lookup: ProofCheckTypeFactLookup,
+): ProofCheckTypeFactCatalogEntryDraft {
+  const lookupKey = proofCheckTypeFactLookupStableKey(lookup);
+  return {
+    concreteType: lookup.concreteType,
+    liveValueScope: lookup.liveValueScope,
+    placeholders: [],
+    facts: [],
+    invalidatedBy: [{ kind: "moveTransfers" }, { kind: "consumeRemoves" }],
+    authorityKey: `uefi-aarch64:type-fact:${checkedTypeFingerprint(lookup.concreteType)}:${lookupKey}`,
+  };
+}
+
+function productionReachableLocalTypeFactEntries(
+  proofMir: ProofMirProgram,
+): readonly ProofCheckTypeFactCatalogEntryDraft[] {
+  return collectReachableLocalTypeFactLookups(proofMir).map(typeFactEntryForReachableLocal);
 }
 
 function productionUefiAArch64ProofCheckResourceLimits() {

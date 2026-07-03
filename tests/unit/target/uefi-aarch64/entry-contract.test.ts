@@ -40,14 +40,14 @@ describe("UEFI AArch64 source boot function contract", () => {
     expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual([
       "entry-contract:raw-firmware-parameter:imageHandle:EFI_HANDLE",
       "entry-contract:raw-firmware-parameter:systemTable:EFI_SYSTEM_TABLE*",
-      "entry-contract:source-visible-parameters-must-be-empty",
+      "entry-contract:unsupported-source-visible-parameters",
     ]);
     expect(result.diagnostics.every((diagnostic) => diagnostic.ownerKey === "entry-contract")).toBe(
       true,
     );
   });
 
-  test("requires an empty source-visible parameter list for v1", () => {
+  test("rejects arbitrary source-visible parameters", () => {
     const result = validateUefiAArch64BootFunctionContract({
       sourceVisibleParameters: [{ name: "argc", typeKey: "i32" }],
       resultShape: { kind: "unit-success" },
@@ -55,8 +55,35 @@ describe("UEFI AArch64 source boot function contract", () => {
 
     expect(result.kind).toBe("error");
     expect(result.diagnostics[0]?.stableDetail).toBe(
-      "entry-contract:source-visible-parameters-must-be-empty",
+      "entry-contract:unsupported-source-visible-parameters",
     );
+  });
+
+  test("accepts the canonical source-visible UefiFirmware capability parameter", () => {
+    const result = validateUefiAArch64BootFunctionContract({
+      sourceVisibleParameters: [
+        { name: "firmware", typeKey: "wrela_std.target.uefi.UefiFirmware" },
+      ],
+      resultShape: {
+        kind: "target-certified-result",
+        errorTypeKey: "wrela_std.target.uefi.BootError",
+      },
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.value.sourceVisibleParameters).toEqual([
+      { name: "firmware", typeKey: "wrela_std.target.uefi.UefiFirmware" },
+    ]);
+  });
+
+  test("accepts lowered source-type fingerprints for the firmware capability parameter", () => {
+    const result = validateUefiAArch64BootFunctionContract({
+      sourceVisibleParameters: [{ name: "firmware", typeKey: "source:30:8" }],
+      resultShape: { kind: "target-certified-result", errorTypeKey: "uefi.Status" },
+    });
+
+    expect(result.kind).toBe("ok");
   });
 
   test("accepts only the v1 source boot result shapes", () => {

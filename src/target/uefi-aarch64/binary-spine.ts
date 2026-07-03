@@ -15,6 +15,7 @@ import {
 } from "../aarch64";
 import type { OptIrFunction } from "../../opt-ir/program";
 import { optIrTypeStableKey } from "../../opt-ir/types";
+import { checkedTypeFingerprint } from "../../semantic/surface/type-model";
 import { createUefiAArch64EntryThunkObjectFactory, planUefiAArch64EntryThunk } from "./entry-thunk";
 import { canonicalUefiAArch64ExitBootServicesPolicy } from "./exit-boot-services";
 import { uefiAArch64FirmwarePlatformCallContext } from "./firmware-lowering";
@@ -281,17 +282,39 @@ function validateBinarySpineBootFunctionContract(
   const entryBlock = entryFunction.blocks.find(
     (block) => block.blockId === entryFunction.entryBlock,
   );
+  const signatureParameters = sourceVisibleSignatureParameters(entryFunction);
   const sourceVisibleParameters =
-    entryBlock?.parameters.map((parameter) =>
-      Object.freeze({
-        name: `optir.value:${String(parameter.valueId)}`,
-        typeKey: optIrTypeStableKey(parameter.type),
-      }),
-    ) ?? [];
+    entryBlock?.parameters.map((parameter, index) => {
+      const signatureParameter = signatureParameters[index];
+      return Object.freeze({
+        name: signatureParameter?.name ?? `optir.value:${String(parameter.valueId)}`,
+        typeKey:
+          signatureParameter === undefined
+            ? optIrTypeStableKey(parameter.type)
+            : checkedTypeFingerprint(signatureParameter.type),
+      });
+    }) ?? [];
   return validateUefiAArch64BootFunctionContract({
     sourceVisibleParameters,
     resultShape: bootResultShapeForOptIrFunction(entryFunction),
   });
+}
+
+function sourceVisibleSignatureParameters(func: OptIrFunction) {
+  const signature = func.signature as Partial<OptIrFunction["signature"]>;
+  return Object.freeze([
+    ...(signature.receiver === undefined
+      ? []
+      : [
+          Object.freeze({
+            name: "self",
+            type: signature.receiver.type,
+          }),
+        ]),
+    ...(signature.parameters ?? []).map((parameter) =>
+      Object.freeze({ name: parameter.name, type: parameter.type }),
+    ),
+  ]);
 }
 
 function bootResultShapeForOptIrFunction(func: OptIrFunction) {

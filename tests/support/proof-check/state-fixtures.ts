@@ -37,13 +37,16 @@ export function testPlaceIdForKey(placeKey: string): ReturnType<typeof proofMirP
 
 export function testPlaceResolverForKeys(placeKeys: readonly string[]): ProofCheckPlaceResolver {
   const index = new Map<string, ReturnType<typeof proofMirPlaceId>>();
+  const canonicalPlaceKeyByPlaceKey = new Map<string, string>();
   for (const placeKey of placeKeys) {
     index.set(placeKey, testPlaceIdForKey(placeKey));
+    canonicalPlaceKeyByPlaceKey.set(placeKey, placeKey);
   }
   return {
     index,
     placeShapeKeyByPlaceId: new Map<string, string>(),
     equivalentPlaceKeysByPlaceId: new Map<string, readonly string[]>(),
+    canonicalPlaceKeyByPlaceKey,
   };
 }
 

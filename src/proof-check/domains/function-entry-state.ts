@@ -56,7 +56,14 @@ export function functionEntrySignatureFromMir(input: {
 }): ProofCheckFunctionSignatureInput {
   const receiverPlace = input.functionGraph.places
     .entries()
-    .find((place) => place.root.kind === "receiver");
+    .find(
+      (place) =>
+        place.root.kind === "receiver" ||
+        (place.root.kind === "parameter" &&
+          input.functionGraph.signature.receiver !== undefined &&
+          String(place.root.parameterId) ===
+            String(input.functionGraph.signature.receiver.parameterId)),
+    );
   const receiver: ProofCheckFunctionReceiverInput | undefined =
     input.functionGraph.signature.receiver === undefined || receiverPlace === undefined
       ? undefined

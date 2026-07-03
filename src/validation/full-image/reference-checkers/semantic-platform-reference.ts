@@ -13,10 +13,19 @@ import type { FullImageReferenceChecker, FullImageReferenceCheckerInput } from "
 const CHECKER_KEY = "semantic-platform-reference";
 const INPUT_AUTHORITY = Object.freeze(["source-package", "compiler-trace"] as const);
 const PLATFORM_FUNCTION_PATTERN = /^\s*platform\s+fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/gm;
+const PACKET_COUNTER_UEFI_SOURCE_PRIMITIVES = Object.freeze([
+  "uefi.source.bindVirtioNet",
+  "uefi.source.discoverVirtio",
+  "uefi.source.exitBootServices",
+  "uefi.source.planMachine",
+  "uefi.source.reserveRestrictedMemory",
+  "uefi.source.splitNetworkDevice",
+]);
 const EXPECTED_REACHABLE_PRIMITIVES_BY_SCENARIO = Object.freeze({
   "smoke-console": Object.freeze(["uefi.console.outputString"]),
   "packet-counter": Object.freeze([
     "uefi.console.outputString",
+    ...PACKET_COUNTER_UEFI_SOURCE_PRIMITIVES,
     UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID,
   ]),
   "status-error": Object.freeze([]),

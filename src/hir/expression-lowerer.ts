@@ -39,6 +39,7 @@ import { hirEnumCaseOrdinal } from "./enum-case-model";
 export interface LowerExpressionInput {
   readonly view: ExpressionView;
   readonly expectedType?: CheckedType;
+  readonly expectedResourceKind?: CheckedResourceKind;
   readonly context: HirLoweringContext;
 }
 
@@ -575,7 +576,8 @@ function lowerObject(
   }
   const targetType = input.expectedType;
 
-  const resourceKind = resourceKindForCheckedType(input.context, input.expectedType);
+  const resourceKind =
+    input.expectedResourceKind ?? resourceKindForCheckedType(input.context, input.expectedType);
   const constructibility = checkConstructibility({
     targetType: input.expectedType,
     targetKind: resourceKind,
@@ -595,10 +597,14 @@ function lowerObject(
       .filter((field) => field.itemId === targetSource.itemId)
       .map((field) => [field.name, field]),
   );
+  const seenFieldNames = new Set<string>();
   const fields: HirObjectField[] = [];
   for (const fieldView of view.fields()) {
     const fieldOrigin = originForObjectField(fieldView, input.context);
     const name = fieldView.nameText() ?? "";
+    if (name.length > 0) {
+      seenFieldNames.add(name);
+    }
     const checkedField = checkedFieldsByName.get(name);
     const valueView = fieldView.value();
     const value =
@@ -607,6 +613,7 @@ function lowerObject(
             view: valueView,
             context: input.context,
             expectedType: checkedField?.type,
+            expectedResourceKind: checkedField?.resourceKind,
           })
         : errorExpression(input.context, fieldOrigin, `missing-object-field:${name}`);
     if (checkedField === undefined) {
@@ -627,6 +634,16 @@ function lowerObject(
       value,
       sourceOrigin: fieldOrigin,
       ...(checkedField !== undefined ? { fieldId: checkedField.fieldId } : {}),
+    });
+  }
+  for (const checkedField of checkedFieldsByName.values()) {
+    if (seenFieldNames.has(checkedField.name)) {
+      continue;
+    }
+    reportObjectFieldMismatch({
+      context: input.context,
+      sourceOrigin: origin,
+      stableDetail: `missing:${checkedField.name}`,
     });
   }
 
@@ -718,6 +735,10 @@ function lowerAttempt(input: LowerExpressionInput, view: AttemptExpressionView):
     view,
     fallibleExpression,
     ...(alternativeExpression !== undefined ? { alternativeExpression } : {}),
+    ...(input.expectedType !== undefined ? { expectedType: input.expectedType } : {}),
+    ...(input.expectedResourceKind !== undefined
+      ? { expectedResourceKind: input.expectedResourceKind }
+      : {}),
     context: input.context,
     contracts,
   });

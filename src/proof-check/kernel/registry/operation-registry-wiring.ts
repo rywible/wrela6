@@ -27,7 +27,10 @@ export type {
   BuildProofCheckOperationTransferRegistryInput,
   ProofCheckPlaceResolver,
 } from "./transition-helpers";
-export { createProofCheckPlaceResolver } from "./transition-helpers";
+export {
+  createProofCheckPlaceResolver,
+  createProofCheckPlaceResolverForFunction,
+} from "./transition-helpers";
 
 export function handleFunctionEntry(input: {
   readonly transition: ProofCheckTransition;

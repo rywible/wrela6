@@ -363,6 +363,8 @@ function lowerMachineInstruction(
         stableKey,
         opcode,
         operands: [{ kind: "register", register: target }],
+        fixedRegisterUses: context.callBoundary?.argumentRegisters,
+        fixedRegisterDefs: context.callBoundary?.resultRegisters,
         provenanceSource: originStableKey(instruction.origin),
       },
     };

@@ -96,6 +96,19 @@ export function uefiLoweringRuleToAArch64FirmwarePlatformCallLowering(input: {
       }
       return undefined;
     }
+    case "constant-status":
+      return Object.freeze({
+        kind: "constant-status" as const,
+        primitiveId: input.primitiveId,
+        operationKey: input.rule.operationKey,
+        value: input.rule.value,
+      });
+    case "zero-runtime":
+      return Object.freeze({
+        kind: "zero-runtime" as const,
+        primitiveId: input.primitiveId,
+        operationKey: input.rule.operationKey,
+      });
   }
 }
 

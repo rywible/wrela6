@@ -667,6 +667,95 @@ function runIfLoweringSourceTest(
   });
 }
 
+function runControlFlowLoweringSourceTest(
+  input: LowerProofMirIfStatementForTestInput,
+): IfLoweringTestResult {
+  const functionInstanceId = input.functionInstanceId ?? monoInstanceId("fn:if-test");
+  const bindings = collectIfLowererBindings(functionInstanceId, input.scalarLocals);
+  const parsed = parseIfLowererSource({
+    functionInstanceId,
+    bindings,
+    source: input.source,
+  });
+  const body: MonoBlock = {
+    statements: [...parsed.preamble, parsed.ifStatement, ...parsed.postamble],
+    sourceOrigin: "source:function:body",
+  };
+
+  const contextResult = buildIfLoweringTestContext({
+    functionInstanceId,
+    locals: bindings.locals,
+    body,
+  });
+  if (contextResult.kind === "error") {
+    return { kind: "error", diagnostics: contextResult.diagnostics };
+  }
+
+  const { context, entryBlockKey, expressionLowerer, statementLowerer, terminalLowerer } =
+    contextResult.value;
+  const currentBlockRef = { blockKey: entryBlockKey };
+  const continuationBlockRef: { blockKey?: ProofMirCanonicalKey } = {};
+  const controlFlowLowerer = createProofMirControlFlowLowerer({
+    expression: expressionLowerer,
+    statement: statementLowerer,
+    terminal: terminalLowerer,
+    currentBlockRef,
+    continuationBlockRef,
+  });
+
+  let currentBlockKey = entryBlockKey;
+
+  for (const statement of parsed.preamble) {
+    const lowered = statementLowerer.lowerStatement({
+      context,
+      statement,
+      blockKey: currentBlockKey,
+    });
+    if (lowered.kind === "error") {
+      return { kind: "error", diagnostics: lowered.diagnostics };
+    }
+  }
+
+  const loweredIf = controlFlowLowerer.lowerControlFlowStatement({
+    context,
+    statement: parsed.ifStatement,
+    blockKey: currentBlockKey,
+  });
+  if (loweredIf.kind === "error") {
+    return { kind: "error", diagnostics: loweredIf.diagnostics };
+  }
+  currentBlockKey = currentBlockRef.blockKey ?? currentBlockKey;
+
+  for (const statement of parsed.postamble) {
+    if (statement.kind.kind === "return") {
+      const lowered = terminalLowerer.lowerReturn({
+        context,
+        expression: statement.kind.expression,
+        blockKey: currentBlockKey,
+        terminal: false,
+      });
+      if (lowered.kind === "error") {
+        return { kind: "error", diagnostics: lowered.diagnostics };
+      }
+      continue;
+    }
+
+    const lowered = statementLowerer.lowerStatement({
+      context,
+      statement,
+      blockKey: currentBlockKey,
+    });
+    if (lowered.kind === "error") {
+      return { kind: "error", diagnostics: lowered.diagnostics };
+    }
+  }
+
+  return buildIfLoweringTestSuccess({
+    context,
+    continuationBlockKey: continuationBlockRef.blockKey ?? currentBlockKey,
+  });
+}
+
 export function lowerProofMirIfStatementForTest(
   input: LowerProofMirIfStatementForTestInput,
 ): IfLoweringTestResult {
@@ -676,5 +765,5 @@ export function lowerProofMirIfStatementForTest(
 export function lowerProofMirControlFlowForTest(
   input: LowerProofMirIfStatementForTestInput,
 ): IfLoweringTestResult {
-  return runIfLoweringSourceTest(input);
+  return runControlFlowLoweringSourceTest(input);
 }

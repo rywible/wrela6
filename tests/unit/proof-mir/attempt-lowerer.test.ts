@@ -8,6 +8,7 @@ import type { ProofMirExpressionLowerer } from "../../../src/proof-mir/lower/low
 import {
   attemptWithBranchyFallibleExpressionFixture,
   lowerProofMirAttemptForTest,
+  lowerProofMirAttemptValueForTest,
 } from "../../support/proof-mir/lower-harness/attempt-lowerer-harness";
 
 const functionInstanceId = monoInstanceId("fn:main");
@@ -281,6 +282,50 @@ describe("ProofMirAttemptLowerer", () => {
       "consumePlace",
     ]);
     expect(lowered.errorEdge?.effects.map((effect) => effect.kind)).toEqual(["consumePlace"]);
+  });
+
+  test("attempt value lowering rejoins success with a value and returns mapped error alternative", () => {
+    const inputPlace = monoInputPlace(2);
+    const alternativeExpression = literalExpression(42);
+    const expressionLowerer: ProofMirExpressionLowerer = {
+      lowerExpression(input) {
+        if (input.expression === alternativeExpression) {
+          return {
+            kind: "ok",
+            value: { kind: "value", value: proofMirCanonicalKey("test:attempt:alternative:42") },
+          };
+        }
+        return {
+          kind: "ok",
+          value: { kind: "value", value: proofMirCanonicalKey("test:attempt:fallible:42") },
+        };
+      },
+      lowerExpressionAsPlace: () => ({
+        kind: "error",
+        diagnostics: [],
+      }),
+    };
+
+    const lowered = lowerProofMirAttemptValueForTest(
+      attemptFixture({
+        ordinal: 8,
+        fallibleExpression: literalExpression(8),
+        alternative: alternativeExpression,
+        declaredInputPlaces: [inputPlace],
+        expressionLowerer,
+      }),
+    );
+
+    expect(lowered.kind).toBe("ok");
+    if (lowered.kind !== "ok") return;
+    expect(lowered.successContinuation?.blockKey).toBeDefined();
+    expect(lowered.successValueKey).toBeDefined();
+    expect(lowered.successEdge?.effects.map((effect) => effect.kind)).toEqual([
+      "consumePlace",
+      "consumePlace",
+    ]);
+    expect(lowered.errorEdge?.effects.map((effect) => effect.kind)).toEqual(["consumePlace"]);
+    expect(lowered.errorTerminator?.kind).toBe("return");
   });
 
   test("attempt record does not enumerate producer calls", () => {

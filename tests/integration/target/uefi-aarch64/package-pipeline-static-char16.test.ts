@@ -36,10 +36,10 @@ describe("UEFI package pipeline static CHAR16 metadata", () => {
         .filter((function_) => function_.externalRoot?.reason === "imageEntry"),
     ).toHaveLength(1);
     expect(result.value.optIr.staticChar16Strings).toHaveLength(1);
-    expect(result.value.optIr.staticChar16Pointers.map((record) => record.valueKey)).toEqual([
-      "optir.value:3",
-      "optir.value:5",
-    ]);
+    expect(result.value.optIr.staticChar16Pointers).toHaveLength(1);
+    expect(result.value.optIr.staticChar16Pointers[0]?.pointer.stableKey).toBe(
+      result.value.optIr.staticChar16Strings[0]?.stableKey,
+    );
   });
 
   test("production OptIR adapter scopes utf16_static metadata across loaded source functions", () => {

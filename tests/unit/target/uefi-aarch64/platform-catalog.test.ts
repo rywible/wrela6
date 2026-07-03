@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  authenticateUefiAArch64TargetDriverSurface,
   authenticateUefiAArch64PlatformLowerings,
   canonicalUefiAArch64FirmwareTableSurface,
   canonicalUefiAArch64PlatformLowerings,
@@ -8,12 +9,14 @@ import {
   fingerprintUefiPlatformPrimitiveSpec,
   fingerprintUefiSemanticPlatformCatalog,
   FULL_IMAGE_VALIDATION_FEATURE,
+  productionUefiAArch64LayoutTargetSurface,
   UEFI_AARCH64_UTF16_STATIC_INTRINSIC,
   uefiAArch64PlatformPrimitiveNameCatalog,
 } from "../../../../src/target/uefi-aarch64";
-import { targetTypeId } from "../../../../src/semantic/ids";
+import { deviceSurfaceId, targetTypeId } from "../../../../src/semantic/ids";
 import { semanticTargetSurface } from "../../../../src/semantic/surface/platform-surface";
 import { semanticTargetSurfaceWithUefiPrimitives } from "../../../support/semantic/semantic-surface-fakes";
+import { uefiTargetSurfaceFixture } from "../../../support/target/uefi-aarch64/uefi-aarch64-fixtures";
 
 describe("UEFI platform primitive lowering payloads", () => {
   test("exports the UEFI primitive source-name catalog", () => {
@@ -26,6 +29,12 @@ describe("UEFI platform primitive lowering payloads", () => {
       ["exit_boot_services_with_fresh_map", "uefi.boot.exitBootServices"],
       ["output_string", "uefi.console.outputString"],
       ["set_watchdog_timer", "uefi.boot.setWatchdogTimer"],
+      ["uefi_bind_virtio_net", "uefi.source.bindVirtioNet"],
+      ["uefi_discover_virtio", "uefi.source.discoverVirtio"],
+      ["uefi_exit_boot_services", "uefi.source.exitBootServices"],
+      ["uefi_plan_machine", "uefi.source.planMachine"],
+      ["uefi_reserve_restricted_memory", "uefi.source.reserveRestrictedMemory"],
+      ["uefi_split_network_device", "uefi.source.splitNetworkDevice"],
       ["validation_fixture_packet_source", "uefi.validation.fixturePacketSource"],
     ]);
     expect(String(catalog.byName("output_string")?.primitiveId)).toBe("uefi.console.outputString");
@@ -63,6 +72,12 @@ describe("UEFI platform primitive lowering payloads", () => {
         "uefi.boot.stall",
         "uefi.console.outputString",
         "uefi.protocol.locate",
+        "uefi.source.bindVirtioNet",
+        "uefi.source.discoverVirtio",
+        "uefi.source.exitBootServices",
+        "uefi.source.planMachine",
+        "uefi.source.reserveRestrictedMemory",
+        "uefi.source.splitNetworkDevice",
         "uefi.validation.fixturePacketSource",
       ]);
     }
@@ -86,6 +101,44 @@ describe("UEFI platform primitive lowering payloads", () => {
     expect(lowering?.lowering).toEqual({
       kind: "inline",
       operationKey: "validation-fixture-packet-source",
+    });
+  });
+
+  test("catalogs source-level UEFI bringup primitives as private target status edges", () => {
+    const semanticTarget = canonicalUefiAArch64SemanticTargetSurface();
+    const primitive = semanticTarget.platformPrimitives.get(
+      "uefi.source.reserveRestrictedMemory" as never,
+    );
+    const lowering = canonicalUefiAArch64PlatformLowerings().find(
+      (candidate) => String(candidate.primitiveId) === "uefi.source.reserveRestrictedMemory",
+    );
+    const exitLowering = canonicalUefiAArch64PlatformLowerings().find(
+      (candidate) => String(candidate.primitiveId) === "uefi.source.exitBootServices",
+    );
+
+    expect(primitive?.signature.requiredModifiers).toEqual(["private", "platform"]);
+    expect(lowering?.lowering).toEqual({
+      kind: "constant-status",
+      operationKey: "uefi-source-reserve-restricted-memory",
+      value: 0n,
+    });
+    expect(exitLowering?.lowering).toMatchObject({
+      kind: "compiler-runtime-helper",
+      helperLinkageName: "__wrela_uefi_exit_boot_services_with_fresh_map",
+      result: { kind: "efi-status" },
+    });
+  });
+
+  test("layout target exposes source-visible network device as a zero-sized capability", () => {
+    const target = authenticateUefiAArch64TargetDriverSurface(uefiTargetSurfaceFixture());
+    expect(target.kind).toBe("ok");
+    if (target.kind !== "ok") return;
+    const layoutTarget = productionUefiAArch64LayoutTargetSurface(target.value);
+
+    expect(layoutTarget.deviceSurfaces.get(deviceSurfaceId("uefi.net0"))).toEqual({
+      deviceSurfaceId: deviceSurfaceId("uefi.net0"),
+      representation: { kind: "zeroSizedCapability" },
+      sourceOrigin: "uefi-aarch64:source-api:NetworkDevice",
     });
   });
 

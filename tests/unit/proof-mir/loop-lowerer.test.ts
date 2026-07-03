@@ -126,5 +126,8 @@ describe("ProofMirLoopLowerer", () => {
 
     expect(lowered.header.parameters).toHaveLength(0);
     expect(lowered.header.boundaryResources?.places.length).toBeGreaterThan(0);
+    const placeKeys = lowered.header.boundaryResources?.places.map(String) ?? [];
+    expect(placeKeys.some((placeKey) => placeKey.includes("root:local"))).toBe(true);
+    expect(placeKeys.some((placeKey) => placeKey.includes("local:packet"))).toBe(false);
   });
 });

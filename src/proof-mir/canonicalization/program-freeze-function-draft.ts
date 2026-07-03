@@ -92,6 +92,31 @@ import {
   brandIdByProofKey,
 } from "./program-freeze-shared";
 
+function scopeKindFromRole(role: string): ProofMirScope["kind"] {
+  if (role === "function") {
+    return "function";
+  }
+  if (role.startsWith("loop:")) {
+    return "loop";
+  }
+  if (role.startsWith("matchArm:")) {
+    return "matchArm";
+  }
+  if (role.startsWith("validationArm:")) {
+    return "validationArm";
+  }
+  if (role.startsWith("attemptArm:")) {
+    return "attemptArm";
+  }
+  if (role.startsWith("take:")) {
+    return "take";
+  }
+  if (role.startsWith("suspendResume:")) {
+    return "suspendResume";
+  }
+  return "block";
+}
+
 export interface FreezeFunctionDraftProgramLookups {
   readonly factLookup: ProofMirCanonicalKeyLookup<ProofMirFactId>;
   readonly layoutTermLookup: ProofMirCanonicalKeyLookup<ProofMirLayoutTermId>;
@@ -577,7 +602,7 @@ export function freezeFunctionDraft(input: {
     frozenScopes.push({
       scopeId,
       ...(parentScopeId !== undefined ? { parentScopeId } : {}),
-      kind: record.role === "function" ? "function" : "block",
+      kind: scopeKindFromRole(record.role),
       ownedLocals: [],
       openedObligations: [],
       openedSessionMembers: [],

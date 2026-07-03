@@ -279,9 +279,12 @@ function lowerTypeRecord(input: {
 }): HirTypeRecord | undefined {
   const item = input.context.index.item(input.itemId);
   if (item === undefined) return undefined;
+  const modulePathKey = input.context.index.module(input.moduleId)?.pathKey;
   return {
     typeId: input.typeId,
     itemId: input.itemId,
+    sourceName: item.name,
+    ...(modulePathKey !== undefined ? { sourceModulePathKey: modulePathKey } : {}),
     sourceKind: item.kind,
     declaredTypeParameters: declaredTypeParametersForItem({
       context: input.context,

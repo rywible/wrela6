@@ -439,6 +439,7 @@ function propagateStaticChar16PointersThroughSourceCallParameters(input: {
   readonly pointersByValueKey: Map<string, UefiAArch64StaticChar16StringPointer>;
 }): void {
   const entryParametersByFunction = sourceEntryParametersByFunction(input.program);
+  const pointersByValueKey = pointerSetsByValueKey(input.pointersByValueKey);
   let changed = true;
   while (changed) {
     changed = false;
@@ -458,18 +459,75 @@ function propagateStaticChar16PointersThroughSourceCallParameters(input: {
         if (argumentId === undefined || parameterId === undefined) {
           continue;
         }
-        const pointer = input.pointersByValueKey.get(`optir.value:${String(argumentId)}`);
-        if (pointer === undefined) {
+        const argumentPointers = pointersByValueKey.get(`optir.value:${String(argumentId)}`);
+        if (argumentPointers === undefined || argumentPointers.size === 0) {
           continue;
         }
         changed =
-          appendStaticChar16PointerRecord(input.staticChar16Pointers, input.pointersByValueKey, {
-            valueKey: `optir.value:${String(parameterId)}`,
-            pointer,
-          }) || changed;
+          unionPointerSet(
+            pointersByValueKey,
+            `optir.value:${String(parameterId)}`,
+            argumentPointers,
+          ) || changed;
       }
     }
   }
+
+  for (const [valueKey, pointers] of [...pointersByValueKey.entries()].sort((left, right) =>
+    compareCodeUnitStrings(left[0], right[0]),
+  )) {
+    if (pointers.size !== 1) {
+      continue;
+    }
+    const pointer = [...pointers.values()][0];
+    if (pointer === undefined) {
+      continue;
+    }
+    const existing = input.pointersByValueKey.get(valueKey);
+    if (existing !== undefined && !staticChar16PointersEqual(existing, pointer)) {
+      continue;
+    }
+    appendStaticChar16PointerRecord(input.staticChar16Pointers, input.pointersByValueKey, {
+      valueKey,
+      pointer,
+    });
+  }
+}
+
+function pointerSetsByValueKey(
+  pointersByValueKey: ReadonlyMap<string, UefiAArch64StaticChar16StringPointer>,
+): Map<string, Map<string, UefiAArch64StaticChar16StringPointer>> {
+  const output = new Map<string, Map<string, UefiAArch64StaticChar16StringPointer>>();
+  for (const [valueKey, pointer] of pointersByValueKey.entries()) {
+    output.set(valueKey, new Map([[staticChar16PointerStableKey(pointer), pointer]]));
+  }
+  return output;
+}
+
+function unionPointerSet(
+  pointersByValueKey: Map<string, Map<string, UefiAArch64StaticChar16StringPointer>>,
+  valueKey: string,
+  incomingPointers: ReadonlyMap<string, UefiAArch64StaticChar16StringPointer>,
+): boolean {
+  let pointerSet = pointersByValueKey.get(valueKey);
+  if (pointerSet === undefined) {
+    pointerSet = new Map<string, UefiAArch64StaticChar16StringPointer>();
+    pointersByValueKey.set(valueKey, pointerSet);
+  }
+
+  let changed = false;
+  for (const [pointerKey, pointer] of incomingPointers.entries()) {
+    if (pointerSet.has(pointerKey)) {
+      continue;
+    }
+    pointerSet.set(pointerKey, pointer);
+    changed = true;
+  }
+  return changed;
+}
+
+function staticChar16PointerStableKey(pointer: UefiAArch64StaticChar16StringPointer): string {
+  return `${pointer.stableKey}:${pointer.fingerprint}:${pointer.symbolName}`;
 }
 
 function sourceEntryParametersByFunction(

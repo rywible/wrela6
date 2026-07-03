@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import { constructOptIr } from "../../../src/opt-ir/public-api";
 import {
+  validConstructOptIrInputWithAttemptMatchForTest,
+  validConstructOptIrInputWithCallResultPlaceLoadForTest,
   validConstructOptIrInputForTest,
   validConstructOptIrInputWithReachableBlocksForTest,
   validConstructOptIrInputWithScalarStatementsForTest,
@@ -59,5 +61,59 @@ describe("checked MIR to OptIR construction", () => {
       kind: "return",
       values: [result.program.operations?.at(-1)?.resultIds[0]],
     });
+  });
+
+  test("aliases value-and-place call results for later loads", () => {
+    const result = constructOptIr(validConstructOptIrInputWithCallResultPlaceLoadForTest());
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") {
+      throw new Error(
+        `Expected call result place load to lower: ${result.diagnostics
+          .map((diagnostic) => diagnostic.stableDetail)
+          .join(",")}`,
+      );
+    }
+
+    expect(result.program.operations?.map((operation) => operation.kind)).toContain("sourceCall");
+    expect(
+      result.program.operations?.some((operation) => operation.kind === "aggregateExtract"),
+    ).toBe(false);
+  });
+
+  test("lowers checked MIR attempt matches into runtime status switches", () => {
+    const result = constructOptIr(validConstructOptIrInputWithAttemptMatchForTest());
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") {
+      throw new Error(
+        `Expected attempt match to lower: ${result.diagnostics
+          .map((diagnostic) => diagnostic.stableDetail)
+          .join(",")}`,
+      );
+    }
+
+    const function_ = result.program.functions.entries()[0];
+    const entry = function_?.blocks.find((block) =>
+      block.operations.some((operationId) =>
+        result.program.operations?.some(
+          (operation) => operation.operationId === operationId && operation.kind === "constant",
+        ),
+      ),
+    );
+    expect(entry?.terminator?.kind).toBe("switch");
+    if (entry?.terminator?.kind !== "switch") {
+      throw new Error("expected attempt entry block to end in a switch");
+    }
+    const successEdge = function_?.edges.entries().find((edge) => edge.kind === "attemptSuccess");
+    const errorEdge = function_?.edges.entries().find((edge) => edge.kind === "attemptError");
+    if (successEdge === undefined || errorEdge === undefined) {
+      throw new Error("expected attempt success and error edges");
+    }
+    expect(entry.terminator.cases).toEqual([{ label: "0", edge: successEdge.edgeId }]);
+    expect(entry.terminator.defaultEdge).toBe(errorEdge.edgeId);
+    expect(
+      result.program.operations?.some((operation) => operation.kind === "aggregateExtract"),
+    ).toBe(false);
   });
 });

@@ -67,6 +67,22 @@ describe("ProofMirValidationLowerer", () => {
     expect(lowered.terminator.validationId).toEqual(lowered.validation.validationId);
   });
 
+  test("validation match fallthrough arms rejoin a continuation block", () => {
+    const lowered = lowerProofMirValidationMatchForTest(validationLowererFixture());
+
+    expect(lowered.kind).toBe("ok");
+    if (lowered.kind !== "ok") return;
+
+    expect(lowered.continuation?.blockKey).toBeDefined();
+    expect(lowered.terminator.kind).toBe("matchValidation");
+    if (lowered.terminator.kind !== "matchValidation") return;
+    const continuationEdges = lowered.edgesTo(lowered.continuation!.blockKey);
+    expect(continuationEdges.map((edge) => edge.kind)).toEqual(["normal", "normal"]);
+    expect(continuationEdges.map((edge) => edge.fromBlockKey).sort()).toEqual(
+      [lowered.terminator.okTarget.block, lowered.terminator.errTarget.block].sort(),
+    );
+  });
+
   test("ok edge carries validation evidence facts", () => {
     const lowered = lowerProofMirValidationMatchForTest(validationLowererFixture());
 

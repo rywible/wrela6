@@ -295,13 +295,18 @@ function factMatchesByteProvenance(
 export function aarch64FactSpendingFromFacts(
   factIndex: AArch64BackendFactIndex,
 ): readonly AArch64FactSpendingRecord[] {
+  const recordsByStableKey = new Map<string, AArch64FactSpendingRecord>();
+  for (const fact of factIndex.allFacts()) {
+    const record = aarch64FactSpendingRecord({
+      stableKey: `fact-spent:${fact.family}:${fact.sourceStableKey}`,
+      authority: fact.family,
+      payload: fact.subjectKey,
+    });
+    recordsByStableKey.set(record.stableKey, recordsByStableKey.get(record.stableKey) ?? record);
+  }
   return Object.freeze(
-    factIndex.allFacts().map((fact) =>
-      aarch64FactSpendingRecord({
-        stableKey: `fact-spent:${fact.family}:${fact.sourceStableKey}`,
-        authority: fact.family,
-        payload: fact.subjectKey,
-      }),
+    [...recordsByStableKey.values()].sort((left, right) =>
+      compareCodeUnitStrings(left.stableKey, right.stableKey),
     ),
   );
 }

@@ -44,7 +44,7 @@ export interface UefiAArch64BootFunctionContractInput {
 }
 
 export interface UefiAArch64BootFunctionContract {
-  readonly sourceVisibleParameters: readonly [];
+  readonly sourceVisibleParameters: readonly UefiAArch64SourceVisibleParameter[];
   readonly resultShape: UefiAArch64BootResultShape;
 }
 
@@ -95,7 +95,7 @@ export function validateUefiAArch64BootFunctionContract(
 
   return uefiAArch64Ok({
     value: Object.freeze({
-      sourceVisibleParameters: Object.freeze([]) as readonly [],
+      sourceVisibleParameters: Object.freeze([...input.sourceVisibleParameters]),
       resultShape: input.resultShape as UefiAArch64BootResultShape,
     }),
     verification: passedVerification(ENTRY_CONTRACT_VERIFIER_KEY, BOOT_CONTRACT_RUN_KEY),
@@ -173,8 +173,8 @@ function bootFunctionContractDiagnostics(input: UefiAArch64BootFunctionContractI
     }
   }
 
-  if (input.sourceVisibleParameters.length > 0) {
-    details.push("entry-contract:source-visible-parameters-must-be-empty");
+  if (!isAllowedSourceVisibleParameterList(input.sourceVisibleParameters)) {
+    details.push("entry-contract:unsupported-source-visible-parameters");
   }
 
   if (!isAllowedBootResultShape(input.resultShape)) {
@@ -186,6 +186,27 @@ function bootFunctionContractDiagnostics(input: UefiAArch64BootFunctionContractI
 
 function isRawFirmwareParameter(typeKey: string): boolean {
   return typeKey === "EFI_HANDLE" || typeKey === "EFI_SYSTEM_TABLE*";
+}
+
+function isAllowedSourceVisibleParameterList(
+  parameters: readonly UefiAArch64SourceVisibleParameter[],
+): boolean {
+  if (parameters.length === 0) return true;
+  if (parameters.length !== 1) return false;
+  const parameter = parameters[0];
+  return (
+    parameter !== undefined &&
+    parameter.name === "firmware" &&
+    isCanonicalSourceFirmwareTypeKey(parameter.typeKey)
+  );
+}
+
+function isCanonicalSourceFirmwareTypeKey(typeKey: string): boolean {
+  return (
+    typeKey === "wrela_std.target.uefi.UefiFirmware" ||
+    typeKey === "wrela_abi.target.uefi.UefiFirmware" ||
+    /^source:\d+:\d+$/.test(typeKey)
+  );
 }
 
 function isAllowedBootResultShape(

@@ -118,6 +118,17 @@ function verifyOperationRuntimeShape(
       expectResultCount(1);
       break;
     case "memoryLoad":
+      if (operation.operandIds.length > 1) {
+        diagnostics.push(
+          arityDiagnostic({
+            operation,
+            context,
+            detail: `operand-shape:${operation.kind}:optional-address-base:${operation.operandIds.length}:0..1`,
+          }),
+        );
+      }
+      expectResultCount(1);
+      break;
     case "vectorLoad":
       expectOperands([], "none");
       expectResultCount(1);

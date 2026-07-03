@@ -123,4 +123,16 @@ describe("ProofMirIfLowerer", () => {
     if (lowered.kind !== "ok") return;
     expect(lowered.branch?.terminator?.kind).toBe("branch");
   });
+
+  test("control-flow lowerer registers owned continuation before fallthrough edges", () => {
+    const lowered = lowerProofMirControlFlowForTest({
+      source: ["let x = 0", "if flag:", "    x = 1", "return x"],
+      scalarLocals: ["flag", "x"],
+    });
+
+    expect(lowered.kind).toBe("ok");
+    if (lowered.kind !== "ok") return;
+    expect(lowered.continuation?.blockKey).toBeDefined();
+    expect(lowered.edgesTo(lowered.continuation!.blockKey).length).toBeGreaterThan(0);
+  });
 });

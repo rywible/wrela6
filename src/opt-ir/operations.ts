@@ -592,6 +592,7 @@ export function optIrMemoryLoadOperation(
   input: {
     readonly operationId: OptIrOperationId;
     readonly resultId: OptIrValueId;
+    readonly baseValueId?: OptIrValueId;
     readonly originId: OptIrOriginId;
   } & MemoryAccessInput,
 ): OptIrOperationConstructionResult {
@@ -605,7 +606,7 @@ export function optIrMemoryLoadOperation(
       {
         kind: "memoryLoad",
         operationId: input.operationId,
-        operandIds: [],
+        operandIds: input.baseValueId === undefined ? [] : [input.baseValueId],
         resultIds: [input.resultId],
         resultTypes: [input.valueType],
         originId: input.originId,

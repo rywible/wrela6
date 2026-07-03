@@ -71,6 +71,7 @@ export interface ProofCheckPlaceResolver {
   index: Map<string, ProofMirPlaceId>;
   placeShapeKeyByPlaceId: Map<string, string>;
   equivalentPlaceKeysByPlaceId: Map<string, readonly string[]>;
+  canonicalPlaceKeyByPlaceKey: Map<string, string>;
 }
 
 export interface ProofCheckRegistryContext {
@@ -93,11 +94,24 @@ export function createProofCheckPlaceResolver(mir?: ProofMirProgram): ProofCheck
     index: new Map<string, ProofMirPlaceId>(),
     placeShapeKeyByPlaceId: new Map<string, string>(),
     equivalentPlaceKeysByPlaceId: new Map<string, readonly string[]>(),
+    canonicalPlaceKeyByPlaceKey: new Map<string, string>(),
   };
   if (mir !== undefined) {
     for (const functionGraph of mir.functions.entries()) {
       registerProofMirFunctionPlaces(placeResolver, functionGraph);
     }
+  }
+  return placeResolver;
+}
+
+export function createProofCheckPlaceResolverForFunction(input: {
+  readonly mir: ProofMirProgram;
+  readonly functionInstanceId: MonoInstanceId;
+}): ProofCheckPlaceResolver {
+  const placeResolver = createProofCheckPlaceResolver();
+  const functionGraph = input.mir.functions.get(input.functionInstanceId);
+  if (functionGraph !== undefined) {
+    registerProofMirFunctionPlaces(placeResolver, functionGraph);
   }
   return placeResolver;
 }
@@ -124,19 +138,67 @@ export function proofMirPlaceShapeKey(input: {
   });
 }
 
+function canonicalAliasPriority(aliasKey: string): number {
+  if (aliasKey === "receiver") {
+    return 0;
+  }
+  if (/^parameter:\d+:.+/.test(aliasKey)) {
+    return 1;
+  }
+  if (/^argument:\d+:.+/.test(aliasKey)) {
+    return 2;
+  }
+  if (aliasKey === "result") {
+    return 3;
+  }
+  if (aliasKey.startsWith("proofMirPlace:")) {
+    return 4;
+  }
+  if (/^parameter:\d+$/.test(aliasKey)) {
+    return 5;
+  }
+  if (/^argument:\d+$/.test(aliasKey)) {
+    return 6;
+  }
+  return 7;
+}
+
+function canonicalAliasForPlaceShape(
+  aliases: Iterable<string>,
+  fallbackPlaceId: ProofMirPlaceId,
+): string {
+  return (
+    [...aliases].sort((left, right) => {
+      const priorityDelta = canonicalAliasPriority(left) - canonicalAliasPriority(right);
+      return priorityDelta === 0 ? compareCodeUnitStrings(left, right) : priorityDelta;
+    })[0] ?? placeKeyForMirPlace(fallbackPlaceId)
+  );
+}
+
 export function registerProofMirFunctionPlaces(
   placeResolver: ProofCheckPlaceResolver,
   functionGraph: ProofMirFunction,
 ): void {
+  const aliasesByPlaceIdKey = new Map<string, Set<string>>();
+  const addPlaceAlias = (placeId: ProofMirPlaceId, aliasKey: string): void => {
+    const key = resolverPlaceIdKey(functionGraph, placeId);
+    const aliases = aliasesByPlaceIdKey.get(key) ?? new Set<string>();
+    aliases.add(aliasKey);
+    aliasesByPlaceIdKey.set(key, aliases);
+  };
+
   for (const [placeKey, placeId] of buildPlaceKeyToMirPlaceIdIndex({
     functionGraph,
     functionInstanceId: functionGraph.functionInstanceId,
   }).entries()) {
     placeResolver.index.set(placeKey, placeId);
+    addPlaceAlias(placeId, placeKey);
   }
 
   const placeIdsByShapeKey = new Map<string, ProofMirPlaceId[]>();
+  const placeAliasesByShapeKey = new Map<string, Set<string>>();
   for (const place of functionGraph.places.entries()) {
+    addPlaceAlias(place.placeId, placeKeyForMirPlace(place.placeId));
     const shapeKey = proofMirPlaceShapeKey({ functionGraph, placeId: place.placeId });
     if (shapeKey === undefined) {
       continue;
@@ -146,12 +208,24 @@ export function registerProofMirFunctionPlaces(
       shapeKey,
     );
     placeIdsByShapeKey.set(shapeKey, [...(placeIdsByShapeKey.get(shapeKey) ?? []), place.placeId]);
+    const aliases = placeAliasesByShapeKey.get(shapeKey) ?? new Set<string>();
+    for (const aliasKey of aliasesByPlaceIdKey.get(
+      resolverPlaceIdKey(functionGraph, place.placeId),
+    ) ?? []) {
+      aliases.add(aliasKey);
+    }
+    placeAliasesByShapeKey.set(shapeKey, aliases);
   }
 
-  for (const placeIds of placeIdsByShapeKey.values()) {
-    const placeKeys = Object.freeze(
-      placeIds.map((placeId) => placeKeyForMirPlace(placeId)).sort(compareCodeUnitStrings),
+  for (const [shapeKey, placeIds] of placeIdsByShapeKey.entries()) {
+    const canonicalPlaceKey = canonicalAliasForPlaceShape(
+      placeAliasesByShapeKey.get(shapeKey) ?? [],
+      placeIds[0]!,
     );
+    const placeKeys = Object.freeze([canonicalPlaceKey]);
+    for (const aliasKey of placeAliasesByShapeKey.get(shapeKey) ?? []) {
+      placeResolver.canonicalPlaceKeyByPlaceKey.set(aliasKey, canonicalPlaceKey);
+    }
     for (const placeId of placeIds) {
       placeResolver.equivalentPlaceKeysByPlaceId.set(
         resolverPlaceIdKey(functionGraph, placeId),
@@ -161,6 +235,27 @@ export function registerProofMirFunctionPlaces(
   }
 }
 
+export function canonicalProofCheckPlaceKey(
+  placeKey: string,
+  placeResolver?: ProofCheckPlaceResolver,
+): string {
+  return placeResolver?.canonicalPlaceKeyByPlaceKey.get(placeKey) ?? placeKey;
+}
+
+export function registerProofCheckPlaceAlias(input: {
+  readonly placeResolver: ProofCheckPlaceResolver;
+  readonly aliasKey: string;
+  readonly placeId: ProofMirPlaceId;
+  readonly targetPlaceKey?: string;
+}): void {
+  input.placeResolver.index.set(input.aliasKey, input.placeId);
+  const targetPlaceKey = input.targetPlaceKey ?? placeKeyForMirPlace(input.placeId);
+  input.placeResolver.canonicalPlaceKeyByPlaceKey.set(
+    input.aliasKey,
+    canonicalProofCheckPlaceKey(targetPlaceKey, input.placeResolver),
+  );
+}
+
 export function equivalentProofMirPlaceKeys(input: {
   readonly functionGraph: ProofMirFunction | undefined;
   readonly placeId: ProofMirPlaceId;
@@ -168,7 +263,7 @@ export function equivalentProofMirPlaceKeys(input: {
 }): readonly string[] {
   const functionGraph = input.functionGraph;
   if (functionGraph === undefined) {
-    return [placeKeyForMirPlace(input.placeId)];
+    return [canonicalProofCheckPlaceKey(placeKeyForMirPlace(input.placeId), input.placeResolver)];
   }
   const resolverKey = resolverPlaceIdKey(functionGraph, input.placeId);
   const cached = input.placeResolver?.equivalentPlaceKeysByPlaceId.get(resolverKey);
@@ -179,23 +274,11 @@ export function equivalentProofMirPlaceKeys(input: {
     registerProofMirFunctionPlaces(input.placeResolver, functionGraph);
     return (
       input.placeResolver.equivalentPlaceKeysByPlaceId.get(resolverKey) ?? [
-        placeKeyForMirPlace(input.placeId),
+        canonicalProofCheckPlaceKey(placeKeyForMirPlace(input.placeId), input.placeResolver),
       ]
     );
   }
-  const shapeKey = proofMirPlaceShapeKey({ functionGraph, placeId: input.placeId });
-  if (shapeKey === undefined) {
-    return [placeKeyForMirPlace(input.placeId)];
-  }
-  return Object.freeze(
-    functionGraph.places
-      .entries()
-      .filter(
-        (place) => proofMirPlaceShapeKey({ functionGraph, placeId: place.placeId }) === shapeKey,
-      )
-      .map((place) => placeKeyForMirPlace(place.placeId))
-      .sort(compareCodeUnitStrings),
-  );
+  return [placeKeyForMirPlace(input.placeId)];
 }
 
 function parseProofMirPlaceIdPrefix(placeKey: string): ProofMirPlaceId | undefined {
@@ -251,24 +334,7 @@ export function placeStateForKey(
   placeKey: string,
   placeResolver?: ProofCheckPlaceResolver,
 ): CheckedPlaceState | undefined {
-  const direct = state.places.get(placeKey);
-  if (direct !== undefined) {
-    return direct;
-  }
-  const placeId = tryResolveProofMirPlaceIdForPlaceKey(placeKey, placeResolver);
-  if (placeId === undefined || placeResolver === undefined) {
-    return undefined;
-  }
-  for (const [aliasKey, aliasPlaceId] of placeResolver.index.entries()) {
-    if (String(aliasPlaceId) !== String(placeId)) {
-      continue;
-    }
-    const aliased = state.places.get(aliasKey);
-    if (aliased !== undefined) {
-      return aliased;
-    }
-  }
-  return undefined;
+  return state.places.get(canonicalProofCheckPlaceKey(placeKey, placeResolver));
 }
 
 export function structuredPlace(placeId: ProofMirPlaceId): ProofCheckStructuredPlace {

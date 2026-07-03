@@ -21,14 +21,12 @@ import type { MonoCheckedType } from "../../../src/mono/mono-hir";
 import type { CheckedMirProgram } from "../../../src/proof-check/model/checked-mir";
 import type { LayoutFactProgram } from "../../../src/layout/layout-program";
 import type { ProofMirFunction } from "../../../src/proof-mir/model/program";
-import type { ProofMirBlock, ProofMirValue } from "../../../src/proof-mir/model/graph";
 import { coreCheckedType } from "../../../src/semantic/surface/type-model";
 import { coreTypeId, fieldId, parameterId } from "../../../src/semantic/ids";
 import {
   proofMirBlockId,
   proofMirCallId,
   proofMirControlEdgeId,
-  proofMirExitEdgeId,
   proofMirFactId,
   proofMirLayoutTermBindingId,
   proofMirLayoutTermId,
@@ -37,13 +35,15 @@ import {
   proofMirRuntimeCallId,
   proofMirRuntimeOperationId,
   proofMirStatementId,
-  proofMirTerminatorId,
   proofMirValueId,
 } from "../../../src/proof-mir/ids";
+import { attemptMatchFunction, callResultPlaceLoadFunction } from "./attempt-construction-fixtures";
 import {
-  proofMirCanonicalKey,
-  type ProofMirCanonicalKey,
-} from "../../../src/proof-mir/canonicalization/canonical-keys";
+  proofMirRuntimeValue,
+  reachableTwoBlockFunction,
+  replaceFunctionBlock,
+  table,
+} from "./construction-fixture-rewriters";
 
 export function validConstructOptIrInputForTest(): ConstructOptIrInput {
   const handoff = checkedOptIrHandoffForTest({ includeSemanticInlinePolicies: true });
@@ -72,6 +72,18 @@ export function validConstructOptIrInputWithReachableBlocksForTest(): ConstructO
 export function validConstructOptIrInputWithScalarStatementsForTest(): ConstructOptIrInput {
   const input = validConstructOptIrInputForTest();
   const checkedMir = mapFirstFunction(input.handoff.checkedMir, scalarStatementFunction);
+  return { ...input, handoff: withCheckedMir(input.handoff, checkedMir) };
+}
+
+export function validConstructOptIrInputWithCallResultPlaceLoadForTest(): ConstructOptIrInput {
+  const input = validConstructOptIrInputForTest();
+  const checkedMir = mapFirstFunction(input.handoff.checkedMir, callResultPlaceLoadFunction);
+  return { ...input, handoff: withCheckedMir(input.handoff, checkedMir) };
+}
+
+export function validConstructOptIrInputWithAttemptMatchForTest(): ConstructOptIrInput {
+  const input = validConstructOptIrInputForTest();
+  const checkedMir = mapFirstFunction(input.handoff.checkedMir, attemptMatchFunction);
   return { ...input, handoff: withCheckedMir(input.handoff, checkedMir) };
 }
 
@@ -503,75 +515,6 @@ function withReversedFunctionTable(checkedMir: CheckedMirProgram): CheckedMirPro
   };
 }
 
-function reachableTwoBlockFunction(function_: ProofMirFunction): ProofMirFunction {
-  const entryBlock = function_.blocks.get(function_.entryBlockId) ?? function_.blocks.entries()[0];
-  if (entryBlock === undefined) {
-    return function_;
-  }
-
-  const returnBlockId = proofMirBlockId(9101);
-  const jumpEdgeId = proofMirControlEdgeId(9101);
-  const returnEdge =
-    function_.edges.entries().find((edge) => edge.kind === "returnExit") ??
-    function_.edges.entries()[0];
-  const returnEdgeId = returnEdge?.edgeId ?? proofMirControlEdgeId(9102);
-  const exitId = function_.exits[0]?.exitId ?? proofMirExitEdgeId(9101);
-  const origin = entryBlock.origin;
-  const rewrittenEntryBlock = {
-    ...entryBlock,
-    terminator: {
-      terminatorId: proofMirTerminatorId(9101),
-      kind: {
-        kind: "goto" as const,
-        target: { edgeId: jumpEdgeId, blockId: returnBlockId },
-      },
-      outgoingEdges: [jumpEdgeId],
-      origin,
-    },
-    incomingEdges: [],
-  };
-  const returnBlock = {
-    blockId: returnBlockId,
-    scopeId: entryBlock.scopeId,
-    parameters: [],
-    statements: [],
-    terminator: {
-      terminatorId: proofMirTerminatorId(9102),
-      kind: { kind: "return" as const, edgeId: returnEdgeId, exit: exitId },
-      outgoingEdges: [returnEdgeId],
-      origin,
-    },
-    incomingEdges: [jumpEdgeId],
-    origin,
-  };
-  const jumpEdge = {
-    edgeId: jumpEdgeId,
-    fromBlockId: entryBlock.blockId,
-    toBlockId: returnBlockId,
-    kind: "normal" as const,
-    arguments: [],
-    facts: [],
-    effects: [],
-    crossedScopes: [],
-    origin,
-  };
-  const rewrittenReturnEdge = {
-    ...(returnEdge ?? jumpEdge),
-    edgeId: returnEdgeId,
-    fromBlockId: returnBlockId,
-    toBlockId: undefined,
-    kind: "returnExit" as const,
-    arguments: [],
-    origin,
-  };
-
-  return {
-    ...function_,
-    blocks: table([rewrittenEntryBlock, returnBlock], (block) => block.blockId),
-    edges: table([jumpEdge, rewrittenReturnEdge], (edge) => edge.edgeId),
-  };
-}
-
 function scalarStatementFunction(function_: ProofMirFunction): ProofMirFunction {
   const entryBlock = function_.blocks.get(function_.entryBlockId) ?? function_.blocks.entries()[0];
   if (entryBlock === undefined) {
@@ -837,21 +780,6 @@ export function validConstructOptIrInputWithEntryParameterLoadForTest(): Constru
   return { ...input, handoff: withCheckedMir(input.handoff, checkedMir) };
 }
 
-function replaceFunctionBlock(
-  function_: ProofMirFunction,
-  replacementBlock: ProofMirBlock,
-): ProofMirFunction {
-  return {
-    ...function_,
-    blocks: table(
-      function_.blocks
-        .entries()
-        .map((block) => (block.blockId === replacementBlock.blockId ? replacementBlock : block)),
-      (block) => block.blockId,
-    ),
-  };
-}
-
 function entryParameterLoadFunction(function_: ProofMirFunction): ProofMirFunction {
   const entryBlock = function_.blocks.get(function_.entryBlockId) ?? function_.blocks.entries()[0];
   if (entryBlock === undefined) {
@@ -913,20 +841,6 @@ function entryParameterLoadFunction(function_: ProofMirFunction): ProofMirFuncti
   };
 }
 
-function proofMirRuntimeValue(
-  valueId: ReturnType<typeof proofMirValueId>,
-  type: MonoCheckedType,
-  origin: ProofMirValue["origin"],
-): ProofMirValue {
-  return {
-    valueId,
-    type,
-    resourceKind: "Copy" as never,
-    representation: { kind: "runtime" },
-    origin,
-  };
-}
-
 function mapFirstFunction(
   checkedMir: CheckedMirProgram,
   mapper: (function_: ProofMirFunction) => ProofMirFunction,
@@ -947,26 +861,6 @@ function mapFirstFunction(
         (function_) => function_.functionInstanceId,
       ),
     },
-  };
-}
-
-function table<LookupId, Entry>(
-  entries: readonly Entry[],
-  idOf: (entry: Entry) => LookupId,
-): {
-  readonly get: (lookupId: LookupId) => Entry | undefined;
-  readonly has: (lookupId: LookupId) => boolean;
-  readonly keyOf: (entry: Entry) => ProofMirCanonicalKey;
-  readonly lookupKeyOf: (lookupId: LookupId) => ProofMirCanonicalKey;
-  readonly entries: () => readonly Entry[];
-} {
-  const byId = new Map(entries.map((entry) => [idOf(entry), entry] as const));
-  return {
-    get: (lookupId) => byId.get(lookupId),
-    has: (lookupId) => byId.has(lookupId),
-    keyOf: (entry) => proofMirCanonicalKey(String(idOf(entry))),
-    lookupKeyOf: (lookupId) => proofMirCanonicalKey(String(lookupId)),
-    entries: () => entries.slice(),
   };
 }
 

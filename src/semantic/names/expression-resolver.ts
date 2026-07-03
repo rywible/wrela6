@@ -28,6 +28,7 @@ import {
   typeParameterCandidate,
 } from "./scope";
 import type { ScopeCandidate } from "./scope";
+import { buildMemberFunctionScope, findMemberFunctionItem } from "./member-function-scope";
 import type { NameResolutionDiagnostic, NameReferenceKind } from "./diagnostics";
 import * as DiagnosticsModule from "./diagnostics";
 import { resolveTypeReference, type ModuleResolutionContext } from "./type-reference-resolver";
@@ -159,9 +160,34 @@ function walkDeclaration(
   if (decl instanceof FunctionDeclarationView) {
     walkFunction(decl, topItem, context);
   } else if (hasMemberFunctions(decl)) {
-    for (const memFunc of decl.memberFunctions()) {
-      walkFunction(memFunc, topItem, context);
-    }
+    walkMemberFunctions(decl.memberFunctions(), topItem, context);
+  }
+}
+
+function walkMemberFunctions(
+  memberFunctions: readonly FunctionDeclarationView[],
+  ownerItem: ItemRecord | undefined,
+  context: ResolutionWalkContext,
+): void {
+  const memberFunctionScope =
+    ownerItem === undefined
+      ? undefined
+      : buildMemberFunctionScope({ index: context.index, ownerItem });
+  const memberContext =
+    memberFunctionScope === undefined
+      ? context
+      : { ...context, scope: chainScope(memberFunctionScope, context.scope) };
+
+  for (const memberFunction of memberFunctions) {
+    const functionItem =
+      ownerItem === undefined
+        ? undefined
+        : findMemberFunctionItem({
+            index: context.index,
+            ownerItem,
+            functionView: memberFunction,
+          });
+    walkFunction(memberFunction, functionItem ?? ownerItem, memberContext);
   }
 }
 

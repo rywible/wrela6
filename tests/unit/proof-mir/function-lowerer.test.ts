@@ -62,6 +62,10 @@ function completeRegistryInput(overrides?: {
     } satisfies ProofMirValidationLowerer,
     attempt: {
       lowerAttempt: () => ({ kind: "ok" as const, value: undefined }),
+      lowerAttemptValue: () => ({
+        kind: "ok" as const,
+        value: { blockKey: "" as never, operand: { kind: "value" as const, value: 0 as never } },
+      }),
     } satisfies ProofMirAttemptLowerer,
     take: {
       lowerTake: () => ({ kind: "ok" as const, value: undefined }),

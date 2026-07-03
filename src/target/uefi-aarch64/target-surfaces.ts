@@ -21,6 +21,8 @@ import {
   type OptIrTargetSurface,
 } from "../../opt-ir";
 import { optIrUnsignedIntegerType } from "../../opt-ir/types";
+import type { TypeId } from "../../semantic/ids";
+import type { CheckedType } from "../../semantic/surface/type-model";
 import type { ProofAuthorityFingerprint } from "../../shared/proof-authority-types";
 import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
 import { stableDigestHex } from "../../shared/stable-json";
@@ -146,9 +148,15 @@ export function authenticateUefiAArch64PeCoffWriterTargetForLinkedPolicy(input: 
   });
 }
 
+export interface UefiAArch64OptIrTargetSurfaceOptions {
+  readonly sourceApiResultConstructorTypeId?: TypeId;
+}
+
 export function productionUefiAArch64OptIrTargetSurface(
   target: UefiAArch64TargetDriverSurface,
+  options: UefiAArch64OptIrTargetSurfaceOptions = {},
 ): OptIrTargetSurface {
+  const sourceApiResultConstructorTypeId = options.sourceApiResultConstructorTypeId;
   const platformEffects = optIrEffectCatalog(
     "platform",
     target,
@@ -185,6 +193,16 @@ export function productionUefiAArch64OptIrTargetSurface(
       aggregatePassing: "targetDefined" as const,
       returnValue: "targetDefined" as const,
     }),
+    ...(sourceApiResultConstructorTypeId === undefined
+      ? {}
+      : {
+          sourceTypeAbi: Object.freeze({
+            lowerType: (type: CheckedType) =>
+              isSourceApiResultType(type, sourceApiResultConstructorTypeId)
+                ? optIrUnsignedIntegerType(64)
+                : undefined,
+          }),
+        }),
     platformEffects,
     runtimeEffects,
     vector: Object.freeze({
@@ -275,11 +293,24 @@ function optIrEffectCatalog(
 }
 
 function optIrPlatformEffectRequirements(
-  loweringKind: "firmware-call" | "compiler-runtime-helper" | "inline",
+  loweringKind:
+    | "firmware-call"
+    | "compiler-runtime-helper"
+    | "constant-status"
+    | "zero-runtime"
+    | "inline",
   primitiveId: string,
 ): readonly OptIrEffectRequirement[] {
-  if (loweringKind === "inline") return Object.freeze([]);
+  if (loweringKind === "inline" || loweringKind === "zero-runtime") return Object.freeze([]);
   return Object.freeze([{ mode: "orderedEffectToken", tokenKey: `uefi-platform:${primitiveId}` }]);
+}
+
+function isSourceApiResultType(type: CheckedType, resultConstructorTypeId: TypeId): boolean {
+  return (
+    type.kind === "applied" &&
+    type.constructor.kind === "source" &&
+    type.constructor.typeId === resultConstructorTypeId
+  );
 }
 
 function optIrRuntimeEffectRequirements(

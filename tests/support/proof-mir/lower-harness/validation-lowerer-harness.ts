@@ -17,6 +17,8 @@ export type ValidationMatchLoweringTestResult =
       readonly terminator: DraftGraphTerminator;
       readonly okEdge: DraftGraphEdgeView;
       readonly errEdge: DraftGraphEdgeView;
+      readonly continuation?: { readonly blockKey: ProofMirCanonicalKey };
+      edgesTo(blockKey: ProofMirCanonicalKey): readonly DraftGraphEdgeView[];
     }
   | { readonly kind: "error"; readonly diagnostics: readonly ProofMirDiagnostic[] };
 
@@ -82,6 +84,27 @@ export function lowerProofMirValidationMatchForTest(fixture: {
     };
   }
 
+  function edgesTo(blockKey: ProofMirCanonicalKey): readonly DraftGraphEdgeView[] {
+    return fixture.context.graph
+      .functionDraft()
+      .controlEdges.entries()
+      .map((entry) => fixture.context.graph.edge(entry.key))
+      .filter((edge) => edge.toBlockKey === blockKey)
+      .sort((left, right) => String(left.key).localeCompare(String(right.key)));
+  }
+
+  const armBlockKeys = [terminator.okTarget.block, terminator.errTarget.block];
+  const continuationEdge = fixture.context.graph
+    .functionDraft()
+    .controlEdges.entries()
+    .map((entry) => fixture.context.graph.edge(entry.key))
+    .find(
+      (edge) =>
+        edge.kind === "normal" &&
+        armBlockKeys.includes(edge.fromBlockKey) &&
+        edge.toBlockKey !== undefined,
+    );
+
   return {
     kind: "ok",
     validation: fixture.validation,
@@ -89,6 +112,10 @@ export function lowerProofMirValidationMatchForTest(fixture: {
     terminator,
     okEdge: fixture.context.graph.edge(terminator.okTarget.edge),
     errEdge: fixture.context.graph.edge(terminator.errTarget.edge),
+    ...(continuationEdge?.toBlockKey === undefined
+      ? {}
+      : { continuation: { blockKey: continuationEdge.toBlockKey } }),
+    edgesTo,
   };
 }
 

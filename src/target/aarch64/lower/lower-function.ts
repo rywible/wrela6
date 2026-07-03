@@ -52,6 +52,7 @@ import {
   type AArch64VectorPolicyDecision,
 } from "./operation-materialization";
 import type { AArch64LoweringSelectionRecord, AArch64LoweringState } from "./pipeline-stages";
+import { operationMayMaterializeAArch64MachineCall } from "./operation-call-shape";
 import {
   aarch64RegionMemoryTypeForOptIrRegion,
   resolveAArch64RegionAddressBasisForState,
@@ -386,21 +387,6 @@ export function lowerAArch64FunctionShells(
   };
 }
 
-function isCallOperation(
-  operation: OptIrOperation | undefined,
-): operation is Extract<
-  OptIrOperation,
-  { readonly kind: "sourceCall" | "runtimeCall" | "platformCall" | "intrinsicCall" }
-> {
-  return (
-    operation !== undefined &&
-    (operation.kind === "sourceCall" ||
-      operation.kind === "runtimeCall" ||
-      operation.kind === "platformCall" ||
-      operation.kind === "intrinsicCall")
-  );
-}
-
 function globalSymbolsForFunctions(
   functions: readonly AArch64MachineFunction[],
 ): ReturnType<typeof aarch64SymbolReference>[] {
@@ -540,7 +526,7 @@ function frameObjectsForAbi(input: {
         return outgoingSize;
       }
       outgoingArgSize = Math.max(outgoingArgSize, outgoingSize.size);
-      if (isCallOperation(operation)) {
+      if (operationMayMaterializeAArch64MachineCall(operation, input.materializationContext)) {
         const clobbers = classifyAArch64CallClobbers({
           abi: input.abi,
           callId: operation.callId,
@@ -732,7 +718,7 @@ function outgoingArgAreaSize(
 ):
   | { readonly kind: "ok"; readonly size: number }
   | { readonly kind: "error"; readonly stableDetail: string } {
-  if (!isCallOperation(operation)) {
+  if (!operationMayMaterializeAArch64MachineCall(operation, materializationContext)) {
     return { kind: "ok", size: 0 };
   }
   const hiddenContextKeys =

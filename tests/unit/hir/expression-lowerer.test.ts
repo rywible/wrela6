@@ -155,6 +155,25 @@ test("object literal lowers checked fields by FieldId", () => {
   expect(expression.kind.fields[0]).toMatchObject({ name: "value", fieldId });
 });
 
+test("object literal emits HIR_OBJECT_FIELD_TYPE_MISMATCH for missing checked fields", () => {
+  const context = createHirUnitContext(
+    "class Binding:\n    net0: NetworkDevice\nedge class NetworkDevice:\nfn make() -> Binding:\n    { }\n",
+  );
+  const bindingType = context.program.types.entries()[0]!.type;
+  lowerExpression({
+    view: firstObjectLiteralView(context),
+    expectedType: bindingType,
+    context,
+  });
+
+  expect(context.diagnostics.entries()).toContainEqual(
+    expect.objectContaining({
+      code: "HIR_OBJECT_FIELD_TYPE_MISMATCH",
+      stableDetail: "missing:net0",
+    }),
+  );
+});
+
 test("object literal accepts applied source expected type", () => {
   const context = createHirUnitContext("class Box[T]:\nfn make() -> Box[u32]:\n    {}\n");
   const boxType = context.program.functions.entries()[0]!.returnType;

@@ -12,7 +12,6 @@ import { proofMirSsaLocalKey } from "../domains/graph-ssa";
 import { draftLocalKey } from "../draft/draft-keys";
 import type {
   DraftProofMirGraphStatementSnapshot,
-  DraftProofMirObjectFieldValue,
   DraftProofMirStatementKind,
 } from "../draft/draft-statement";
 import { type ProofMirPlaceId, type ProofMirValueId } from "../ids";
@@ -26,6 +25,7 @@ import {
 } from "./lowering-context";
 import { syncLoweredPlaceToFunctionDraft } from "./lowering-place-sync";
 import { shouldLowerMemberAsValidatedBufferRead } from "../domains/validated-buffer-read-detection";
+import { objectConstructFields, recordObjectFieldConsumes } from "./object-construction-lowerer";
 
 export type { ProofMirLoweringResult };
 
@@ -89,6 +89,21 @@ function createExpressionLowererImpl(implInput: {
 
   function placeOperand(placeKey: ProofMirCanonicalKey): ProofMirDraftPlaceOperand {
     return { kind: "place", place: placeKey };
+  }
+
+  function loadedValueOperand(input: {
+    readonly valueKey: ProofMirCanonicalKey;
+    readonly placeKey: ProofMirCanonicalKey;
+    readonly expression: MonoExpression;
+  }): ProofMirDraftOperand {
+    if (input.expression.resourceKind === "Copy" || input.expression.resourceKind === "Never") {
+      return valueOperand(input.valueKey);
+    }
+    return {
+      kind: "valueAndPlace",
+      value: input.valueKey,
+      place: input.placeKey,
+    };
   }
 
   function readScalarLocal(readInput: {
@@ -158,7 +173,13 @@ function createExpressionLowererImpl(implInput: {
       loadInput.loweringInput,
       loadInput.expression,
     );
-    return loweringOk(valueOperand(resultKey));
+    return loweringOk(
+      loadedValueOperand({
+        valueKey: resultKey,
+        placeKey: loadInput.placeKey,
+        expression: loadInput.expression,
+      }),
+    );
   }
 
   function lowerLiteral(
@@ -705,6 +726,13 @@ function createExpressionLowererImpl(implInput: {
         (entry) => entry.operand.kind === "place" || entry.operand.kind === "valueAndPlace",
       );
     const originKey = originForExpression(loweringInput.context, expression);
+    const constructFields = objectConstructFields({
+      loweringInput,
+      fieldValues,
+    });
+    if (constructFields.kind !== "ok") {
+      return constructFields;
+    }
     if (!needsPlace) {
       const valueKey = loweringInput.context.graph.createValue({
         role: `object:copy-scalar:${instantiatedHirIdKey(expression.expressionId)}`,
@@ -712,34 +740,21 @@ function createExpressionLowererImpl(implInput: {
         type: expression.type,
         resourceKind: expression.resourceKind,
       });
-      const constructFields: DraftProofMirObjectFieldValue[] = [];
-      for (const entry of fieldValues) {
-        if (entry.operand.kind !== "value") {
-          return loweringError([
-            invalidValueResourceKindDiagnostic({
-              functionInstanceId: loweringInput.context.functionInstanceId,
-              stableDetail: `object:field:${entry.field.name}`,
-              sourceOrigin: entry.field.sourceOrigin,
-            }),
-          ]);
-        }
-        constructFields.push({
-          ...(entry.field.fieldId === undefined ? {} : { fieldId: entry.field.fieldId }),
-          name: entry.field.name,
-          valueKey: entry.operand.value,
-          originKey: originForExpression(loweringInput.context, entry.field.value),
-        });
-      }
       recordStatement(
         {
           kind: "constructObject",
           resultKey: valueKey,
-          fields: constructFields,
+          fields: constructFields.value,
         },
         originKey,
         loweringInput,
         expression,
       );
+      recordObjectFieldConsumes({
+        loweringInput,
+        fieldValues,
+        recordStatement,
+      });
       return loweringOk(valueOperand(valueKey));
     }
     const aggregateValueKey = loweringInput.context.graph.createValue({
@@ -747,6 +762,21 @@ function createExpressionLowererImpl(implInput: {
       origin: originKey,
       type: expression.type,
       resourceKind: expression.resourceKind,
+    });
+    recordStatement(
+      {
+        kind: "constructObject",
+        resultKey: aggregateValueKey,
+        fields: constructFields.value,
+      },
+      originKey,
+      loweringInput,
+      expression,
+    );
+    recordObjectFieldConsumes({
+      loweringInput,
+      fieldValues,
+      recordStatement,
     });
     const placeKey =
       expression.place === undefined
@@ -764,20 +794,16 @@ function createExpressionLowererImpl(implInput: {
     if (placeKey.kind !== "ok") {
       return placeKey;
     }
-    for (const entry of fieldValues) {
-      if (entry.operand.kind === "value") {
-        recordStatement(
-          {
-            kind: "store",
-            placeKey: placeKey.value,
-            valueKey: entry.operand.value,
-          },
-          originKey,
-          loweringInput,
-          expression,
-        );
-      }
-    }
+    recordStatement(
+      {
+        kind: "store",
+        placeKey: placeKey.value,
+        valueKey: aggregateValueKey,
+      },
+      originKey,
+      loweringInput,
+      expression,
+    );
     return loweringOk({
       kind: "valueAndPlace",
       value: aggregateValueKey,

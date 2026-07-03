@@ -140,6 +140,10 @@ function completeRegistryInput(overrides?: { readonly statement?: ProofMirStatem
     },
     attempt: {
       lowerAttempt: () => ({ kind: "ok" as const, value: undefined }),
+      lowerAttemptValue: () => ({
+        kind: "ok" as const,
+        value: { blockKey: "" as never, operand: { kind: "value" as const, value: 0 as never } },
+      }),
     },
     take: {
       lowerTake: () => ({ kind: "ok" as const, value: undefined }),

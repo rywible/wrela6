@@ -9,7 +9,13 @@ import {
   optIrCodeSizeDelta,
   reserveInlineExpansionBudget,
 } from "../policy/expansion-budget";
-import type { OptIrFunctionId, OptIrOperationId, OptIrValueId } from "../ids";
+import {
+  optIrCallId,
+  optIrOperationId,
+  type OptIrFunctionId,
+  type OptIrOperationId,
+  type OptIrValueId,
+} from "../ids";
 import type { OptIrOperation } from "../operations";
 import { optIrFunctionTable, type OptIrFunction, type OptIrProgram } from "../program";
 import {
@@ -93,6 +99,7 @@ export function runWholeProgramInlining(
   let currentProgram = input.program;
   let currentOperations = input.operations;
   const worklist: OptIrWholeProgramInliningWorkItem[] = [];
+  const inlinedCalleeKeys = new Set<string>();
 
   for (const candidate of inlineCandidates(input.program, input.operations, functionByInstance)) {
     const candidateKey = candidateKeyFor(candidate);
@@ -137,13 +144,19 @@ export function runWholeProgramInlining(
     ledger.commit(reservation.reservation);
     currentOperations = rewrite.operations;
     currentProgram = replaceFunction(currentProgram, rewrite.functionOutput);
+    inlinedCalleeKeys.add(String(callee.monoInstanceId));
     decisionLog = appendDecision(decisionLog, candidateKey, "accepted", "inline:accepted", "none");
     worklist.push(...workItemsFor(caller.functionId, candidateKey));
   }
+  const pruned = removeUnreferencedInlinedCallees({
+    program: currentProgram,
+    operations: currentOperations,
+    inlinedCalleeKeys,
+  });
 
   return {
-    program: currentProgram,
-    operations: Object.freeze([...currentOperations].sort(compareOperations)),
+    program: pruned.program,
+    operations: Object.freeze([...pruned.operations].sort(compareOperations)),
     decisionLog: decisionLog ?? { entries: () => [] },
     worklist: Object.freeze(worklist.sort(compareWorkItems)),
     remainingImageBudget: ledger.remaining({ kind: "image" }),
@@ -279,10 +292,18 @@ function inlineSourceCall(
     entryBlock,
     entryBlock.terminator.values,
   );
+  const operationSubstitution = buildOperationSubstitution({
+    callOperationId: callOperation.operationId,
+    calleeOperations: completeCalleeOperations,
+    operations,
+  });
   const clonedOperations = completeCalleeOperations.map((operation) =>
-    rewriteOptIrOperationValues(operation, {
-      valueFor: (valueId) => valueForSubstitution(substitution, valueId),
-    }),
+    rewriteOperationId(
+      rewriteOptIrOperationValues(operation, {
+        valueFor: (valueId) => valueForSubstitution(substitution, valueId),
+      }),
+      requireSubstitutedOperationId(operationSubstitution, operation.operationId),
+    ),
   );
   const nextOperationById = new Map(
     operations.map((operation) => [operation.operationId, operation]),
@@ -352,15 +373,58 @@ function valueForSubstitution(
   return substitution.get(valueId) ?? valueId;
 }
 
-function operationIsInlineSafe(operation: OptIrOperation): boolean {
-  return (
-    operation.kind !== "sourceCall" &&
-    operation.kind !== "runtimeCall" &&
-    operation.kind !== "platformCall" &&
-    operation.kind !== "intrinsicCall" &&
-    operation.effects.isRuntimePure &&
-    !operation.effects.hasTerminalEffects
+function buildOperationSubstitution(input: {
+  readonly callOperationId: OptIrOperationId;
+  readonly calleeOperations: readonly OptIrOperation[];
+  readonly operations: readonly OptIrOperation[];
+}): ReadonlyMap<OptIrOperationId, OptIrOperationId> {
+  let nextOperationId = optIrOperationId(
+    Math.max(0, ...input.operations.map((operation) => Number(operation.operationId))) + 1,
   );
+  const substitutions = new Map<OptIrOperationId, OptIrOperationId>();
+  input.calleeOperations.forEach((operation, index) => {
+    if (index === 0) {
+      substitutions.set(operation.operationId, input.callOperationId);
+      return;
+    }
+    substitutions.set(operation.operationId, nextOperationId);
+    nextOperationId = optIrOperationId(Number(nextOperationId) + 1);
+  });
+  return substitutions;
+}
+
+function requireSubstitutedOperationId(
+  substitution: ReadonlyMap<OptIrOperationId, OptIrOperationId>,
+  operationId: OptIrOperationId,
+): OptIrOperationId {
+  const substituted = substitution.get(operationId);
+  if (substituted === undefined) {
+    throw new RangeError(
+      `Missing whole-program inline operation clone for ${String(operationId)}.`,
+    );
+  }
+  return substituted;
+}
+
+function rewriteOperationId(
+  operation: OptIrOperation,
+  operationId: OptIrOperationId,
+): OptIrOperation {
+  return Object.freeze({
+    ...operation,
+    operationId,
+    ...("callId" in operation ? { callId: optIrCallId(Number(operationId)) } : {}),
+  });
+}
+
+function operationIsInlineSafe(operation: OptIrOperation): boolean {
+  if (operation.kind === "sourceCall" || operation.kind === "runtimeCall") {
+    return false;
+  }
+  if (operation.kind === "platformCall" || operation.kind === "intrinsicCall") {
+    return !operation.effects.hasTerminalEffects;
+  }
+  return operation.effects.isRuntimePure && !operation.effects.hasTerminalEffects;
 }
 
 function estimatedGrowth(
@@ -384,6 +448,56 @@ function replaceFunction(program: OptIrProgram, functionOutput: OptIrFunction): 
         .map((func) => (func.functionId === functionOutput.functionId ? functionOutput : func)),
     ),
   });
+}
+
+function removeUnreferencedInlinedCallees(input: {
+  readonly program: OptIrProgram;
+  readonly operations: readonly OptIrOperation[];
+  readonly inlinedCalleeKeys: ReadonlySet<string>;
+}): { readonly program: OptIrProgram; readonly operations: readonly OptIrOperation[] } {
+  if (input.inlinedCalleeKeys.size === 0) {
+    return { program: input.program, operations: input.operations };
+  }
+  const referencedCalleeKeys = new Set(
+    input.operations
+      .filter(isSourceCallOperation)
+      .map((operation) => String(operation.target.functionInstanceId)),
+  );
+  const removedOperationIds = new Set(
+    input.program.functions
+      .entries()
+      .filter(
+        (function_) =>
+          function_.externalRoot === undefined &&
+          input.inlinedCalleeKeys.has(String(function_.monoInstanceId)) &&
+          !referencedCalleeKeys.has(String(function_.monoInstanceId)),
+      )
+      .flatMap((function_) => function_.blocks.flatMap((block) => block.operations)),
+  );
+  if (removedOperationIds.size === 0) {
+    return { program: input.program, operations: input.operations };
+  }
+  return {
+    program: Object.freeze({
+      ...input.program,
+      functions: optIrFunctionTable(
+        input.program.functions
+          .entries()
+          .filter((function_) =>
+            function_.blocks.every((block) =>
+              block.operations.every((operationId) => !removedOperationIds.has(operationId)),
+            ),
+          ),
+      ),
+    }),
+    operations: Object.freeze(
+      input.operations.filter((operation) => !removedOperationIds.has(operation.operationId)),
+    ),
+  };
+}
+
+function isSourceCallOperation(operation: OptIrOperation): operation is SourceCallOperation {
+  return operation.kind === "sourceCall" && operation.target.kind === "source";
 }
 
 function appendDecision(

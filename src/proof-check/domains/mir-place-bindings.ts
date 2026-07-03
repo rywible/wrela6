@@ -33,6 +33,12 @@ function placeBinderForMirPlaceRoot(
     case "receiver":
       return { kind: "receiver" };
     case "parameter": {
+      if (
+        functionGraph.signature.receiver !== undefined &&
+        String(functionGraph.signature.receiver.parameterId) === String(root.parameterId)
+      ) {
+        return { kind: "receiver" };
+      }
       const index = functionGraph.signature.parameters.findIndex(
         (parameter) => String(parameter.parameterId) === String(root.parameterId),
       );

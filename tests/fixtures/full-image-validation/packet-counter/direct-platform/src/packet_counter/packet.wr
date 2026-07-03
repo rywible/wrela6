@@ -1,4 +1,4 @@
-use UefiStatus from packet_counter.uefi_status
+use BootError from wrela_abi.target.uefi.firmware
 
 class Validation[Ok, Err, Source]:
 
@@ -22,12 +22,12 @@ validated buffer CounterPacket:
             otherwise => PacketKind.ignored
 
     require:
-        source.len >= 2 else UefiStatus.bad_buffer_size
-        source.len <= max_frame_bytes else UefiStatus.bad_buffer_size
-        layout.fits else UefiStatus.bad_buffer_size
+        source.len >= 2 else BootError.PacketMalformed
+        source.len <= max_frame_bytes else BootError.PacketMalformed
+        layout.fits else BootError.PacketMalformed
 
 pub fn validate_counter_packet(
     source: Ptr,
     max_frame_bytes: usize,
-) -> Validation[CounterPacket, UefiStatus, Ptr]:
+) -> Validation[CounterPacket, BootError, Ptr]:
     return {}

@@ -164,6 +164,7 @@ export interface MirValidationOperationContext {
 
 export interface MirAttemptOperationContext {
   readonly attemptKey: string;
+  readonly pendingResultPlace: ProofCheckStructuredPlace;
   readonly declaredInputs: readonly ProofCheckStructuredPlace[];
 }
 
@@ -228,6 +229,7 @@ export function resolveAttemptContextForBlock(input: {
   }
   return {
     attemptKey: mirProofMetadataKey(attempt.attemptId),
+    pendingResultPlace: structuredPlaceForMirPlace(attempt.pendingResultPlace),
     declaredInputs: attempt.inputPlaces.map((place) => structuredPlaceForMirPlace(place)),
   };
 }

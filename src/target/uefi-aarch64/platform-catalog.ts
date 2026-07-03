@@ -46,6 +46,42 @@ import {
 
 export const FULL_IMAGE_VALIDATION_FEATURE = UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_FEATURE;
 
+export const UEFI_AARCH64_SOURCE_API_PLATFORM_PRIMITIVES = Object.freeze([
+  Object.freeze({
+    sourceName: "uefi_reserve_restricted_memory",
+    primitiveId: "uefi.source.reserveRestrictedMemory",
+    operationKey: "uefi-source-reserve-restricted-memory",
+  }),
+  Object.freeze({
+    sourceName: "uefi_discover_virtio",
+    primitiveId: "uefi.source.discoverVirtio",
+    operationKey: "uefi-source-discover-virtio",
+  }),
+  Object.freeze({
+    sourceName: "uefi_bind_virtio_net",
+    primitiveId: "uefi.source.bindVirtioNet",
+    operationKey: "uefi-source-bind-virtio-net",
+  }),
+  Object.freeze({
+    sourceName: "uefi_plan_machine",
+    primitiveId: "uefi.source.planMachine",
+    operationKey: "uefi-source-plan-machine",
+  }),
+  Object.freeze({
+    sourceName: "uefi_exit_boot_services",
+    primitiveId: "uefi.source.exitBootServices",
+    operationKey: "uefi-source-exit-boot-services",
+  }),
+  Object.freeze({
+    sourceName: "uefi_split_network_device",
+    primitiveId: "uefi.source.splitNetworkDevice",
+    operationKey: "uefi-source-split-network-device",
+  }),
+] as const);
+
+export type UefiAArch64SourceApiPrimitiveName =
+  (typeof UEFI_AARCH64_SOURCE_API_PLATFORM_PRIMITIVES)[number]["primitiveId"];
+
 export const UEFI_AARCH64_UTF16_STATIC_INTRINSIC = Object.freeze({
   sourceName: "utf16_static",
   intrinsicKey: "uefi.utf16_static",
@@ -120,6 +156,15 @@ export type UefiFirmwareLoweringRule =
   | {
       readonly kind: "inline";
       readonly operationKey: string;
+    }
+  | {
+      readonly kind: "constant-status";
+      readonly operationKey: string;
+      readonly value: bigint;
+    }
+  | {
+      readonly kind: "zero-runtime";
+      readonly operationKey: string;
     };
 
 export function uefiAArch64PlatformPrimitiveNameCatalog() {
@@ -140,6 +185,10 @@ export function uefiAArch64PlatformPrimitiveNameCatalog() {
       name: "validation_fixture_packet_source",
       primitiveId: platformPrimitiveId(UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID),
     },
+    ...UEFI_AARCH64_SOURCE_API_PLATFORM_PRIMITIVES.map((primitive) => ({
+      name: primitive.sourceName,
+      primitiveId: platformPrimitiveId(primitive.primitiveId),
+    })),
   ]);
 }
 
@@ -319,6 +368,10 @@ function freezeLoweringRule(lowering: UefiFirmwareLoweringRule): UefiFirmwareLow
       });
     case "inline":
       return Object.freeze({ ...lowering });
+    case "constant-status":
+      return Object.freeze({ ...lowering });
+    case "zero-runtime":
+      return Object.freeze({ ...lowering });
   }
 }
 
@@ -380,9 +433,14 @@ type CanonicalUefiPrimitiveName =
   | "uefi.boot.stall"
   | "uefi.boot.exit"
   | "uefi.protocol.locate"
+  | UefiAArch64SourceApiPrimitiveName
   | typeof UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID;
 
 function signatureForPrimitive(name: CanonicalUefiPrimitiveName): TargetFunctionSignature {
+  if (isSourceApiPrimitiveName(name)) {
+    return targetSignature([], "uefi.Ptr", Object.freeze(["private", "platform"]));
+  }
+
   switch (name) {
     case "uefi.console.outputString":
       return targetSignature([uefiParameter("uefi.Utf16Static")], "uefi.Status");
@@ -436,6 +494,7 @@ function signatureForPrimitive(name: CanonicalUefiPrimitiveName): TargetFunction
 function targetSignature(
   parameters: readonly TargetParameterSpec[],
   returnTypeKey: UefiSemanticTargetTypeKey,
+  requiredModifiers: readonly string[] = Object.freeze(["platform"]),
 ): TargetFunctionSignature {
   return Object.freeze({
     genericArity: 0,
@@ -443,7 +502,7 @@ function targetSignature(
     parameters: Object.freeze([...parameters]),
     returnType: targetCheckedType(targetTypeId(returnTypeKey)),
     returnKind: concreteKind("Copy"),
-    requiredModifiers: Object.freeze(["platform"]),
+    requiredModifiers: Object.freeze([...requiredModifiers]),
     forbiddenModifiers: Object.freeze([]),
   });
 }
@@ -537,7 +596,16 @@ const CANONICAL_UEFI_PLATFORM_LOWERING_RULES: readonly {
       operationKey: UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_OPERATION_KEY,
     }),
   }),
+  ...UEFI_AARCH64_SOURCE_API_PLATFORM_PRIMITIVES.map(sourceApiPrimitiveLowering),
 ]);
+
+function isSourceApiPrimitiveName(
+  name: CanonicalUefiPrimitiveName,
+): name is UefiAArch64SourceApiPrimitiveName {
+  return UEFI_AARCH64_SOURCE_API_PLATFORM_PRIMITIVES.some(
+    (primitive) => primitive.primitiveId === name,
+  );
+}
 
 function firmwareCall(
   primitiveId: CanonicalUefiPrimitiveName,
@@ -555,6 +623,38 @@ function firmwareCall(
       arguments: Object.freeze(argumentRules.map((argument) => Object.freeze(argument))),
       result: Object.freeze({ kind: "efi-status" as const }),
     }),
+  });
+}
+
+function sourceApiPrimitiveLowering(
+  primitive: (typeof UEFI_AARCH64_SOURCE_API_PLATFORM_PRIMITIVES)[number],
+): {
+  readonly primitiveId: UefiAArch64SourceApiPrimitiveName;
+  readonly lowering: UefiFirmwareLoweringRule;
+} {
+  if (primitive.primitiveId === "uefi.source.exitBootServices") {
+    return compilerRuntimeHelper(
+      primitive.primitiveId,
+      proofMirRuntimeOperationId(1006),
+      UEFI_AARCH64_EXIT_BOOT_SERVICES_WITH_FRESH_MAP_LINKAGE_NAME,
+      [{ kind: "image-handle" }, { kind: "system-table" }],
+      { kind: "efi-status" },
+    );
+  }
+  return Object.freeze({
+    primitiveId: primitive.primitiveId,
+    lowering: Object.freeze(
+      primitive.primitiveId === "uefi.source.splitNetworkDevice"
+        ? {
+            kind: "zero-runtime" as const,
+            operationKey: primitive.operationKey,
+          }
+        : {
+            kind: "constant-status" as const,
+            operationKey: primitive.operationKey,
+            value: 0n,
+          },
+    ),
   });
 }
 
@@ -595,7 +695,13 @@ function argumentDiagnostics(
   primitiveId: string,
   lowering: UefiFirmwareLoweringRule,
 ): readonly UefiAArch64TargetDiagnostic[] {
-  if (lowering.kind === "inline") return [];
+  if (
+    lowering.kind === "inline" ||
+    lowering.kind === "zero-runtime" ||
+    lowering.kind === "constant-status"
+  ) {
+    return [];
+  }
   const diagnostics: UefiAArch64TargetDiagnostic[] = [];
   for (const argument of lowering.arguments) {
     if (
@@ -641,14 +747,14 @@ function isStaticChar16PointerRequirement(
   );
 }
 
-function compilerRuntimeHelper(
-  primitiveId: CanonicalUefiPrimitiveName,
+function compilerRuntimeHelper<PrimitiveId extends CanonicalUefiPrimitiveName>(
+  primitiveId: PrimitiveId,
   runtimeId: ProofMirRuntimeOperationId,
   helperLinkageName: string,
   argumentRules: readonly UefiFirmwareArgumentRule[],
   result: UefiFirmwareResultRule,
 ): {
-  readonly primitiveId: CanonicalUefiPrimitiveName;
+  readonly primitiveId: PrimitiveId;
   readonly lowering: UefiFirmwareLoweringRule;
 } {
   return Object.freeze({

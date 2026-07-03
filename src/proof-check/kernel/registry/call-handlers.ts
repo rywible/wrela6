@@ -27,6 +27,7 @@ import {
   errorTransition,
   okCoreTransition,
   placeKeyForMirPlace,
+  registerProofCheckPlaceAlias,
   tryResolveProofMirPlaceIdForPlaceKey,
   type ProofCheckRegistryContext,
 } from "./transition-helpers";
@@ -61,7 +62,7 @@ function mirCallForCallGraphEdge(input: {
   return undefined;
 }
 
-function compilerIntrinsicProducedPlace(input: {
+function callProducedPlace(input: {
   readonly mir: ProofMirProgram;
   readonly functionInstanceId: MonoInstanceId;
   readonly call: ProofMirCallGraphEdge;
@@ -203,8 +204,18 @@ export function handleCallTransfer(input: {
             input.context.placeResolver,
           );
           if (placeId !== undefined) {
-            input.context.placeResolver.index.set(`parameter:${index}`, placeId);
-            input.context.placeResolver.index.set(`argument:${index}`, placeId);
+            registerProofCheckPlaceAlias({
+              placeResolver: input.context.placeResolver,
+              aliasKey: `parameter:${index}`,
+              placeId,
+              targetPlaceKey: argument.placeKey,
+            });
+            registerProofCheckPlaceAlias({
+              placeResolver: input.context.placeResolver,
+              aliasKey: `argument:${index}`,
+              placeId,
+              targetPlaceKey: argument.placeKey,
+            });
           }
         }
       }
@@ -214,7 +225,12 @@ export function handleCallTransfer(input: {
           input.context.placeResolver,
         );
         if (receiverPlaceId !== undefined) {
-          input.context.placeResolver.index.set("receiver", receiverPlaceId);
+          registerProofCheckPlaceAlias({
+            placeResolver: input.context.placeResolver,
+            aliasKey: "receiver",
+            placeId: receiverPlaceId,
+            targetPlaceKey: effectOperandBindings.receiver.placeKey,
+          });
         }
       }
       const result = checkPlatformContractTransfer({
@@ -231,12 +247,39 @@ export function handleCallTransfer(input: {
       if (result.kind === "error") {
         return errorTransition(result.diagnostics);
       }
+      const producedPlace =
+        contract.signature.hasResult === true
+          ? callProducedPlace({
+              mir: input.context.input.mir,
+              functionInstanceId: input.transition.functionInstanceId,
+              call: input.call,
+            })
+          : undefined;
+      const produceResult =
+        producedPlace === undefined
+          ? {
+              kind: "ok" as const,
+              patches: [],
+              certificates: [],
+              packetEntries: [],
+            }
+          : applySummaryProduceEffect({
+              state,
+              place: { placeKey: producedPlace.placeKey },
+              resourceKind: producedPlace.resourceKind,
+              operationOriginKey: ownerKey,
+              placeResolver: input.context.placeResolver,
+              dependencyValueIds: producedPlace.valueIds,
+            });
+      if (produceResult.kind === "error") {
+        return errorTransition(produceResult.diagnostics);
+      }
       return okCoreTransition({
         transition: input.transition,
         context: input.context,
-        patches: result.patches,
-        certificates: result.certificates,
-        packetEntries: result.packetEntries,
+        patches: [...result.patches, ...produceResult.patches],
+        certificates: [...result.certificates, ...produceResult.certificates],
+        packetEntries: [...result.packetEntries, ...produceResult.packetEntries],
       });
     }
     case "compilerRuntime": {
@@ -291,7 +334,7 @@ export function handleCallTransfer(input: {
       });
     }
     case "compilerIntrinsic": {
-      const producedPlace = compilerIntrinsicProducedPlace({
+      const producedPlace = callProducedPlace({
         mir: input.context.input.mir,
         functionInstanceId: input.transition.functionInstanceId,
         call: input.call,

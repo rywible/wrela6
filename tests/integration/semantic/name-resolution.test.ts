@@ -173,3 +173,36 @@ test("take aliases do not produce unresolved diagnostics", () => {
   );
   expect(unresolvedNames).toEqual([]);
 });
+
+test("member function bodies resolve parameters and enclosing sibling functions", () => {
+  const graph = parseModuleGraphForTest([
+    [
+      "main.wr",
+      [
+        "edge class Firmware:",
+        "    fn status(self) -> u32:",
+        "        return firmware_status(firmware=self)",
+        "private platform fn firmware_status(firmware: Firmware) -> u32",
+        "uefi image Boot:",
+        "    private fn bringup(firmware: Firmware) -> u32:",
+        "        return firmware.status()",
+        "    fn boot(firmware: Firmware) -> u32:",
+        "        return bringup(firmware=firmware)",
+      ].join("\n"),
+    ],
+  ]);
+  const indexResult = buildItemIndex({ graph });
+  const nameResult = resolveNames({
+    graph,
+    index: indexResult.index,
+    coreTypes: CoreTypeCatalog.default(),
+    platformPrimitiveNames: platformPrimitiveNameCatalog([
+      { primitiveId: platformPrimitiveId("firmware_status"), name: "firmware_status" },
+    ]),
+  });
+
+  const unresolvedNames = nameResult.diagnostics.filter(
+    (diagnostic) => diagnostic.code === "NAME_UNRESOLVED_NAME",
+  );
+  expect(unresolvedNames).toEqual([]);
+});

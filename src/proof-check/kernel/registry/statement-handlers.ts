@@ -3,7 +3,12 @@ import {
   type ProofMirControlEdgeId,
   type ProofMirPlaceId,
 } from "../../../proof-mir/ids";
-import type { ProofMirFunction, ProofMirStatement } from "../../../proof-mir/model/graph";
+import type {
+  ProofMirFunction,
+  ProofMirPlace,
+  ProofMirStatement,
+} from "../../../proof-mir/model/graph";
+import { stableJson } from "../../../shared/stable-json";
 import { recordAttempt } from "../../domains/attempts";
 import { openLoan, closeLoan } from "../../domains/loans";
 import { placeBinderForMirOwnedPlace } from "../../domains/mir-place-bindings";
@@ -18,10 +23,11 @@ import {
 } from "../../domains/mir-operation-metadata";
 import { advancePrivateState } from "../../domains/private-state";
 import {
-  observeCopyPlace,
   applySummaryProduceEffect,
+  applySummaryPlaceEffect,
   transferConsumePlace,
   transferMovePlace,
+  type ProofCheckOwnershipTransferResult,
 } from "../../domains/ownership";
 import {
   closeTakeSession,
@@ -132,6 +138,57 @@ function readRequirementIsDischarged(input: {
   return input.hasValidatedLayoutAlias && input.requirement.kind === "layoutFits";
 }
 
+function projectionsHavePrefix(
+  base: ProofMirPlace["projection"],
+  candidate: ProofMirPlace["projection"],
+): boolean {
+  if (candidate.length <= base.length) {
+    return false;
+  }
+  return base.every((projection, index) => stableJson(projection) === stableJson(candidate[index]));
+}
+
+function placeIsStructuredDescendant(input: {
+  readonly base: ProofMirPlace;
+  readonly candidate: ProofMirPlace;
+}): boolean {
+  return (
+    stableJson(input.base.root) === stableJson(input.candidate.root) &&
+    projectionsHavePrefix(input.base.projection, input.candidate.projection)
+  );
+}
+
+function storedAggregateDescendantPlaces(input: {
+  readonly functionGraph: ProofMirFunction;
+  readonly placeId: ProofMirPlaceId;
+}): readonly ProofMirPlace[] {
+  const base = input.functionGraph.places.get(input.placeId);
+  if (base === undefined) {
+    return [];
+  }
+  return input.functionGraph.places
+    .entries()
+    .filter((candidate) => placeIsStructuredDescendant({ base, candidate }));
+}
+
+function combineOwnershipTransfers(
+  transfers: readonly ProofCheckOwnershipTransferResult[],
+): ProofCheckOwnershipTransferResult {
+  const diagnostics = transfers.flatMap((transfer) =>
+    transfer.kind === "error" ? transfer.diagnostics : [],
+  );
+  if (diagnostics.length > 0) {
+    return { kind: "error", diagnostics };
+  }
+  const successfulTransfers = transfers.filter((transfer) => transfer.kind === "ok");
+  return {
+    kind: "ok",
+    patches: successfulTransfers.flatMap((transfer) => transfer.patches),
+    certificates: successfulTransfers.flatMap((transfer) => transfer.certificates),
+    packetEntries: successfulTransfers.flatMap((transfer) => transfer.packetEntries),
+  };
+}
+
 export function handleStatement(input: {
   readonly transition: ProofCheckTransition;
   readonly context: ProofCheckRegistryContext;
@@ -152,26 +209,36 @@ export function handleStatement(input: {
     case "bindLayoutTerm":
       return identityTransition(input.transition);
     case "load":
-      return ownershipTransition(
-        input.transition,
-        input.context,
-        observeCopyPlace({
-          state,
-          place: structuredPlace(statementKind.place),
-          resourceKind: "Copy",
-          operationOriginKey: ownerKey,
-          placeResolver: input.context.placeResolver,
-        }),
-        {
-          kind: "observes",
-          placeKey: summaryPlaceKeyForMirPlace({
-            context: input.context,
-            functionInstanceId: input.transition.functionInstanceId,
-            placeId: statementKind.place,
+      return (() => {
+        const functionGraph = resolveFunctionGraph(
+          input.context.input.mir,
+          input.transition.functionInstanceId,
+        );
+        const loadedValue = functionGraph?.values.get(statementKind.result);
+        const loadedPlace = functionGraph?.places.get(statementKind.place);
+        const resourceKind = loadedValue?.resourceKind ?? loadedPlace?.resourceKind ?? "Copy";
+        return ownershipTransition(
+          input.transition,
+          input.context,
+          applySummaryPlaceEffect({
+            state,
+            place: structuredPlace(statementKind.place),
+            resourceKind,
+            mode: "observe",
+            operationOriginKey: ownerKey,
+            placeResolver: input.context.placeResolver,
           }),
-          borrowMode: "shared",
-        },
-      );
+          {
+            kind: "observes",
+            placeKey: summaryPlaceKeyForMirPlace({
+              context: input.context,
+              functionInstanceId: input.transition.functionInstanceId,
+              placeId: statementKind.place,
+            }),
+            borrowMode: "shared",
+          },
+        );
+      })();
     case "store":
       return (() => {
         const functionGraph = resolveFunctionGraph(
@@ -185,17 +252,34 @@ export function handleStatement(input: {
           placeId: statementKind.place,
         });
         const resourceKind = storedValue?.resourceKind ?? "Copy";
+        const rootTransfer = applySummaryProduceEffect({
+          state,
+          place: structuredPlace(statementKind.place),
+          resourceKind,
+          operationOriginKey: ownerKey,
+          dependencyValueIds: [statementKind.value],
+          placeResolver: input.context.placeResolver,
+        });
+        const descendantTransfers =
+          functionGraph === undefined
+            ? []
+            : storedAggregateDescendantPlaces({
+                functionGraph,
+                placeId: statementKind.place,
+              }).map((descendant) =>
+                applySummaryProduceEffect({
+                  state,
+                  place: structuredPlace(descendant.placeId),
+                  resourceKind: descendant.resourceKind,
+                  operationOriginKey: ownerKey,
+                  dependencyValueIds: [statementKind.value],
+                  placeResolver: input.context.placeResolver,
+                }),
+              );
         return ownershipTransition(
           input.transition,
           input.context,
-          applySummaryProduceEffect({
-            state,
-            place: structuredPlace(statementKind.place),
-            resourceKind,
-            operationOriginKey: ownerKey,
-            dependencyValueIds: [statementKind.value],
-            placeResolver: input.context.placeResolver,
-          }),
+          combineOwnershipTransfers([rootTransfer, ...descendantTransfers]),
           {
             kind: "produces",
             placeKey,
@@ -322,10 +406,12 @@ export function handleStatement(input: {
         recordAttempt({
           state,
           attemptKey: mirProofMetadataKey(statementKind.attempt.attemptId),
+          pendingResultPlace: structuredPlaceForMirPlace(statementKind.attempt.pendingResultPlace),
           declaredInputs: statementKind.attempt.inputPlaces.map((place) =>
             structuredPlaceForMirPlace(place),
           ),
           operationOriginKey: ownerKey,
+          placeResolver: input.context.placeResolver,
         }),
       );
     case "take": {

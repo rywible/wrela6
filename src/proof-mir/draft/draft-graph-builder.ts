@@ -254,12 +254,14 @@ export interface DraftGraphBuilder {
   }): ProofMirCanonicalKey;
   createAttemptEdge(input: {
     readonly kind: "attemptSuccess" | "attemptError";
+    readonly role?: string;
     readonly fromBlock: ProofMirCanonicalKey;
     readonly toBlock: ProofMirCanonicalKey;
     readonly sourceScope: ProofMirCanonicalKey;
     readonly targetScope: ProofMirCanonicalKey;
     readonly origin: ProofMirCanonicalKey;
     readonly effects?: readonly DraftGraphEdgeEffect[];
+    readonly argumentKeys?: readonly ProofMirCanonicalKey[];
   }): ProofMirCanonicalKey;
   createValidationEdge(input: {
     readonly kind: "validationOk" | "validationErr";
@@ -406,6 +408,12 @@ export function createDraftGraphBuilder(input: CreateDraftGraphBuilderInput): Dr
   const normalEdgeCounter = { value: 0 };
   const switchCaseCounter = { value: 0 };
   const nextSyntheticMonoStatement = { value: 1 };
+
+  function hasPlaceWithCanonicalKey(monoPlaceCanonicalKey: string): boolean {
+    return draft.places
+      .entries()
+      .some((entry) => entry.monoPlaceCanonicalKey === monoPlaceCanonicalKey);
+  }
 
   function recordDiagnostic(diagnostic: ProofMirDiagnostic): void {
     diagnostics.push(diagnostic);
@@ -794,6 +802,9 @@ export function createDraftGraphBuilder(input: CreateDraftGraphBuilderInput): Dr
         functionInstanceId,
         monoLocalId: input.monoLocalId,
       });
+      if (draft.locals.has(localKey)) {
+        return localKey;
+      }
       propagateAcceptResult(
         draft.locals.accept({
           key: localKey,
@@ -824,6 +835,9 @@ export function createDraftGraphBuilder(input: CreateDraftGraphBuilderInput): Dr
         functionInstanceId,
         monoPlaceCanonicalKey: input.monoPlaceCanonicalKey,
       });
+      if (draft.places.has(placeKey) || hasPlaceWithCanonicalKey(input.monoPlaceCanonicalKey)) {
+        return placeKey;
+      }
       propagateAcceptResult(
         draft.places.accept({
           key: placeKey,
@@ -846,6 +860,17 @@ export function createDraftGraphBuilder(input: CreateDraftGraphBuilderInput): Dr
       }
       const monoPlaceCanonicalKey =
         place.monoPlaceCanonicalKey ?? `structured:${String(place.key)}`;
+      const canonicalPlaceKey = draftPlaceKey({
+        functionInstanceId,
+        monoPlaceCanonicalKey,
+      });
+      if (
+        draft.places.has(place.key) ||
+        draft.places.has(canonicalPlaceKey) ||
+        hasPlaceWithCanonicalKey(monoPlaceCanonicalKey)
+      ) {
+        return;
+      }
       propagateAcceptResult(
         draft.places.accept({
           key: place.key,

@@ -715,6 +715,8 @@ export interface MonoTypeInstance {
   readonly instanceId: MonoInstanceId;
   readonly sourceTypeId: TypeId;
   readonly sourceItemId: ItemId;
+  readonly sourceName?: string;
+  readonly sourceModulePathKey?: string;
   readonly sourceKind: SourceItemKind;
   readonly typeArguments: readonly MonoCheckedType[];
   readonly fields: readonly MonoFieldRecord[];

@@ -1,7 +1,13 @@
 import { hirStatementId } from "../../hir/ids";
 import { instantiatedHirId, type MonoInstanceId } from "../../mono/ids";
-import type { MonoAttempt, MonoExpression, MonoStatementId } from "../../mono/mono-hir";
+import type {
+  MonoAttempt,
+  MonoCheckedType,
+  MonoExpression,
+  MonoStatementId,
+} from "../../mono/mono-hir";
 import { proofMetadataIdKey } from "../../mono/proof-metadata-tables";
+import type { ConcreteResourceKind } from "../../semantic/surface/resource-kind";
 import type { ProofMirCanonicalKey } from "../canonicalization/canonical-keys";
 import {
   proofMirDiagnostic,
@@ -26,6 +32,8 @@ import { setEmptyArmUnreachableTerminator } from "./empty-arm-terminator";
 import {
   type ProofMirAttemptLowerer,
   type ProofMirAttemptLoweringInput,
+  type ProofMirAttemptValueLoweringInput,
+  type ProofMirAttemptValueLoweringOutput,
   type ProofMirExpressionLowerer,
   type ProofMirLoweringContext,
   type ProofMirLoweringResult,
@@ -51,6 +59,21 @@ interface ProofMirAttemptIdAllocator {
   valueForKey(key: ProofMirCanonicalKey): ProofMirValueId;
   placeForKey(key: ProofMirCanonicalKey): ProofMirPlaceId;
   nextMonoStatementId(functionInstanceId: MonoInstanceId): MonoStatementId;
+}
+
+interface LoweredAttemptStart {
+  readonly attemptOriginKey: ProofMirCanonicalKey;
+  readonly pendingResultPlaceKey: ProofMirCanonicalKey;
+  readonly inputPlaceKeys: readonly ProofMirCanonicalKey[];
+  readonly alternativeOperand?: ProofMirDraftOperand;
+}
+
+interface InstalledAttemptSplit {
+  readonly successBlockKey: ProofMirCanonicalKey;
+  readonly errorBlockKey: ProofMirCanonicalKey;
+  readonly successOriginKey: ProofMirCanonicalKey;
+  readonly errorOriginKey: ProofMirCanonicalKey;
+  readonly successValueKey?: ProofMirCanonicalKey;
 }
 
 function loweringOk<Value>(value: Value): ProofMirLoweringResult<Value> {
@@ -241,20 +264,21 @@ function consumePlaceEffects(
   }));
 }
 
-function lowerAttemptImpl(input: {
+function lowerAttemptStart(input: {
   readonly context: ProofMirLoweringContext;
   readonly expression: ProofMirExpressionLowerer;
   readonly recorder: ProofMirAttemptRecorder;
-  readonly attemptInput: ProofMirAttemptLoweringInput;
+  readonly attempt: MonoAttempt;
+  readonly blockKey: ProofMirCanonicalKey;
   readonly idAllocator: ProofMirAttemptIdAllocator;
-}): ProofMirLoweringResult<void> {
-  const attempt = input.attemptInput.attempt;
+}): ProofMirLoweringResult<LoweredAttemptStart> {
+  const attempt = input.attempt;
   const attemptOriginKey = originForAttempt(input.context, attempt);
 
   const loweredFallible = input.expression.lowerExpression({
     context: input.context,
     expression: attempt.fallibleExpression,
-    blockKey: input.attemptInput.blockKey,
+    blockKey: input.blockKey,
   });
   if (loweredFallible.kind === "error") {
     return loweredFallible;
@@ -277,19 +301,21 @@ function lowerAttemptImpl(input: {
   }
 
   let alternative: DraftProofMirAttemptAlternative | undefined;
+  let alternativeOperand: ProofMirDraftOperand | undefined;
   if (attempt.alternativeExpression !== undefined) {
     const loweredAlternative = input.expression.lowerExpression({
       context: input.context,
       expression: attempt.alternativeExpression,
-      blockKey: input.attemptInput.blockKey,
+      blockKey: input.blockKey,
     });
     if (loweredAlternative.kind === "error") {
       return loweredAlternative;
     }
+    alternativeOperand = loweredAlternative.value;
     const alternativeOriginKey = originForExpression(input.context, attempt.alternativeExpression);
     alternative = draftAttemptAlternativeFromLowering({
       context: input.context,
-      operand: loweredAlternative.value,
+      operand: alternativeOperand,
       originKey: alternativeOriginKey,
     });
     if (alternative === undefined) {
@@ -301,6 +327,7 @@ function lowerAttemptImpl(input: {
         }),
       ]);
     }
+    input.idAllocator.placeForKey(alternative.placeKey);
   }
 
   const pendingResultPlaceKey = allocatePendingResultPlace({
@@ -330,7 +357,7 @@ function lowerAttemptImpl(input: {
     originKey: attemptOriginKey,
   };
 
-  const statementKey = input.context.graph.addStatement(input.attemptInput.blockKey, {
+  const statementKey = input.context.graph.addStatement(input.blockKey, {
     origin: attemptOriginKey,
   });
   const attemptSnapshot: DraftProofMirGraphStatementSnapshot = {
@@ -339,82 +366,291 @@ function lowerAttemptImpl(input: {
     kind: { kind: "attempt", attempt: draftAttempt },
   };
   input.recorder.record(attemptSnapshot);
-  input.context.graph.recordLoweredStatement(input.attemptInput.blockKey, attemptSnapshot);
+  input.context.graph.recordLoweredStatement(input.blockKey, attemptSnapshot);
 
-  const rootScope = input.context.graph.rootScopeKey();
-  const currentBlock = input.context.graph.block(input.attemptInput.blockKey);
-  const successOrigin = input.context.originMap.syntheticFrom(attemptOriginKey, "attempt.success");
-  const errorOrigin = input.context.originMap.syntheticFrom(attemptOriginKey, "attempt.error");
+  return loweringOk({
+    attemptOriginKey,
+    pendingResultPlaceKey,
+    inputPlaceKeys,
+    ...(alternativeOperand === undefined ? {} : { alternativeOperand }),
+  });
+}
+
+function installAttemptSplit(input: {
+  readonly context: ProofMirLoweringContext;
+  readonly attempt: MonoAttempt;
+  readonly blockKey: ProofMirCanonicalKey;
+  readonly attemptOriginKey: ProofMirCanonicalKey;
+  readonly pendingResultPlaceKey: ProofMirCanonicalKey;
+  readonly inputPlaceKeys: readonly ProofMirCanonicalKey[];
+  readonly successResult?: {
+    readonly type: MonoCheckedType;
+    readonly resourceKind: ConcreteResourceKind;
+  };
+}): ProofMirLoweringResult<InstalledAttemptSplit> {
+  const currentBlock = input.context.graph.block(input.blockKey);
+  const splitScopeKey = currentBlock.scopeKey;
+  const successOrigin = input.context.originMap.syntheticFrom(
+    input.attemptOriginKey,
+    "attempt.success",
+  );
+  const errorOrigin = input.context.originMap.syntheticFrom(
+    input.attemptOriginKey,
+    "attempt.error",
+  );
 
   const successBlockKey = input.context.graph.createBlock({
-    role: `attemptSuccess:${proofMetadataIdKey(attempt.attemptId)}`,
-    scope: rootScope,
+    role: `attemptSuccess:${proofMetadataIdKey(input.attempt.attemptId)}`,
+    scope: splitScopeKey,
     origin: successOrigin,
-    sourceOrigin: attempt.sourceOrigin,
+    sourceOrigin: input.attempt.sourceOrigin,
   });
   const errorBlockKey = input.context.graph.createBlock({
-    role: `attemptError:${proofMetadataIdKey(attempt.attemptId)}`,
-    scope: rootScope,
+    role: `attemptError:${proofMetadataIdKey(input.attempt.attemptId)}`,
+    scope: splitScopeKey,
     origin: errorOrigin,
-    sourceOrigin: attempt.sourceOrigin,
+    sourceOrigin: input.attempt.sourceOrigin,
   });
+  input.context.ssa.registerBlock(successBlockKey);
+  input.context.ssa.registerBlock(errorBlockKey);
 
-  const pendingConsume = [{ kind: "consumePlace" as const, placeKey: pendingResultPlaceKey }];
-  const successEffects = [...pendingConsume, ...consumePlaceEffects(inputPlaceKeys)];
+  const pendingConsume = [{ kind: "consumePlace" as const, placeKey: input.pendingResultPlaceKey }];
+  const successEffects = [...pendingConsume, ...consumePlaceEffects(input.inputPlaceKeys)];
   const errorEffects = pendingConsume;
+  const successValueKey =
+    input.successResult === undefined
+      ? undefined
+      : createAttemptSuccessValue({
+          context: input.context,
+          attempt: input.attempt,
+          originKey: successOrigin,
+          resultType: input.successResult.type,
+          resultResourceKind: input.successResult.resourceKind,
+        });
 
   const successEdgeKey = input.context.graph.createAttemptEdge({
     kind: "attemptSuccess",
-    fromBlock: input.attemptInput.blockKey,
+    role: `attemptSuccess:${proofMetadataIdKey(input.attempt.attemptId)}`,
+    fromBlock: input.blockKey,
     toBlock: successBlockKey,
     sourceScope: currentBlock.scopeKey,
-    targetScope: rootScope,
+    targetScope: splitScopeKey,
     origin: successOrigin,
     effects: successEffects,
+    ...(successValueKey === undefined ? {} : { argumentKeys: [successValueKey] }),
   });
   const errorEdgeKey = input.context.graph.createAttemptEdge({
     kind: "attemptError",
-    fromBlock: input.attemptInput.blockKey,
+    role: `attemptError:${proofMetadataIdKey(input.attempt.attemptId)}`,
+    fromBlock: input.blockKey,
     toBlock: errorBlockKey,
     sourceScope: currentBlock.scopeKey,
-    targetScope: rootScope,
+    targetScope: splitScopeKey,
     origin: errorOrigin,
     effects: errorEffects,
   });
 
+  input.context.ssa.registerPredecessorEdge({
+    blockKey: successBlockKey,
+    edgeKey: successEdgeKey,
+    fromBlockKey: input.blockKey,
+    argumentKeysBySsaKey: {},
+  });
+  input.context.ssa.registerPredecessorEdge({
+    blockKey: errorBlockKey,
+    edgeKey: errorEdgeKey,
+    fromBlockKey: input.blockKey,
+    argumentKeysBySsaKey: {},
+  });
+  input.context.ssa.sealBlock(successBlockKey);
+  input.context.ssa.sealBlock(errorBlockKey);
+
+  const setTerminatorResult = input.context.graph.setTerminator(input.blockKey, {
+    kind: "matchAttempt",
+    match: {
+      attemptId: input.attempt.attemptId,
+      successTarget: { edge: successEdgeKey, block: successBlockKey },
+      errorTarget: { edge: errorEdgeKey, block: errorBlockKey },
+      inputPlaceKeys: input.inputPlaceKeys,
+      origin: input.attemptOriginKey,
+    },
+    origin: input.attemptOriginKey,
+  });
+  if (setTerminatorResult.kind === "error") {
+    return setTerminatorResult;
+  }
+
+  return loweringOk({
+    successBlockKey,
+    errorBlockKey,
+    successOriginKey: successOrigin,
+    errorOriginKey: errorOrigin,
+    ...(successValueKey === undefined ? {} : { successValueKey }),
+  });
+}
+
+function lowerAttemptImpl(input: {
+  readonly context: ProofMirLoweringContext;
+  readonly expression: ProofMirExpressionLowerer;
+  readonly recorder: ProofMirAttemptRecorder;
+  readonly attemptInput: ProofMirAttemptLoweringInput;
+  readonly idAllocator: ProofMirAttemptIdAllocator;
+}): ProofMirLoweringResult<void> {
+  const attempt = input.attemptInput.attempt;
+  const start = lowerAttemptStart({
+    context: input.context,
+    expression: input.expression,
+    recorder: input.recorder,
+    attempt,
+    blockKey: input.attemptInput.blockKey,
+    idAllocator: input.idAllocator,
+  });
+  if (start.kind === "error") {
+    return start;
+  }
+
+  const split = installAttemptSplit({
+    context: input.context,
+    attempt,
+    blockKey: input.attemptInput.blockKey,
+    attemptOriginKey: start.value.attemptOriginKey,
+    pendingResultPlaceKey: start.value.pendingResultPlaceKey,
+    inputPlaceKeys: start.value.inputPlaceKeys,
+  });
+  if (split.kind === "error") {
+    return split;
+  }
+
   const finalizeSuccessArm = setEmptyArmUnreachableTerminator({
     context: input.context,
-    blockKey: successBlockKey,
-    origin: successOrigin,
+    blockKey: split.value.successBlockKey,
+    origin: split.value.successOriginKey,
   });
   if (finalizeSuccessArm.kind === "error") {
     return finalizeSuccessArm;
   }
   const finalizeErrorArm = setEmptyArmUnreachableTerminator({
     context: input.context,
-    blockKey: errorBlockKey,
-    origin: errorOrigin,
+    blockKey: split.value.errorBlockKey,
+    origin: split.value.errorOriginKey,
   });
   if (finalizeErrorArm.kind === "error") {
     return finalizeErrorArm;
   }
 
-  const setTerminatorResult = input.context.graph.setTerminator(input.attemptInput.blockKey, {
-    kind: "matchAttempt",
-    match: {
-      attemptId: attempt.attemptId,
-      successTarget: { edge: successEdgeKey, block: successBlockKey },
-      errorTarget: { edge: errorEdgeKey, block: errorBlockKey },
-      inputPlaceKeys,
-      origin: attemptOriginKey,
-    },
-    origin: attemptOriginKey,
+  return loweringOk(undefined);
+}
+
+function setAttemptErrorReturnTerminator(input: {
+  readonly context: ProofMirLoweringContext;
+  readonly errorBlockKey: ProofMirCanonicalKey;
+  readonly errorOriginKey: ProofMirCanonicalKey;
+  readonly alternativeOperand?: ProofMirDraftOperand;
+  readonly terminal: boolean;
+}): ProofMirLoweringResult<void> {
+  const returnValueKey =
+    input.alternativeOperand === undefined ? undefined : operandValueKey(input.alternativeOperand);
+  const exitBundle = input.context.graph.createReturnExit({
+    fromBlock: input.errorBlockKey,
+    origin: input.errorOriginKey,
+    terminal: input.terminal,
+  });
+  const setTerminatorResult = input.context.graph.setTerminator(input.errorBlockKey, {
+    kind: "return",
+    ...(returnValueKey === undefined ? {} : { value: returnValueKey }),
+    edge: exitBundle.edge,
+    exit: exitBundle.exit,
+    origin: input.errorOriginKey,
   });
   if (setTerminatorResult.kind === "error") {
     return setTerminatorResult;
   }
 
   return loweringOk(undefined);
+}
+
+function createAttemptSuccessValue(input: {
+  readonly context: ProofMirLoweringContext;
+  readonly attempt: MonoAttempt;
+  readonly originKey: ProofMirCanonicalKey;
+  readonly resultType: MonoCheckedType;
+  readonly resultResourceKind: ConcreteResourceKind;
+}): ProofMirCanonicalKey {
+  return input.context.graph.createValue({
+    role: `attempt.result:${proofMetadataIdKey(input.attempt.attemptId)}`,
+    origin: input.originKey,
+    type: input.resultType,
+    resourceKind: input.resultResourceKind,
+  });
+}
+
+function lowerAttemptValueImpl(input: {
+  readonly context: ProofMirLoweringContext;
+  readonly expression: ProofMirExpressionLowerer;
+  readonly recorder: ProofMirAttemptRecorder;
+  readonly attemptInput: ProofMirAttemptValueLoweringInput;
+  readonly idAllocator: ProofMirAttemptIdAllocator;
+}): ProofMirLoweringResult<ProofMirAttemptValueLoweringOutput> {
+  const attempt = input.attemptInput.attempt;
+  const start = lowerAttemptStart({
+    context: input.context,
+    expression: input.expression,
+    recorder: input.recorder,
+    attempt,
+    blockKey: input.attemptInput.blockKey,
+    idAllocator: input.idAllocator,
+  });
+  if (start.kind === "error") {
+    return start;
+  }
+
+  const split = installAttemptSplit({
+    context: input.context,
+    attempt,
+    blockKey: input.attemptInput.blockKey,
+    attemptOriginKey: start.value.attemptOriginKey,
+    pendingResultPlaceKey: start.value.pendingResultPlaceKey,
+    inputPlaceKeys: start.value.inputPlaceKeys,
+    successResult: {
+      type: input.attemptInput.resultType,
+      resourceKind: input.attemptInput.resultResourceKind,
+    },
+  });
+  if (split.kind === "error") {
+    return split;
+  }
+
+  const errorReturn = setAttemptErrorReturnTerminator({
+    context: input.context,
+    errorBlockKey: split.value.errorBlockKey,
+    errorOriginKey: split.value.errorOriginKey,
+    alternativeOperand: start.value.alternativeOperand,
+    terminal: input.attemptInput.terminal,
+  });
+  if (errorReturn.kind === "error") {
+    return errorReturn;
+  }
+
+  const successValueKey = split.value.successValueKey;
+  if (successValueKey === undefined) {
+    return loweringError([
+      invalidAttemptOperandDiagnostic({
+        functionInstanceId: input.context.functionInstanceId,
+        attempt,
+        stableDetail: "missing-success-value",
+      }),
+    ]);
+  }
+
+  if (input.context.blockTracking !== undefined) {
+    input.context.blockTracking.currentBlockRef.blockKey = split.value.successBlockKey;
+    input.context.blockTracking.continuationBlockRef.blockKey = undefined;
+  }
+
+  return loweringOk({
+    blockKey: split.value.successBlockKey,
+    operand: { kind: "value", value: successValueKey },
+  });
 }
 
 export function createProofMirAttemptLowerer(
@@ -430,6 +666,15 @@ export function createProofMirAttemptLowerer(
     idAllocator,
     lowerAttempt(attemptInput) {
       return lowerAttemptImpl({
+        context: attemptInput.context,
+        expression: input.expression,
+        recorder,
+        attemptInput,
+        idAllocator,
+      });
+    },
+    lowerAttemptValue(attemptInput) {
+      return lowerAttemptValueImpl({
         context: attemptInput.context,
         expression: input.expression,
         recorder,

@@ -8,6 +8,10 @@ import type { CheckedType } from "../../semantic/surface/type-model";
 export const UEFI_AARCH64_STATUS_TARGET_TYPE_KEY = "uefi.Status";
 
 export const UEFI_AARCH64_SOURCE_STATUS_BRIDGE = Object.freeze({
+  sourceModulePathKeys: Object.freeze([
+    "wrela_std/target/uefi/status.wr",
+    "wrela_abi/target/uefi/status.wr",
+  ]),
   sourceEnumName: "UefiStatus",
   targetTypeKey: UEFI_AARCH64_STATUS_TARGET_TYPE_KEY,
   cases: Object.freeze([
@@ -34,7 +38,13 @@ export function uefiAArch64SourceStatusBridgeType(
 ): UefiAArch64StatusBridgeType | undefined {
   const statusType = index
     .types()
-    .find((type) => type.name === UEFI_AARCH64_SOURCE_STATUS_BRIDGE.sourceEnumName);
+    .find(
+      (type) =>
+        type.name === UEFI_AARCH64_SOURCE_STATUS_BRIDGE.sourceEnumName &&
+        UEFI_AARCH64_SOURCE_STATUS_BRIDGE.sourceModulePathKeys.includes(
+          index.module(type.moduleId)?.pathKey ?? "",
+        ),
+    );
   if (statusType === undefined) return undefined;
 
   const statusItem = index.item(statusType.itemId);

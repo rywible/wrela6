@@ -1,14 +1,10 @@
 import type { LayoutFactProgram as LayoutProgram } from "../../layout/layout-program";
-import { resourcePlaceId } from "../../hir/ids";
-import { hirResourcePlaceCanonicalKey } from "../../hir/place";
 import type { MonoInstanceId } from "../../mono/ids";
 import type {
   MonoBlock,
   MonoExpression,
   MonoFunctionInstance,
   MonoLocal,
-  MonoParameter,
-  MonoResourcePlace,
   MonoStatement,
 } from "../../mono/mono-hir";
 import type { ParameterId } from "../../semantic/ids";
@@ -57,12 +53,13 @@ import {
   type ProofMirFunctionScopePlaceLowerer,
 } from "./scope-place-lowerer";
 import type { ConcreteResourceKind } from "../../semantic/surface/resource-kind";
-import { concreteKind } from "../../semantic/surface/resource-kind";
 import type { MonomorphizedHirProgram } from "../../mono/mono-hir";
 import type { LayoutFactProgram } from "../../layout/layout-program";
 import { mergeFunctionLoweringIntoProgramDraft } from "../draft/program-draft-merge";
 import type { DraftProofMirBuildTargetContext } from "../draft/draft-builder-context";
 import { blockHasTerminator } from "./control-flow-terminators";
+import { monoParameterPlace } from "./mono-place-builders";
+import { lowerAttemptLetStatement, lowerAttemptReturnStatement } from "./attempt-statement-lowerer";
 
 export type { ProofMirLoweringResult };
 
@@ -175,36 +172,6 @@ function localForParameter(
     }
   }
   return undefined;
-}
-
-function monoParameterPlace(input: {
-  readonly functionInstance: MonoFunctionInstance;
-  readonly parameter: MonoParameter;
-  readonly local: MonoLocal;
-}): MonoResourcePlace {
-  const functionInstanceId = input.functionInstance.instanceId;
-  const root = { kind: "parameter" as const, parameterId: input.parameter.parameterId };
-  return {
-    placeId: {
-      owner: { kind: "function", instanceId: functionInstanceId },
-      hirId: resourcePlaceId(Number(input.parameter.parameterId)),
-      instanceId: functionInstanceId,
-    },
-    canonicalKey: hirResourcePlaceCanonicalKey({
-      owner: { kind: "function", functionId: input.functionInstance.signature.functionId },
-      root,
-      projection: [],
-      type: input.parameter.type,
-      resourceKind: concreteKind(input.parameter.resourceKind),
-    }),
-    root,
-    projection: [],
-    type: input.parameter.type,
-    resourceKind: input.parameter.resourceKind,
-    sourceOrigin: input.local.sourceOrigin,
-    kind: "parameter",
-    parameterId: input.parameter.parameterId,
-  };
 }
 
 function loweringScopePlaceLowererAdapter(input: {
@@ -321,6 +288,25 @@ function dispatchBodyStatement(input: {
         statement: input.statement.kind.statement,
         blockKey: input.blockKey,
       } satisfies ProofMirTakeLoweringInput);
+    case "let": {
+      const value = input.statement.kind.statement.value;
+      if (value?.kind.kind === "attempt") {
+        return lowerAttemptLetStatement({
+          context: input.context,
+          registry: input.registry,
+          statement: input.statement,
+          blockKey: input.blockKey,
+          functionInstance: input.functionInstance,
+          local: input.statement.kind.statement.local,
+          value: value as MonoExpression & { readonly kind: { readonly kind: "attempt" } },
+        });
+      }
+      return input.registry.statement.lowerStatement({
+        context: input.context,
+        statement: input.statement,
+        blockKey: input.blockKey,
+      } satisfies ProofMirStatementLoweringInput);
+    }
     case "expression": {
       const expression = input.statement.kind.expression;
       if (expression.kind.kind === "attempt") {
@@ -337,6 +323,18 @@ function dispatchBodyStatement(input: {
       } satisfies ProofMirStatementLoweringInput);
     }
     case "return":
+      if (input.statement.kind.expression?.kind.kind === "attempt") {
+        return lowerAttemptReturnStatement({
+          context: input.context,
+          registry: input.registry,
+          expression: input.statement.kind.expression as MonoExpression & {
+            readonly kind: { readonly kind: "attempt" };
+          },
+          blockKey: input.blockKey,
+          terminal: input.functionInstance.signature.modifiers.isTerminal,
+          sourceOrigin: input.statement.sourceOrigin,
+        });
+      }
       return input.registry.terminal.lowerReturn({
         context: input.context,
         expression: input.statement.kind.expression,

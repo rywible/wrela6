@@ -89,7 +89,11 @@ export function entrySignatureParametersForBlock(
   if (block.blockId !== function_.entryBlockId) {
     return [];
   }
-  return function_.signature.parameters.map((parameter) =>
+  const signatureParameters = [
+    ...(function_.signature.receiver === undefined ? [] : [function_.signature.receiver]),
+    ...function_.signature.parameters,
+  ];
+  return signatureParameters.map((parameter) =>
     context.values.parameterFor({
       valueKey: functionSignatureParameterValueKey(function_, parameter.parameterId),
       type: optIrTypeFromMono(parameter.type),

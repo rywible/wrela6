@@ -16,6 +16,8 @@ import type {
   LoopLoweringSharedInput,
   StructuredLoopScaffold,
 } from "./loop-lowering-types";
+import { syncLoweredPlaceToFunctionDraft } from "./lowering-place-sync";
+import { monoLocalPlace } from "./mono-place-builders";
 
 export type { StructuredLoopScaffold };
 
@@ -232,18 +234,35 @@ export function collectPlaceBackedBoundaryKeys(input: {
     if (assignedLocalIds.size > 0 && !assignedLocalIds.has(instantiatedHirIdKey(local.localId))) {
       continue;
     }
-    const origin = input.context.graph.allocateSyntheticOrigin(`loop.boundary:${local.name}`);
-    input.context.graph.createLocal({
-      monoLocalId: local.localId,
-      name: local.name,
-      origin,
-    });
-    placeKeys.push(
-      input.context.graph.createPlace({
-        monoPlaceCanonicalKey: `local:${local.name}`,
-        origin,
+    const localRecord = input.context.graph.functionDraft().locals.get(
+      draftLocalKey({
+        functionInstanceId: input.context.functionInstanceId,
+        monoLocalId: local.localId,
       }),
     );
+    if (localRecord?.backingPlaceKey !== undefined) {
+      placeKeys.push(localRecord.backingPlaceKey);
+      continue;
+    }
+    const functionInstance = input.context.program.functions.get(input.context.functionInstanceId);
+    if (functionInstance === undefined) {
+      continue;
+    }
+    const originKey = input.context.graph.allocateSyntheticOrigin(`loop.boundary:${local.name}`);
+    const monoPlace = monoLocalPlace({ functionInstance, local });
+    const loweredPlace = input.context.functionScopePlaceLowerer.lowerMonoPlace({
+      monoPlace,
+      originKey,
+    });
+    if (loweredPlace.kind === "ok") {
+      placeKeys.push(
+        syncLoweredPlaceToFunctionDraft({
+          context: input.context,
+          lowered: loweredPlace.value,
+          monoPlace,
+        }),
+      );
+    }
   }
   return placeKeys;
 }

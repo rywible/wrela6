@@ -365,6 +365,24 @@ export abstract class AArch64MemoryOperationMaterializer extends AArch64Operatio
       };
     }
     this.recordDecision(decision);
+    if (regionMemoryType === "validatedPayload" && this.operation.kind === "memoryLoad") {
+      const sourceOperandId = this.operation.operandIds[0];
+      if (sourceOperandId !== undefined) {
+        const certifiedOffset = certifiedOffsetFromValidatedPayloadBasis(decision.addressBasis);
+        if (certifiedOffset === undefined) {
+          return {
+            kind: "error",
+            stableDetail: `validated-payload-address:missing-certified-offset:${String(access.region)}:operation:${String(this.operation.operationId)}`,
+          };
+        }
+        return this.materializeValidatedPayloadSourceAddress({
+          label,
+          sourceRegister: this.valueRegister(sourceOperandId),
+          byteOffset: certifiedOffset + access.byteOffset,
+          byteWidth: access.byteWidth,
+        });
+      }
+    }
     const resolvedBasis = this.resolveMemoryAddressBasis(decision.addressBasis, new Set());
     if (resolvedBasis.kind === "error") {
       return {
@@ -464,6 +482,38 @@ export abstract class AArch64MemoryOperationMaterializer extends AArch64Operatio
           resolvedBasis.abstractBase + totalOffset,
         ),
       },
+      mode: "materialized-address",
+    };
+  }
+
+  private materializeValidatedPayloadSourceAddress(input: {
+    readonly label: string;
+    readonly sourceRegister: AArch64VirtualRegister;
+    readonly byteOffset: bigint;
+    readonly byteWidth: number;
+  }):
+    | ({ readonly kind: "ok" } & AArch64MaterializedMemoryAddress)
+    | { readonly kind: "error"; readonly stableDetail: string } {
+    const selectedMode = selectAArch64AddressingMode({
+      byteOffset: input.byteOffset,
+      scale: input.byteWidth,
+    });
+    if (selectedMode === "base-unsigned-immediate") {
+      return {
+        kind: "ok",
+        base: { kind: "register", register: input.sourceRegister },
+        offset: input.byteOffset,
+        mode: selectedMode,
+      };
+    }
+    const addressRegister = this.syntheticRegister(
+      `${input.label}:validated-payload-source-effective-address`,
+      POINTER,
+    );
+    this.materializeOffsetAdd(addressRegister, input.sourceRegister, input.byteOffset, input.label);
+    return {
+      kind: "ok",
+      base: { kind: "register", register: addressRegister },
       mode: "materialized-address",
     };
   }
@@ -682,4 +732,10 @@ function symbolicExternalRegionBase(base: string): AArch64SymbolReference {
     symbol: aarch64SymbolId(base),
     visibility: "external",
   });
+}
+
+function certifiedOffsetFromValidatedPayloadBasis(
+  addressBasis: AArch64RegionAddressBasis,
+): bigint | undefined {
+  return addressBasis.kind === "derivedRegionBase" ? addressBasis.byteOffset : undefined;
 }

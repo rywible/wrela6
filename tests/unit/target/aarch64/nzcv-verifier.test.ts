@@ -77,6 +77,30 @@ describe("AArch64 NZCV verifier", () => {
     ).toEqual({ kind: "ok", diagnostics: [] });
   });
 
+  test("accepts a call clobber before a fresh cmp producer and consumer", () => {
+    expect(
+      verifyAArch64MachineProgram({
+        program: programWithInstructionsForTest([
+          callForTest(20),
+          movzForTest(10, 1),
+          movzForTest(11, 2),
+          cmpForTest(1),
+          aarch64MachineInstruction({
+            instructionId: aarch64MachineInstructionId(2),
+            opcode: aarch64OpcodeFormId("b-cond"),
+            operands: [
+              implicitUseResource({ kind: "NZCV" }),
+              branchTarget(aarch64MachineBlockId(1)),
+              immediateOperand(0n, aarch64IntMachineType(64)),
+            ],
+            flags: { mayTrap: false, isTerminator: true },
+            origin: syntheticAArch64Origin("test:b-cond-after-fresh-cmp"),
+          }),
+        ]),
+      }),
+    ).toEqual({ kind: "ok", diagnostics: [] });
+  });
+
   test("accepts an NZCV producer that dominates a successor block consumer", () => {
     const symbol = aarch64SymbolId("test.nzcv.cross.block");
     const program = aarch64MachineProgram({
@@ -267,6 +291,22 @@ function cmpForTest(value: number) {
     ],
     flags: { mayTrap: false },
     origin: syntheticAArch64Origin(`test:cmp:${value}`),
+  });
+}
+
+function callForTest(instructionId: number) {
+  return aarch64MachineInstruction({
+    instructionId: aarch64MachineInstructionId(instructionId),
+    opcode: aarch64OpcodeFormId("bl"),
+    operands: [
+      symbolOperand(aarch64SymbolId("test.nzcv")),
+      implicitDefResource({ kind: "NZCV" }),
+      implicitDefResource({ kind: "FPCR" }),
+      implicitDefResource({ kind: "FPSR" }),
+      implicitDefResource({ kind: "vectorState" }),
+    ],
+    flags: { mayTrap: false },
+    origin: syntheticAArch64Origin(`test:call:${instructionId}`),
   });
 }
 

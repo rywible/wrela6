@@ -89,8 +89,15 @@ describe("UEFI stdlib source root", () => {
     expect(result.value.sourceRoots).toEqual([
       { kind: "project", rootKey: "project", rootPath: "src", trustedForAuthority: false },
     ]);
-    expect(result.value.sourceFiles.map((source) => source.sourceKey)).toEqual(["src/image.wr"]);
+    expect(result.value.sourceFiles.map((source) => source.sourceKey)).toEqual([
+      "src/image.wr",
+      "src/wrela_abi/target/uefi/status.wr",
+    ]);
+    expect(result.value.sourceFiles.map((source) => source.moduleName)).toContain(
+      "wrela_abi.target.uefi.status",
+    );
     expect(result.value.sourceFiles[0]?.text).toContain("platform fn output_string");
+    expectParsedImportResolves(result.value, "image", "wrela_abi.target.uefi.status");
     expect(compileFixturePackage(result.value).kind).toBe("ok");
   });
 });

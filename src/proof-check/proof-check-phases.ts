@@ -19,6 +19,7 @@ import { proofCheckDiagnosticSuppressionHooks } from "./kernel/diagnostic-suppre
 import {
   buildProofCheckOperationTransferRegistry,
   createProofCheckPlaceResolver,
+  createProofCheckPlaceResolverForFunction,
   type ProofCheckRegistryContext,
 } from "./kernel/operation-registry-wiring";
 import {
@@ -221,7 +222,10 @@ export function runReachableFunctionChecks(input: {
       certificateRegistry,
       summaries: registryAccumulator.summaries,
       coreCertificates: functionCoreCertificates,
-      placeResolver: createProofCheckPlaceResolver(checkInput.mir),
+      placeResolver: createProofCheckPlaceResolverForFunction({
+        mir: checkInput.mir,
+        functionInstanceId: checkInput.functionInstanceId,
+      }),
     };
     const functionRegistry = buildProofCheckOperationTransferRegistry({
       context: functionRegistryContext,

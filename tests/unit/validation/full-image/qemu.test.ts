@@ -48,6 +48,21 @@ test("builds default-boot-path QEMU smoke requests without shell marker", () => 
   });
 });
 
+test("builds marker-only shell-startup requests for non-returning PacketCounter cases", () => {
+  expect(
+    fullImageQemuSmokeRequestForCase({
+      caseKey: "packet-counter/toolchain-stdlib",
+      launchMode: "uefi-shell-startup",
+      expectedConsoleMarkers: ["WRELA_PACKET_COUNTER_OK"],
+    }),
+  ).toEqual({
+    kind: "qemu",
+    allowSkip: true,
+    expectedConsoleMarkers: ["WRELA_PACKET_COUNTER_OK"],
+    termination: "kill-after-marker",
+  });
+});
+
 test("classifies known AArch64 firmware basenames as accepted", () => {
   expect(classifyAArch64UefiFirmwarePath("/tmp/AAVMF_CODE.fd")).toEqual({
     kind: "accepted",

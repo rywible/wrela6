@@ -1,7 +1,8 @@
 import type { TargetId } from "../semantic/ids";
+import type { CheckedType } from "../semantic/surface/type-model";
 import type { ProofAuthorityFingerprint } from "../shared/proof-authority-types";
 import type { OptIrEffectRequirement } from "./effects";
-import type { OptIrScalarType } from "./types";
+import type { OptIrScalarType, OptIrType } from "./types";
 
 export type OptIrEndian = "little" | "big";
 
@@ -72,10 +73,15 @@ export interface OptIrIntrinsicLoweringSurface {
   readonly resolve: (intrinsicKey: string) => OptIrIntrinsicLowering | undefined;
 }
 
+export interface OptIrSourceTypeAbiSurface {
+  readonly lowerType: (type: CheckedType) => OptIrType | undefined;
+}
+
 export interface OptIrTargetSurface {
   readonly targetId: TargetId;
   readonly dataModel: OptIrTargetDataModel;
   readonly abi: OptIrTargetAbiSurface;
+  readonly sourceTypeAbi?: OptIrSourceTypeAbiSurface;
   readonly platformEffects: OptIrTargetEffectCatalog;
   readonly runtimeEffects: OptIrTargetEffectCatalog;
   readonly vector: OptIrVectorFeatureSurface;

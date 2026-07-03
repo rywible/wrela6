@@ -142,6 +142,10 @@ function validationLowererForRegistryTest(): ProofMirValidationLowerer {
 function attemptLowererForRegistryTest(): ProofMirAttemptLowerer {
   return {
     lowerAttempt: () => ({ kind: "ok", value: undefined }),
+    lowerAttemptValue: () => ({
+      kind: "ok",
+      value: { blockKey: "" as never, operand: { kind: "value", value: 0 as never } },
+    }),
   };
 }
 

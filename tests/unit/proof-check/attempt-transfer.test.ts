@@ -19,6 +19,7 @@ import {
   privateGenerationForTest,
   proofCheckPlaceForTest,
   proofCheckStateForTest,
+  uninitializedPlaceForTest,
 } from "../../support/proof-check/state-fixtures";
 import { proofCheckStatePatchForTest } from "./state-patch-reducer.test";
 
@@ -104,6 +105,27 @@ describe("recordAttempt", () => {
     );
     expect(result.diagnostics[0]?.rootCauseKey).toBe("buffer");
   });
+
+  test("recordAttempt initializes the pending result place from known uninitialized state", () => {
+    const state = proofCheckStateForTest({
+      places: [ownedPlaceForTest("buffer"), uninitializedPlaceForTest("proofMirPlace:7")],
+    });
+
+    const result = recordAttempt({
+      state,
+      attemptKey: "attempt:fallible",
+      declaredInputs: [proofCheckPlaceForTest("buffer")],
+      pendingResultPlace: proofCheckPlaceForTest("proofMirPlace:7"),
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.patches).toContainEqual({
+      kind: "placeState",
+      place: expect.any(Number),
+      state: { placeKey: "proofMirPlace:7", lifecycle: "owned" },
+    });
+  });
 });
 
 describe("matchAttempt", () => {
@@ -171,6 +193,46 @@ describe("checkAttemptSuccessEdge", () => {
     if (rejected.kind !== "error") return;
     expect(rejected.diagnostics[0]?.rootCauseKey).toBe("context");
   });
+
+  test("success edge allows declared input and internal pending result consumption only", () => {
+    const originalState = proofCheckStateForTest({
+      places: [
+        ownedPlaceForTest("buffer"),
+        ownedPlaceForTest("attempt.result"),
+        ownedPlaceForTest("context"),
+      ],
+    });
+
+    const accepted = checkAttemptSuccessEdge({
+      originalState,
+      armState: proofCheckStateForTest({
+        places: [
+          consumedPlaceForTest("buffer"),
+          consumedPlaceForTest("attempt.result"),
+          ownedPlaceForTest("context"),
+        ],
+      }),
+      declaredInputs: [proofCheckPlaceForTest("buffer")],
+      internalConsumedPlaces: [proofCheckPlaceForTest("attempt.result")],
+    });
+    expect(accepted.kind).toBe("ok");
+
+    const rejected = checkAttemptSuccessEdge({
+      originalState,
+      armState: proofCheckStateForTest({
+        places: [
+          consumedPlaceForTest("buffer"),
+          consumedPlaceForTest("attempt.result"),
+          consumedPlaceForTest("context"),
+        ],
+      }),
+      declaredInputs: [proofCheckPlaceForTest("buffer")],
+      internalConsumedPlaces: [proofCheckPlaceForTest("attempt.result")],
+    });
+    expect(rejected.kind).toBe("error");
+    if (rejected.kind !== "error") return;
+    expect(rejected.diagnostics[0]?.rootCauseKey).toBe("context");
+  });
 });
 
 describe("checkAttemptErrorEdge", () => {
@@ -229,6 +291,27 @@ describe("checkAttemptSplitJoin", () => {
     expect(result.diagnostics[0]?.code).toBe(
       proofCheckDiagnosticCode("PROOF_CHECK_DIVERGENT_SPLIT_STATE"),
     );
+  });
+
+  test("attempt error path cannot silently drop live capabilities", () => {
+    const result = checkAttemptSplitJoin(
+      attemptSplitForTest({
+        successState: proofCheckStateForTest({
+          places: [ownedPlaceForTest("firmware-phase")],
+        }),
+        errorState: proofCheckStateForTest({
+          places: [consumedPlaceForTest("firmware-phase")],
+        }),
+        operationOriginKey: "operation:attempt:error-path-capability-drop",
+      }),
+    );
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") return;
+    expect(result.diagnostics[0]?.code).toBe(
+      proofCheckDiagnosticCode("PROOF_CHECK_DIVERGENT_SPLIT_STATE"),
+    );
+    expect(result.diagnostics[0]?.rootCauseKey).toBe("firmware-phase");
   });
 
   test("success and error arms repaired to the same output shape join exactly", () => {

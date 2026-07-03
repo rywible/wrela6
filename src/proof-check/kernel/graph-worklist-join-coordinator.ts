@@ -98,7 +98,10 @@ export function createJoinCoordinator(context: {
       return false;
     }
 
-    const incomingEdgeIds = sortIncomingEdgeIds(block.incomingEdges);
+    const incomingEdgeIds = sortIncomingEdgeIds(block.incomingEdges).filter((edgeId) => {
+      const edge = functionGraph.edges.get(edgeId);
+      return edge !== undefined && edge.exit === undefined;
+    });
     if (incomingEdgeIds.length <= 1) {
       return false;
     }

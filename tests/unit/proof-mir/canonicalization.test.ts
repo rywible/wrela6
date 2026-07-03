@@ -157,6 +157,91 @@ describe("proofMirDeterministicTable", () => {
 });
 
 describe("freezeFunctionDraft", () => {
+  test("freezes role-prefixed scopes to their semantic scope kinds", () => {
+    const functionInstanceId = monoInstanceId("fn:scopes");
+    const functionDraft = createEmptyDraftProofMirFunctionDraft(functionInstanceId);
+    const originKey = draftOriginKey({
+      owner: { kind: "function", functionInstanceId },
+      note: "scopes",
+    });
+    const rootScopeKey = draftScopeKey({ functionInstanceId, role: "function" });
+    const roles = [
+      "block:nested",
+      "loop:body",
+      "matchArm:case",
+      "validationArm:stmt:7:ok",
+      "attemptArm:stmt:8:success",
+      "take:body",
+      "suspendResume:yield",
+    ] as const;
+
+    acceptOrThrow(
+      functionDraft.origins.accept({
+        key: originKey,
+        ownerKey: `function:${String(functionInstanceId)}`,
+        note: "scopes",
+      }),
+    );
+    acceptOrThrow(
+      functionDraft.scopes.accept({
+        key: rootScopeKey,
+        functionInstanceId,
+        role: "function",
+        originKey,
+      }),
+    );
+    for (const role of roles) {
+      acceptOrThrow(
+        functionDraft.scopes.accept({
+          key: draftScopeKey({ functionInstanceId, role, parentScopeKey: rootScopeKey }),
+          functionInstanceId,
+          role,
+          parentScopeKey: rootScopeKey,
+          originKey,
+        }),
+      );
+    }
+    acceptOrThrow(
+      functionDraft.blocks.accept({
+        key: draftBlockKey({
+          functionInstanceId,
+          role: "entry",
+          sourceOrigin: "scopes.wr:1",
+        }),
+        functionInstanceId,
+        role: "entry",
+        sourceOrigin: "scopes.wr:1",
+        scopeKey: rootScopeKey,
+        originKey,
+      }),
+    );
+
+    const diagnostics: ProofMirDiagnostic[] = [];
+    const frozen = freezeFunctionDraft({
+      functionDraft,
+      proofMetadata: {} as MonoProofMetadata,
+      diagnostics,
+    });
+
+    expect(frozen).not.toBe("error");
+    if (frozen === "error") return;
+    expect(
+      frozen.scopes
+        .entries()
+        .map((scope) => scope.kind)
+        .sort(),
+    ).toEqual([
+      "attemptArm",
+      "block",
+      "function",
+      "loop",
+      "matchArm",
+      "suspendResume",
+      "take",
+      "validationArm",
+    ]);
+  });
+
   test("releaseLoan freezes from the canonical loan record", () => {
     const functionInstanceId = monoInstanceId("fn:release-loan");
     const functionDraft = createEmptyDraftProofMirFunctionDraft(functionInstanceId);
