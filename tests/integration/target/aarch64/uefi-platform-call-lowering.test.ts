@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { monoInstanceId } from "../../../../src/mono/ids";
 import { emptyOptIrFactSet } from "../../../../src/opt-ir/facts/fact-index";
 import {
   optIrConstantId,
   optIrCallId,
+  optIrFunctionId,
   optIrOperationId,
   optIrOriginId,
   optIrValueId,
@@ -11,6 +13,7 @@ import { optIrIntegerConstant } from "../../../../src/opt-ir/constants";
 import {
   optIrConstantOperation,
   optIrPlatformCallOperation,
+  optIrSourceCallOperation,
 } from "../../../../src/opt-ir/operations";
 import { optIrBlockForTest, optIrFunctionForTest } from "../../../support/opt-ir/cfg-fakes";
 import { optIrFunctionTable, optIrRegionTable } from "../../../../src/opt-ir/program";
@@ -358,6 +361,111 @@ describe("AArch64 UEFI platform call lowering", () => {
           register.origin?.kind === "synthetic" && register.origin.stableKey === "uefi.systemTable",
       ) ?? [];
     expect(systemTableRegisters).toHaveLength(1);
+  });
+
+  test("public pipeline forwards UEFI context through source calls to nested firmware calls", () => {
+    const originId = optIrOriginId(94);
+    const helperInstance = monoInstanceId("nested-console-helper");
+    const bootCall = optIrSourceCallOperation({
+      operationId: optIrOperationId(1),
+      callId: optIrCallId(1),
+      target: { kind: "source", functionInstanceId: helperInstance },
+      argumentIds: [],
+      resultIds: [optIrValueId(100)],
+      resultTypes: [optIrUnsignedIntegerType(64)],
+      originId,
+    });
+    const bootBlock = optIrBlockForTest({
+      parameters: [],
+      operations: [bootCall.operationId],
+      terminator: {
+        kind: "return",
+        operationId: optIrOperationId(99),
+        values: [optIrValueId(100)],
+        originId,
+      },
+      originId,
+    });
+    const bootFunction = optIrFunctionForTest({
+      functionId: optIrFunctionId(10),
+      blocks: [bootBlock],
+      entryBlock: bootBlock.blockId,
+      externalRoot: { reason: "imageEntry", originId },
+      originId,
+    });
+    const pointer = optIrConstantOperation({
+      operationId: optIrOperationId(3),
+      resultId: optIrValueId(2),
+      constant: optIrIntegerConstant({
+        constantId: optIrConstantId(3),
+        type: optIrUnsignedIntegerType(64),
+        normalizedValue: 0n,
+      }),
+      originId,
+    });
+    const nestedCall = optIrPlatformCallOperation({
+      operationId: optIrOperationId(4),
+      callId: optIrCallId(4),
+      target: { kind: "platform", platformKey: "uefi.console.outputString" },
+      argumentIds: [optIrValueId(2)],
+      resultIds: [optIrValueId(200)],
+      resultTypes: [optIrUnsignedIntegerType(64)],
+      originId,
+    });
+    const helperBlock = optIrBlockForTest({
+      parameters: [],
+      operations: [pointer.operationId, nestedCall.operationId],
+      terminator: {
+        kind: "return",
+        operationId: optIrOperationId(100),
+        values: [optIrValueId(200)],
+        originId,
+      },
+      originId,
+    });
+    const helperFunction = optIrFunctionForTest({
+      functionId: optIrFunctionId(11),
+      monoInstanceId: helperInstance,
+      blocks: [helperBlock],
+      entryBlock: helperBlock.blockId,
+      originId,
+    });
+    const program = optIrProgramForTest({
+      functions: optIrFunctionTable([bootFunction, helperFunction]),
+      regions: optIrRegionTable([]),
+    });
+
+    const result = lowerOptIrToAArch64({
+      program,
+      operations: [bootCall, pointer, nestedCall],
+      facts: emptyOptIrFactSet(),
+      target: fakeAArch64TargetSurface(),
+      options: {
+        firmware: {
+          platformCalls: uefiAArch64FirmwarePlatformCallContext({
+            firmwareTables: canonicalUefiAArch64FirmwareTableSurface(),
+            platformLowerings: canonicalUefiAArch64PlatformLowerings(),
+          }),
+          staticChar16Pointers: staticChar16PointersForTest(["optir.value:2"]),
+        },
+      },
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error("expected nested firmware call lowering success");
+    const boot = result.machineProgram.functions.entries()[0];
+    const helper = result.machineProgram.functions.entries()[1];
+    const sourceCall = boot?.blocks
+      .flatMap((block) => block.instructions)
+      .find((instruction) => String(instruction.opcode) === "bl");
+    expect(sourceCall?.operands.filter((operand) => operand.operand.kind === "vreg")).toHaveLength(
+      2,
+    );
+    expect(helper?.parameters.map((parameter) => parameter.valueKey)).toEqual([
+      "uefi.imageHandle",
+      "uefi.systemTable",
+    ]);
+    expect(String(helper?.symbol)).toBe("optir.source.nested-console-helper");
   });
 
   test("firmware context lowers exit boot services through the authenticated runtime helper", () => {

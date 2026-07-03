@@ -13,9 +13,11 @@ import {
 } from "../../../src/proof-check/domains/validation";
 import { proofCheckStateKey } from "../../../src/proof-check/kernel/state-key";
 import {
+  consumedPlaceForTest,
   ownedPlaceForTest,
   packetSourceForTest,
   proofCheckStateForTest,
+  uninitializedPlaceForTest,
   withTestPlaceResolver,
 } from "../../support/proof-check/state-fixtures";
 
@@ -74,6 +76,34 @@ describe("createValidation", () => {
         layout: { bufferKey: "source", layoutKey: "layout:Packet" },
       },
     ]);
+  });
+
+  test("validate introduces an uninitialized pending result place", () => {
+    const state = proofCheckStateForTest({
+      places: [
+        ownedPlaceForTest("source"),
+        uninitializedPlaceForTest("proofMirPlace:0"),
+        uninitializedPlaceForTest("packet"),
+      ],
+    });
+
+    const result = createValidation({
+      state,
+      validationKey: "validation:packet",
+      sourcePlaceKey: "source",
+      pendingResultPlaceKey: "proofMirPlace:0",
+      packetPlaceKey: "packet",
+      layoutKey: "layout:Packet",
+      operationOriginKey: "origin:validate",
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.patches).toContainEqual({
+      kind: "placeState",
+      place: expect.any(Number),
+      state: { placeKey: "proofMirPlace:0", lifecycle: "owned" },
+    });
   });
 
   test("rejects duplicate validation key", () => {
@@ -183,7 +213,14 @@ describe("transferValidationOkArm", () => {
         (patch) => patch.kind === "layout" && patch.layout.bufferKey === "packet",
       ),
     ).toBe(true);
-    expect(result.packetEntries.some((entry) => entry.kind === "packetSource")).toBe(true);
+    const packetSourceEntry = result.packetEntries.find((entry) => entry.kind === "packetSource");
+    expect(packetSourceEntry).toBeDefined();
+    expect(packetSourceEntry?.dependencies.map((dependency) => dependency.kind).sort()).toEqual([
+      "coreCertificate",
+      "packetSource",
+      "proofMirPlace",
+      "proofMirPlace",
+    ]);
   });
 });
 
@@ -208,6 +245,36 @@ describe("transferValidationErrArm", () => {
         (patch) => patch.kind === "placeState" && patch.state.placeKey === "source",
       ),
     ).toBe(false);
+  });
+
+  test("err edge initializes materialized error payload aliases", () => {
+    const state = proofCheckStateForTest({
+      places: [
+        ownedPlaceForTest("source"),
+        uninitializedPlaceForTest("status"),
+        uninitializedPlaceForTest("status:alias"),
+      ],
+    });
+
+    const result = transferValidationErrArm(
+      withTestPlaceResolver({
+        state,
+        validationKey: "validation:packet",
+        sourcePlaceKey: "source",
+        errPayloadPlaceKey: "status",
+        additionalOwnedPlaceKeys: ["status:alias"],
+        operationOriginKey: "origin:validation:err",
+      }),
+    );
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(
+      result.patches.filter((patch) => patch.kind === "placeState").map((patch) => patch.state),
+    ).toEqual([
+      { placeKey: "status", lifecycle: "owned" },
+      { placeKey: "status:alias", lifecycle: "owned" },
+    ]);
   });
 });
 
@@ -288,6 +355,7 @@ describe("checkValidationExitClosure", () => {
 
   test("return with live packet token is rejected", () => {
     const state = proofCheckStateForTest({
+      places: [ownedPlaceForTest("packet")],
       packetSources: [packetSourceForTest("packet", "source")],
     });
 
@@ -300,6 +368,21 @@ describe("checkValidationExitClosure", () => {
     expect(result.kind).toBe("error");
     if (result.kind !== "error") return;
     expect(result.diagnostics[0]?.code).toBe(proofCheckDiagnosticCode("PROOF_CHECK_LEAKED_PACKET"));
+  });
+
+  test("return ignores consumed packet provenance", () => {
+    const state = proofCheckStateForTest({
+      places: [consumedPlaceForTest("packet")],
+      packetSources: [packetSourceForTest("packet", "source")],
+    });
+
+    const result = checkValidationExitClosure({
+      state,
+      exitKind: "return",
+      operationOriginKey: "origin:return",
+    });
+
+    expect(result.kind).toBe("ok");
   });
 });
 

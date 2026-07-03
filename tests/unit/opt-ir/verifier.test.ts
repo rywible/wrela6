@@ -7,6 +7,7 @@ import {
   optIrProgramWithBlockArgumentMismatchForTest,
   optIrProgramWithDominanceViolationForTest,
   optIrProgramWithDuplicateValueDefinitionForTest,
+  optIrProgramWithEntryParameterEdgeForTest,
   optIrProgramWithLaterDominatingDefinitionForTest,
   optIrProgramWithMetadataMismatchForTest,
   optIrProgramWithMissingRegionTokenForTest,
@@ -48,6 +49,13 @@ describe("OptIR verifier suite", () => {
     expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
       optIrDiagnosticCode("OPT_IR_BLOCK_ARGUMENT_MISMATCH"),
     );
+  });
+
+  test("ssa verifier does not require CFG edge arguments for entry parameters", () => {
+    expect(verifyOptIrProgramForTest(optIrProgramWithEntryParameterEdgeForTest())).toEqual({
+      kind: "ok",
+      diagnostics: [],
+    });
   });
 
   test("ssa verifier rejects value uses before definitions in the same block", () => {

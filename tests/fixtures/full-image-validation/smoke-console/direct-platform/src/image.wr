@@ -1,0 +1,17 @@
+enum UefiStatus:
+    success
+    load_error
+    invalid_parameter
+    unsupported
+    bad_buffer_size
+    buffer_too_small
+    device_error
+    not_found
+    aborted
+    security_violation
+
+platform fn output_string(message: Utf16Static) -> UefiStatus
+
+uefi image SmokeConsoleImage:
+    fn boot() -> UefiStatus:
+        output_string(utf16_static("WRELA_UEFI_SMOKE_OK\r\n"))

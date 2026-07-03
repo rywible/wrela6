@@ -13,12 +13,15 @@ export type {
 } from "./binary-spine";
 export {
   compileUefiAArch64Image,
+  compileUefiAArch64ImageWithTrace,
   createUefiAArch64TargetMetadata,
   fingerprintUefiAArch64ImageBytes,
 } from "./compile-uefi-aarch64-image";
 export type {
   CompileUefiAArch64ImageInput,
   CompileUefiAArch64ImageResult,
+  CompileUefiAArch64ImageTrace,
+  CompileUefiAArch64ImageWithTraceResult,
 } from "./compile-uefi-aarch64-image";
 export { sortUefiAArch64TargetDiagnostics, uefiAArch64TargetDiagnostic } from "./diagnostics";
 export type {
@@ -103,12 +106,15 @@ export type {
   FixtureProjectFilesystem,
   FixtureProjectPackageInputOptions,
   FixtureProjectPathOperations,
+  UefiAArch64ValidationFixturePacketSource,
+  UefiAArch64ValidationFixturePacketSourceInput,
 } from "./package-input";
 export {
   buildOptimizedOptIr,
   buildProofMir,
   checkProofAndResources,
   computeRepresentationLayoutFacts,
+  extractUefiAArch64StaticChar16MetadataFromCompilerIntrinsics,
   layoutFactsToProofMirInput,
   lowerTypedHir,
   monomorphizeWholeImage,
@@ -122,6 +128,10 @@ export {
   proofMirToCheckInput,
   runUefiAArch64PackagePipelineToOptIr,
 } from "./package-pipeline";
+export {
+  productionUefiAArch64OptIrTargetSurface,
+  productionUefiAArch64ProofCheckInputAuthority,
+} from "./target-surfaces";
 export type {
   PackageModuleGraphParseInput,
   PackageMonomorphizedImageAdapter,
@@ -152,6 +162,10 @@ export {
   canonicalUefiAArch64SemanticTargetSurface,
   fingerprintUefiPlatformPrimitiveSpec,
   fingerprintUefiSemanticPlatformCatalog,
+  FULL_IMAGE_VALIDATION_FEATURE,
+  UEFI_AARCH64_UTF16_STATIC_INTRINSIC,
+  uefiAArch64CompilerIntrinsicNameCatalog,
+  uefiAArch64PlatformPrimitiveNameCatalog,
 } from "./platform-catalog";
 export type {
   UefiAArch64PlatformPrimitiveLowering,
@@ -240,6 +254,8 @@ export type {
 } from "./target-driver-surface";
 export {
   authenticateUefiAArch64PeCoffWriterTargetForLinkedPolicy,
+  productionUefiAArch64LayoutTargetSurface,
+  productionUefiAArch64ProofMirBuildTargetContext,
   productionUefiAArch64ResolvedTargetSurfaces,
   productionUefiAArch64TargetSurfaceFingerprints,
 } from "./target-surfaces";

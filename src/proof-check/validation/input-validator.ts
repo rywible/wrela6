@@ -209,7 +209,7 @@ function validateTargetIdsMatch(input: {
   );
 }
 
-function layoutAuthorityFingerprintForInputValidation(
+export function layoutAuthorityFingerprintForProofCheckInput(
   layout: LayoutFactProgram,
 ): ProofAuthorityFingerprint {
   return proofAuthorityFingerprintFromValue({
@@ -226,13 +226,13 @@ function validateLayoutAuthority(input: {
   readonly diagnostics: ProofCheckDiagnostic[];
 }): void {
   pushAuthorityFingerprintValidation({
-    fingerprint: layoutAuthorityFingerprintForInputValidation(input.mir.layout),
+    fingerprint: layoutAuthorityFingerprintForProofCheckInput(input.mir.layout),
     ownerKey: "proof-check:embedded-layout",
     rootCauseKey: "proof-check:authority-fingerprint",
     diagnostics: input.diagnostics,
   });
   pushAuthorityFingerprintValidation({
-    fingerprint: layoutAuthorityFingerprintForInputValidation(input.layout),
+    fingerprint: layoutAuthorityFingerprintForProofCheckInput(input.layout),
     ownerKey: "proof-check:selected-layout",
     rootCauseKey: "proof-check:authority-fingerprint",
     diagnostics: input.diagnostics,

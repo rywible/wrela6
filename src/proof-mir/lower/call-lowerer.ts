@@ -1,5 +1,6 @@
 import { instantiatedHirIdKey, type MonoInstanceId } from "../../mono/ids";
 import type { ProofMirCanonicalKey } from "../canonicalization/canonical-keys";
+import { proofMirDiagnostic } from "../diagnostics";
 import type { ProofMirPlaceId, ProofMirValueId } from "../ids";
 import type { ProofMirCallGraphEdge } from "../model/calls";
 import type { DraftProofMirCallReceiver } from "../draft/draft-call-operands";
@@ -16,6 +17,7 @@ import { lowerCompilerRuntimeCallImpl } from "./call-lowering-runtime";
 import {
   callLoweringIdAllocatorForFunction,
   callSiteRequirementsForExpression,
+  loweringError,
   loweringOk,
   originForCall,
   type CallLoweringIdAllocator,
@@ -51,6 +53,10 @@ function lowerCallImpl(input: {
   readonly placeIdForKey?: (key: ProofMirCanonicalKey) => ProofMirPlaceId;
   readonly callInput: ProofMirCallLoweringInput;
 }): ProofMirLoweringResult<ProofMirDraftOperand> {
+  if (input.callInput.call.compilerIntrinsic !== undefined) {
+    return lowerCompilerIntrinsicCallImpl(input);
+  }
+
   const targetResult = input.context.callTargetIndex.resolveMonoCall({
     call: input.callInput.call,
     monoExpressionId: input.callInput.monoExpressionId,
@@ -119,6 +125,77 @@ function lowerCallImpl(input: {
     arguments: loweredArgumentsResult.value,
     requirements,
     result: resultOperand,
+  });
+
+  return loweringOk(resultOperand);
+}
+
+function lowerCompilerIntrinsicCallImpl(input: {
+  readonly context: ProofMirCallLoweringInput["context"];
+  readonly recorder: ProofMirCallLoweringRecorder;
+  readonly idAllocator: CallLoweringIdAllocator;
+  readonly callInput: ProofMirCallLoweringInput;
+}): ProofMirLoweringResult<ProofMirDraftOperand> {
+  const compilerIntrinsic = input.callInput.call.compilerIntrinsic;
+  if (compilerIntrinsic === undefined) {
+    throw new RangeError("compiler intrinsic call lowering requires intrinsic metadata.");
+  }
+  if (input.callInput.call.recovered === true) {
+    return loweringError([
+      proofMirDiagnostic({
+        severity: "error",
+        code: "PROOF_MIR_INVALID_CONCRETE_CALL_TARGET",
+        message: "Recovered compiler-intrinsic call cannot be lowered to Proof MIR.",
+        ownerKey: `function:${String(input.context.functionInstanceId)}`,
+        rootCauseKey: "call-target",
+        stableDetail: `compiler-intrinsic:recovered:${compilerIntrinsic.intrinsicKey}`,
+        functionInstanceId: input.context.functionInstanceId,
+      }),
+    ]);
+  }
+
+  const originKey = originForCall(
+    input.context,
+    input.callInput.monoExpressionId,
+    input.callInput.call.sourceOrigin ?? "source:compiler-intrinsic",
+  );
+  const resultValueKey = input.context.graph.createValue({
+    role: `compiler-intrinsic:result:${compilerIntrinsic.intrinsicKey}:${instantiatedHirIdKey(input.callInput.monoExpressionId)}`,
+    origin: originKey,
+    type: input.callInput.resultType,
+    resourceKind: input.callInput.resultResourceKind,
+  });
+  const resultPlaceKey = input.context.graph.createPlace({
+    monoPlaceCanonicalKey: `compiler-intrinsic:result-place:${instantiatedHirIdKey(input.callInput.monoExpressionId)}`,
+    origin: originKey,
+    root: { kind: "runtimeTemporary", valueKey: resultValueKey },
+    type: input.callInput.resultType,
+    resourceKind: input.callInput.resultResourceKind,
+  });
+  const resultOperand: ProofMirDraftOperand = {
+    kind: "valueAndPlace",
+    value: resultValueKey,
+    place: resultPlaceKey,
+  };
+
+  recordCallArtifacts({
+    context: input.context,
+    recorder: input.recorder,
+    idAllocator: input.idAllocator,
+    callInput: input.callInput,
+    target: {
+      kind: "compilerIntrinsic",
+      intrinsicKey: compilerIntrinsic.intrinsicKey,
+      sourceValueKey: compilerIntrinsic.sourceValueKey,
+      returnTypeKey: compilerIntrinsic.returnTypeKey,
+    },
+    arguments: [],
+    requirements: callSiteRequirementsForExpression(
+      input.context.program,
+      input.callInput.monoExpressionId,
+    ),
+    result: resultOperand,
+    originSource: "source:compiler-intrinsic",
   });
 
   return loweringOk(resultOperand);

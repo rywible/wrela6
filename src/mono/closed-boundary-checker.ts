@@ -438,7 +438,10 @@ function scanCallExpression(input: {
   if (input.call.recovered === true) {
     reportRecovery({ context: input.context, diagnostics: input.diagnostics });
   }
-  if (input.call.calleeFunctionId === undefined || input.call.recovered === true) {
+  if (
+    (input.call.calleeFunctionId === undefined || input.call.recovered === true) &&
+    (input.call.compilerIntrinsic === undefined || input.call.recovered === true)
+  ) {
     input.diagnostics.push(
       boundaryDiagnostic({
         code: "MONO_UNRESOLVED_CALL_TARGET",

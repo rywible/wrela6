@@ -12,17 +12,21 @@ import {
 import { optimizedOptIrProgramWithUnitSuccessImageEntryForAArch64Test } from "../aarch64/selection/optimized-opt-ir-fixtures";
 
 export function uefiAArch64PackagePipelineDependenciesForOptimizedFixture(): UefiAArch64PackagePipelineDependencies {
-  const parsedGraph: PackageParsedModuleGraphAdapter = Object.freeze({ kind: "parsed-graph" });
-  const typedHir: PackageTypedHirAdapter = Object.freeze({ kind: "typed-hir" });
-  const monomorphizedImage: PackageMonomorphizedImageAdapter = Object.freeze({
+  const parsedGraph = unsafePackagePipelineAdapter<PackageParsedModuleGraphAdapter>({
+    kind: "parsed-graph",
+  });
+  const typedHir = unsafePackagePipelineAdapter<PackageTypedHirAdapter>({ kind: "typed-hir" });
+  const monomorphizedImage = unsafePackagePipelineAdapter<PackageMonomorphizedImageAdapter>({
     kind: "mono-image",
     reachablePlatformPrimitiveIds: Object.freeze([]),
   });
-  const layoutFacts: PackageRepresentationLayoutFactsAdapter = Object.freeze({
+  const layoutFacts = unsafePackagePipelineAdapter<PackageRepresentationLayoutFactsAdapter>({
     kind: "layout-facts",
   });
-  const proofMir: PackageProofMirAdapter = Object.freeze({ kind: "proof-mir" });
-  const proofCheck: PackageProofCheckAdapter = Object.freeze({ kind: "proof-check" });
+  const proofMir = unsafePackagePipelineAdapter<PackageProofMirAdapter>({ kind: "proof-mir" });
+  const proofCheck = unsafePackagePipelineAdapter<PackageProofCheckAdapter>({
+    kind: "proof-check",
+  });
 
   return Object.freeze({
     parseModuleGraph: () => ({ kind: "ok" as const, value: parsedGraph, diagnostics: [] }),
@@ -45,12 +49,19 @@ export function uefiAArch64PackagePipelineDependenciesForOptimizedFixture(): Uef
     }),
     buildOptimizedOptIr: () => {
       const fixture = optimizedOptIrProgramWithUnitSuccessImageEntryForAArch64Test();
-      const optIr: PackageOptimizedOptIrAdapter = Object.freeze({
+      const optIr = unsafePackagePipelineAdapter<PackageOptimizedOptIrAdapter>({
         program: fixture.program,
         operations: Object.freeze([...fixture.operations]),
+        unoptimizedOperations: Object.freeze([...fixture.operations]),
         facts: emptyOptIrFactSet(),
+        staticChar16Strings: Object.freeze([]),
+        staticChar16Pointers: Object.freeze([]),
       });
       return { kind: "ok" as const, value: optIr, diagnostics: [] };
     },
   });
+}
+
+function unsafePackagePipelineAdapter<Adapter>(value: unknown): Adapter {
+  return Object.freeze(value as object) as Adapter;
 }

@@ -73,6 +73,7 @@ export interface BuildInitialProofCheckStateInput {
   readonly functionInstanceId: MonoInstanceId;
   readonly entryReason: ProofCheckEntryReason;
   readonly signature: ProofCheckFunctionSignatureInput;
+  readonly knownPlaceKeys?: readonly string[];
   readonly declaredRequirements: readonly ProofCheckRequirementTerm[];
   readonly seededFacts?: readonly ProofCheckSeededFactInput[];
   readonly seededCapabilities?: readonly ProofCheckSeededCapabilityInput[];
@@ -182,6 +183,23 @@ function buildOwnedPlaces(
     });
   }
   return places;
+}
+
+function buildInitialPlaceStates(input: {
+  readonly signature: ProofCheckFunctionSignatureInput;
+  readonly knownPlaceKeys: readonly string[] | undefined;
+}): readonly CheckedPlaceState[] {
+  const statesByPlaceKey = new Map<string, CheckedPlaceState>();
+  for (const place of buildOwnedPlaces(input.signature)) {
+    statesByPlaceKey.set(place.placeKey, place);
+  }
+  for (const placeKey of input.knownPlaceKeys ?? []) {
+    if (statesByPlaceKey.has(placeKey)) {
+      continue;
+    }
+    statesByPlaceKey.set(placeKey, { placeKey, lifecycle: "uninitialized" });
+  }
+  return sortedUnique([...statesByPlaceKey.values()], (state) => state.placeKey);
 }
 
 function normalizedRequirementEntries(
@@ -442,7 +460,10 @@ export function buildInitialProofCheckState(
   );
 
   const state = createProofCheckState({
-    places: buildOwnedPlaces(input.signature),
+    places: buildInitialPlaceStates({
+      signature: input.signature,
+      knownPlaceKeys: input.knownPlaceKeys,
+    }),
     facts: [...requirementFacts.facts, ...intrinsicFacts],
     capabilities,
     privateState: buildPrivateStateGenerations(input.signature),

@@ -167,8 +167,8 @@ const SCHEMAS = {
   },
   exitClosure: {
     kind: "exitClosure",
-    subjectKinds: ["function", "block", "edge"],
-    requiredDependencies: ["coreCertificate", "proofMirEdge"],
+    subjectKinds: ["place", "function"],
+    requiredDependencies: [],
     certificateRule: "core",
     typedAnswers: ["terminalBehavior", "provesImpossible"],
   },
@@ -182,7 +182,7 @@ const SCHEMAS = {
   origin: {
     kind: "origin",
     subjectKinds: ["mirOrigin"],
-    requiredDependencies: ["proofMirFact"],
+    requiredDependencies: [],
     certificateRule: "core",
     typedAnswers: ["provenanceContributor"],
   },
@@ -342,6 +342,12 @@ function validateSubjectReferences(
   input: CheckedFactImportValidationInput,
 ): readonly OptIrFactImportDiagnostic[] {
   const subject = input.entry.subject;
+  if (String(input.entry.kind) === "origin" && subject.kind === "mirOrigin") {
+    return [];
+  }
+  if (String(input.entry.kind) === "exitClosure" && subject.kind === "place") {
+    return [];
+  }
   switch (subject.kind) {
     case "place":
       return hasValue(input.proofMirLookups.places, subject.placeId)

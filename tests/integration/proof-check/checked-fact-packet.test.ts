@@ -216,7 +216,11 @@ describe("checked fact packet cross-domain integration", () => {
     );
     expect(ownershipEntry).toBeDefined();
     if (ownershipEntry === undefined) return;
-    expect(dependencyKinds(ownershipEntry)).toEqual(["proofMirPlace", "proofMirPlace"]);
+    expect(dependencyKinds(ownershipEntry)).toEqual([
+      "proofMirPlace",
+      "proofMirPlace",
+      "coreCertificate",
+    ]);
 
     const platformResult = applyPlatformContractEffects({
       state: proofCheckStateForTest(),

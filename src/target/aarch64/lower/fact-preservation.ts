@@ -12,6 +12,7 @@ import { dependencyEdgeKey, type AArch64DependencyEdge } from "../plan/required-
 import type { AArch64FactPreservationMapping, AArch64LoweringState } from "./pipeline-stages";
 
 const AARCH64_CANONICAL_TARGET_DECLARATION = "wrela-uefi-aarch64-rpi5-v1";
+const AARCH64_MEMORY_ORDER_TARGET_DECLARATION = "target.memory-order";
 
 export function preserveAArch64Facts(input: {
   readonly optIrFacts: OptIrFactSet;
@@ -33,18 +34,30 @@ export function preserveAArch64Facts(input: {
         machineInstructions: record.machineInstructions,
       });
     for (const mapping of mappings) {
+      const implicitBackendFact = backendFactDescriptorForMapping(mapping, input.optIrFacts);
       records.push(
         aarch64MachineFactRecord({
           factId: aarch64MachineFactId(nextFactId),
-          extensionKey: mapping.extensionKey ?? "legacy.machine-fact",
+          extensionKey:
+            mapping.extensionKey ?? implicitBackendFact?.extensionKey ?? "legacy.machine-fact",
           subject: mapping.subject,
-          payload: mapping.payload ?? { patternId: record.patternId },
+          payload: mapping.payload ??
+            implicitBackendFact?.payload ?? { patternId: record.patternId },
           lineage: {
             optIrFactIds: optIrFactIdsFromNumbers(mapping.optIrFactIds),
             targetDeclarationKeys: mapping.targetDeclarationKeys ?? [
               AARCH64_CANONICAL_TARGET_DECLARATION,
             ],
           },
+          ...((mapping.upstreamVerifierKey ?? implicitBackendFact?.upstreamVerifierKey) ===
+          undefined
+            ? {}
+            : {
+                upstreamVerifierKey:
+                  mapping.upstreamVerifierKey ?? implicitBackendFact?.upstreamVerifierKey,
+              }),
+          targetDeclarationKeys: mapping.targetDeclarationKeys ??
+            implicitBackendFact?.targetDeclarationKeys ?? [AARCH64_CANONICAL_TARGET_DECLARATION],
           manifestGate: mapping.manifestGate ?? record.patternId,
         }),
       );
@@ -69,7 +82,10 @@ export function preserveAArch64Facts(input: {
   return aarch64PreservedFactSet({
     records,
     droppedFacts,
-    targetDeclarations: [AARCH64_CANONICAL_TARGET_DECLARATION],
+    targetDeclarations: [
+      AARCH64_CANONICAL_TARGET_DECLARATION,
+      ...records.flatMap((record) => record.targetDeclarationKeys),
+    ],
   });
 }
 
@@ -162,15 +178,21 @@ function mappingForFact(input: {
   readonly dependencyEdges: readonly AArch64DependencyEdge[];
   readonly requiredEdges: readonly AArch64DependencyEdge[];
 }): readonly AArch64FactPreservationMapping[] {
+  const backendFact = backendFactDescriptorForOptIrFact(input.fact);
   const base = {
     optIrFactIds: [Number(input.fact.factId)],
-    extensionKey: input.fact.extensionKey ?? input.fact.packetKind,
-    payload: {
+    extensionKey: backendFact.extensionKey,
+    payload: backendFact.payload ?? {
       extensionKey: input.fact.extensionKey ?? input.fact.packetKind,
       packetKind: input.fact.extensionPacketKind ?? input.fact.packetKind,
       patternId: input.record.patternId,
     },
-    targetDeclarationKeys: [AARCH64_CANONICAL_TARGET_DECLARATION],
+    ...(backendFact.upstreamVerifierKey === undefined
+      ? {}
+      : { upstreamVerifierKey: backendFact.upstreamVerifierKey }),
+    targetDeclarationKeys: backendFact.targetDeclarationKeys ?? [
+      AARCH64_CANONICAL_TARGET_DECLARATION,
+    ],
     manifestGate: input.record.patternId,
   } satisfies Omit<AArch64FactPreservationMapping, "subject">;
 
@@ -233,6 +255,98 @@ function mappingForFact(input: {
           },
         },
       ];
+}
+
+function backendFactDescriptorForOptIrFact(fact: OptIrFactRecord): {
+  readonly extensionKey: string;
+  readonly payload?: Readonly<Record<string, unknown>>;
+  readonly upstreamVerifierKey?: string;
+  readonly targetDeclarationKeys?: readonly string[];
+} {
+  if (fact.extensionKey !== "memory-order") {
+    return { extensionKey: fact.extensionKey ?? fact.packetKind };
+  }
+  const payload = optIrFactPayload(fact);
+  return {
+    extensionKey: "memory-order-and-region-type",
+    payload: {
+      region: backendMemoryRegionKey(fact),
+      order: backendMemoryOrder(payload.order, fact.extensionPacketKind),
+      regionType: backendRegionMemoryType(payload.memoryType),
+    },
+    upstreamVerifierKey: "proof.memory-order",
+    targetDeclarationKeys: [AARCH64_MEMORY_ORDER_TARGET_DECLARATION],
+  };
+}
+
+function backendFactDescriptorForMapping(
+  mapping: AArch64FactPreservationMapping,
+  optIrFacts: OptIrFactSet,
+): ReturnType<typeof backendFactDescriptorForOptIrFact> | undefined {
+  if (mapping.extensionKey !== undefined || mapping.optIrFactIds.length !== 1) {
+    return undefined;
+  }
+  const factId = mapping.optIrFactIds[0];
+  if (factId === undefined) {
+    return undefined;
+  }
+  const fact = optIrFacts.indexes.byId[factId];
+  return fact === undefined ? undefined : backendFactDescriptorForOptIrFact(fact);
+}
+
+function optIrFactPayload(fact: OptIrFactRecord): Readonly<Record<string, unknown>> {
+  return fact.extensionPayload !== undefined &&
+    typeof fact.extensionPayload === "object" &&
+    fact.extensionPayload !== null
+    ? (fact.extensionPayload as Readonly<Record<string, unknown>>)
+    : {};
+}
+
+function backendMemoryRegionKey(fact: OptIrFactRecord): string {
+  if (fact.subject.kind === "optIrRegion") {
+    return `region:${String(fact.subject.regionId)}`;
+  }
+  if (fact.subject.kind === "operation") {
+    return `operation:${String(fact.subject.operationId)}`;
+  }
+  return fact.subjectKey;
+}
+
+function backendMemoryOrder(value: unknown, packetKind: string | undefined): string {
+  switch (value) {
+    case "relaxed":
+      return "relaxed";
+    case "acquire":
+      return "acquire";
+    case "release":
+      return "release";
+    case "acquireRelease":
+      return "acq_rel";
+    case "sequentiallyConsistent":
+    case "deviceOrdered":
+      return "seq_cst";
+    case "compilerOnlyOrdered":
+      return "relaxed";
+    default:
+      return packetKind === "barrier-domain" ? "seq_cst" : "relaxed";
+  }
+}
+
+function backendRegionMemoryType(value: unknown): string {
+  switch (value) {
+    case "normalCacheable":
+    case "packetSource":
+    case "validatedPayload":
+      return "normal";
+    case "deviceMmio":
+      return "mmio";
+    case "firmwareTable":
+    case "runtimeOwned":
+    case "externalConservative":
+      return "volatile";
+    default:
+      return "normal";
+  }
 }
 
 function memoryOperandMappings(

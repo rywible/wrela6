@@ -7,12 +7,41 @@ import {
   canonicalUefiAArch64SemanticTargetSurface,
   fingerprintUefiPlatformPrimitiveSpec,
   fingerprintUefiSemanticPlatformCatalog,
+  FULL_IMAGE_VALIDATION_FEATURE,
+  UEFI_AARCH64_UTF16_STATIC_INTRINSIC,
+  uefiAArch64PlatformPrimitiveNameCatalog,
 } from "../../../../src/target/uefi-aarch64";
 import { targetTypeId } from "../../../../src/semantic/ids";
 import { semanticTargetSurface } from "../../../../src/semantic/surface/platform-surface";
 import { semanticTargetSurfaceWithUefiPrimitives } from "../../../support/semantic/semantic-surface-fakes";
 
 describe("UEFI platform primitive lowering payloads", () => {
+  test("exports the UEFI primitive source-name catalog", () => {
+    const catalog = uefiAArch64PlatformPrimitiveNameCatalog();
+
+    expect(FULL_IMAGE_VALIDATION_FEATURE).toBe("full-image-validation-fixture");
+    expect(
+      catalog.primitives.map((primitive) => [primitive.name, String(primitive.primitiveId)]),
+    ).toEqual([
+      ["exit_boot_services_with_fresh_map", "uefi.boot.exitBootServices"],
+      ["output_string", "uefi.console.outputString"],
+      ["set_watchdog_timer", "uefi.boot.setWatchdogTimer"],
+      ["validation_fixture_packet_source", "uefi.validation.fixturePacketSource"],
+    ]);
+    expect(String(catalog.byName("output_string")?.primitiveId)).toBe("uefi.console.outputString");
+  });
+
+  test("exports the UEFI utf16_static compiler intrinsic catalog entry", () => {
+    expect(UEFI_AARCH64_UTF16_STATIC_INTRINSIC).toEqual({
+      sourceName: "utf16_static",
+      intrinsicKey: "uefi.utf16_static",
+      parameterShape: ["string-literal"],
+      returnTargetType: "uefi.Utf16Static",
+    });
+    expect(Object.isFrozen(UEFI_AARCH64_UTF16_STATIC_INTRINSIC)).toBe(true);
+    expect(Object.isFrozen(UEFI_AARCH64_UTF16_STATIC_INTRINSIC.parameterShape)).toBe(true);
+  });
+
   test("authenticates v1 lowerings against canonical semantic primitives", () => {
     const semanticTarget = canonicalUefiAArch64SemanticTargetSurface();
     const result = authenticateUefiAArch64PlatformLowerings({
@@ -34,8 +63,30 @@ describe("UEFI platform primitive lowering payloads", () => {
         "uefi.boot.stall",
         "uefi.console.outputString",
         "uefi.protocol.locate",
+        "uefi.validation.fixturePacketSource",
       ]);
     }
+  });
+
+  test("canonical semantic target gates the validation fixture primitive behind its feature", () => {
+    const semanticTarget = canonicalUefiAArch64SemanticTargetSurface();
+    const primitive = semanticTarget.platformPrimitives.get(
+      "uefi.validation.fixturePacketSource" as never,
+    );
+
+    expect(primitive).toBeDefined();
+    expect(primitive?.availability.features).toEqual([FULL_IMAGE_VALIDATION_FEATURE]);
+  });
+
+  test("catalogs the validation fixture packet source as a compiler-owned inline primitive", () => {
+    const lowering = canonicalUefiAArch64PlatformLowerings().find(
+      (candidate) => String(candidate.primitiveId) === "uefi.validation.fixturePacketSource",
+    );
+
+    expect(lowering?.lowering).toEqual({
+      kind: "inline",
+      operationKey: "validation-fixture-packet-source",
+    });
   });
 
   test("canonical console primitive carries the stdlib wrapper signature shape", () => {

@@ -15,6 +15,7 @@ import {
   invalidBoundaryConstructOptIrInputForTest,
   stableOptIrConstructionKey,
   validConstructOptIrInputWithCapabilityFlowCallForTest,
+  validConstructOptIrInputWithEntryParameterLoadForTest,
   validConstructOptIrInputWithProofOnlyDependentFactsForTest,
   validConstructOptIrInputWithPreservedNoaliasWitnessForTest,
   validConstructOptIrInputWithOrphanNoaliasWitnessForTest,
@@ -78,6 +79,70 @@ describe("OptIR public construction API", () => {
     }
 
     expect(result.facts.records.map((record) => record.packetKind)).toEqual(["capabilityFlow"]);
+  });
+
+  test("constructOptIr attaches checked summaries and mandatory inline policies to functions", () => {
+    const input = validConstructOptIrInputForTest();
+    const result = constructOptIr(input);
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") {
+      throw new Error("Expected construction to preserve function summary metadata.");
+    }
+
+    const policy = input.handoff.semanticInlinePolicies[0];
+    if (policy === undefined) {
+      throw new Error("Expected fixture handoff to include a semantic inline policy.");
+    }
+    const function_ = result.program.functions
+      .entries()
+      .find((entry) => entry.monoInstanceId === policy.functionInstanceId);
+    if (function_ === undefined) {
+      throw new Error("Expected constructed function for inline policy.");
+    }
+    const summary = function_.summary as
+      | {
+          readonly functionInstanceId?: unknown;
+          readonly semanticInlinePolicy?: {
+            readonly kind?: unknown;
+            readonly source?: unknown;
+            readonly certificateId?: unknown;
+          };
+        }
+      | undefined;
+
+    expect(summary?.functionInstanceId).toBe(policy.functionInstanceId);
+    expect(summary?.semanticInlinePolicy).toMatchObject({
+      kind: "mandatory",
+      source: "checkedSummary",
+      certificateId: policy.summaryCertificateId,
+    });
+  });
+
+  test("constructOptIr attaches checked external roots to functions", () => {
+    const input = validConstructOptIrInputForTest();
+    const result = constructOptIr(input);
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") {
+      throw new Error("Expected construction to preserve external root metadata.");
+    }
+
+    const externalRoot = input.handoff.checkedMir.mir.image.externalRoots[0];
+    if (externalRoot === undefined) {
+      throw new Error("Expected fixture handoff to include an image entry external root.");
+    }
+    const function_ = result.program.functions
+      .entries()
+      .find((entry) => entry.monoInstanceId === externalRoot.functionInstanceId);
+    if (function_ === undefined) {
+      throw new Error("Expected constructed function for external root.");
+    }
+
+    expect(function_.externalRoot).toEqual({
+      reason: externalRoot.reason,
+      originId: function_.originId,
+    });
   });
 
   test("constructOptIr rejects call facts for the wrong checked MIR caller", () => {
@@ -202,7 +267,7 @@ describe("OptIR public construction API", () => {
     ).toBe("unknown");
   });
 
-  test("constructOptIr materializes validated-payload regions for checked buffer reads", () => {
+  test("constructOptIr materializes backed validated-payload regions for checked buffer reads", () => {
     const result = constructOptIr(validConstructOptIrInputWithValidatedBufferReadForTest());
 
     expect(result.kind).toBe("ok");
@@ -226,10 +291,31 @@ describe("OptIR public construction API", () => {
       readRequires: ["9501"],
       pathCertificates: [optIrPathCertificateId(9501)],
     });
-    expect(result.program.regions.entries()).toHaveLength(1);
+    expect(result.program.regions.entries()).toHaveLength(2);
     expect(result.program.optimizationRegions?.map((region) => region.kind)).toEqual([
+      "packetSource",
       "validatedPayload",
     ]);
+    const packetSourceRegion = result.program.optimizationRegions?.find(
+      (region) => region.kind === "packetSource",
+    );
+    const payloadRegion = result.program.optimizationRegions?.find(
+      (region) => region.kind === "validatedPayload",
+    );
+    if (packetSourceRegion === undefined || payloadRegion === undefined) {
+      throw new Error("Expected packet source and payload regions.");
+    }
+    const regionMemoryFact = result.facts.records.find(
+      (record) =>
+        record.extensionKey === "memory-order" &&
+        record.extensionPacketKind === "region-memory-type" &&
+        record.subjectKey === `region:${String(payloadRegion.regionId)}`,
+    );
+    expect(regionMemoryFact?.extensionPayload).toMatchObject({
+      memoryType: "validatedPayload",
+      backingRegion: packetSourceRegion.regionId,
+      certifiedOffset: 0n,
+    });
   });
 
   test("constructOptIr fails closed when a validated-buffer read has no imported bounds fact", () => {
@@ -242,6 +328,27 @@ describe("OptIR public construction API", () => {
     expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
       "statement:9501:missing-validated-buffer-authority:fn:0|ownerType:none|owner:<>|fn:<>",
     );
+  });
+
+  test("constructOptIr lowers entry parameter place loads as entry block parameters", () => {
+    const result = constructOptIr(validConstructOptIrInputWithEntryParameterLoadForTest());
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") {
+      throw new Error("Expected entry parameter load construction to succeed.");
+    }
+
+    const function_ = result.program.functions.entries()[0];
+    if (function_ === undefined) {
+      throw new Error("Expected constructed function.");
+    }
+    const entryBlock = function_.blocks.find((block) => block.blockId === function_.entryBlock);
+    if (entryBlock === undefined) {
+      throw new Error("Expected constructed entry block.");
+    }
+
+    expect(entryBlock.parameters.map((parameter) => parameter.incomingRole)).toEqual(["entry"]);
+    expect(entryBlock.operations).toEqual([]);
   });
 
   test("buildOptimizedOptIr propagates construction errors without optimizer execution", () => {

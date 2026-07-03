@@ -9,6 +9,7 @@ const PURE_UEFI_TARGET_FILES = [
   "artifact.ts",
   "target-driver-surface.ts",
   "target-surfaces.ts",
+  "proof-check-authority.ts",
   "status-conversion.ts",
   "firmware-abi.ts",
   "firmware-tables.ts",
@@ -113,6 +114,7 @@ describe("UEFI AArch64 target-driver audit", () => {
 
   test("UEFI golden fixtures do not import production target data", () => {
     for (const filePath of [
+      "src/validation/full-image/reference-checkers/uefi-tcb-golden-fixtures.ts",
       "tests/support/target/uefi-aarch64/status-golden-fixtures.ts",
       "tests/support/target/uefi-aarch64/firmware-table-golden-fixtures.ts",
     ]) {
@@ -147,7 +149,22 @@ describe("UEFI AArch64 target-driver audit", () => {
     const packagePipeline = readFileSync("src/target/uefi-aarch64/package-pipeline.ts", "utf8");
     expect(packagePipeline).not.toContain("[key: string]: unknown");
     expect(packagePipeline).not.toContain("artifact?: unknown");
+    expect(packagePipeline).not.toContain("CandidateAdapter");
     expect(packagePipeline).not.toContain('stages.passed("hir")');
+
+    const packagePipelineStageInputs = readFileSync(
+      "src/target/uefi-aarch64/package-pipeline-stage-inputs.ts",
+      "utf8",
+    );
+    expect(packagePipelineStageInputs).not.toContain("CandidateAdapter");
+
+    const targetSurfaces = readFileSync("src/target/uefi-aarch64/target-surfaces.ts", "utf8");
+    expect(targetSurfaces).not.toContain("proofCheckPlatformContractCatalog");
+    expect(targetSurfaces).not.toContain("productionUefiAArch64ProofCheckInputAuthority(input");
+
+    const hirCallLowerer = readFileSync("src/hir/call-lowerer.ts", "utf8");
+    expect(hirCallLowerer).not.toContain("compilerIntrinsicForSpan");
+    expect(hirCallLowerer).not.toContain("context.references.entries()");
 
     const compileDriver = readFileSync(
       "src/target/uefi-aarch64/compile-uefi-aarch64-image.ts",

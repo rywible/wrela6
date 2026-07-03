@@ -85,6 +85,11 @@ export type DraftProofMirStatementKind =
       readonly rightKey: ProofMirCanonicalKey;
       readonly resultKey: ProofMirCanonicalKey;
     }
+  | {
+      readonly kind: "constructObject";
+      readonly resultKey: ProofMirCanonicalKey;
+      readonly fields: readonly DraftProofMirObjectFieldValue[];
+    }
   | { readonly kind: "call"; readonly callKey: ProofMirCanonicalKey }
   | { readonly kind: "validate"; readonly validation: DraftProofMirValidationStart }
   | { readonly kind: "attempt"; readonly attempt: DraftProofMirAttemptStart }
@@ -107,6 +112,13 @@ export type DraftProofMirStatementKind =
   | { readonly kind: "requireFact"; readonly factKey: ProofMirCanonicalKey }
   | { readonly kind: "readValidatedBufferField"; readonly read: DraftProofMirValidatedBufferRead }
   | { readonly kind: "extension"; readonly extension: ProofMirStatementExtension };
+
+export interface DraftProofMirObjectFieldValue {
+  readonly fieldId?: FieldId;
+  readonly name: string;
+  readonly valueKey: ProofMirCanonicalKey;
+  readonly originKey: ProofMirCanonicalKey;
+}
 
 export interface DraftProofMirValidationStart {
   readonly validationId: MonoInstantiatedProofId<ValidationId>;

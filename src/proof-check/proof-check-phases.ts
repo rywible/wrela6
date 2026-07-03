@@ -1,5 +1,4 @@
 import type { MonoInstanceId } from "../mono/ids";
-import type { ProofMirPlaceId } from "../proof-mir/ids";
 import {
   buildCheckedFunctionSummary,
   type BuildCheckedFunctionSummaryInput,
@@ -22,7 +21,6 @@ import {
   createProofCheckPlaceResolver,
   type ProofCheckRegistryContext,
 } from "./kernel/operation-registry-wiring";
-import { buildPlaceKeyToMirPlaceIdIndex } from "./domains/mir-place-bindings";
 import {
   createProofCheckRegistryAccumulator,
   mergeProofCheckFunctionRegistryArtifactsIntoAccumulator,
@@ -58,13 +56,18 @@ import {
   ensureOriginEntryCoreCertificates,
 } from "./validation/origin-packet-entry";
 import { validateCheckedFactPacketInputForProofCheck } from "./validation/packet-validation-context";
+import { layoutAuthorityFingerprintForProofCheckInput } from "./validation/input-validator";
 import {
   validateCheckedFactPacket,
   checkedFactSubjectKey,
   type ProofCheckCertificate,
   type ProofSemanticsCertificateRecord,
 } from "./validation/packet-validator";
-import { checkedOptIrHandoffFingerprint, type CheckedOptIrHandoff } from "./model/opt-ir-handoff";
+import {
+  checkedOptIrHandoffFingerprint,
+  checkedOptIrHandoffStableJson,
+  type CheckedOptIrHandoff,
+} from "./model/opt-ir-handoff";
 
 export interface ProofCheckReachableFunctionChecksResult {
   readonly kind: "ok";
@@ -211,7 +214,6 @@ export function runReachableFunctionChecks(input: {
       registryAccumulator.summaries.set(functionInstanceId, summary);
     }
 
-    const callerGraph = checkInput.mir.functions.get(checkInput.functionInstanceId);
     const functionCoreCertificates = [...registryAccumulator.coreCertificates];
     const functionRegistryContext: ProofCheckRegistryContext = {
       input: input.checkInput,
@@ -219,17 +221,7 @@ export function runReachableFunctionChecks(input: {
       certificateRegistry,
       summaries: registryAccumulator.summaries,
       coreCertificates: functionCoreCertificates,
-      placeResolver: {
-        index:
-          callerGraph === undefined
-            ? new Map<string, ProofMirPlaceId>()
-            : new Map(
-                buildPlaceKeyToMirPlaceIdIndex({
-                  functionGraph: callerGraph,
-                  functionInstanceId: checkInput.functionInstanceId,
-                }),
-              ),
-      },
+      placeResolver: createProofCheckPlaceResolver(checkInput.mir),
     };
     const functionRegistry = buildProofCheckOperationTransferRegistry({
       context: functionRegistryContext,
@@ -321,7 +313,7 @@ export function runReachableFunctionChecks(input: {
         certificateRegistry,
         summaries: registryAccumulator.summaries,
         coreCertificates: registryAccumulator.coreCertificates,
-        placeResolver: createProofCheckPlaceResolver(),
+        placeResolver: createProofCheckPlaceResolver(input.checkInput.mir),
       },
     }),
     buildSummaryInput: (checkInput) =>
@@ -464,39 +456,6 @@ export function buildCheckedMirProgram(input: {
   };
 }
 
-function stableJson(value: unknown): string {
-  return JSON.stringify(toStableValue(value));
-}
-
-function toStableValue(value: unknown): unknown {
-  if (value instanceof Map) {
-    return [...value.entries()]
-      .map(([key, entry]) => [toStableValue(key), toStableValue(entry)] as const)
-      .sort((left, right) => stableJson(left[0]).localeCompare(stableJson(right[0])));
-  }
-
-  if (value instanceof Set) {
-    return [...value]
-      .map(toStableValue)
-      .sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
-  }
-
-  if (Array.isArray(value)) {
-    return value.map(toStableValue);
-  }
-
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([, entry]) => entry !== undefined)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => [key, toStableValue(entry)]),
-    );
-  }
-
-  return value;
-}
-
 export function buildCheckedOptIrHandoff(input: {
   readonly checkInput: CheckProofAndResourcesInput;
   readonly checked: CheckedMirProgram;
@@ -523,8 +482,8 @@ export function buildCheckedOptIrHandoff(input: {
       }
       return left.summaryCertificateId - right.summaryCertificateId;
     });
-  const originMapStableKey = stableJson(input.checked.originMap);
-  const checkedFactPacketStableKey = stableJson(input.checked.facts);
+  const originMapStableKey = checkedOptIrHandoffStableJson(input.checked.originMap);
+  const checkedFactPacketStableKey = checkedOptIrHandoffStableJson(input.checked.facts);
   const withoutFingerprint = {
     checkedMir: input.checked,
     certificates: input.certificates,
@@ -539,6 +498,7 @@ export function buildCheckedOptIrHandoff(input: {
         input.checkInput.runtimeCatalog.fingerprint,
         input.checkInput.typeFacts.fingerprint,
         input.checkInput.semantics.fingerprint,
+        layoutAuthorityFingerprintForProofCheckInput(input.checkInput.layout),
       ],
     },
     pathCertificates: [],

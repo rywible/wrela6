@@ -57,6 +57,23 @@ test("argument type mismatches emit HIR_CALL_ARGUMENT_MISMATCH", () => {
   );
 });
 
+test("integer literal arguments use concrete parameter expected types", () => {
+  const context = createHirUnitContext(
+    "fn accept(value: u64) -> u64\nfn caller() -> u64:\n    accept(0)\n",
+  );
+  const expression = firstExpressionView(context.graph);
+  const callView = CallExpressionView.from(expression.node)!;
+
+  const callExpression = lowerCallExpression({ view: callView, context });
+
+  expect(context.diagnostics.entries()).toEqual([]);
+  expect(callExpression.kind.kind).toBe("call");
+  if (callExpression.kind.kind !== "call") throw new Error("expected call expression");
+  expect(checkedTypeFingerprint(callExpression.kind.call.arguments[0]!.expression.type)).toBe(
+    "core:u64",
+  );
+});
+
 test("unknown named arguments emit HIR_CALL_ARGUMENT_MISMATCH and recover the call", () => {
   const context = createHirUnitContext(
     "fn pair(left: u32) -> u32\nfn caller() -> u32:\n    pair(right=1)\n",
@@ -296,9 +313,13 @@ test("explicit type arguments require checked type references", () => {
       referenceFor: referenceLookup.referenceFor,
       completedMemberFor: referenceLookup.completedMemberFor,
       requirementReferenceFor: referenceLookup.requirementReferenceFor,
+      referenceEntryForSpan(input: Parameters<typeof referenceLookup.referenceEntryForSpan>[0]) {
+        if (input.kind === "typeName" || input.kind === "typeParameter") return undefined;
+        return referenceLookup.referenceEntryForSpan(input);
+      },
       referenceForSpan(input: Parameters<typeof referenceLookup.referenceForSpan>[0]) {
         if (input.kind === "typeName" || input.kind === "typeParameter") return undefined;
-        return referenceLookup.referenceForSpan(input);
+        return referenceLookup.referenceEntryForSpan(input)?.reference;
       },
       completedMemberForSpan: referenceLookup.completedMemberForSpan,
     },

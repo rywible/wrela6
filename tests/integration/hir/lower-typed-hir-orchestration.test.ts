@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { SourceSpan } from "../../../src/frontend";
+import { buildItemIndex } from "../../../src/semantic/item-index";
+import { CoreTypeCatalog, resolveNames } from "../../../src/semantic/names";
 import { lowerTypedHir } from "../../../src/hir";
 import type { LowerTypedHirResult } from "../../../src/hir";
 import { checkSemanticSurface } from "../../../src/semantic/surface";
@@ -25,6 +27,12 @@ import {
   primitiveSpecFake,
   semanticTargetSurfaceFake,
 } from "../../support/semantic/semantic-surface-fakes";
+import { platformPrimitiveNameCatalogFake } from "../../support/semantic/name-resolution-fakes";
+import { parseModuleGraphForTest } from "../../support/frontend/module-graph-test-support";
+import {
+  canonicalUefiAArch64SemanticTargetSurface,
+  uefiAArch64CompilerIntrinsicNameCatalog,
+} from "../../../src/target/uefi-aarch64";
 import {
   lowerTypedHirForTest,
   semanticSurfaceForHirTest,
@@ -163,6 +171,57 @@ test("lowerTypedHir returns pure HIR result without upstream diagnostics", () =>
 
   expect(result.program.functions.entries()).toHaveLength(1);
   expect(result.diagnostics).toEqual([]);
+});
+
+test("orchestration preserves UEFI compiler intrinsic metadata in HIR calls", () => {
+  const graph = parseModuleGraphForTest([
+    [
+      "main.wr",
+      'fn marker() -> Utf16Static:\n    utf16_static("OK\\r\\n")\nuefi image Boot:\n    fn main() -> Never\n',
+    ],
+  ]);
+  const index = buildItemIndex({ graph }).index;
+  const coreTypes = CoreTypeCatalog.default();
+  const targetSurface = canonicalUefiAArch64SemanticTargetSurface();
+  const names = resolveNames({
+    graph,
+    index,
+    coreTypes,
+    platformPrimitiveNames: platformPrimitiveNameCatalogFake([]),
+    compilerIntrinsics: uefiAArch64CompilerIntrinsicNameCatalog(),
+    targetTypes: targetSurface.targetTypeKinds,
+  });
+  const surface = checkSemanticSurface({
+    graph,
+    index,
+    references: names.references,
+    platformBindings: names.platformBindings,
+    coreTypes,
+    targetSurface,
+  });
+  const result = lowerTypedHir({
+    graph,
+    index,
+    references: names.references,
+    coreTypes,
+    program: surface.program,
+    image: surface.image,
+  });
+
+  expect(result.diagnostics).toEqual([]);
+  const calls = result.program.functions
+    .entries()
+    .flatMap((func) => func.bodyIndex?.expressions.entries() ?? [])
+    .filter((expression) => expression.kind.kind === "call")
+    .map((expression) => (expression.kind.kind === "call" ? expression.kind.call : undefined))
+    .filter((call) => call !== undefined);
+
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.compilerIntrinsic).toMatchObject({
+    intrinsicKey: "uefi.utf16_static",
+    literalValue: "OK\r\n",
+    returnTypeKey: "uefi.Utf16Static",
+  });
 });
 
 test("orchestration wires ensure fact lowering into full HIR", () => {

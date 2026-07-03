@@ -208,7 +208,7 @@ describe("validation splits public API integration", () => {
     expect(result.kind).toBe("error");
     if (result.kind !== "error") return;
     expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
-      proofCheckDiagnosticCode("PROOF_CHECK_LEAKED_VALIDATION"),
+      proofCheckDiagnosticCode("PROOF_CHECK_INVALID_VALIDATION_SPLIT"),
     );
   });
 });

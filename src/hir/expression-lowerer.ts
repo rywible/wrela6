@@ -22,9 +22,10 @@ import {
   checkedTypesEqual,
   coreCheckedType,
   errorCheckedType,
+  sourceCheckedType,
 } from "../semantic/surface/type-model";
 import type { CheckedType } from "../semantic/surface/type-model";
-import { coreTypeId } from "../semantic/ids";
+import { coreTypeId, type FieldId, type ItemId, type TypeId } from "../semantic/ids";
 import type { HirExpression, HirExpressionKind, HirObjectField, HirResourcePlace } from "./hir";
 import type { HirLoweringContext } from "./lowering-context";
 import { currentHirModuleId, hirDiagnostic } from "./lowering-context";
@@ -33,6 +34,7 @@ import { lowerCallExpression } from "./call-lowerer";
 import { lowerAttemptExpression } from "./attempt-lowerer";
 import { checkConstructibility } from "./constructibility";
 import { resourceKindForCheckedType } from "./type-resource-kind";
+import { hirEnumCaseOrdinal } from "./enum-case-model";
 
 export interface LowerExpressionInput {
   readonly view: ExpressionView;
@@ -235,6 +237,19 @@ function reportObjectFieldMismatch(input: {
   );
 }
 
+function objectTargetSource(
+  context: HirLoweringContext,
+  type: CheckedType | undefined,
+): { readonly itemId: ItemId; readonly typeId: TypeId } | undefined {
+  if (type?.kind === "source") {
+    return { itemId: type.itemId, typeId: type.typeId };
+  }
+  if (type?.kind !== "applied" || type.constructor.kind !== "source") return undefined;
+  const typeRecord = context.index.type(type.constructor.typeId);
+  if (typeRecord === undefined) return undefined;
+  return { itemId: typeRecord.itemId, typeId: type.constructor.typeId };
+}
+
 function lowerName(input: LowerExpressionInput, view: NameExpressionView): HirExpression {
   const origin = originForExpression(view, input.context);
   const name = view.nameText() ?? "";
@@ -367,13 +382,73 @@ function imageDevicePlace(input: {
   };
 }
 
+function lowerEnumCaseMember(input: {
+  readonly context: HirLoweringContext;
+  readonly completed: ResolvedReference | undefined;
+  readonly origin: HirOriginId;
+  readonly expectedType: CheckedType | undefined;
+}): HirExpression | undefined {
+  if (input.completed?.kind !== "item") return undefined;
+  const ordinalResult = hirEnumCaseOrdinal({
+    index: input.context.index,
+    caseItemId: input.completed.itemId,
+  });
+  if (ordinalResult.kind === "not-enum-case") return undefined;
+  if (ordinalResult.kind === "broken") {
+    input.context.diagnostics.report(
+      hirDiagnostic({
+        code: "HIR_MEMBER_REFERENCE_MISMATCH",
+        message: "Resolved enum case metadata is inconsistent with the item index.",
+        originId: input.origin,
+        ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+        originKey: `origin:${input.origin}`,
+        stableDetail: ordinalResult.stableDetail,
+      }),
+    );
+    return errorExpression(input.context, input.origin, ordinalResult.stableDetail);
+  }
+  const { ordinal, enumItemId, enumTypeId } = ordinalResult.record;
+  const expression = addExpression(input.context, {
+    kind: {
+      kind: "literal",
+      literal: { kind: "integer", text: String(ordinal), value: BigInt(ordinal) },
+    },
+    type: sourceCheckedType({ itemId: enumItemId, typeId: enumTypeId }),
+    resourceKind: concreteKind("Copy"),
+    sourceOrigin: input.origin,
+  });
+  reportTypeMismatch({
+    context: input.context,
+    sourceOrigin: input.origin,
+    expectedType: input.expectedType,
+    actualType: expression.type,
+  });
+  return expression;
+}
+
+function ownerItemIdForMemberFallback(
+  context: HirLoweringContext,
+  type: CheckedType,
+): ItemId | undefined {
+  if (type.kind === "source") return type.itemId;
+  if (type.kind !== "applied" || type.constructor.kind !== "source") return undefined;
+  return context.index.type(type.constructor.typeId)?.itemId;
+}
+
+function completedFieldForReceiver(input: {
+  readonly context: HirLoweringContext;
+  readonly receiver: HirExpression;
+  readonly memberName: string;
+}): FieldId | undefined {
+  const ownerItemId = ownerItemIdForMemberFallback(input.context, input.receiver.type);
+  if (ownerItemId === undefined) return undefined;
+  return input.context.program.fields
+    .entries()
+    .find((field) => field.itemId === ownerItemId && field.name === input.memberName)?.fieldId;
+}
+
 function lowerMember(input: LowerExpressionInput, view: MemberAccessExpressionView): HirExpression {
   const origin = originForExpression(view, input.context);
-  const receiverView = view.receiver();
-  const receiver =
-    receiverView !== undefined
-      ? lowerExpression({ view: receiverView, context: input.context })
-      : errorExpression(input.context, origin, "missing-member-receiver");
   const memberName = view.memberName() ?? "";
   const memberSpan =
     presentTokenSpan(view.memberToken()) ?? view.memberToken()?.span ?? view.node.span;
@@ -387,11 +462,46 @@ function lowerMember(input: LowerExpressionInput, view: MemberAccessExpressionVi
       moduleId: currentHirModuleId(input.context),
       span: memberSpan,
     });
+  const enumCaseReference =
+    completed ??
+    input.context.referenceLookup.referenceForSpan({
+      moduleId: currentHirModuleId(input.context),
+      span: memberSpan,
+      kind: "enumCase",
+    }) ??
+    input.context.referenceLookup.referenceForSpan({
+      moduleId: currentHirModuleId(input.context),
+      span: memberSpan,
+      kind: "memberName",
+    });
 
-  if (completed?.kind === "field") {
+  const enumCase = lowerEnumCaseMember({
+    context: input.context,
+    completed: enumCaseReference,
+    origin,
+    expectedType: input.expectedType,
+  });
+  if (enumCase !== undefined) return enumCase;
+
+  const receiverView = view.receiver();
+  const receiver =
+    receiverView !== undefined
+      ? lowerExpression({ view: receiverView, context: input.context })
+      : errorExpression(input.context, origin, "missing-member-receiver");
+
+  const fieldId =
+    completed?.kind === "field"
+      ? completed.fieldId
+      : completedFieldForReceiver({
+          context: input.context,
+          receiver,
+          memberName,
+        });
+
+  if (fieldId !== undefined) {
     const imageDevice = imageDevicePlace({
       context: input.context,
-      fieldId: completed.fieldId,
+      fieldId,
       sourceOrigin: origin,
     });
     if (imageDevice !== undefined) {
@@ -399,7 +509,7 @@ function lowerMember(input: LowerExpressionInput, view: MemberAccessExpressionVi
         kind: {
           kind: "member",
           receiver,
-          fieldId: completed.fieldId,
+          fieldId,
           memberPlace: imageDevice.place,
         },
         type: imageDevice.type,
@@ -409,24 +519,21 @@ function lowerMember(input: LowerExpressionInput, view: MemberAccessExpressionVi
       });
     }
 
-    const field = input.context.program.fields.get(completed.fieldId);
+    const field = input.context.program.fields.get(fieldId);
     const type = field?.type ?? errorCheckedType();
     const resourceKind = field?.resourceKind ?? errorKind();
     const memberPlace =
       receiver.place !== undefined
         ? input.context.places.placeForProjection({
             root: receiver.place.root,
-            projection: [
-              ...receiver.place.projection,
-              { kind: "field", fieldId: completed.fieldId },
-            ],
+            projection: [...receiver.place.projection, { kind: "field", fieldId }],
             type,
             resourceKind,
             sourceOrigin: origin,
           })
         : undefined;
     return addExpression(input.context, {
-      kind: { kind: "member", receiver, fieldId: completed.fieldId, memberPlace },
+      kind: { kind: "member", receiver, fieldId, memberPlace },
       type,
       resourceKind,
       sourceOrigin: origin,
@@ -452,7 +559,8 @@ function lowerObject(
   view: ObjectLiteralExpressionView,
 ): HirExpression {
   const origin = originForExpression(view, input.context);
-  if (input.expectedType?.kind !== "source") {
+  const targetSource = objectTargetSource(input.context, input.expectedType);
+  if (input.expectedType === undefined || targetSource === undefined) {
     input.context.diagnostics.report(
       hirDiagnostic({
         code: "HIR_OBJECT_LITERAL_TYPE_REQUIRED",
@@ -484,7 +592,7 @@ function lowerObject(
   const checkedFieldsByName = new Map(
     input.context.program.fields
       .entries()
-      .filter((field) => field.itemId === targetType.itemId)
+      .filter((field) => field.itemId === targetSource.itemId)
       .map((field) => [field.name, field]),
   );
   const fields: HirObjectField[] = [];
@@ -523,7 +631,7 @@ function lowerObject(
   }
 
   return addExpression(input.context, {
-    kind: { kind: "object", typeId: targetType.typeId, fields },
+    kind: { kind: "object", typeId: targetSource.typeId, fields },
     type: targetType,
     resourceKind,
     sourceOrigin: origin,

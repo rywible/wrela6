@@ -1,22 +1,38 @@
 import type { ProofMirControlEdgeId, ProofMirExitEdgeId } from "../../../proof-mir/ids";
 import { proofMirPlaceId } from "../../../proof-mir/ids";
-import type { ProofMirFunction } from "../../../proof-mir/model/graph";
+import type { ProofMirExitEdge, ProofMirFunction } from "../../../proof-mir/model/graph";
 import { checkAttemptErrorEdge, checkAttemptSuccessEdge } from "../../domains/attempts";
 import { checkProofCheckExtensionTransfer } from "../../domains/extensions";
 import { streamMemberForMirReference } from "../../domains/mir-operation-metadata";
+import { transferConsumePlace } from "../../domains/ownership-transfer";
 import {
   checkLocalTerminalExit,
   transferDivergenceExit,
   type LocalTerminalExitResult,
 } from "../../domains/terminal";
 import { transferValidationErrArm, transferValidationOkArm } from "../../domains/validation";
-import { proofCheckDiagnostic } from "../../diagnostics";
+import {
+  introducedValidationArmLayoutPlaceKeysFromEdge,
+  introducedValidationArmPlaceKeysFromEdge,
+  validationArmCleanupPlaceKeys,
+} from "../../domains/validation-arm-cleanup";
+import { proofCheckDiagnostic, type ProofCheckDiagnostic } from "../../diagnostics";
+import type { ProofCheckCertificateId } from "../../model/certificates";
+import type {
+  CheckedFactKindId,
+  CheckedFactPacketEntry,
+  CheckedFactSubject,
+} from "../../model/fact-packet";
+import type { ProofCheckState } from "../state";
+import type { ProofCheckStatePatchEntry } from "../state-patch";
+import { reduceProofCheckState } from "../state-reducer";
 import {
   proofCheckProgramPointKey,
   type ProofCheckTransition,
   type ProofCheckTransitionResult,
 } from "../transition-api";
 import {
+  certificateIdForSubject,
   coreCertificate,
   errorTransition,
   exitClosurePacketEntry,
@@ -38,6 +54,19 @@ import {
   missingMirMetadataTransition,
   type ProofCheckRegistryContext,
 } from "./transition-helpers";
+
+type ReturnScopeCleanupResult =
+  | {
+      readonly kind: "ok";
+      readonly state: ProofCheckState;
+      readonly patches: readonly ProofCheckStatePatchEntry[];
+      readonly certificates: readonly ProofCheckCertificateId[];
+      readonly packetEntries: readonly CheckedFactPacketEntry<
+        CheckedFactKindId,
+        CheckedFactSubject
+      >[];
+    }
+  | { readonly kind: "error"; readonly diagnostics: readonly ProofCheckDiagnostic[] };
 
 export function handleReturnExitEdge(input: {
   readonly transition: ProofCheckTransition;
@@ -64,10 +93,30 @@ export function handleReturnExitEdge(input: {
   }
 
   const ownerKey = proofCheckProgramPointKey(input.transition.location);
+  const cleanupResult =
+    exit.kind === "panic"
+      ? ({
+          kind: "ok",
+          state: input.transition.inputState,
+          patches: [],
+          certificates: [],
+          packetEntries: [],
+        } satisfies ReturnScopeCleanupResult)
+      : consumeValidationArmPlacesForReturn({
+          transition: input.transition,
+          context: input.context,
+          functionGraph: input.functionGraph,
+          exit,
+          operationOriginKey: ownerKey,
+        });
+  if (cleanupResult.kind === "error") {
+    return errorTransition(cleanupResult.diagnostics);
+  }
+
   let domainResult: LocalTerminalExitResult;
   if (exit.kind === "panic") {
     domainResult = transferDivergenceExit({
-      state: input.transition.inputState,
+      state: cleanupResult.state,
       kind: "panic",
       divergenceKey: `panic:${String(input.edgeId)}`,
       boundary: exit.boundary,
@@ -75,7 +124,7 @@ export function handleReturnExitEdge(input: {
     });
   } else {
     domainResult = checkLocalTerminalExit({
-      state: input.transition.inputState,
+      state: cleanupResult.state,
       terminalReachabilityRequired: terminalReachabilityRequired(exit.closure),
       operationOriginKey: ownerKey,
     });
@@ -93,6 +142,7 @@ export function handleReturnExitEdge(input: {
     coreCertificate(input.context, exitCertificateSubjectKey, "exitClosure"),
   );
   const packetEntries = [
+    ...cleanupResult.packetEntries,
     ...domainResult.packetEntries,
     exitClosurePacketEntry(input.context, {
       operationOriginKey: ownerKey,
@@ -104,14 +154,80 @@ export function handleReturnExitEdge(input: {
   return okCoreTransition({
     transition: input.transition,
     context: input.context,
-    patches: domainResult.patches,
-    certificates: [certificate],
+    patches: [...cleanupResult.patches, ...domainResult.patches],
+    certificates: cleanupResult.certificates,
     packetEntries,
     registryEffects: [
-      exitStateSideEffect(input.transition.inputState),
+      exitStateSideEffect(cleanupResult.state),
       exitCertificateSideEffect(certificate),
     ],
   });
+}
+
+function consumeValidationArmPlacesForReturn(input: {
+  readonly transition: ProofCheckTransition;
+  readonly context: ProofCheckRegistryContext;
+  readonly functionGraph: ProofMirFunction;
+  readonly exit: ProofMirExitEdge;
+  readonly operationOriginKey: string;
+}): ReturnScopeCleanupResult {
+  let state = input.transition.inputState;
+  const patches: ProofCheckStatePatchEntry[] = [];
+  const certificates: ProofCheckCertificateId[] = [];
+  const packetEntries: CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject>[] = [];
+
+  for (const placeKey of validationArmCleanupPlaceKeys({
+    functionGraph: input.functionGraph,
+    exit: input.exit,
+    placeResolver: input.context.placeResolver,
+  })) {
+    if (state.places.get(placeKey)?.lifecycle !== "owned") {
+      continue;
+    }
+    const consumeResult = transferConsumePlace({
+      state,
+      place: { placeKey },
+      resourceKind: "Linear",
+      operationOriginKey: `${input.operationOriginKey}:validation-arm-scope-exit:${placeKey}`,
+      placeResolver: input.context.placeResolver,
+      functionGraph: input.functionGraph,
+    });
+    if (consumeResult.kind === "error") {
+      return consumeResult;
+    }
+
+    const certificate =
+      consumeResult.certificates[0] ??
+      certificateIdForSubject(
+        input.context,
+        `${input.operationOriginKey}:validation-arm-scope-exit:${placeKey}`,
+      );
+    const reduction = reduceProofCheckState(state, {
+      kind: "coreTransfer",
+      transitionId: input.transition.transitionId,
+      certificate,
+      entries: consumeResult.patches,
+    });
+    if (reduction.kind === "error") {
+      return {
+        kind: "error",
+        diagnostics: reduction.diagnostics,
+      };
+    }
+
+    state = reduction.state;
+    patches.push(...consumeResult.patches);
+    certificates.push(...consumeResult.certificates);
+    packetEntries.push(...consumeResult.packetEntries);
+  }
+
+  return {
+    kind: "ok",
+    state,
+    patches,
+    certificates,
+    packetEntries,
+  };
 }
 
 export function handleEdge(input: {
@@ -171,7 +287,20 @@ export function handleEdge(input: {
           ...(validationContext.payloadPlaceKey === undefined
             ? {}
             : { payloadPlaceKey: validationContext.payloadPlaceKey }),
+          additionalOwnedPlaceKeys: introducedValidationArmPlaceKeysFromEdge({
+            functionGraph,
+            edge,
+            placeResolver: input.context.placeResolver,
+          }),
+          additionalLayoutPlaceKeys: introducedValidationArmLayoutPlaceKeysFromEdge({
+            functionGraph,
+            edge,
+            placeResolver: input.context.placeResolver,
+          }),
           operationOriginKey: ownerKey,
+          ...(input.context.placeResolver === undefined
+            ? {}
+            : { placeResolver: input.context.placeResolver }),
         }),
       );
     }
@@ -199,7 +328,18 @@ export function handleEdge(input: {
           state,
           validationKey: validationContext.validationKey,
           sourcePlaceKey: validationContext.sourcePlaceKey,
+          ...(validationContext.errPayloadPlaceKey === undefined
+            ? {}
+            : { errPayloadPlaceKey: validationContext.errPayloadPlaceKey }),
+          additionalOwnedPlaceKeys: introducedValidationArmPlaceKeysFromEdge({
+            functionGraph,
+            edge,
+            placeResolver: input.context.placeResolver,
+          }),
           operationOriginKey: ownerKey,
+          ...(input.context.placeResolver === undefined
+            ? {}
+            : { placeResolver: input.context.placeResolver }),
         }),
       );
     }

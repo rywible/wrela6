@@ -7,6 +7,10 @@ import {
   uefiAArch64Error,
   uefiAArch64Ok,
 } from "./result";
+import {
+  UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_FEATURE,
+  UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID,
+} from "./validation-fixture-packet-rule";
 
 const PACKAGE_INPUT_VERIFIER_KEY = "uefi-aarch64-package-input";
 const PACKAGE_INPUT_RUN_KEY = "construct";
@@ -29,6 +33,8 @@ export interface CompilerPackageInput {
   readonly sourceRoots: readonly CompilerSourceRoot[];
   readonly sourceFiles: readonly CompilerSourceFileInput[];
   readonly entryModuleName: string;
+  readonly enabledTargetFeatures: readonly string[];
+  readonly validationFixturePacketSource?: UefiAArch64ValidationFixturePacketSource;
 }
 
 export interface CompilerPackageInputOptions {
@@ -36,6 +42,22 @@ export interface CompilerPackageInputOptions {
   readonly sourceRoots: readonly CompilerSourceRoot[];
   readonly sourceFiles: readonly CompilerSourceFileInput[];
   readonly entryModuleName?: string;
+  readonly enabledTargetFeatures?: readonly string[];
+  readonly validationFixturePacketSource?: UefiAArch64ValidationFixturePacketSourceInput;
+}
+
+export interface UefiAArch64ValidationFixturePacketSource {
+  readonly primitiveId: typeof UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID;
+  readonly feature: typeof UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_FEATURE;
+  readonly bytes: readonly number[];
+  readonly stableKey: string;
+}
+
+export interface UefiAArch64ValidationFixturePacketSourceInput {
+  readonly primitiveId: typeof UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID;
+  readonly feature: typeof UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_FEATURE;
+  readonly bytes: readonly number[];
+  readonly stableKey: string;
 }
 
 export interface FixtureProjectFilesystem {
@@ -56,6 +78,8 @@ export interface FixtureProjectPackageInputOptions {
   readonly sourceRoots?: readonly CompilerSourceRoot[];
   readonly stdlibMode?: "toolchain" | "project-ejected" | "none";
   readonly projectSourceRoot?: string;
+  readonly enabledTargetFeatures?: readonly string[];
+  readonly validationFixturePacketSource?: UefiAArch64ValidationFixturePacketSourceInput;
   readonly filesystem: FixtureProjectFilesystem;
   readonly paths?: FixtureProjectPathOperations;
 }
@@ -76,6 +100,10 @@ export function compilerPackageInput(
   const diagnostics = [
     ...duplicateDiagnostics(sourceFiles, "sourceKey", "duplicate-source-key"),
     ...duplicateDiagnostics(sourceFiles, "moduleName", "duplicate-module-name"),
+    ...validationFixturePacketSourceDiagnostics(
+      input.validationFixturePacketSource,
+      input.enabledTargetFeatures ?? [],
+    ),
   ];
 
   if (diagnostics.length > 0) {
@@ -91,9 +119,21 @@ export function compilerPackageInput(
       sourceRoots,
       sourceFiles,
       entryModuleName: input.entryModuleName ?? "image",
+      enabledTargetFeatures: normalizedEnabledTargetFeatures(input.enabledTargetFeatures ?? []),
+      ...(input.validationFixturePacketSource === undefined
+        ? {}
+        : {
+            validationFixturePacketSource: freezeValidationFixturePacketSource(
+              input.validationFixturePacketSource,
+            ),
+          }),
     }),
     verification: passedVerification(PACKAGE_INPUT_VERIFIER_KEY, PACKAGE_INPUT_RUN_KEY),
   });
+}
+
+function normalizedEnabledTargetFeatures(features: readonly string[]): readonly string[] {
+  return Object.freeze([...new Set(features)].sort(compareCodeUnitStrings));
 }
 
 export function defaultUefiAArch64SourceRoots(input: {
@@ -151,6 +191,53 @@ export function packageInputFromFixtureProject(
     sourceRoots,
     sourceFiles,
     entryModuleName: options.entryModuleName,
+    enabledTargetFeatures: options.enabledTargetFeatures,
+    validationFixturePacketSource: options.validationFixturePacketSource,
+  });
+}
+
+function validationFixturePacketSourceDiagnostics(
+  source: UefiAArch64ValidationFixturePacketSourceInput | undefined,
+  enabledTargetFeatures: readonly string[],
+): readonly ReturnType<typeof uefiAArch64TargetDiagnostic>[] {
+  if (source === undefined) return [];
+  const diagnostics: ReturnType<typeof uefiAArch64TargetDiagnostic>[] = [];
+  if (!enabledTargetFeatures.includes(UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_FEATURE)) {
+    diagnostics.push(packageInputDiagnostic("validation-fixture-packet-source:feature-disabled"));
+  }
+  if (source.primitiveId !== UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID) {
+    diagnostics.push(
+      packageInputDiagnostic("validation-fixture-packet-source:invalid-primitive-id"),
+    );
+  }
+  if (source.feature !== UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_FEATURE) {
+    diagnostics.push(packageInputDiagnostic("validation-fixture-packet-source:invalid-feature"));
+  }
+  if (source.stableKey.length === 0) {
+    diagnostics.push(packageInputDiagnostic("validation-fixture-packet-source:empty-stable-key"));
+  }
+  if (!source.bytes.every((byte) => Number.isInteger(byte) && byte >= 0x00 && byte <= 0xff)) {
+    diagnostics.push(packageInputDiagnostic("validation-fixture-packet-source:invalid-byte"));
+  }
+  return diagnostics;
+}
+
+function freezeValidationFixturePacketSource(
+  source: UefiAArch64ValidationFixturePacketSourceInput,
+): UefiAArch64ValidationFixturePacketSource {
+  return Object.freeze({
+    primitiveId: source.primitiveId,
+    feature: source.feature,
+    stableKey: source.stableKey,
+    bytes: Object.freeze([...source.bytes]),
+  });
+}
+
+function packageInputDiagnostic(stableDetail: string) {
+  return uefiAArch64TargetDiagnostic({
+    code: "UEFI_AARCH64_PIPELINE_FAILED",
+    ownerKey: "package-input",
+    stableDetail: `package-input:${stableDetail}`,
   });
 }
 

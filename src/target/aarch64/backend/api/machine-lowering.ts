@@ -1,5 +1,6 @@
 import type { AArch64MachineFunction } from "../../machine-ir/machine-function";
 import type { AArch64MachineInstruction } from "../../machine-ir/machine-instruction";
+import type { AArch64MachineScalarType, AArch64MachineType } from "../../machine-ir/machine-types";
 import type { AArch64AllocationResult } from "../allocation/allocation-result";
 import type { AArch64PhysicalInstruction } from "../finalization/physical-instruction-ir";
 import type { AArch64LayoutPhysicalInstruction } from "../object/layout-encode-fixed-point";
@@ -258,6 +259,9 @@ export function layoutAArch64InstructionFromPhysicalInstruction(
       ? {}
       : { definedSymbol: instruction.definedSymbol }),
     ...(instruction.security === undefined ? {} : { security: instruction.security }),
+    ...(instruction.accessWidthBytes === undefined
+      ? {}
+      : { accessWidthBytes: instruction.accessWidthBytes }),
     ...(instruction.opcode === "bl" && branchTarget?.kind === "symbol"
       ? {
           relocation: { family: "branch26", target: branchTarget.symbol },
@@ -479,6 +483,7 @@ function lowerMachineInstruction(
           { kind: "register", register },
           { kind: "memory", base, offsetBytes: Number(immediateValueOf(instruction)) },
         ],
+        ...accessWidthForLoadStore(instruction),
         memoryKey: `memory:${base}:${immediateValueOf(instruction).toString()}`,
         provenanceSource: originStableKey(instruction.origin),
       },
@@ -871,6 +876,45 @@ function lowerMachineInstruction(
     };
   }
   return invalidLowering(stableKey, `unsupported-opcode:${opcode}`);
+}
+
+function accessWidthForLoadStore(instruction: AArch64MachineInstruction): {
+  readonly accessWidthBytes?: number;
+} {
+  const accessType = instruction.operands[0]?.type;
+  const accessWidthBytes = memoryAccessBytesForType(accessType);
+  return accessWidthBytes === undefined ? {} : { accessWidthBytes };
+}
+
+function memoryAccessBytesForType(type: AArch64MachineType | undefined): number | undefined {
+  if (type === undefined) {
+    return undefined;
+  }
+  switch (type.kind) {
+    case "integer":
+    case "float":
+    case "pointer":
+    case "token":
+    case "resourceToken":
+      return memoryAccessBytesForScalarType(type);
+    case "vector": {
+      const laneBytes = memoryAccessBytesForScalarType(type.laneType);
+      return laneBytes === undefined ? undefined : laneBytes * type.laneCount;
+    }
+  }
+}
+
+function memoryAccessBytesForScalarType(type: AArch64MachineScalarType): number | undefined {
+  switch (type.kind) {
+    case "integer":
+    case "float":
+      return Math.max(1, Math.ceil(type.width / 8));
+    case "pointer":
+      return 8;
+    case "token":
+    case "resourceToken":
+      return undefined;
+  }
 }
 
 function nzcvSubjectAfterInstruction(

@@ -159,6 +159,7 @@ export interface MirValidationOperationContext {
   readonly pendingResultPlaceKey: string;
   readonly layoutKey: string;
   readonly payloadPlaceKey?: string;
+  readonly errPayloadPlaceKey?: string;
 }
 
 export interface MirAttemptOperationContext {
@@ -178,6 +179,9 @@ function validationContextFromStart(
     ...(validation.okPayloadPlace === undefined
       ? {}
       : { payloadPlaceKey: mirPlaceKey(validation.okPayloadPlace) }),
+    ...(validation.errPayloadPlace === undefined
+      ? {}
+      : { errPayloadPlaceKey: mirPlaceKey(validation.errPayloadPlace) }),
   };
 }
 

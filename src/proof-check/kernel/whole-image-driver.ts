@@ -15,6 +15,7 @@ import {
 import { buildInitialProofCheckState } from "../domains/initial-state";
 import {
   entryLayoutFactsForValidatedBufferParameters,
+  functionEntryKnownPlaceKeysFromMir,
   functionEntrySignatureFromMir,
   seededFactsForValidatedBufferParameters,
 } from "../domains/function-entry-state";
@@ -164,6 +165,10 @@ export function runProofCheckWholeImageDriver(
         functionInstanceId,
         entryReason: "ordinarySource",
         signature,
+        knownPlaceKeys: functionEntryKnownPlaceKeysFromMir({
+          functionGraph,
+          functionInstanceId,
+        }),
         declaredRequirements: [],
         authorityFingerprints: [],
         intrinsicFacts: seededFactsForValidatedBufferParameters({

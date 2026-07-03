@@ -10,6 +10,7 @@ import {
   type CheckedFactKindId,
   type CheckedFactSubject,
 } from "../model/fact-packet";
+import { layoutAuthorityFingerprintForProofCheckInput } from "./input-validator";
 import type { ValidateCheckedFactPacketInput } from "./packet-validator";
 
 function mergeKeySets(...keySets: readonly ReadonlySet<string>[]): ReadonlySet<string> {
@@ -30,6 +31,7 @@ export function authorityFingerprintsForProofCheckInput(
     input.runtimeCatalog.fingerprint,
     input.typeFacts.fingerprint,
     input.semantics.fingerprint,
+    layoutAuthorityFingerprintForProofCheckInput(input.layout),
   ];
   if (input.mir.runtimeCatalog.fingerprint !== undefined) {
     fingerprints.push(input.mir.runtimeCatalog.fingerprint);

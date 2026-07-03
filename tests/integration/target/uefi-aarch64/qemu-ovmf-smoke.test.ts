@@ -6,6 +6,9 @@ import {
   packageInputFromFixtureProject,
   qemuSmokeConfigFromEnvironment,
   runUefiAArch64QemuSmoke,
+  type PackageProofCheckAdapter,
+  type PackageProofMirAdapter,
+  type PackageRepresentationLayoutFactsAdapter,
 } from "../../../../src/target/uefi-aarch64";
 import { nodeUefiAArch64QemuHostEffects } from "../../../../src/target/uefi-aarch64/qemu-smoke-host";
 import {
@@ -22,13 +25,17 @@ describe("UEFI AArch64 real QEMU smoke", () => {
 
     const result = uefiAArch64PackagePipelineDependenciesForOptimizedFixture().buildOptimizedOptIr({
       target: target.value,
-      proofCheck: Object.freeze({ kind: "proof-check" }),
-      proofMir: Object.freeze({ kind: "proof-mir" }),
-      layoutFacts: Object.freeze({ kind: "layout-facts" }),
+      proofCheck: unsafePackagePipelineAdapter<PackageProofCheckAdapter>({ kind: "proof-check" }),
+      proofMir: unsafePackagePipelineAdapter<PackageProofMirAdapter>({ kind: "proof-mir" }),
+      layoutFacts: unsafePackagePipelineAdapter<PackageRepresentationLayoutFactsAdapter>({
+        kind: "layout-facts",
+      }),
     });
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
+    expect(result.value.program).toBeDefined();
+    if (result.value.program === undefined) return;
 
     const entryFunction = result.value.program.functions
       .entries()
@@ -87,3 +94,7 @@ describe("UEFI AArch64 real QEMU smoke", () => {
     expect(smoke.status).toBe("passed");
   }, 60000);
 });
+
+function unsafePackagePipelineAdapter<Adapter>(value: unknown): Adapter {
+  return Object.freeze(value as object) as Adapter;
+}

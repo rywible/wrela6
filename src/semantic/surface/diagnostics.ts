@@ -32,7 +32,8 @@ export type SemanticSurfaceDiagnosticCode =
   | "SURFACE_INVALID_IMAGE_ENTRY_SIGNATURE"
   | "SURFACE_UNRESOLVED_DEFERRED_MEMBER"
   | "SURFACE_AMBIGUOUS_DEFERRED_MEMBER"
-  | "SURFACE_INVALID_WIRE_ENCODING";
+  | "SURFACE_INVALID_WIRE_ENCODING"
+  | "SURFACE_INVALID_COMPILER_INTRINSIC_CALL";
 
 export interface DiagnosticRelatedInformation {
   readonly message: string;

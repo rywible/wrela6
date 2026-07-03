@@ -56,6 +56,7 @@ describe("UEFI AArch64 binary spine", () => {
       "aarch64-lowering",
       "aarch64-backend",
       "static-char16-objects",
+      "validation-fixture-objects",
       "runtime-helper-objects",
       "synthetic-entry-object",
       "linker",
@@ -148,6 +149,43 @@ describe("UEFI AArch64 binary spine", () => {
     );
   });
 
+  test("links validation fixture packet source as compiler-owned read-only bytes", () => {
+    const target = authenticateUefiAArch64TargetDriverSurface(uefiTargetSurfaceFixture());
+    expect(target.kind).toBe("ok");
+    if (target.kind !== "ok") throw new Error("expected authenticated UEFI target");
+
+    const result = runUefiAArch64BinarySpine({
+      target: target.value,
+      optIr: packageOptIrFixture(target.value, validationFixturePacketSourceOptIrFixture(), {
+        staticChar16Strings: Object.freeze([]),
+        staticChar16Pointers: Object.freeze([]),
+        validationFixturePacketSources: Object.freeze([
+          Object.freeze({
+            primitiveId: "uefi.validation.fixturePacketSource",
+            feature: "full-image-validation-fixture",
+            stableKey: "binary-spine-packet-counter:fixture-packet-source",
+            bytes: Object.freeze([0x01, 0x02, 0x41, 0x42]),
+          }),
+        ]),
+      }),
+      artifactName: "packet-counter.efi",
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error("expected binary spine output");
+    expect(result.value.validationFixtureObjects).toHaveLength(1);
+
+    const linkedSymbols = result.value.linkedLayout.symbols.map((symbol) => symbol.linkageName);
+    expect(linkedSymbols).toContain("__wrela_uefi_validation_fixture_packet_bytes");
+    expect(linkedSymbols).not.toContain("validation_fixture_packet_source");
+    expect(linkedSymbols).not.toContain("platform.uefi.validation.fixturePacketSource");
+
+    const section = result.value.linkedLayout.sections.find(
+      (candidate) => candidate.stableKey === ".rdata",
+    );
+    expect(section?.bytes).toEqual(expect.arrayContaining([0x01, 0x02, 0x41, 0x42]));
+  });
+
   test("rejects console output firmware calls without static CHAR16 metadata", () => {
     const target = authenticateUefiAArch64TargetDriverSurface(uefiTargetSurfaceFixture());
     expect(target.kind).toBe("ok");
@@ -186,19 +224,33 @@ function packageOptIrFixture(
   staticMetadata: Pick<
     UefiAArch64PackageOptIrPipelineOutput["optIr"],
     "staticChar16Strings" | "staticChar16Pointers"
-  > = {
+  > &
+    Partial<
+      Pick<UefiAArch64PackageOptIrPipelineOutput["optIr"], "validationFixturePacketSources">
+    > = {
     staticChar16Strings: Object.freeze([]),
     staticChar16Pointers: Object.freeze([]),
   },
 ): UefiAArch64PackageOptIrPipelineOutput {
   return Object.freeze({
     target,
+    parsedGraph: Object.freeze({}) as UefiAArch64PackageOptIrPipelineOutput["parsedGraph"],
+    typedHir: Object.freeze({}) as UefiAArch64PackageOptIrPipelineOutput["typedHir"],
+    monomorphizedImage: Object.freeze(
+      {},
+    ) as UefiAArch64PackageOptIrPipelineOutput["monomorphizedImage"],
+    layoutFacts: Object.freeze({}) as UefiAArch64PackageOptIrPipelineOutput["layoutFacts"],
+    proofMir: Object.freeze({}) as UefiAArch64PackageOptIrPipelineOutput["proofMir"],
+    proofCheck: Object.freeze({}) as UefiAArch64PackageOptIrPipelineOutput["proofCheck"],
+    optimizedOptIr: Object.freeze({}) as UefiAArch64PackageOptIrPipelineOutput["optimizedOptIr"],
     optIr: Object.freeze({
       program: fixture.program,
       operations: Object.freeze([...fixture.operations]),
+      unoptimizedOperations: Object.freeze([...fixture.operations]),
       facts: emptyOptIrFactSet(),
       staticChar16Strings: staticMetadata.staticChar16Strings,
       staticChar16Pointers: staticMetadata.staticChar16Pointers,
+      validationFixturePacketSources: staticMetadata.validationFixturePacketSources ?? [],
     }),
     semanticPlatformCatalogFingerprint: target.semanticPlatformCatalogFingerprint,
     proofMirRuntimeCatalogFingerprint: target.proofMirRuntimeCatalogFingerprint,
@@ -206,6 +258,41 @@ function packageOptIrFixture(
     runtimeCatalogFingerprint: target.proofMirRuntimeCatalogFingerprint,
     stages: Object.freeze([]),
   });
+}
+
+function validationFixturePacketSourceOptIrFixture() {
+  const originId = optIrOriginId(300);
+  const call = optIrPlatformCallOperation({
+    operationId: optIrOperationId(1),
+    callId: optIrCallId(1),
+    target: { kind: "platform", platformKey: "uefi.validation.fixturePacketSource" },
+    argumentIds: [],
+    resultIds: [optIrValueId(1)],
+    resultTypes: [optIrUnsignedIntegerType(64)],
+    originId,
+  });
+  const block = optIrBlockForTest({
+    parameters: [],
+    operations: [call.operationId],
+    terminator: {
+      kind: "return",
+      operationId: optIrOperationId(99),
+      values: [optIrValueId(1)],
+      originId,
+    },
+    originId,
+  });
+  const sourceFunction = optIrFunctionForTest({
+    blocks: [block],
+    entryBlock: block.blockId,
+    externalRoot: { reason: "imageEntry", originId },
+    originId,
+  });
+  const program = optIrProgramForTest({
+    functions: optIrFunctionTable([sourceFunction]),
+    regions: optIrRegionTable([]),
+  });
+  return { program, operations: [call] };
 }
 
 function staticChar16StringForTest() {

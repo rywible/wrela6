@@ -51,6 +51,7 @@ function duplicateLocalDiagnostic(input: {
   return {
     code,
     message: `Local '${input.name}' shadows an existing local.`,
+    stableDetail: input.name,
     originId: input.sourceOrigin,
     order: {
       moduleId: moduleId(0),

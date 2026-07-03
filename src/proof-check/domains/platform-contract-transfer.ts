@@ -28,6 +28,7 @@ import type { ProofCheckCertificateId } from "../model/certificates";
 import type { ProofCheckCoreCertificate } from "../model/certificates";
 import {
   checkedFactKindId,
+  type CheckedExtensionFact,
   type CheckedFactKindId,
   type CheckedFactPacketEntry,
   type CheckedFactScope,
@@ -392,6 +393,12 @@ function normalizedRequirementKey(requirement: ProofCheckRequirementTerm): strin
   return normalizeProofCheckTerm(requirement).key;
 }
 
+function isProofCheckCoreCertificate(
+  certificate: ProofCheckCertificateId | ProofCheckCoreCertificate,
+): certificate is ProofCheckCoreCertificate {
+  return "certificateId" in certificate;
+}
+
 function checkOperandBindings(input: {
   readonly state: ProofCheckState;
   readonly bindings: PlatformContractOperandBindings | undefined;
@@ -481,6 +488,58 @@ function buildCapabilityFlowPacketEntry(input: {
     invalidatedBy: [{ kind: "placeConsume", placeId: subjectPlaceId }],
     certificate,
     origin: originForPlatformFact(input.operationOriginKey),
+  };
+}
+
+function buildPlatformPreconditionPacketEntry(input: {
+  readonly resolution: PlatformContractResolution;
+  readonly contract: ProofCheckPlatformContract;
+  readonly operationOriginKey: string;
+  readonly catalogFingerprint: NonNullable<PlatformContractTransferInput["catalog"]>["fingerprint"];
+  readonly preconditionCertificates: readonly ProofCheckCoreCertificate[];
+}): CheckedExtensionFact {
+  const subjectKey = [
+    "platform-call-precondition",
+    input.resolution.targetId,
+    input.resolution.primitiveId,
+    input.resolution.contractId,
+    input.operationOriginKey,
+  ].join(":");
+  const certificate = certificateForSubject(subjectKey);
+  return {
+    factId: proofCheckPacketFactId(stableNumericSeed(`platformPrecondition:${subjectKey}`)),
+    kind: checkedFactKindId("extension"),
+    subject: {
+      kind: "factExtension",
+      extensionKey: "platform-call-precondition",
+      subjectKey,
+    },
+    scope: defaultScope(),
+    dependencies: [
+      {
+        kind: "authorityEntry",
+        fingerprint: input.catalogFingerprint,
+        entryKey: input.resolution.authorityKey,
+      },
+      ...input.preconditionCertificates.map((preconditionCertificate) => ({
+        kind: "coreCertificate" as const,
+        certificateId: preconditionCertificate.certificateId,
+      })),
+    ],
+    invalidatedBy: [{ kind: "authorityChange", fingerprint: input.catalogFingerprint }],
+    certificate,
+    origin: originForPlatformFact(input.operationOriginKey),
+    extensionKey: "platform-call-precondition",
+    packetKind: "platformCallPrecondition",
+    authorityFingerprint: input.catalogFingerprint,
+    payload: Object.freeze({
+      targetId: input.resolution.targetId,
+      primitiveId: input.resolution.primitiveId,
+      contractId: input.resolution.contractId,
+      authorityKey: input.resolution.authorityKey,
+      operationOriginKey: input.operationOriginKey,
+      preconditionKeys: Object.freeze(input.contract.preconditions.map(normalizedRequirementKey)),
+    }),
   };
 }
 
@@ -712,20 +771,35 @@ export function checkPlatformContractTransfer(
   if (effectsResult.kind === "error") {
     return effectsResult;
   }
+  const preconditionCertificates = preconditionResult.certificates.filter(
+    isProofCheckCoreCertificate,
+  );
+
+  const platformPreconditionPacketEntries =
+    input.catalog === undefined
+      ? []
+      : [
+          buildPlatformPreconditionPacketEntry({
+            resolution: resolutionResult.resolution,
+            contract: input.contract,
+            operationOriginKey: ownerKey,
+            catalogFingerprint: input.catalog.fingerprint,
+            preconditionCertificates,
+          }),
+        ];
 
   const certificates = [
     ...operandResult.certificates,
-    ...(preconditionResult.kind === "ok"
-      ? (preconditionResult.certificates as readonly ProofCheckCoreCertificate[]).map(
-          (certificate) => certificateForSubject(proofCheckCoreCertificateStableKey(certificate)),
-        )
-      : []),
+    ...preconditionCertificates.map((certificate) =>
+      certificateForSubject(proofCheckCoreCertificateStableKey(certificate)),
+    ),
     ...capabilityFlowResult.certificates,
     ...effectsResult.certificates,
   ].sort((left, right) => compareCodeUnitStrings(String(left.id), String(right.id)));
 
   const packetEntries = [
     ...operandResult.packetEntries,
+    ...platformPreconditionPacketEntries,
     ...capabilityFlowResult.packetEntries,
     ...effectsResult.packetEntries,
   ].sort((left, right) => {

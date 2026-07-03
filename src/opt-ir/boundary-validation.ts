@@ -5,7 +5,10 @@ import type {
   CheckedFactSubject,
   CheckedFactKindId,
 } from "../proof-check/model/fact-packet";
-import { checkedOptIrHandoffFingerprint } from "../proof-check/model/opt-ir-handoff";
+import {
+  checkedOptIrHandoffFingerprint,
+  checkedOptIrHandoffStableJson,
+} from "../proof-check/model/opt-ir-handoff";
 import type {
   CheckedOptIrHandoff,
   CheckedPacketValidationAttestation,
@@ -146,6 +149,7 @@ function validateFunctionCertificates(handoff: CheckedOptIrHandoff): readonly Op
 
   for (const [functionInstanceId, checkedFunction] of handoff.checkedMir.checkedFunctions) {
     const ownerKey = `function:${String(functionInstanceId)}`;
+    const functionGraph = handoff.checkedMir.mir.functions.get(functionInstanceId);
     if (!accepted.has(functionInstanceId)) {
       diagnostics.push(
         inputContractDiagnostic(
@@ -173,7 +177,7 @@ function validateFunctionCertificates(handoff: CheckedOptIrHandoff): readonly Op
         ),
       );
     }
-    if (checkedFunction.exitCertificates.length === 0) {
+    if ((functionGraph?.exits.length ?? 0) > 0 && checkedFunction.exitCertificates.length === 0) {
       diagnostics.push(
         inputContractDiagnostic(
           ownerKey,
@@ -208,7 +212,7 @@ function validatePacketAttestation(handoff: CheckedOptIrHandoff): readonly OptIr
     [
       "checkedFactPacketStableKey",
       packetValidation.checkedFactPacketStableKey,
-      stableJson(handoff.checkedMir.facts),
+      checkedOptIrHandoffStableJson(handoff.checkedMir.facts),
     ],
     [
       "acceptedFunctionInstanceIds",
@@ -224,12 +228,12 @@ function validatePacketAttestation(handoff: CheckedOptIrHandoff): readonly OptIr
     [
       "originMapStableKey",
       packetValidation.originMapStableKey,
-      stableJson(handoff.checkedMir.originMap),
+      checkedOptIrHandoffStableJson(handoff.checkedMir.originMap),
     ],
   ];
 
   for (const [key, actual, expected] of checks) {
-    if (stableJson(actual) !== stableJson(expected)) {
+    if (checkedOptIrHandoffStableJson(actual) !== checkedOptIrHandoffStableJson(expected)) {
       diagnostics.push(
         inputContractDiagnostic(
           "packetValidation",

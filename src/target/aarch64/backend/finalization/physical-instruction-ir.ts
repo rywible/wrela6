@@ -19,6 +19,7 @@ export interface AArch64PhysicalInstruction {
   readonly stableKey: string;
   readonly opcode: string;
   readonly operands: readonly AArch64PhysicalOperand[];
+  readonly accessWidthBytes?: number;
   readonly relocationHoleOwner?: string;
   readonly securityLabel?: string;
   readonly provenanceSource?: string;

@@ -1,6 +1,7 @@
 import { buildOptIrMemorySsa } from "../analyses/memory-ssa";
 import { computeOptIrEscapeAnalysis } from "../analyses/escape-analysis";
 import { hasMemoryAccess } from "../operation-access";
+import { optIrFunctionTable, optIrProgram } from "../program";
 import { optIrDefaultVectorPolicy } from "../policy/vector-policy";
 import type { OptIrTargetSurface } from "../target-surface";
 import { runCfgSimplification } from "./cfg-simplification";
@@ -75,6 +76,7 @@ export function runMandatoryInliningCluster(state: PipelineState): PipelineStepR
   let program = state.program;
   let operations = state.operations;
   let nextFactId = nextFactIdCounter(state.facts);
+  const inlinedCalleeKeys = new Set<string>();
 
   for (const operation of operations) {
     if (!isSourceCall(operation)) continue;
@@ -94,12 +96,55 @@ export function runMandatoryInliningCluster(state: PipelineState): PipelineStepR
       return { kind: "error", diagnostics: result.diagnostics };
     }
     if (result.inlinedCallOperationIds.length === 0) continue;
+    inlinedCalleeKeys.add(String(callee.monoInstanceId));
     program = replaceFunction(program, result.function);
     operations = sortedOperations(result.operations);
     nextFactId = nextFactIdCounter(state.facts);
   }
 
-  return { ...state, program, operations };
+  const pruned = removeUnreferencedInlinedCallees({ program, operations, inlinedCalleeKeys });
+  return { ...state, program: pruned.program, operations: pruned.operations };
+}
+
+function removeUnreferencedInlinedCallees(input: {
+  readonly program: PipelineState["program"];
+  readonly operations: PipelineState["operations"];
+  readonly inlinedCalleeKeys: ReadonlySet<string>;
+}): Pick<PipelineState, "program" | "operations"> {
+  if (input.inlinedCalleeKeys.size === 0) {
+    return { program: input.program, operations: input.operations };
+  }
+  const referencedCalleeKeys = new Set(
+    input.operations
+      .filter(isSourceCall)
+      .map((operation) => String(operation.target.functionInstanceId)),
+  );
+  const removedOperationIds = new Set(
+    input.program.functions
+      .entries()
+      .filter(
+        (function_) =>
+          input.inlinedCalleeKeys.has(String(function_.monoInstanceId)) &&
+          !referencedCalleeKeys.has(String(function_.monoInstanceId)),
+      )
+      .flatMap((function_) => function_.blocks.flatMap((block) => block.operations)),
+  );
+  if (removedOperationIds.size === 0) {
+    return { program: input.program, operations: input.operations };
+  }
+  const functions = input.program.functions
+    .entries()
+    .filter((function_) =>
+      function_.blocks.every((block) =>
+        block.operations.every((operationId) => !removedOperationIds.has(operationId)),
+      ),
+    );
+  return {
+    program: optIrProgram({ ...input.program, functions: optIrFunctionTable(functions) }),
+    operations: sortedOperations(
+      input.operations.filter((operation) => !removedOperationIds.has(operation.operationId)),
+    ),
+  };
 }
 
 export function runWholeProgramInliningStep(state: PipelineState): PipelineState {

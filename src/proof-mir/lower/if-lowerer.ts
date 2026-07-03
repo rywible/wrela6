@@ -34,8 +34,10 @@ import {
   type ProofMirLoweringContext,
   type ProofMirLoweringResult,
   type ProofMirStatementLowerer,
+  type ProofMirTailReturnPolicy,
   type ProofMirTerminalLowerer,
 } from "./lowering-context";
+import { lowerProofMirTailReturnStatement } from "./tail-return";
 
 export { createLoweringIdAllocator } from "./expression-lowerer-helpers";
 export type { ProofMirLoweringIdAllocator } from "./expression-lowerer-helpers";
@@ -68,7 +70,7 @@ function loweringError(diagnostics: readonly ProofMirDiagnostic[]): ProofMirLowe
 }
 
 function mapComparisonOperator(operator: string): ProofMirComparisonOperator | undefined {
-  switch (operator) {
+  switch (operator.trim()) {
     case "==":
       return "eq";
     case "!=":
@@ -373,11 +375,26 @@ function lowerArmStatements(input: {
   readonly terminalLowerer: ProofMirTerminalLowerer;
   readonly blockKey: ProofMirCanonicalKey;
   readonly statements: readonly MonoStatement[];
+  readonly tailReturn?: ProofMirTailReturnPolicy;
 }): ProofMirLoweringResult<void> {
   input.context.ssa.registerBlock(input.blockKey);
-  for (const statement of input.statements) {
+  for (const [statementIndex, statement] of input.statements.entries()) {
     if (blockHasExitTerminator(input.context, input.blockKey)) {
       return loweringOk(undefined);
+    }
+    const tailReturn = lowerProofMirTailReturnStatement({
+      context: input.context,
+      terminalLowerer: input.terminalLowerer,
+      statement,
+      blockKey: input.blockKey,
+      lastStatement: statementIndex === input.statements.length - 1,
+      tailReturn: input.tailReturn,
+    });
+    if (tailReturn.kind === "lowered") {
+      if (tailReturn.result.kind === "error") {
+        return tailReturn.result;
+      }
+      continue;
     }
     if (statement.kind.kind === "return") {
       const lowered = input.terminalLowerer.lowerReturn({
@@ -414,6 +431,7 @@ export function lowerIfStatement(input: {
   readonly continuationBlockKey: ProofMirCanonicalKey;
   readonly idAllocator: ProofMirLoweringIdAllocator;
   readonly scalarLocals: readonly MonoLocal[];
+  readonly tailReturn?: ProofMirTailReturnPolicy;
 }): ProofMirLoweringResult<{
   readonly afterBlockKey: ProofMirCanonicalKey;
   readonly thenBlockKey: ProofMirCanonicalKey;
@@ -536,6 +554,7 @@ export function lowerIfStatement(input: {
     terminalLowerer: input.terminalLowerer,
     blockKey: thenBlockKey,
     statements: input.ifStatement.thenBlock.statements,
+    ...(input.tailReturn === undefined ? {} : { tailReturn: input.tailReturn }),
   });
   if (loweredThen.kind === "error") {
     return loweredThen;
@@ -551,6 +570,7 @@ export function lowerIfStatement(input: {
       terminalLowerer: input.terminalLowerer,
       blockKey: elseBlockKey,
       statements: input.ifStatement.elseBlock.statements,
+      ...(input.tailReturn === undefined ? {} : { tailReturn: input.tailReturn }),
     });
     if (loweredElse.kind === "error") {
       return loweredElse;
@@ -762,6 +782,7 @@ export function createProofMirControlFlowLowerer(
         continuationBlockKey,
         idAllocator,
         scalarLocals: [],
+        ...(loweringInput.tailReturn === undefined ? {} : { tailReturn: loweringInput.tailReturn }),
       });
       if (lowered.kind === "error") {
         return lowered;

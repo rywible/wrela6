@@ -113,6 +113,7 @@ export interface HirDiagnosticRelatedInformation {
 export interface HirDiagnostic {
   readonly code: HirDiagnosticCode;
   readonly message: string;
+  readonly stableDetail: string;
   readonly span?: SourceSpan;
   readonly moduleId?: ModuleId;
   readonly ownerItemId?: ItemId;

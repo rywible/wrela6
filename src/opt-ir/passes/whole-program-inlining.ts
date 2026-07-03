@@ -13,16 +13,13 @@ import type { OptIrFunctionId, OptIrOperationId, OptIrValueId } from "../ids";
 import type { OptIrOperation } from "../operations";
 import { optIrFunctionTable, type OptIrFunction, type OptIrProgram } from "../program";
 import {
-  isOptIrSourceValueOperation,
-  rewriteOptIrSourceValueOperationOperands,
-} from "../source-value-operations";
-import {
   appendOptIrDecisionLogEntry,
   optIrDecisionLogEntry,
   type OptIrDecisionLog,
   type OptIrPolicyResult,
   type OptIrPolicyUncertainty,
 } from "../policy/decision-log";
+import { rewriteOptIrOperationValues } from "./operation-value-rewrite";
 
 export type OptIrWholeProgramInliningWorkItemKind = "cleanup" | "sccp" | "specialization";
 
@@ -283,7 +280,9 @@ function inlineSourceCall(
     entryBlock.terminator.values,
   );
   const clonedOperations = completeCalleeOperations.map((operation) =>
-    rewriteOperationValues(operation, substitution),
+    rewriteOptIrOperationValues(operation, {
+      valueFor: (valueId) => valueForSubstitution(substitution, valueId),
+    }),
   );
   const nextOperationById = new Map(
     operations.map((operation) => [operation.operationId, operation]),
@@ -346,112 +345,7 @@ function buildValueSubstitution(
   return substitution;
 }
 
-function rewriteOperationValues(
-  operation: OptIrOperation,
-  substitution: ReadonlyMap<OptIrValueId, OptIrValueId>,
-): OptIrOperation {
-  const operandIds = operation.operandIds.map((valueId) => substituteValue(substitution, valueId));
-  const resultIds = operation.resultIds.map((valueId) => substituteValue(substitution, valueId));
-  const base = {
-    ...operation,
-    operandIds: Object.freeze(operandIds),
-    resultIds: Object.freeze(resultIds),
-  };
-  if (isOptIrSourceValueOperation(operation)) {
-    return rewriteOptIrSourceValueOperationOperands(operation, operandIds, resultIds);
-  }
-  switch (operation.kind) {
-    case "constant":
-    case "memoryLoad":
-    case "proofErasedMarker":
-      return Object.freeze(base);
-    case "integerBinary":
-    case "integerCompare":
-    case "booleanBinary":
-      return Object.freeze({
-        ...base,
-        left: substituteValue(substitution, operation.left),
-        right: substituteValue(substitution, operation.right),
-      });
-    case "integerUnary":
-    case "booleanNot":
-      return Object.freeze({
-        ...base,
-        operand: substituteValue(substitution, operation.operand),
-      });
-    case "aggregateConstruct":
-      return Object.freeze({
-        ...base,
-        fieldIds: Object.freeze(
-          operation.fieldIds.map((valueId) => substituteValue(substitution, valueId)),
-        ),
-      });
-    case "aggregateExtract":
-      return Object.freeze({
-        ...base,
-        aggregate: substituteValue(substitution, operation.aggregate),
-      });
-    case "aggregateInsert":
-      return Object.freeze({
-        ...base,
-        aggregate: substituteValue(substitution, operation.aggregate),
-        field: substituteValue(substitution, operation.field),
-      });
-    case "layoutOffset":
-    case "layoutByteRange":
-      return Object.freeze({
-        ...base,
-        base: substituteValue(substitution, operation.base),
-      });
-    case "layoutEndianDecode":
-      return Object.freeze({
-        ...base,
-        bytes: substituteValue(substitution, operation.bytes),
-      });
-    case "memoryStore":
-      return Object.freeze({
-        ...base,
-        storeValue: substituteValue(substitution, operation.storeValue),
-      });
-    case "sourceCall":
-    case "runtimeCall":
-    case "platformCall":
-    case "intrinsicCall":
-      return Object.freeze({
-        ...base,
-        argumentIds: Object.freeze(
-          operation.argumentIds.map((valueId) => substituteValue(substitution, valueId)),
-        ),
-      });
-    case "vectorLoad":
-    case "vectorMaskedLoad":
-      return Object.freeze({
-        ...base,
-        ...(operation.mask === undefined
-          ? {}
-          : { mask: substituteValue(substitution, operation.mask) }),
-      });
-    case "vectorStore":
-    case "vectorMaskedStore":
-      return Object.freeze({
-        ...base,
-        vector: substituteValue(substitution, operation.vector),
-        storeValue: substituteValue(substitution, operation.storeValue),
-        ...(operation.mask === undefined
-          ? {}
-          : { mask: substituteValue(substitution, operation.mask) }),
-      });
-    case "vectorByteSwap":
-      return Object.freeze({
-        ...base,
-        vector: substituteValue(substitution, operation.vector),
-      });
-    default:
-      return Object.freeze(base);
-  }
-}
-
-function substituteValue(
+function valueForSubstitution(
   substitution: ReadonlyMap<OptIrValueId, OptIrValueId>,
   valueId: OptIrValueId,
 ): OptIrValueId {

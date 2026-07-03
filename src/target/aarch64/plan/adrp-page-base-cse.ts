@@ -154,9 +154,14 @@ function canReplaceAllUses(input: {
   readonly registerId: number;
   readonly instructions: readonly AArch64MachineInstruction[];
 }): boolean {
-  return input.instructions
-    .flatMap((instruction) => instruction.operands)
-    .every((operand) => {
+  return input.instructions.every((instruction) => {
+    if (
+      String(instruction.opcode) === "add-pageoff" &&
+      instruction.operands.some((operand) => isUseOfRegister(operand, input.registerId))
+    ) {
+      return false;
+    }
+    return instruction.operands.every((operand) => {
       if (
         operand.operand.kind !== "vreg" ||
         Number(operand.operand.register.vreg) !== input.registerId
@@ -167,6 +172,15 @@ function canReplaceAllUses(input: {
         operand.role === "use" || operand.role === "memoryBase" || operand.role === "memoryIndex"
       );
     });
+  });
+}
+
+function isUseOfRegister(operand: AArch64InstructionOperand, registerId: number): boolean {
+  return (
+    operand.operand.kind === "vreg" &&
+    Number(operand.operand.register.vreg) === registerId &&
+    (operand.role === "use" || operand.role === "memoryBase" || operand.role === "memoryIndex")
+  );
 }
 
 function replaceInstructionOperands(

@@ -1,4 +1,3 @@
-import type { MonoInstanceId } from "../../mono/ids";
 import type {
   MonoBlock,
   MonoExpression,
@@ -17,7 +16,7 @@ import type { DraftProofMirStatementKind } from "../draft/draft-statement";
 import { draftLocalKey } from "../draft/draft-keys";
 import type { ProofMirConsumeReason } from "../model/graph";
 import type { ProofMirDraftOperand } from "./lowering-operands";
-import { createLoweringIdAllocator } from "./expression-lowerer-helpers";
+import { createLoweringIdAllocator, monoPlaceForLocal } from "./expression-lowerer-helpers";
 import { syncLoweredPlaceToFunctionDraft } from "./lowering-place-sync";
 import { originForStatement } from "./lowering-origins";
 import { operandPlaceKey, operandValueKey } from "./lowering-operands";
@@ -29,7 +28,6 @@ import {
   type ProofMirStatementLowerer,
   type ProofMirStatementLoweringInput,
 } from "./lowering-context";
-import { resourcePlaceId } from "../../hir/ids";
 
 export type DraftRecordedProofMirStatement =
   | {
@@ -105,7 +103,7 @@ function ensureLocalRegistered(
   const storage = localStorageKind(context, local);
   let backingPlaceKey: ProofMirCanonicalKey | undefined;
   if (storage === "placeBacked") {
-    const targetPlace = monoPlaceForLocal(context.functionInstanceId, local);
+    const targetPlace = monoPlaceForStatementLocal(context, local);
     const placeKeyResult = lowerPlaceBackedTarget(context, targetPlace, originKey);
     if (placeKeyResult.kind === "ok") {
       backingPlaceKey = placeKeyResult.value;
@@ -318,7 +316,7 @@ function lowerLetStatement(input: {
     return loweringOk(undefined);
   }
 
-  const targetPlace = monoPlaceForLocal(input.context.functionInstanceId, input.local);
+  const targetPlace = monoPlaceForStatementLocal(input.context, input.local);
   const targetPlaceKey = lowerPlaceBackedTarget(input.context, targetPlace, originKey);
   if (targetPlaceKey.kind !== "ok") {
     return targetPlaceKey;
@@ -443,7 +441,7 @@ function lowerAssignmentStatement(input: {
       if (target?.kind.kind !== "name" || target.kind.localId === undefined) {
         return undefined;
       }
-      return monoPlaceForLocal(input.context.functionInstanceId, {
+      return monoPlaceForStatementLocal(input.context, {
         localId: target.kind.localId,
         name: target.kind.name,
         type: target.type,
@@ -524,25 +522,19 @@ function lowerBlockStatement(input: {
   return loweringOk(undefined);
 }
 
-function monoPlaceForLocal(
-  functionInstanceId: MonoInstanceId,
+function monoPlaceForStatementLocal(
+  context: ProofMirLoweringContext,
   local: MonoLocal,
 ): MonoResourcePlace {
-  return {
-    placeId: {
-      owner: { kind: "function", instanceId: functionInstanceId },
-      hirId: resourcePlaceId(Number(String(local.localId.hirId))),
-      instanceId: functionInstanceId,
-    },
-    canonicalKey: `function:${String(functionInstanceId)}/local:${local.name}`,
-    root: { kind: "local", localId: local.localId },
-    projection: [],
+  return monoPlaceForLocal({
+    program: context.program,
+    functionInstanceId: context.functionInstanceId,
+    localId: local.localId,
+    parameterId: local.parameterId,
     type: local.type,
     resourceKind: local.resourceKind,
     sourceOrigin: local.sourceOrigin,
-    kind: "local",
-    localId: local.localId,
-  };
+  });
 }
 
 interface StatementLowererState {

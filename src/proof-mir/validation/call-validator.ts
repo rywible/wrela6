@@ -51,6 +51,13 @@ function callTargetsEqual(left: ProofMirCallTarget, right: ProofMirCallTarget): 
         proofMetadataIdKey(left.edgeId) === proofMetadataIdKey(right.edgeId) &&
         String(left.primitiveId) === String(right.primitiveId)
       );
+    case "compilerIntrinsic":
+      return (
+        right.kind === "compilerIntrinsic" &&
+        left.intrinsicKey === right.intrinsicKey &&
+        left.sourceValueKey === right.sourceValueKey &&
+        left.returnTypeKey === right.returnTypeKey
+      );
     case "compilerRuntime":
       return (
         right.kind === "compilerRuntime" &&
@@ -210,6 +217,24 @@ function validateCallTarget(input: {
             message: "Certified platform call target is missing a layout platform ABI fact.",
             ownerKey: proofMirOwnedCallIdKey(input.ownedCallId),
             stableDetail: `missing-platform-abi:${proofMetadataIdKey(input.target.edgeId)}`,
+            functionInstanceId: input.ownedCallId.functionInstanceId,
+          }),
+        );
+      }
+      break;
+    }
+    case "compilerIntrinsic": {
+      if (
+        input.target.intrinsicKey.length === 0 ||
+        input.target.sourceValueKey.length === 0 ||
+        input.target.returnTypeKey.length === 0
+      ) {
+        input.diagnostics.push(
+          callDiagnostic({
+            code: "PROOF_MIR_INVALID_CONCRETE_CALL_TARGET",
+            message: "Compiler-intrinsic call target is missing stable target metadata.",
+            ownerKey: proofMirOwnedCallIdKey(input.ownedCallId),
+            stableDetail: "compiler-intrinsic:metadata-missing",
             functionInstanceId: input.ownedCallId.functionInstanceId,
           }),
         );

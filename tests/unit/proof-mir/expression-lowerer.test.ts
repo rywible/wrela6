@@ -160,6 +160,15 @@ describe("ProofMirExpressionLowerer", () => {
     expect(lowered.statements.find((statement) => statement.kind.kind === "binary")).toMatchObject({
       kind: { kind: "binary", operator: "add" },
     });
+    const binaryStatement = lowered.statements.find(
+      (statement) => statement.kind.kind === "binary",
+    );
+    if (binaryStatement?.kind.kind !== "binary") throw new Error("expected binary statement");
+    const binaryResultKey = binaryStatement.kind.resultKey;
+    expect(lowered.values.find((value) => value.key === binaryResultKey)).toMatchObject({
+      type: { kind: "core", coreTypeId: "u8" },
+      resourceKind: "Copy",
+    });
   });
 
   test("unary operators map to closed Proof MIR operator enums", () => {
@@ -172,6 +181,13 @@ describe("ProofMirExpressionLowerer", () => {
 
     expect(lowered.statements.find((statement) => statement.kind.kind === "unary")).toMatchObject({
       kind: { kind: "unary", operator: "logicalNot" },
+    });
+    const unaryStatement = lowered.statements.find((statement) => statement.kind.kind === "unary");
+    if (unaryStatement?.kind.kind !== "unary") throw new Error("expected unary statement");
+    const unaryResultKey = unaryStatement.kind.resultKey;
+    expect(lowered.values.find((value) => value.key === unaryResultKey)).toMatchObject({
+      type: { kind: "core", coreTypeId: "bool" },
+      resourceKind: "Copy",
     });
   });
 
@@ -209,6 +225,17 @@ describe("ProofMirExpressionLowerer", () => {
 
     expect(lowered.operand.kind).toBe("value");
     expect(lowered.statements.map((statement) => statement.kind.kind)).not.toContain("store");
+    expect(
+      lowered.statements.find((statement) => statement.kind.kind === "constructObject"),
+    ).toMatchObject({
+      kind: {
+        kind: "constructObject",
+        fields: [
+          { name: "tag", valueKey: expect.any(String) },
+          { name: "len", valueKey: expect.any(String) },
+        ],
+      },
+    });
   });
 
   test("borrow unary emits borrowPlace and returns a place operand", () => {

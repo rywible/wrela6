@@ -1,0 +1,5 @@
+use UefiStatus from wrela_std.target.uefi.status
+
+uefi image StatusErrorImage:
+    fn boot() -> UefiStatus:
+        UefiStatus.bad_buffer_size

@@ -7,6 +7,7 @@ import type { ProofCheckCertificateId } from "../model/certificates";
 import type { ProofCheckCoreCertificate } from "../model/certificates";
 import {
   checkedFactKindId,
+  type CheckedFactDependency,
   type CheckedFactInvalidation,
   type CheckedFactKindId,
   type CheckedFactPacketEntry,
@@ -25,21 +26,22 @@ import {
 import { findLoanConflict } from "./loans";
 import {
   type ProofCheckPlaceResolver,
-  placeKeyForMirPlace,
   placeStateForKey,
   proofMirPlaceIdForPlaceKey,
-  tryResolveProofMirPlaceIdForPlaceKey,
   tryResolveProofMirPlaceDependency,
 } from "../kernel/registry/transition-helpers";
-import type { ProofMirPlaceId } from "../../proof-mir/ids";
-import type { ProofMirFunction, ProofMirPlaceRoot } from "../../proof-mir/model/graph";
+import type { ProofMirValueId } from "../../proof-mir/ids";
+import type { ProofMirFunction } from "../../proof-mir/model/graph";
 import {
   compareProofCheckPlaces,
-  requiresCheckedOwnerSemantics,
   parseProofCheckStructuredPlacePath,
   type ProofCheckConcreteResourceKind,
   type ProofCheckPlaceRelation,
 } from "./ownership-place-model";
+import {
+  hiddenOwnedResourcePlaceKeys,
+  isCopyResourceKind,
+} from "./ownership-hidden-place-analysis";
 
 export type ProofCheckOwnershipTransferResult =
   | {
@@ -206,21 +208,29 @@ function factAddPatch(fact: CheckedActiveFact): ProofCheckStatePatchEntry {
 function buildOwnershipPacketEntry(input: {
   readonly subjectPlaceKey: string;
   readonly dependencyPlaceKeys: readonly string[];
+  readonly dependencyValueIds?: readonly ProofMirValueId[];
   readonly operationOriginKey: string;
   readonly placeResolver?: ProofCheckPlaceResolver;
 }): CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject> {
   const subjectPlaceId = proofMirPlaceIdForPlaceKey(input.subjectPlaceKey, input.placeResolver);
   const placeSubjectKey = `place:${String(subjectPlaceId)}`;
   const certificate = certificateForSubject(placeSubjectKey);
+  const dependencies: CheckedFactDependency[] = [
+    ...input.dependencyPlaceKeys.flatMap((placeKey) => {
+      const dependency = tryResolveProofMirPlaceDependency(placeKey, input.placeResolver);
+      return dependency === undefined ? [] : [dependency];
+    }),
+    ...uniqueValueDependencies(input.dependencyValueIds ?? []),
+  ];
+  if (certificate.kind === "core") {
+    dependencies.push({ kind: "coreCertificate", certificateId: certificate.id });
+  }
   return {
     factId: proofCheckPacketFactId(stableNumericSeed(`ownership:${input.subjectPlaceKey}`)),
     kind: checkedFactKindId("ownership"),
     subject: { kind: "place", placeId: subjectPlaceId },
     scope: defaultScope(),
-    dependencies: input.dependencyPlaceKeys.flatMap((placeKey) => {
-      const dependency = tryResolveProofMirPlaceDependency(placeKey, input.placeResolver);
-      return dependency === undefined ? [] : [dependency];
-    }),
+    dependencies,
     invalidatedBy: [
       { kind: "placeMove", placeId: subjectPlaceId },
       { kind: "placeConsume", placeId: subjectPlaceId },
@@ -230,163 +240,23 @@ function buildOwnershipPacketEntry(input: {
   };
 }
 
+function uniqueValueDependencies(
+  valueIds: readonly ProofMirValueId[],
+): readonly Extract<CheckedFactDependency, { readonly kind: "proofMirValue" }>[] {
+  const byKey = new Map<string, ProofMirValueId>();
+  for (const valueId of valueIds) {
+    byKey.set(String(valueId), valueId);
+  }
+  return [...byKey.entries()]
+    .sort((left, right) => compareCodeUnitStrings(left[0], right[0]))
+    .map(([, valueId]) => ({ kind: "proofMirValue", valueId }) as const);
+}
+
 function directPlaceLifecycle(
   state: ProofCheckState,
   placeKey: string,
 ): CheckedPlaceLifecycle | undefined {
   return state.places.get(placeKey)?.lifecycle;
-}
-
-function proofMirPlaceRootKey(root: ProofMirPlaceRoot): string {
-  switch (root.kind) {
-    case "parameter":
-      return `parameter:${String(root.parameterId)}`;
-    case "receiver":
-      return `receiver:${String(root.parameterId)}`;
-    case "local":
-      return `local:${String(root.localId)}`;
-    case "temporary":
-      return `temporary:${String(root.ordinal)}`;
-    case "imageDevice":
-      return `imageDevice:${String(root.imageId)}:${String(root.fieldId)}`;
-    case "validationPayload":
-      return `validationPayload:${String(root.validationId)}`;
-    case "error":
-      return "error";
-    case "blockParameter":
-      return `blockParameter:${String(root.valueId)}`;
-    case "runtimeTemporary":
-      return `runtimeTemporary:${String(root.valueId)}`;
-    default: {
-      const unreachable: never = root;
-      return unreachable;
-    }
-  }
-}
-
-function isPlaceOwnedInState(input: {
-  readonly state: ProofCheckState;
-  readonly placeId: ProofMirPlaceId;
-  readonly placeResolver?: ProofCheckPlaceResolver;
-}): boolean {
-  const directKey = placeKeyForMirPlace(input.placeId);
-  if (input.state.places.get(directKey)?.lifecycle === "owned") {
-    return true;
-  }
-  if (input.placeResolver === undefined) {
-    return false;
-  }
-  for (const [placeKey, placeId] of input.placeResolver.index.entries()) {
-    if (String(placeId) !== String(input.placeId)) {
-      continue;
-    }
-    if (input.state.places.get(placeKey)?.lifecycle === "owned") {
-      return true;
-    }
-  }
-  return false;
-}
-
-function ownedStructuredDescendantPlaceKeys(input: {
-  readonly state: ProofCheckState;
-  readonly place: ProofCheckStructuredPlace;
-}): readonly string[] {
-  return [...input.state.places.entries()]
-    .filter(([, placeState]) => placeState.lifecycle === "owned")
-    .filter(([placeKey]) => {
-      const relation = compareProofCheckPlaces(input.place, structuredPlace(placeKey));
-      return relation.kind === "descendant";
-    })
-    .map(([placeKey]) => placeKey)
-    .sort(compareCodeUnitStrings);
-}
-
-function hiddenOwnedProjectionPlaceKeys(input: {
-  readonly state: ProofCheckState;
-  readonly consumedPlaceId: ProofMirPlaceId;
-  readonly functionGraph: ProofMirFunction;
-  readonly placeResolver?: ProofCheckPlaceResolver;
-}): readonly string[] {
-  const consumedPlace = input.functionGraph.places.get(input.consumedPlaceId);
-  if (consumedPlace === undefined || consumedPlace.projection.length > 0) {
-    return [];
-  }
-  const consumedRootKey = proofMirPlaceRootKey(consumedPlace.root);
-  return input.functionGraph.places
-    .entries()
-    .filter((place) => place.placeId !== input.consumedPlaceId)
-    .filter((place) => place.projection.length > 0)
-    .filter((place) => proofMirPlaceRootKey(place.root) === consumedRootKey)
-    .filter((place) =>
-      requiresCheckedOwnerSemantics(place.resourceKind as ProofCheckConcreteResourceKind),
-    )
-    .filter((place) =>
-      isPlaceOwnedInState({
-        state: input.state,
-        placeId: place.placeId,
-        placeResolver: input.placeResolver,
-      }),
-    )
-    .map((place) => placeKeyForMirPlace(place.placeId))
-    .sort(compareCodeUnitStrings);
-}
-
-function hiddenOwnedTrailingParameterPlaceKeys(input: {
-  readonly state: ProofCheckState;
-  readonly consumedPlaceId: ProofMirPlaceId;
-  readonly functionGraph: ProofMirFunction;
-  readonly placeResolver?: ProofCheckPlaceResolver;
-}): readonly string[] {
-  const consumedPlace = input.functionGraph.places.get(input.consumedPlaceId);
-  if (
-    consumedPlace === undefined ||
-    consumedPlace.projection.length > 0 ||
-    consumedPlace.root.kind !== "parameter" ||
-    !isCopyResourceKind(consumedPlace.resourceKind as ProofCheckConcreteResourceKind)
-  ) {
-    return [];
-  }
-  const wrapperParameterId =
-    consumedPlace.root.kind === "parameter" ? consumedPlace.root.parameterId : undefined;
-  if (wrapperParameterId === undefined) {
-    return [];
-  }
-  const wrapperIndex = input.functionGraph.signature.parameters.findIndex(
-    (parameter) => String(parameter.parameterId) === String(wrapperParameterId),
-  );
-  if (wrapperIndex < 0) {
-    return [];
-  }
-
-  const leaks: string[] = [];
-  for (const [index, parameter] of input.functionGraph.signature.parameters.entries()) {
-    if (index <= wrapperIndex) {
-      continue;
-    }
-    if (!requiresCheckedOwnerSemantics(parameter.resourceKind as ProofCheckConcreteResourceKind)) {
-      continue;
-    }
-    const parameterPlace = input.functionGraph.places
-      .entries()
-      .find(
-        (place) =>
-          place.root.kind === "parameter" &&
-          String(place.root.parameterId) === String(parameter.parameterId),
-      );
-    if (parameterPlace === undefined) {
-      continue;
-    }
-    if (
-      isPlaceOwnedInState({
-        state: input.state,
-        placeId: parameterPlace.placeId,
-        placeResolver: input.placeResolver,
-      })
-    ) {
-      leaks.push(placeKeyForMirPlace(parameterPlace.placeId));
-    }
-  }
-  return leaks.sort(compareCodeUnitStrings);
 }
 
 function wrapperResourceLeakDiagnostic(input: {
@@ -417,36 +287,12 @@ function checkWrapperResourceLeakBeforeDrop(input: {
   readonly placeResolver?: ProofCheckPlaceResolver;
   readonly functionGraph?: ProofMirFunction;
 }): ProofCheckOwnershipTransferResult | undefined {
-  const structuredDescendants = ownedStructuredDescendantPlaceKeys({
+  const hiddenPlaces = hiddenOwnedResourcePlaceKeys({
     state: input.state,
     place: input.place,
+    placeResolver: input.placeResolver,
+    functionGraph: input.functionGraph,
   });
-  let hiddenPlaces = structuredDescendants;
-  if (input.functionGraph !== undefined) {
-    const consumedPlaceId = tryResolveProofMirPlaceIdForPlaceKey(
-      input.place.placeKey,
-      input.placeResolver,
-    );
-    if (consumedPlaceId !== undefined) {
-      hiddenPlaces = [
-        ...new Set([
-          ...structuredDescendants,
-          ...hiddenOwnedProjectionPlaceKeys({
-            state: input.state,
-            consumedPlaceId,
-            functionGraph: input.functionGraph,
-            placeResolver: input.placeResolver,
-          }),
-          ...hiddenOwnedTrailingParameterPlaceKeys({
-            state: input.state,
-            consumedPlaceId,
-            functionGraph: input.functionGraph,
-            placeResolver: input.placeResolver,
-          }),
-        ]),
-      ].sort(compareCodeUnitStrings);
-    }
-  }
 
   if (hiddenPlaces.length === 0) {
     return undefined;
@@ -648,10 +494,6 @@ export function checkUsePlace(
     certificates: [],
     packetEntries: [],
   };
-}
-
-function isCopyResourceKind(kind: ProofCheckConcreteResourceKind): boolean {
-  return kind === "Copy" || kind === "Never";
 }
 
 function requiresConsumeOnTransfer(kind: ProofCheckConcreteResourceKind): boolean {
@@ -962,24 +804,24 @@ export function applySummaryProduceEffect(
   input: ProofCheckPlaceOperationInput & {
     readonly resourceKind: ProofCheckConcreteResourceKind;
     readonly operationOriginKey: string;
+    readonly dependencyValueIds?: readonly ProofMirValueId[];
   },
 ): ProofCheckOwnershipTransferResult {
   const placeKey = input.place.placeKey;
   const patches: ProofCheckStatePatchEntry[] = [
     placeStatePatch(placeKey, "owned", input.placeResolver),
   ];
-  const subjectKey = `produce:${placeKey}:${input.resourceKind}`;
+  const packetEntry = buildOwnershipPacketEntry({
+    subjectPlaceKey: placeKey,
+    dependencyPlaceKeys: [placeKey],
+    dependencyValueIds: input.dependencyValueIds,
+    operationOriginKey: input.operationOriginKey,
+    placeResolver: input.placeResolver,
+  });
   return {
     kind: "ok",
     patches,
-    certificates: [certificateForSubject(subjectKey)],
-    packetEntries: [
-      buildOwnershipPacketEntry({
-        subjectPlaceKey: placeKey,
-        dependencyPlaceKeys: [placeKey],
-        operationOriginKey: input.operationOriginKey,
-        placeResolver: input.placeResolver,
-      }),
-    ],
+    certificates: [],
+    packetEntries: [packetEntry],
   };
 }

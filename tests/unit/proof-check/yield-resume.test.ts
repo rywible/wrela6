@@ -143,6 +143,7 @@ describe("checkYieldResumeTransfer", () => {
     const result = checkYieldResumeTransfer(
       yieldResumeInputForTest({
         state: proofCheckStateForTest({
+          places: [ownedPlaceForTest("packet")],
           packetSources: [packetSourceForTest("packet", "source")],
         }),
       }),

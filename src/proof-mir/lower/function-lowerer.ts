@@ -1,8 +1,10 @@
 import type { LayoutFactProgram as LayoutProgram } from "../../layout/layout-program";
 import { resourcePlaceId } from "../../hir/ids";
+import { hirResourcePlaceCanonicalKey } from "../../hir/place";
 import type { MonoInstanceId } from "../../mono/ids";
 import type {
   MonoBlock,
+  MonoExpression,
   MonoFunctionInstance,
   MonoLocal,
   MonoParameter,
@@ -48,16 +50,19 @@ import {
   type ProofMirTakeLoweringInput,
   type ProofMirValidationLoweringInput,
 } from "./lowering-context";
+import { proofMirTailReturnPolicy } from "./tail-return";
 import { syncLoweredPlaceToFunctionDraft } from "./lowering-place-sync";
 import {
   createProofMirScopePlaceLowerer,
   type ProofMirFunctionScopePlaceLowerer,
 } from "./scope-place-lowerer";
 import type { ConcreteResourceKind } from "../../semantic/surface/resource-kind";
+import { concreteKind } from "../../semantic/surface/resource-kind";
 import type { MonomorphizedHirProgram } from "../../mono/mono-hir";
 import type { LayoutFactProgram } from "../../layout/layout-program";
 import { mergeFunctionLoweringIntoProgramDraft } from "../draft/program-draft-merge";
 import type { DraftProofMirBuildTargetContext } from "../draft/draft-builder-context";
+import { blockHasTerminator } from "./control-flow-terminators";
 
 export type { ProofMirLoweringResult };
 
@@ -178,14 +183,21 @@ function monoParameterPlace(input: {
   readonly local: MonoLocal;
 }): MonoResourcePlace {
   const functionInstanceId = input.functionInstance.instanceId;
+  const root = { kind: "parameter" as const, parameterId: input.parameter.parameterId };
   return {
     placeId: {
       owner: { kind: "function", instanceId: functionInstanceId },
       hirId: resourcePlaceId(Number(input.parameter.parameterId)),
       instanceId: functionInstanceId,
     },
-    canonicalKey: `function:${String(functionInstanceId)}/parameter:${String(input.parameter.parameterId)}`,
-    root: { kind: "parameter", parameterId: input.parameter.parameterId },
+    canonicalKey: hirResourcePlaceCanonicalKey({
+      owner: { kind: "function", functionId: input.functionInstance.signature.functionId },
+      root,
+      projection: [],
+      type: input.parameter.type,
+      resourceKind: concreteKind(input.parameter.resourceKind),
+    }),
+    root,
     projection: [],
     type: input.parameter.type,
     resourceKind: input.parameter.resourceKind,
@@ -246,13 +258,49 @@ function isControlFlowStatement(statement: MonoStatement): boolean {
   }
 }
 
+function implicitReturnExpression(input: {
+  readonly context: ProofMirLoweringContext;
+  readonly statement: MonoStatement;
+  readonly blockKey: ProofMirCanonicalKey;
+  readonly functionInstance: MonoFunctionInstance;
+  readonly lastStatement: boolean;
+}): MonoExpression | undefined {
+  if (
+    !input.lastStatement ||
+    input.statement.kind.kind !== "expression" ||
+    input.functionInstance.signature.returnKind === "Never" ||
+    blockHasTerminator(input.context, input.blockKey)
+  ) {
+    return undefined;
+  }
+
+  const expression = input.statement.kind.expression;
+  return expression.kind.kind === "attempt" ? undefined : expression;
+}
+
 function dispatchBodyStatement(input: {
   readonly context: ProofMirLoweringContext;
   readonly registry: ProofMirLoweringRegistry;
   readonly statement: MonoStatement;
   readonly blockKey: ProofMirCanonicalKey;
   readonly functionInstance: MonoFunctionInstance;
+  readonly lastStatement: boolean;
 }): ProofMirLoweringResult<void> {
+  const implicitExpression = implicitReturnExpression(input);
+  const tailReturn = proofMirTailReturnPolicy({
+    returnKind: input.functionInstance.signature.returnKind,
+    terminal: input.functionInstance.signature.modifiers.isTerminal,
+    lastStatement: input.lastStatement,
+  });
+  if (implicitExpression !== undefined) {
+    return input.registry.terminal.lowerReturn({
+      context: input.context,
+      expression: implicitExpression,
+      blockKey: input.blockKey,
+      terminal: input.functionInstance.signature.modifiers.isTerminal,
+    } satisfies ProofMirReturnLoweringInput);
+  }
+
   switch (input.statement.kind.kind) {
     case "for":
       return input.registry.iterator.lowerFor({
@@ -265,6 +313,7 @@ function dispatchBodyStatement(input: {
         context: input.context,
         statement: input.statement.kind.statement,
         blockKey: input.blockKey,
+        ...(tailReturn === undefined ? {} : { tailReturn }),
       } satisfies ProofMirValidationLoweringInput);
     case "take":
       return input.registry.take.lowerTake({
@@ -334,6 +383,7 @@ function dispatchBodyStatement(input: {
           context: input.context,
           statement: input.statement,
           blockKey: input.blockKey,
+          ...(tailReturn === undefined ? {} : { tailReturn }),
         } satisfies ProofMirControlFlowLoweringInput);
       }
       return input.registry.statement.lowerStatement({
@@ -678,13 +728,14 @@ export function lowerProofMirFunction(
   }
 
   let currentBlockKey = entryBlockKey;
-  for (const statement of body.statements) {
+  for (const [statementIndex, statement] of body.statements.entries()) {
     const loweredStatement = dispatchBodyStatement({
       context: loweringContext,
       registry: input.registry,
       statement,
       blockKey: currentBlockKey,
       functionInstance,
+      lastStatement: statementIndex === body.statements.length - 1,
     });
     if (loweredStatement.kind === "error") {
       input.buildContext.markFunctionFailed(functionInstanceId);

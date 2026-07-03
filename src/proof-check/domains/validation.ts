@@ -21,6 +21,7 @@ import {
   type CheckedFactSubject,
   type CheckedOriginFact,
 } from "../model/fact-packet";
+import { checkedFactSubjectKey } from "../validation/packet-fact-keys";
 import {
   computeProofCheckCoreMeet,
   proofCheckStateComponentKeysForJoinFailure,
@@ -54,6 +55,10 @@ export interface MatchValidationInput {
   readonly pendingResultPlaceKey: string;
   readonly layoutKey: string;
   readonly payloadPlaceKey?: string;
+  readonly errPayloadPlaceKey?: string;
+  readonly additionalOkOwnedPlaceKeys?: readonly string[];
+  readonly additionalOkLayoutPlaceKeys?: readonly string[];
+  readonly additionalErrOwnedPlaceKeys?: readonly string[];
   readonly membershipBrandKey?: string;
   readonly operationOriginKey?: string;
   readonly placeResolver?: ProofCheckPlaceResolver;
@@ -66,6 +71,8 @@ export interface ValidationOkArmTransferInput {
   readonly packetPlaceKey: string;
   readonly layoutKey: string;
   readonly payloadPlaceKey?: string;
+  readonly additionalOwnedPlaceKeys?: readonly string[];
+  readonly additionalLayoutPlaceKeys?: readonly string[];
   readonly membershipBrandKey?: string;
   readonly operationOriginKey?: string;
   readonly placeResolver?: ProofCheckPlaceResolver;
@@ -76,6 +83,7 @@ export interface ValidationErrArmTransferInput {
   readonly validationKey: string;
   readonly sourcePlaceKey: string;
   readonly errPayloadPlaceKey?: string;
+  readonly additionalOwnedPlaceKeys?: readonly string[];
   readonly operationOriginKey?: string;
   readonly placeResolver?: ProofCheckPlaceResolver;
 }
@@ -339,6 +347,7 @@ function livePendingValidationKeys(state: ProofCheckState): readonly string[] {
 
 function livePacketKeys(state: ProofCheckState): readonly string[] {
   return [...state.packetSources.values()]
+    .filter((packetSource) => state.places.get(packetSource.packetKey)?.lifecycle === "owned")
     .map((packetSource) => packetSource.packetKey)
     .sort(compareCodeUnitStrings);
 }
@@ -374,6 +383,10 @@ function buildPacketSourcePacketEntry(input: {
     dependencies: [
       { kind: "proofMirPlace", placeId: packetPlaceId },
       { kind: "proofMirPlace", placeId: sourcePlaceId },
+      { kind: "packetSource", packet: packetPlaceId, source: sourcePlaceId },
+      ...(input.certificate.kind === "core"
+        ? [{ kind: "coreCertificate" as const, certificateId: input.certificate.id }]
+        : []),
     ],
     invalidatedBy: [
       {
@@ -387,12 +400,26 @@ function buildPacketSourcePacketEntry(input: {
   };
 }
 
+function packetSourceSubjectKey(input: {
+  readonly packetPlaceKey: string;
+  readonly sourcePlaceKey: string;
+  readonly placeResolver?: ProofCheckPlaceResolver;
+}): string {
+  return checkedFactSubjectKey({
+    kind: "packetSource",
+    packet: proofMirPlaceIdForPlaceKey(input.packetPlaceKey, input.placeResolver),
+    source: proofMirPlaceIdForPlaceKey(input.sourcePlaceKey, input.placeResolver),
+  });
+}
+
 function buildValidationOkArmState(input: {
   readonly state: ProofCheckState;
   readonly sourcePlaceKey: string;
   readonly packetPlaceKey: string;
   readonly layoutKey: string;
   readonly payloadPlaceKey?: string;
+  readonly additionalOwnedPlaceKeys?: readonly string[];
+  readonly additionalLayoutPlaceKeys?: readonly string[];
   readonly membershipBrandKey?: string;
 }): ProofCheckState {
   const places = new Map(input.state.places);
@@ -410,6 +437,12 @@ function buildValidationOkArmState(input: {
       lifecycle: "owned",
     });
   }
+  for (const placeKey of input.additionalOwnedPlaceKeys ?? []) {
+    places.set(placeKey, {
+      placeKey,
+      lifecycle: "owned",
+    });
+  }
 
   const validations = new Map(input.state.validations);
   for (const [validationKey, validation] of input.state.validations) {
@@ -424,6 +457,12 @@ function buildValidationOkArmState(input: {
     bufferKey: input.packetPlaceKey,
     layoutKey: input.layoutKey,
   });
+  for (const placeKey of input.additionalLayoutPlaceKeys ?? []) {
+    layout.set(placeKey, {
+      bufferKey: placeKey,
+      layoutKey: input.layoutKey,
+    });
+  }
 
   const packetSources = new Map(input.state.packetSources);
   packetSources.set(`${input.packetPlaceKey}->${input.sourcePlaceKey}`, {
@@ -436,6 +475,12 @@ function buildValidationOkArmState(input: {
     factKey: layoutBoundsFactKey(input.packetPlaceKey, input.layoutKey),
     termKey: layoutBoundsFactKey(input.packetPlaceKey, input.layoutKey),
   });
+  for (const placeKey of input.additionalLayoutPlaceKeys ?? []) {
+    facts.set(layoutBoundsFactKey(placeKey, input.layoutKey), {
+      factKey: layoutBoundsFactKey(placeKey, input.layoutKey),
+      termKey: layoutBoundsFactKey(placeKey, input.layoutKey),
+    });
+  }
   if (input.membershipBrandKey !== undefined) {
     const brandFactKey = membershipBrandFactKey(input.packetPlaceKey, input.membershipBrandKey);
     facts.set(brandFactKey, { factKey: brandFactKey, termKey: brandFactKey });
@@ -455,6 +500,7 @@ function buildValidationErrArmState(input: {
   readonly state: ProofCheckState;
   readonly sourcePlaceKey: string;
   readonly errPayloadPlaceKey?: string;
+  readonly additionalOwnedPlaceKeys?: readonly string[];
 }): ProofCheckState {
   const places = new Map(input.state.places);
   const sourcePlace = places.get(input.sourcePlaceKey);
@@ -464,6 +510,19 @@ function buildValidationErrArmState(input: {
   if (input.errPayloadPlaceKey !== undefined) {
     places.set(input.errPayloadPlaceKey, {
       placeKey: input.errPayloadPlaceKey,
+      lifecycle: "owned",
+    });
+  }
+  const alreadyOwned = new Set(
+    input.errPayloadPlaceKey === undefined ? [] : [input.errPayloadPlaceKey],
+  );
+  for (const placeKey of input.additionalOwnedPlaceKeys ?? []) {
+    if (alreadyOwned.has(placeKey)) {
+      continue;
+    }
+    alreadyOwned.add(placeKey);
+    places.set(placeKey, {
+      placeKey,
       lifecycle: "owned",
     });
   }
@@ -520,7 +579,10 @@ export function createValidation(input: CreateValidationInput): ValidationTransf
     input.pendingResultPlaceKey,
     input.placeResolver,
   );
-  if (pendingResultPlace === undefined || pendingResultPlace.lifecycle !== "owned") {
+  if (
+    pendingResultPlace === undefined ||
+    (pendingResultPlace.lifecycle !== "owned" && pendingResultPlace.lifecycle !== "uninitialized")
+  ) {
     return errorValidationTransfer([
       invalidValidationSplitDiagnostic({
         detail: `pending validation result ${input.pendingResultPlaceKey} is not owned`,
@@ -534,6 +596,9 @@ export function createValidation(input: CreateValidationInput): ValidationTransf
     validationPatch({ validationKey: input.validationKey, status: "pending" }, "open"),
     layoutPatch(input.sourcePlaceKey, input.layoutKey),
   ];
+  if (pendingResultPlace.lifecycle === "uninitialized") {
+    patches.push(placeStatePatch(input.pendingResultPlaceKey, "owned", input.placeResolver));
+  }
 
   return okValidationTransfer(patches);
 }
@@ -563,7 +628,7 @@ export function matchValidation(input: MatchValidationInput): ValidationTransfer
 
   const packetSourceCertificate = allocateCoreCertificate({
     rule: "packetSource",
-    subjectKey: `${input.packetPlaceKey}->${input.sourcePlaceKey}`,
+    subjectKey: packetSourceSubjectKey(input),
     dependencyKeys: [input.sourcePlaceKey, input.packetPlaceKey, input.layoutKey],
   });
 
@@ -573,12 +638,23 @@ export function matchValidation(input: MatchValidationInput): ValidationTransfer
     packetPlaceKey: input.packetPlaceKey,
     layoutKey: input.layoutKey,
     payloadPlaceKey: input.payloadPlaceKey,
+    ...(input.additionalOkOwnedPlaceKeys === undefined
+      ? {}
+      : { additionalOwnedPlaceKeys: input.additionalOkOwnedPlaceKeys }),
+    ...(input.additionalOkLayoutPlaceKeys === undefined
+      ? {}
+      : { additionalLayoutPlaceKeys: input.additionalOkLayoutPlaceKeys }),
     membershipBrandKey: input.membershipBrandKey,
   });
   const errorState = buildValidationErrArmState({
     state: input.state,
     sourcePlaceKey: input.sourcePlaceKey,
-    errPayloadPlaceKey: input.payloadPlaceKey,
+    ...(input.errPayloadPlaceKey === undefined
+      ? {}
+      : { errPayloadPlaceKey: input.errPayloadPlaceKey }),
+    ...(input.additionalErrOwnedPlaceKeys === undefined
+      ? {}
+      : { additionalOwnedPlaceKeys: input.additionalErrOwnedPlaceKeys }),
   });
 
   const patches: ProofCheckStatePatchEntry[] = [
@@ -612,7 +688,7 @@ export function transferValidationOkArm(
 
   const packetSourceCertificate = allocateCoreCertificate({
     rule: "packetSource",
-    subjectKey: `${input.packetPlaceKey}->${input.sourcePlaceKey}`,
+    subjectKey: packetSourceSubjectKey(input),
     dependencyKeys: [input.sourcePlaceKey, input.packetPlaceKey, input.layoutKey],
   });
   const certificate: ProofCheckCertificateId = {
@@ -634,6 +710,31 @@ export function transferValidationOkArm(
   if (input.payloadPlaceKey !== undefined) {
     patches.push(placeStatePatch(input.payloadPlaceKey, "owned", input.placeResolver));
   }
+  const alreadyOwned = new Set([
+    input.packetPlaceKey,
+    ...(input.payloadPlaceKey === undefined ? [] : [input.payloadPlaceKey]),
+  ]);
+  for (const placeKey of input.additionalOwnedPlaceKeys ?? []) {
+    if (alreadyOwned.has(placeKey)) {
+      continue;
+    }
+    alreadyOwned.add(placeKey);
+    patches.push(placeStatePatch(placeKey, "owned", input.placeResolver));
+  }
+  const layoutAliases = new Set([input.packetPlaceKey]);
+  for (const placeKey of input.additionalLayoutPlaceKeys ?? []) {
+    if (layoutAliases.has(placeKey)) {
+      continue;
+    }
+    layoutAliases.add(placeKey);
+    patches.push(
+      layoutPatch(placeKey, input.layoutKey),
+      factAddPatch({
+        factKey: layoutBoundsFactKey(placeKey, input.layoutKey),
+        termKey: layoutBoundsFactKey(placeKey, input.layoutKey),
+      }),
+    );
+  }
   if (input.membershipBrandKey !== undefined) {
     const brandFactKey = membershipBrandFactKey(input.packetPlaceKey, input.membershipBrandKey);
     patches.push(
@@ -645,7 +746,6 @@ export function transferValidationOkArm(
   }
 
   return okValidationTransfer(patches, {
-    certificates: [certificate],
     packetEntries: [
       buildPacketSourcePacketEntry({
         packetPlaceKey: input.packetPlaceKey,
@@ -676,6 +776,16 @@ export function transferValidationErrArm(
   const patches: ProofCheckStatePatchEntry[] = [];
   if (input.errPayloadPlaceKey !== undefined) {
     patches.push(placeStatePatch(input.errPayloadPlaceKey, "owned", input.placeResolver));
+  }
+  const alreadyOwned = new Set(
+    input.errPayloadPlaceKey === undefined ? [] : [input.errPayloadPlaceKey],
+  );
+  for (const placeKey of input.additionalOwnedPlaceKeys ?? []) {
+    if (alreadyOwned.has(placeKey)) {
+      continue;
+    }
+    alreadyOwned.add(placeKey);
+    patches.push(placeStatePatch(placeKey, "owned", input.placeResolver));
   }
 
   return okValidationTransfer(patches);

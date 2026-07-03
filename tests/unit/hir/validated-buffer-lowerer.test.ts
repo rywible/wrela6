@@ -132,6 +132,34 @@ test("HIR preserves derived field cases in source order", () => {
   expect(version.cases[1]?.result.kind).toBe("integerLiteral");
 });
 
+test("HIR lowers enum case derived-field results to discriminant literals", () => {
+  const result = lowerTypedHirForTest([
+    [
+      "main.wr",
+      [
+        "enum PacketKind:",
+        "    count",
+        "    ignored",
+        "validated buffer Packet:",
+        "    layout:",
+        "        kind_byte: u8 @ 0",
+        "    derive:",
+        "        kind: PacketKind from kind_byte:",
+        "            1 => PacketKind.count",
+        "            otherwise => PacketKind.ignored",
+      ].join("\n"),
+    ],
+  ]);
+  const buffer = result.program.validatedBuffers.entries()[0]!;
+  const kind = buffer.derivedFields[0]!;
+
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+    hirDiagnosticCode("HIR_UNSUPPORTED_LAYOUT_EXPRESSION"),
+  );
+  expect(kind.cases[0]?.result).toMatchObject({ kind: "integerLiteral", value: 0n });
+  expect(kind.cases[1]?.result).toMatchObject({ kind: "integerLiteral", value: 1n });
+});
+
 test("layout field can reference an earlier derived field", () => {
   const result = lowerTypedHirForTest([
     [

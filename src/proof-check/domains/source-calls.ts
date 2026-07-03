@@ -632,6 +632,9 @@ function applySummaryPlaceEffects(input: {
       case "consumes": {
         const placeKey = resolvePlaceKeyForBinder(effect.place, input.bindings);
         if (placeKey === undefined) {
+          if (effect.kind === "observes" && effect.borrowMode === undefined) {
+            continue;
+          }
           return {
             kind: "error",
             diagnostics: sortProofCheckDiagnostics([

@@ -1,6 +1,7 @@
 import type { MonoInstanceId } from "../../../mono/ids";
-import { proofMirOwnedCallId } from "../../../proof-mir/ids";
+import { proofMirOwnedCallId, type ProofMirValueId } from "../../../proof-mir/ids";
 import type { ProofMirCallGraphEdge } from "../../../proof-mir/model/calls";
+import type { ProofMirCall, ProofMirFunction } from "../../../proof-mir/model/graph";
 import type { ProofMirProgram } from "../../../proof-mir/model/program";
 import {
   checkPlatformContractTransfer,
@@ -11,6 +12,7 @@ import {
   buildCheckedSourceCallTransferInput,
   buildPlatformCallEffectOperandBindings,
 } from "../../domains/mir-source-call-transfer";
+import { applySummaryProduceEffect } from "../../domains/ownership";
 import { proofCheckDiagnostic } from "../../diagnostics";
 import {
   resolveAcceptedSourceCallSummary,
@@ -24,6 +26,7 @@ import {
 import {
   errorTransition,
   okCoreTransition,
+  placeKeyForMirPlace,
   tryResolveProofMirPlaceIdForPlaceKey,
   type ProofCheckRegistryContext,
 } from "./transition-helpers";
@@ -34,6 +37,62 @@ export function callGraphEdgeForStatement(
   callId: ProofMirCallGraphEdge["callId"]["callId"],
 ): ProofMirCallGraphEdge | undefined {
   return mir.callGraph.get(proofMirOwnedCallId(functionInstanceId, callId));
+}
+
+function mirCallForCallGraphEdge(input: {
+  readonly mir: ProofMirProgram;
+  readonly functionInstanceId: MonoInstanceId;
+  readonly call: ProofMirCallGraphEdge;
+}): { readonly functionGraph: ProofMirFunction; readonly mirCall: ProofMirCall } | undefined {
+  const functionGraph = input.mir.functions.get(input.functionInstanceId);
+  if (functionGraph === undefined) {
+    return undefined;
+  }
+  for (const block of functionGraph.blocks.entries()) {
+    for (const statement of block.statements) {
+      if (
+        statement.kind.kind === "call" &&
+        String(statement.kind.call.callId) === String(input.call.callId.callId)
+      ) {
+        return { functionGraph, mirCall: statement.kind.call };
+      }
+    }
+  }
+  return undefined;
+}
+
+function compilerIntrinsicProducedPlace(input: {
+  readonly mir: ProofMirProgram;
+  readonly functionInstanceId: MonoInstanceId;
+  readonly call: ProofMirCallGraphEdge;
+}):
+  | {
+      readonly placeKey: string;
+      readonly valueIds: readonly ProofMirValueId[];
+      readonly resourceKind: "Copy" | "Affine" | "Linear";
+    }
+  | undefined {
+  const resolvedCall = mirCallForCallGraphEdge(input);
+  const result = resolvedCall?.mirCall.result;
+  if (resolvedCall === undefined || result === undefined) {
+    return undefined;
+  }
+  const placeId =
+    result.kind === "place" || result.kind === "valueAndPlace" ? result.place : undefined;
+  if (placeId === undefined) {
+    return undefined;
+  }
+  const place = resolvedCall.functionGraph.places.get(placeId);
+  const resourceKind = place?.resourceKind;
+  const valueIds = result.kind === "valueAndPlace" ? [result.value] : [];
+  return {
+    placeKey: placeKeyForMirPlace(placeId),
+    valueIds,
+    resourceKind:
+      resourceKind === "Affine" || resourceKind === "Linear" || resourceKind === "Copy"
+        ? resourceKind
+        : "Copy",
+  };
 }
 
 export function handleCallTransfer(input: {
@@ -229,6 +288,39 @@ export function handleCallTransfer(input: {
         patches: result.patches,
         certificates: result.certificates,
         packetEntries: result.packetEntries,
+      });
+    }
+    case "compilerIntrinsic": {
+      const producedPlace = compilerIntrinsicProducedPlace({
+        mir: input.context.input.mir,
+        functionInstanceId: input.transition.functionInstanceId,
+        call: input.call,
+      });
+      const produceResult =
+        producedPlace === undefined
+          ? {
+              kind: "ok" as const,
+              patches: [],
+              certificates: [],
+              packetEntries: [],
+            }
+          : applySummaryProduceEffect({
+              state,
+              place: { placeKey: producedPlace.placeKey },
+              resourceKind: producedPlace.resourceKind,
+              operationOriginKey: ownerKey,
+              placeResolver: input.context.placeResolver,
+              dependencyValueIds: producedPlace.valueIds,
+            });
+      if (produceResult.kind === "error") {
+        return errorTransition(produceResult.diagnostics);
+      }
+      return okCoreTransition({
+        transition: input.transition,
+        context: input.context,
+        patches: produceResult.patches,
+        certificates: produceResult.certificates,
+        packetEntries: produceResult.packetEntries,
       });
     }
     default: {

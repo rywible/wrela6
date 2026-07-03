@@ -233,7 +233,13 @@ const DECODER_PATTERN_SPECS = Object.freeze([
   decoderPatternSpec("cset", 0xffff0c00, 0x9a9f0400),
   decoderPatternSpec("csel", 0xffe00c00, 0x9a800000),
   decoderPatternSpec("ccmp", 0xffe00c10, 0xfa400000),
+  decoderPatternSpec("ldr-unsigned-immediate", 0xffc00000, 0x39400000),
+  decoderPatternSpec("ldr-unsigned-immediate", 0xffc00000, 0x79400000),
+  decoderPatternSpec("ldr-unsigned-immediate", 0xffc00000, 0xb9400000),
   decoderPatternSpec("ldr-unsigned-immediate", 0xffc00000, 0xf9400000),
+  decoderPatternSpec("str-unsigned-immediate", 0xffc00000, 0x39000000),
+  decoderPatternSpec("str-unsigned-immediate", 0xffc00000, 0x79000000),
+  decoderPatternSpec("str-unsigned-immediate", 0xffc00000, 0xb9000000),
   decoderPatternSpec("str-unsigned-immediate", 0xffc00000, 0xf9000000),
   decoderPatternSpec("ldr-register-offset", 0xffe0fc00, 0xf8606800),
   decoderPatternSpec("ldp-signed-offset", 0xffc00000, 0xa9400000),
@@ -276,12 +282,7 @@ const DECODER_PATTERN_SPECS = Object.freeze([
   decoderPatternSpec("tbnz", 0x7f000000, 0x37000000),
 ]);
 
-const DECODER_PATTERNS_BY_OPCODE = new Map(
-  DECODER_PATTERN_SPECS.map((spec) => [
-    spec.opcode,
-    Object.freeze([decoderPattern(spec.mask, spec.value)]),
-  ]),
-);
+const DECODER_PATTERNS_BY_OPCODE = decoderPatternsByOpcode(DECODER_PATTERN_SPECS);
 
 const STACK_POINTER_OPERAND_OPCODES = new Set([
   "add-immediate",
@@ -444,6 +445,23 @@ function decoderPatternSpec(opcode: string, mask: number, value: number) {
 
 function decoderPattern(mask: number, value: number): Rpi5DecoderPattern {
   return Object.freeze({ mask: mask >>> 0, value: value >>> 0, source: "decoder" });
+}
+
+function decoderPatternsByOpcode(
+  specs: readonly (typeof DECODER_PATTERN_SPECS)[number][],
+): ReadonlyMap<string, readonly Rpi5DecoderPattern[]> {
+  const patternsByOpcode = new Map<string, Rpi5DecoderPattern[]>();
+  for (const spec of specs) {
+    const patterns = patternsByOpcode.get(spec.opcode) ?? [];
+    patterns.push(decoderPattern(spec.mask, spec.value));
+    patternsByOpcode.set(spec.opcode, patterns);
+  }
+  return new Map(
+    [...patternsByOpcode.entries()].map(([opcode, patterns]) => [
+      opcode,
+      Object.freeze([...patterns]),
+    ]),
+  );
 }
 
 function familyForOpcode(opcode: string): string {

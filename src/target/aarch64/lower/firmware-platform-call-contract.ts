@@ -1,3 +1,12 @@
+import type { AArch64VirtualRegister } from "../machine-ir/virtual-register";
+
+export const AARCH64_FIRMWARE_IMAGE_HANDLE_VALUE_KEY = "uefi.imageHandle" as const;
+export const AARCH64_FIRMWARE_SYSTEM_TABLE_VALUE_KEY = "uefi.systemTable" as const;
+export const AARCH64_FIRMWARE_CONTEXT_VALUE_KEYS = Object.freeze([
+  AARCH64_FIRMWARE_IMAGE_HANDLE_VALUE_KEY,
+  AARCH64_FIRMWARE_SYSTEM_TABLE_VALUE_KEY,
+] as const);
+
 export type AArch64FirmwareTableBaseKey =
   | "uefi-system-table"
   | "uefi-simple-text-output"
@@ -59,6 +68,14 @@ export type AArch64FirmwarePlatformCallLowering =
       readonly helperLinkageName: string;
       readonly argumentRules: readonly AArch64FirmwareArgumentRule[];
       readonly resultRule: AArch64FirmwareResultRule;
+    }
+  | {
+      readonly kind: "static-readonly-pointer-result";
+      readonly primitiveId: string;
+      readonly symbolName: string;
+      readonly stableKey: string;
+      readonly fingerprint: string;
+      readonly resultRule: Extract<AArch64FirmwareResultRule, { readonly kind: "pointer-result" }>;
     };
 
 export interface AArch64FirmwarePlatformCallContext {
@@ -75,4 +92,3 @@ export interface AArch64FirmwareLoweringOptions {
 export interface AArch64FirmwareLoweringContext extends AArch64FirmwareLoweringOptions {
   readonly contextRegisters: Map<string, AArch64VirtualRegister>;
 }
-import type { AArch64VirtualRegister } from "../machine-ir/virtual-register";

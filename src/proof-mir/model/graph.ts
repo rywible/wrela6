@@ -157,6 +157,12 @@ export type ProofMirCallTarget =
       readonly abi: ProofMirLayoutReference & { readonly kind: "platformAbi" };
     }
   | {
+      readonly kind: "compilerIntrinsic";
+      readonly intrinsicKey: string;
+      readonly sourceValueKey: string;
+      readonly returnTypeKey: string;
+    }
+  | {
       readonly kind: "compilerRuntime";
       readonly runtimeId: ProofMirRuntimeOperationId;
       readonly runtimeCallId: ProofMirRuntimeCallId;
@@ -423,6 +429,13 @@ export interface ProofMirValidatedBufferRead {
   readonly origin: ProofMirOriginId;
 }
 
+export interface ProofMirObjectFieldValue {
+  readonly fieldId?: FieldId;
+  readonly name: string;
+  readonly value: ProofMirValueId;
+  readonly origin: ProofMirOriginId;
+}
+
 export type ProofMirUnaryOperator = "logicalNot" | "numericNegate" | "bitwiseNot";
 
 export type ProofMirBinaryOperator =
@@ -482,6 +495,11 @@ export type ProofMirStatementKind =
       readonly left: ProofMirValueId;
       readonly right: ProofMirValueId;
       readonly result: ProofMirValueId;
+    }
+  | {
+      readonly kind: "constructObject";
+      readonly result: ProofMirValueId;
+      readonly fields: readonly ProofMirObjectFieldValue[];
     }
   | { readonly kind: "call"; readonly call: ProofMirCall }
   | { readonly kind: "validate"; readonly validation: ProofMirValidationStart }

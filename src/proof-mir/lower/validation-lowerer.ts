@@ -1,17 +1,13 @@
 import { hirStatementId } from "../../hir/ids";
-import type { ValidationId } from "../../hir/ids";
 import type { MonoInstanceId } from "../../mono/ids";
 import { instantiatedHirId, instantiatedHirIdKey } from "../../mono/ids";
 import type {
-  MonoInstantiatedProofId,
   MonoLocal,
-  MonoResourcePlace,
+  MonoStatement,
   MonoStatementId,
   MonoValidation,
   MonoValidationMatchStatement,
-  MonomorphizedHirProgram,
 } from "../../mono/mono-hir";
-import type { TypeId } from "../../semantic/ids";
 import type { ProofMirCanonicalKey } from "../canonicalization/canonical-keys";
 import {
   proofMirDiagnostic,
@@ -19,21 +15,7 @@ import {
   type ProofMirDiagnostic,
 } from "../diagnostics";
 import { draftLocalKey } from "../draft/draft-keys";
-import {
-  proofMirOriginId,
-  proofMirPlaceId,
-  proofMirStatementId,
-  proofMirValueId,
-  type ProofMirOriginId,
-  type ProofMirPlaceId,
-  type ProofMirStatementId,
-  type ProofMirValueId,
-} from "../ids";
-import type { DraftProofMirLayoutTermReference } from "../draft/draft-layout-term-reference";
-import type {
-  ProofMirLayoutReference,
-  ProofMirLayoutTermReference,
-} from "../model/layout-bindings";
+import { type ProofMirLayoutReference } from "../model/layout-bindings";
 import type {
   DraftProofMirGraphStatementSnapshot,
   DraftProofMirStatementKind,
@@ -47,12 +29,27 @@ import {
 } from "../draft/draft-graph-builder";
 
 import { setEmptyArmUnreachableTerminator } from "./empty-arm-terminator";
+import { blockHasExitTerminator, blockHasTerminator } from "./control-flow-terminators";
 import {
+  type ProofMirControlFlowLowerer,
   type ProofMirLoweringContext,
   type ProofMirLoweringResult,
+  type ProofMirStatementLowerer,
+  type ProofMirTailReturnPolicy,
+  type ProofMirTerminalLowerer,
   type ProofMirValidationLoweringInput,
   type ProofMirValidationLowerer,
 } from "./lowering-context";
+import {
+  allocateValidationPlaces,
+  createValidationLoweringIdAllocator,
+  projectedPlaceKeysForBindingLocal,
+  recordValidationEvidenceFacts,
+  resolveValidatedBufferInstanceId,
+  type LoweredValidationPlaces,
+  type ValidationLoweringIdAllocator,
+} from "./validation-lowerer-support";
+import { lowerProofMirTailReturnStatement } from "./tail-return";
 
 interface RecordedProofMirStatement {
   readonly statementKey: ProofMirCanonicalKey;
@@ -60,19 +57,10 @@ interface RecordedProofMirStatement {
   readonly kind: DraftProofMirStatementKind;
 }
 
-interface ValidationLoweringIdAllocator {
-  valueForKey(key: ProofMirCanonicalKey): ProofMirValueId;
-  placeForKey(key: ProofMirCanonicalKey): ProofMirPlaceId;
-  nextStatementId(): ProofMirStatementId;
-  nextOrigin(): ProofMirOriginId;
-}
-
-interface LoweredValidationPlaces {
-  readonly sourcePlaceKey: ProofMirCanonicalKey;
-  readonly pendingResultPlaceKey: ProofMirCanonicalKey;
-  readonly okPacketPlaceKey: ProofMirCanonicalKey;
-  readonly okPayloadPlaceKey?: ProofMirCanonicalKey;
-  readonly errPayloadPlaceKey?: ProofMirCanonicalKey;
+export interface CreateProofMirValidationLowererInput {
+  readonly statement?: ProofMirStatementLowerer;
+  readonly terminal?: ProofMirTerminalLowerer;
+  readonly controlFlow?: ProofMirControlFlowLowerer;
 }
 
 function loweringOk<Value>(value: Value): ProofMirLoweringResult<Value> {
@@ -81,248 +69,6 @@ function loweringOk<Value>(value: Value): ProofMirLoweringResult<Value> {
 
 function loweringError(diagnostics: readonly ProofMirDiagnostic[]): ProofMirLoweringResult<never> {
   return { kind: "error", diagnostics: sortProofMirDiagnostics([...diagnostics]) };
-}
-
-function createValidationLoweringIdAllocator(): ValidationLoweringIdAllocator {
-  let nextValue = 0;
-  let nextPlace = 0;
-  let nextStatement = 0;
-  let nextOrigin = 1;
-  const valueKeys = new Map<ProofMirCanonicalKey, ProofMirValueId>();
-  const placeKeys = new Map<ProofMirCanonicalKey, ProofMirPlaceId>();
-
-  return {
-    valueForKey(key) {
-      const existing = valueKeys.get(key);
-      if (existing !== undefined) {
-        return existing;
-      }
-      const id = proofMirValueId(nextValue++);
-      valueKeys.set(key, id);
-      return id;
-    },
-    placeForKey(key) {
-      const existing = placeKeys.get(key);
-      if (existing !== undefined) {
-        return existing;
-      }
-      const id = proofMirPlaceId(nextPlace++);
-      placeKeys.set(key, id);
-      return id;
-    },
-    nextStatementId() {
-      return proofMirStatementId(nextStatement++);
-    },
-    nextOrigin() {
-      return proofMirOriginId(nextOrigin++);
-    },
-  };
-}
-
-function resolveValidatedBufferInstanceId(
-  program: MonomorphizedHirProgram,
-  validatedBufferTypeId: TypeId,
-): MonoInstanceId | undefined {
-  for (const buffer of program.validatedBuffers.entries()) {
-    if (buffer.typeId === validatedBufferTypeId) {
-      return buffer.instanceId;
-    }
-  }
-  return undefined;
-}
-
-function lowerMonoPlaceKey(input: {
-  readonly context: ProofMirLoweringContext;
-  readonly monoPlace: MonoResourcePlace;
-  readonly originKey: ProofMirCanonicalKey;
-}): ProofMirLoweringResult<ProofMirCanonicalKey> {
-  return input.context.scopePlaceLowerer.lowerMonoPlace({
-    context: input.context,
-    monoPlace: input.monoPlace,
-    originKey: input.originKey,
-  });
-}
-
-function validationPacketPlaceKey(input: {
-  readonly context: ProofMirLoweringContext;
-  readonly validationId: MonoInstantiatedProofId<ValidationId>;
-  readonly originKey: ProofMirCanonicalKey;
-}): ProofMirCanonicalKey {
-  const valueKey = input.context.graph.createValue({
-    role: `validation:packet:${String(input.validationId.hirId)}`,
-    origin: input.originKey,
-  });
-  return input.context.effects.placeFromRuntimeTemporary({
-    valueKey,
-    originKey: input.originKey,
-  });
-}
-
-function allocateValidationPlaces(input: {
-  readonly context: ProofMirLoweringContext;
-  readonly validation: MonoValidation;
-  readonly originKey: ProofMirCanonicalKey;
-  readonly materializeOkPayload: boolean;
-  readonly materializeErrPayload: boolean;
-}): ProofMirLoweringResult<LoweredValidationPlaces> {
-  const sourcePlaceResult = lowerMonoPlaceKey({
-    context: input.context,
-    monoPlace: input.validation.sourcePlace,
-    originKey: input.originKey,
-  });
-  if (sourcePlaceResult.kind === "error") {
-    return sourcePlaceResult;
-  }
-
-  const pendingResultResult = lowerMonoPlaceKey({
-    context: input.context,
-    monoPlace: input.validation.pendingResultPlace,
-    originKey: input.originKey,
-  });
-  if (pendingResultResult.kind === "error") {
-    return pendingResultResult;
-  }
-
-  const okPacketPlaceKey = validationPacketPlaceKey({
-    context: input.context,
-    validationId: input.validation.validationId,
-    originKey: input.originKey,
-  });
-
-  let okPayloadPlaceKey: ProofMirCanonicalKey | undefined;
-  if (input.materializeOkPayload) {
-    okPayloadPlaceKey = input.context.effects.placeFromValidationPayload({
-      validationId: input.validation.validationId,
-      originKey: input.originKey,
-      type: input.validation.okPayloadType,
-      resourceKind: "Copy",
-    });
-  }
-
-  let errPayloadPlaceKey: ProofMirCanonicalKey | undefined;
-  if (input.materializeErrPayload) {
-    errPayloadPlaceKey = input.context.effects.placeFromValidationPayload({
-      validationId: input.validation.validationId,
-      originKey: input.originKey,
-      type: input.validation.errPayloadType,
-      resourceKind: "Copy",
-    });
-  }
-
-  return loweringOk({
-    sourcePlaceKey: sourcePlaceResult.value,
-    pendingResultPlaceKey: pendingResultResult.value,
-    okPacketPlaceKey,
-    ...(okPayloadPlaceKey === undefined ? {} : { okPayloadPlaceKey }),
-    ...(errPayloadPlaceKey === undefined ? {} : { errPayloadPlaceKey }),
-  });
-}
-
-function layoutTermReferenceForRoot(input: {
-  readonly context: ProofMirLoweringContext;
-  readonly root: ProofMirLayoutTermReference["path"]["root"];
-  readonly childPath: ProofMirLayoutTermReference["path"]["childPath"];
-  readonly expectedUnit: ProofMirLayoutTermReference["unit"];
-}): DraftProofMirLayoutTermReference | undefined {
-  const resolved = input.context.layoutBindingIndex.resolveTerm({
-    root: input.root,
-    childPath: input.childPath,
-    expectedUnit: input.expectedUnit,
-  });
-  if (resolved.kind !== "ok") {
-    return undefined;
-  }
-  return {
-    termKey: resolved.key,
-    unit: resolved.unit,
-    path: {
-      root: input.root,
-      childPath: input.childPath,
-    },
-  };
-}
-
-function recordValidationEvidenceFacts(input: {
-  readonly context: ProofMirLoweringContext;
-  readonly validation: MonoValidation;
-  readonly bufferInstanceId: MonoInstanceId;
-  readonly packetPlaceKey: ProofMirCanonicalKey;
-  readonly originKey: ProofMirCanonicalKey;
-  readonly idAllocator: ValidationLoweringIdAllocator;
-}): readonly ProofMirCanonicalKey[] {
-  const buffer = input.context.layout.validatedBuffers.get(input.bufferInstanceId);
-  if (buffer === undefined) {
-    return [];
-  }
-
-  const factKeys: ProofMirCanonicalKey[] = [];
-
-  const sourceLengthEnd = layoutTermReferenceForRoot({
-    context: input.context,
-    root: {
-      kind: "validatedBufferSourceLength",
-      instanceId: input.bufferInstanceId,
-    },
-    childPath: [],
-    expectedUnit: "byteLength",
-  });
-  if (sourceLengthEnd !== undefined) {
-    const factKey = input.context.factRecorder.recordLayoutFitsFact({
-      role: "evidence",
-      dependsOn: [
-        {
-          kind: "layout",
-          layout: {
-            kind: "validatedBuffer",
-            instanceId: input.bufferInstanceId,
-          } satisfies ProofMirLayoutReference,
-        },
-      ],
-      origin: input.originKey,
-      sourcePlaceKey: input.packetPlaceKey,
-      end: sourceLengthEnd,
-    });
-    if (factKey !== undefined) {
-      factKeys.push(factKey);
-    }
-  }
-
-  for (const derivedField of buffer.derivedFields) {
-    const payloadEnd = layoutTermReferenceForRoot({
-      context: input.context,
-      root: {
-        kind: "validatedBufferDerivedSource",
-        instanceId: input.bufferInstanceId,
-        fieldId: derivedField.fieldId,
-      },
-      childPath: [],
-      expectedUnit: derivedField.source.unit,
-    });
-    if (payloadEnd === undefined) {
-      continue;
-    }
-    const factKey = input.context.factRecorder.recordPayloadEndFact({
-      role: "evidence",
-      dependsOn: [
-        {
-          kind: "layout",
-          layout: {
-            kind: "validatedBuffer",
-            instanceId: input.bufferInstanceId,
-          } satisfies ProofMirLayoutReference,
-        },
-      ],
-      origin: input.originKey,
-      sourcePlaceKey: input.packetPlaceKey,
-      end: payloadEnd,
-    });
-    if (factKey !== undefined) {
-      factKeys.push(factKey);
-    }
-  }
-
-  void input.validation;
-  return factKeys;
 }
 
 function buildValidationStart(input: {
@@ -504,6 +250,7 @@ function invalidValidationEdgeEffectsDiagnostic(input: {
 function buildValidationEdgeEffects(input: {
   readonly places: LoweredValidationPlaces;
   readonly includeErrPayload: boolean;
+  readonly okProjectedPlaceKeys?: readonly ProofMirCanonicalKey[];
 }): {
   readonly okEffects: readonly {
     readonly kind: "consumePlace" | "introducePlace";
@@ -517,13 +264,29 @@ function buildValidationEdgeEffects(input: {
   const okEffects: {
     readonly kind: "consumePlace" | "introducePlace";
     readonly placeKey: ProofMirCanonicalKey;
-  }[] = [
-    { kind: "consumePlace", placeKey: input.places.pendingResultPlaceKey },
-    { kind: "consumePlace", placeKey: input.places.sourcePlaceKey },
-    { kind: "introducePlace", placeKey: input.places.okPacketPlaceKey },
-  ];
+  }[] = [];
+  const pushOkEffect = (effect: {
+    readonly kind: "consumePlace" | "introducePlace";
+    readonly placeKey: ProofMirCanonicalKey;
+  }): void => {
+    if (
+      okEffects.some(
+        (existing) => existing.kind === effect.kind && existing.placeKey === effect.placeKey,
+      )
+    ) {
+      return;
+    }
+    okEffects.push(effect);
+  };
+
+  pushOkEffect({ kind: "consumePlace", placeKey: input.places.pendingResultPlaceKey });
+  pushOkEffect({ kind: "consumePlace", placeKey: input.places.sourcePlaceKey });
+  pushOkEffect({ kind: "introducePlace", placeKey: input.places.okPacketPlaceKey });
+  for (const projectedPlaceKey of input.okProjectedPlaceKeys ?? []) {
+    pushOkEffect({ kind: "introducePlace", placeKey: projectedPlaceKey });
+  }
   if (input.places.okPayloadPlaceKey !== undefined) {
-    okEffects.push({ kind: "introducePlace", placeKey: input.places.okPayloadPlaceKey });
+    pushOkEffect({ kind: "introducePlace", placeKey: input.places.okPayloadPlaceKey });
   }
 
   const errEffects: {
@@ -537,12 +300,117 @@ function buildValidationEdgeEffects(input: {
   return { okEffects, errEffects };
 }
 
+function lowerValidationArmBlock(input: {
+  readonly context: ProofMirLoweringContext;
+  readonly statementLowerer: ProofMirStatementLowerer | undefined;
+  readonly terminalLowerer: ProofMirTerminalLowerer | undefined;
+  readonly controlFlowLowerer: ProofMirControlFlowLowerer | undefined;
+  readonly blockKey: ProofMirCanonicalKey;
+  readonly statements: readonly MonoStatement[];
+  readonly origin: ProofMirCanonicalKey;
+  readonly tailReturn?: ProofMirTailReturnPolicy;
+}): ProofMirLoweringResult<void> {
+  if (input.statementLowerer === undefined || input.terminalLowerer === undefined) {
+    return setEmptyArmUnreachableTerminator({
+      context: input.context,
+      blockKey: input.blockKey,
+      origin: input.origin,
+    });
+  }
+
+  input.context.ssa.registerBlock(input.blockKey);
+  const tracking = input.context.blockTracking;
+  const previousCurrentBlock = tracking?.currentBlockRef.blockKey;
+  const previousContinuationBlock = tracking?.continuationBlockRef.blockKey;
+  if (tracking !== undefined) {
+    tracking.currentBlockRef.blockKey = input.blockKey;
+    tracking.continuationBlockRef.blockKey = undefined;
+  }
+
+  let activeBlockKey = input.blockKey;
+  const restoreTracking = (): void => {
+    if (tracking === undefined) {
+      return;
+    }
+    tracking.currentBlockRef.blockKey = previousCurrentBlock;
+    tracking.continuationBlockRef.blockKey = previousContinuationBlock;
+  };
+
+  for (const [statementIndex, statement] of input.statements.entries()) {
+    if (blockHasExitTerminator(input.context, activeBlockKey)) {
+      restoreTracking();
+      return loweringOk(undefined);
+    }
+    const lastStatement = statementIndex === input.statements.length - 1;
+    const tailReturn = lowerProofMirTailReturnStatement({
+      context: input.context,
+      terminalLowerer: input.terminalLowerer,
+      statement,
+      blockKey: activeBlockKey,
+      lastStatement,
+      tailReturn: input.tailReturn,
+    });
+    const lowered =
+      tailReturn.kind === "lowered"
+        ? tailReturn.result
+        : statement.kind.kind === "return"
+          ? input.terminalLowerer.lowerReturn({
+              context: input.context,
+              expression: statement.kind.expression,
+              blockKey: activeBlockKey,
+              terminal: false,
+            })
+          : input.controlFlowLowerer !== undefined &&
+              (statement.kind.kind === "if" ||
+                statement.kind.kind === "while" ||
+                statement.kind.kind === "loop" ||
+                statement.kind.kind === "match" ||
+                statement.kind.kind === "break" ||
+                statement.kind.kind === "continue")
+            ? input.controlFlowLowerer.lowerControlFlowStatement({
+                context: input.context,
+                statement,
+                blockKey: activeBlockKey,
+                ...(lastStatement && input.tailReturn !== undefined
+                  ? { tailReturn: input.tailReturn }
+                  : {}),
+              })
+            : input.statementLowerer.lowerStatement({
+                context: input.context,
+                statement,
+                blockKey: activeBlockKey,
+              });
+    if (lowered.kind === "error") {
+      restoreTracking();
+      return lowered;
+    }
+
+    if (tracking?.currentBlockRef.blockKey !== undefined) {
+      activeBlockKey = tracking.currentBlockRef.blockKey;
+    }
+  }
+
+  if (!blockHasTerminator(input.context, activeBlockKey)) {
+    restoreTracking();
+    return setEmptyArmUnreachableTerminator({
+      context: input.context,
+      blockKey: activeBlockKey,
+      origin: input.origin,
+    });
+  }
+
+  restoreTracking();
+  return loweringOk(undefined);
+}
+
 function lowerValidationCreationImpl(input: {
   readonly context: ProofMirLoweringContext;
   readonly validation: MonoValidation;
   readonly blockKey: ProofMirCanonicalKey;
   readonly materializeOkPayload: boolean;
   readonly materializeErrPayload: boolean;
+  readonly okBindingLocal?: MonoLocal;
+  readonly errBindingLocal?: MonoLocal;
   readonly recorded: RecordedProofMirStatement[];
   readonly idAllocator: ValidationLoweringIdAllocator;
 }): ProofMirLoweringResult<{
@@ -579,6 +447,8 @@ function lowerValidationCreationImpl(input: {
     originKey,
     materializeOkPayload: input.materializeOkPayload,
     materializeErrPayload: input.materializeErrPayload,
+    ...(input.okBindingLocal === undefined ? {} : { okBindingLocal: input.okBindingLocal }),
+    ...(input.errBindingLocal === undefined ? {} : { errBindingLocal: input.errBindingLocal }),
   });
   if (placesResult.kind === "error") {
     return placesResult;
@@ -610,6 +480,10 @@ function lowerValidationMatchImpl(input: {
   readonly context: ProofMirLoweringContext;
   readonly statement: MonoValidationMatchStatement;
   readonly blockKey: ProofMirCanonicalKey;
+  readonly statementLowerer: ProofMirStatementLowerer | undefined;
+  readonly terminalLowerer: ProofMirTerminalLowerer | undefined;
+  readonly controlFlowLowerer: ProofMirControlFlowLowerer | undefined;
+  readonly tailReturn?: ProofMirTailReturnPolicy;
   readonly recorded: RecordedProofMirStatement[];
   readonly idAllocator: ValidationLoweringIdAllocator;
 }): ProofMirLoweringResult<{
@@ -639,6 +513,8 @@ function lowerValidationMatchImpl(input: {
 
   const validation = input.statement.validation;
   const materializeErrPayload = input.statement.errArm.bindingLocals.length > 0;
+  const okBindingLocal = input.statement.okArm.bindingLocals[0];
+  const errBindingLocal = input.statement.errArm.bindingLocals[0];
   const matchStatementId = instantiatedHirId(
     input.context.functionInstanceId,
     hirStatementId(Number(String(validation.validationId.hirId))),
@@ -650,6 +526,8 @@ function lowerValidationMatchImpl(input: {
     blockKey: input.blockKey,
     materializeOkPayload: false,
     materializeErrPayload,
+    ...(okBindingLocal === undefined ? {} : { okBindingLocal }),
+    ...(errBindingLocal === undefined ? {} : { errBindingLocal }),
     recorded: input.recorded,
     idAllocator: input.idAllocator,
   });
@@ -711,26 +589,45 @@ function lowerValidationMatchImpl(input: {
     origin: errArmOriginKey,
   });
 
-  const finalizeOkArm = setEmptyArmUnreachableTerminator({
+  const finalizeOkArm = lowerValidationArmBlock({
     context: input.context,
+    statementLowerer: input.statementLowerer,
+    terminalLowerer: input.terminalLowerer,
+    controlFlowLowerer: input.controlFlowLowerer,
     blockKey: okBlockKey,
+    statements: input.statement.okArm.body.statements,
     origin: okArmOriginKey,
+    ...(input.tailReturn === undefined ? {} : { tailReturn: input.tailReturn }),
   });
   if (finalizeOkArm.kind === "error") {
     return finalizeOkArm;
   }
-  const finalizeErrArm = setEmptyArmUnreachableTerminator({
+  const finalizeErrArm = lowerValidationArmBlock({
     context: input.context,
+    statementLowerer: input.statementLowerer,
+    terminalLowerer: input.terminalLowerer,
+    controlFlowLowerer: input.controlFlowLowerer,
     blockKey: errBlockKey,
+    statements: input.statement.errArm.body.statements,
     origin: errArmOriginKey,
+    ...(input.tailReturn === undefined ? {} : { tailReturn: input.tailReturn }),
   });
   if (finalizeErrArm.kind === "error") {
     return finalizeErrArm;
   }
 
+  const okProjectedPlaceKeys =
+    okBindingLocal === undefined
+      ? []
+      : projectedPlaceKeysForBindingLocal({
+          context: input.context,
+          local: okBindingLocal,
+        });
+
   const { okEffects, errEffects } = buildValidationEdgeEffects({
     places,
     includeErrPayload: materializeErrPayload,
+    okProjectedPlaceKeys,
   });
 
   const okFactKeys = recordValidationEvidenceFacts({
@@ -745,7 +642,6 @@ function lowerValidationMatchImpl(input: {
   const okBindings: DraftGraphValidationArmBinding[] = [];
   const okModelBindings: ProofMirValidationArmBinding[] = [];
   const okArgumentKeys: ProofMirCanonicalKey[] = [];
-  const okBindingLocal = input.statement.okArm.bindingLocals[0];
   if (okBindingLocal !== undefined) {
     const binding = draftBindingForArmLocal({
       context: input.context,
@@ -764,7 +660,6 @@ function lowerValidationMatchImpl(input: {
   const errBindings: DraftGraphValidationArmBinding[] = [];
   const errModelBindings: ProofMirValidationArmBinding[] = [];
   const errArgumentKeys: ProofMirCanonicalKey[] = [];
-  const errBindingLocal = input.statement.errArm.bindingLocals[0];
   if (errBindingLocal !== undefined && places.errPayloadPlaceKey !== undefined) {
     const binding = draftBindingForArmLocal({
       context: input.context,
@@ -829,7 +724,9 @@ function lowerValidationMatchImpl(input: {
   });
 }
 
-export function createProofMirValidationLowerer(): ProofMirValidationLowerer & {
+export function createProofMirValidationLowerer(
+  input: CreateProofMirValidationLowererInput = {},
+): ProofMirValidationLowerer & {
   readonly statements: () => readonly DraftProofMirGraphStatementSnapshot[];
   lowerValidationCreation(input: {
     readonly context: ProofMirLoweringContext;
@@ -848,6 +745,10 @@ export function createProofMirValidationLowerer(): ProofMirValidationLowerer & {
         context: lowererInput.context,
         statement: lowererInput.statement,
         blockKey: lowererInput.blockKey,
+        statementLowerer: input.statement,
+        terminalLowerer: input.terminal,
+        controlFlowLowerer: input.controlFlow,
+        ...(lowererInput.tailReturn === undefined ? {} : { tailReturn: lowererInput.tailReturn }),
         recorded,
         idAllocator,
       });

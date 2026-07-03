@@ -22,7 +22,11 @@ import {
   type CheckedFactSubject,
   type CheckedOriginFact,
 } from "../model/fact-packet";
-import { proofMirOriginId, type ProofMirPlaceId } from "../../proof-mir/ids";
+import {
+  proofMirOriginId,
+  type ProofMirControlEdgeId,
+  type ProofMirPlaceId,
+} from "../../proof-mir/ids";
 import { buildProofCheckFactEnvironment } from "./facts";
 import type { ProofCheckFactEnvironment } from "../model/fact-environment";
 import {
@@ -438,6 +442,7 @@ export function validatedBufferPacketEntriesForRead(input: {
   readonly certificates: readonly LayoutEntailmentCertificate[];
   readonly validatedBufferInstanceId: string;
   readonly placeId: ProofMirPlaceId;
+  readonly edgeIds: readonly ProofMirControlEdgeId[];
   readonly operationOriginKey: string;
 }): readonly CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject>[] {
   const layoutKey = String(input.validatedBufferInstanceId);
@@ -450,6 +455,9 @@ export function validatedBufferPacketEntriesForRead(input: {
     subject: { kind: "place", placeId: input.placeId },
     scope: defaultScope(),
     dependencies: [
+      ...[...input.edgeIds]
+        .sort((left, right) => compareCodeUnitStrings(String(left), String(right)))
+        .map((edgeId) => ({ kind: "proofMirEdge" as const, edgeId })),
       { kind: "layoutFact", layoutKey: layoutFactKey(layoutKey) },
       {
         kind: "coreCertificate",

@@ -237,6 +237,7 @@ export interface MonoDiagnostic {
   readonly code: MonoDiagnosticCode;
   readonly severity: MonoDiagnosticSeverity;
   readonly message: string;
+  readonly stableDetail: string;
   readonly sourceOrigin?: string;
   readonly span?: SourceSpan;
   readonly moduleId?: ModuleId;
@@ -311,6 +312,7 @@ export function monoDiagnostic(input: MonoDiagnosticInput): MonoDiagnostic {
     code: validatedCode,
     severity: input.severity,
     message: input.message,
+    stableDetail: input.stableDetail,
     ...(input.sourceOrigin !== undefined ? { sourceOrigin: input.sourceOrigin } : {}),
     ...(span !== undefined ? { span } : {}),
     ...(input.moduleId !== undefined ? { moduleId: input.moduleId } : {}),

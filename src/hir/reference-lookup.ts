@@ -12,6 +12,11 @@ export interface HirReferenceLookup {
   referenceFor(key: SyntaxReferenceKey): ResolvedReference | undefined;
   completedMemberFor(key: SyntaxReferenceKey): ResolvedReference | undefined;
   requirementReferenceFor(key: SyntaxReferenceKey): ResolvedReference | undefined;
+  referenceEntryForSpan(input: {
+    readonly moduleId: ModuleId;
+    readonly span: SpanLike;
+    readonly kind?: NameReferenceKind;
+  }): { readonly key: SyntaxReferenceKey; readonly reference: ResolvedReference } | undefined;
   referenceForSpan(input: {
     readonly moduleId: ModuleId;
     readonly span: SpanLike;
@@ -45,6 +50,10 @@ function referenceFingerprint(reference: ResolvedReference): string {
       return `type:${reference.itemId}:${reference.typeId}`;
     case "builtinType":
       return `builtinType:${reference.coreTypeId}`;
+    case "targetType":
+      return `targetType:${reference.targetTypeId}`;
+    case "compilerIntrinsic":
+      return `compilerIntrinsic:${reference.intrinsicKey}`;
     case "function":
       return `function:${reference.itemId}:${reference.functionId}`;
     case "image":
@@ -70,9 +79,11 @@ function disagreementDiagnostic(input: {
   const originKey = keyToString(input.key);
   const left = referenceFingerprint(input.left);
   const right = referenceFingerprint(input.right);
+  const stableDetail = [left, right].sort(compareCodeUnitStrings).join("|");
   return {
     code,
     message: `HIR input surfaces disagree for ${originKey}: ${left} vs ${right}.`,
+    stableDetail,
     moduleId: input.key.moduleId,
     span: input.key.span,
     order: {
@@ -86,7 +97,7 @@ function disagreementDiagnostic(input: {
         ownerKey,
         originKey,
         code,
-        stableDetail: [left, right].sort(compareCodeUnitStrings).join("|"),
+        stableDetail,
       }),
     },
   };
@@ -118,7 +129,10 @@ function spanKey(input: {
 function indexSpanEntries(
   entries: readonly { readonly key: SyntaxReferenceKey; readonly reference: ResolvedReference }[],
 ) {
-  const indexed = new Map<string, ResolvedReference>();
+  const indexed = new Map<
+    string,
+    { readonly key: SyntaxReferenceKey; readonly reference: ResolvedReference }
+  >();
   for (const entry of entries) {
     const base = {
       moduleId: entry.key.moduleId,
@@ -126,12 +140,12 @@ function indexSpanEntries(
     };
     const anyKindKey = spanKey(base);
     if (!indexed.has(anyKindKey)) {
-      indexed.set(anyKindKey, entry.reference);
+      indexed.set(anyKindKey, entry);
     }
 
     const kindKey = spanKey({ ...base, kind: entry.key.kind });
     if (!indexed.has(kindKey)) {
-      indexed.set(kindKey, entry.reference);
+      indexed.set(kindKey, entry);
     }
   }
   return indexed;
@@ -188,11 +202,14 @@ export function buildHirReferenceLookup(input: BuildHirReferenceLookupInput): Hi
     requirementReferenceFor(key) {
       return requirements.get(keyToString(key));
     },
-    referenceForSpan(spanInput) {
+    referenceEntryForSpan(spanInput) {
       return referencesBySpan.get(spanKey(spanInput));
     },
+    referenceForSpan(spanInput) {
+      return referencesBySpan.get(spanKey(spanInput))?.reference;
+    },
     completedMemberForSpan(spanInput) {
-      return completedBySpan.get(spanKey(spanInput));
+      return completedBySpan.get(spanKey(spanInput))?.reference;
     },
   };
 }

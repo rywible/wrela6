@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { optIrFactId, optIrOperationId, optIrRegionId } from "../../../../src/opt-ir/ids";
 import { optIrFactSetFromRecords } from "../../../../src/opt-ir/facts/fact-index";
 import { footprintFactRecord } from "../../../../src/opt-ir/facts/footprint-facts";
+import { regionMemoryTypeFactRecord } from "../../../../src/opt-ir/facts/memory-order-facts";
 import { securityFactRecord } from "../../../../src/opt-ir/facts/security-facts";
 import {
   preserveAArch64Facts,
@@ -129,6 +130,43 @@ describe("AArch64 fact preservation", () => {
     expect(preserved.droppedFacts).toEqual([
       { optIrFactId: optIrFactId(1), reason: "no-surviving-machine-subject" },
     ]);
+  });
+
+  test("translates OptIR memory-order facts into backend memory-order authority", () => {
+    const preserved = preserveAArch64Facts({
+      optIrFacts: optIrFactSetFromRecords([
+        regionMemoryTypeFactRecord({
+          factId: optIrFactId(1),
+          regionId: optIrRegionId(4),
+          memoryType: "validatedPayload",
+        }),
+      ]),
+      selectionRecords: [
+        {
+          patternId: "validated-payload.load",
+          inputFacts: [1],
+          machineInstructions: [aarch64MachineInstructionId(40)],
+          factPreservationMappings: [
+            {
+              optIrFactIds: [1],
+              subject: { kind: "memoryOperand", instructionId: 40, operandIndex: 1 },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(preserved.targetDeclarations).toContain("target.memory-order");
+    expect(preserved.records[0]).toMatchObject({
+      extensionKey: "memory-order-and-region-type",
+      upstreamVerifierKey: "proof.memory-order",
+      targetDeclarationKeys: ["target.memory-order"],
+      payload: {
+        region: "region:4",
+        order: "relaxed",
+        regionType: "normal",
+      },
+    });
   });
 
   test("stage wrapper keeps explicit mappings even when factsUsed is empty", () => {

@@ -4,8 +4,10 @@ import type {
   MonoCheckedType,
   MonoExpression,
   MonoExpressionId,
+  MonomorphizedHirProgram,
   MonoLocalId,
   MonoPlaceProjection,
+  MonoPlaceRoot,
   MonoResourcePlace,
   MonoStatementId,
 } from "../../mono/mono-hir";
@@ -185,7 +187,7 @@ export function createLoweringIdAllocator(): ProofMirLoweringIdAllocator {
 }
 
 export function mapUnaryOperator(operator: string): ProofMirUnaryOperator | undefined {
-  switch (operator) {
+  switch (operator.trim()) {
     case "!":
       return "logicalNot";
     case "-":
@@ -198,7 +200,7 @@ export function mapUnaryOperator(operator: string): ProofMirUnaryOperator | unde
 }
 
 export function mapBinaryOperator(operator: string): ProofMirBinaryOperator | undefined {
-  switch (operator) {
+  switch (operator.trim()) {
     case "+":
       return "add";
     case "-":
@@ -225,7 +227,7 @@ export function mapBinaryOperator(operator: string): ProofMirBinaryOperator | un
 }
 
 export function mapComparisonOperator(operator: string): ProofMirComparisonOperator | undefined {
-  switch (operator) {
+  switch (operator.trim()) {
     case "==":
       return "eq";
     case "!=":
@@ -275,6 +277,7 @@ export function requireBlockKey(
 }
 
 export function monoPlaceForLocal(input: {
+  readonly program?: MonomorphizedHirProgram;
   readonly functionInstanceId: MonoInstanceId;
   readonly localId: MonoLocalId;
   readonly parameterId?: ParameterId;
@@ -288,6 +291,15 @@ export function monoPlaceForLocal(input: {
     input.parameterId !== undefined
       ? ({ kind: "parameter", parameterId: input.parameterId } as const)
       : ({ kind: "local", localId: input.localId } as const);
+  const existing = input.program?.proofMetadata?.resourcePlaces
+    .entries()
+    .find(
+      (place) =>
+        sameMonoPlaceRoot(place.root, root) && sameMonoProjection(place.projection, projection),
+    );
+  if (existing !== undefined) {
+    return existing;
+  }
   const canonicalKey = `function:${String(input.functionInstanceId)}/root:${root.kind}:${input.parameterId !== undefined ? String(input.parameterId) : instantiatedHirIdKey(input.localId)}${projection.map((entry) => `/${entry.kind}:${entry.kind === "field" ? String(entry.fieldId) : ""}`).join("")}`;
   return {
     placeId: {
@@ -304,6 +316,68 @@ export function monoPlaceForLocal(input: {
     kind: root.kind === "parameter" ? "parameter" : "local",
     ...(root.kind === "local" ? { localId: input.localId } : { parameterId: input.parameterId! }),
   };
+}
+
+function sameMonoPlaceRoot(left: MonoPlaceRoot, right: MonoPlaceRoot): boolean {
+  if (left.kind !== right.kind) return false;
+  switch (left.kind) {
+    case "receiver":
+    case "parameter":
+      return String(left.parameterId) === String((right as typeof left).parameterId);
+    case "local":
+      return (
+        String(left.localId.instanceId) === String((right as typeof left).localId.instanceId) &&
+        String(left.localId.hirId) === String((right as typeof left).localId.hirId)
+      );
+    case "temporary":
+      return left.ordinal === (right as typeof left).ordinal;
+    case "imageDevice":
+      return (
+        String(left.imageId) === String((right as typeof left).imageId) &&
+        String(left.fieldId) === String((right as typeof left).fieldId)
+      );
+    case "validationPayload":
+      return (
+        String(left.validationId.instanceId) ===
+          String((right as typeof left).validationId.instanceId) &&
+        String(left.validationId.hirId) === String((right as typeof left).validationId.hirId)
+      );
+    case "error":
+      return true;
+    default: {
+      const unreachable: never = left;
+      return unreachable;
+    }
+  }
+}
+
+function sameMonoProjection(
+  left: readonly MonoPlaceProjection[],
+  right: readonly MonoPlaceProjection[],
+): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((leftProjection, index) => {
+    const rightProjection = right[index];
+    if (rightProjection === undefined || leftProjection.kind !== rightProjection.kind) {
+      return false;
+    }
+    switch (leftProjection.kind) {
+      case "field": {
+        if (rightProjection.kind !== "field") return false;
+        return String(leftProjection.fieldId) === String(rightProjection.fieldId);
+      }
+      case "deref":
+        return true;
+      case "variant": {
+        if (rightProjection.kind !== "variant") return false;
+        return leftProjection.name === rightProjection.name;
+      }
+      default: {
+        const unreachable: never = leftProjection;
+        return unreachable;
+      }
+    }
+  });
 }
 
 export function monoObjectPlace(input: {

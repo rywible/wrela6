@@ -2,6 +2,11 @@ import type { ProofMirRuntimeOperationId } from "../../runtime/runtime-catalog-t
 import { proofMirRuntimeOperationId } from "../../runtime/runtime-catalog-types";
 import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
 import { stableHash, stableJson } from "../../shared/stable-json";
+import { platformPrimitiveNameCatalog } from "../../semantic/names/platform-primitives";
+import type {
+  CompilerIntrinsicNameCatalog,
+  CompilerIntrinsicNameSpec,
+} from "../../semantic/names/reference";
 import {
   imageProfileId,
   platformContractId,
@@ -33,6 +38,37 @@ import {
   type UefiAArch64TargetResult,
 } from "./result";
 import { UEFI_AARCH64_EXIT_BOOT_SERVICES_WITH_FRESH_MAP_LINKAGE_NAME } from "./runtime-catalog";
+import {
+  UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_FEATURE,
+  UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_OPERATION_KEY,
+  UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID,
+} from "./validation-fixture-packet-rule";
+
+export const FULL_IMAGE_VALIDATION_FEATURE = UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_FEATURE;
+
+export const UEFI_AARCH64_UTF16_STATIC_INTRINSIC = Object.freeze({
+  sourceName: "utf16_static",
+  intrinsicKey: "uefi.utf16_static",
+  parameterShape: Object.freeze(["string-literal"] as const),
+  returnTargetType: "uefi.Utf16Static",
+});
+
+export function uefiAArch64CompilerIntrinsicNameCatalog(): CompilerIntrinsicNameCatalog {
+  const intrinsics = Object.freeze([
+    UEFI_AARCH64_UTF16_STATIC_INTRINSIC,
+  ] satisfies readonly CompilerIntrinsicNameSpec[]);
+  const byName = new Map<string, CompilerIntrinsicNameSpec>(
+    intrinsics.map((intrinsic) => [intrinsic.sourceName, intrinsic]),
+  );
+  return Object.freeze({
+    get intrinsics(): readonly CompilerIntrinsicNameSpec[] {
+      return [...intrinsics];
+    },
+    byName(name: string): CompilerIntrinsicNameSpec | undefined {
+      return byName.get(name);
+    },
+  });
+}
 
 export interface UefiAArch64PlatformPrimitiveLowering {
   readonly primitiveId: PlatformPrimitiveId;
@@ -85,6 +121,27 @@ export type UefiFirmwareLoweringRule =
       readonly kind: "inline";
       readonly operationKey: string;
     };
+
+export function uefiAArch64PlatformPrimitiveNameCatalog() {
+  return platformPrimitiveNameCatalog([
+    {
+      name: "output_string",
+      primitiveId: platformPrimitiveId("uefi.console.outputString"),
+    },
+    {
+      name: "set_watchdog_timer",
+      primitiveId: platformPrimitiveId("uefi.boot.setWatchdogTimer"),
+    },
+    {
+      name: "exit_boot_services_with_fresh_map",
+      primitiveId: platformPrimitiveId("uefi.boot.exitBootServices"),
+    },
+    {
+      name: "validation_fixture_packet_source",
+      primitiveId: platformPrimitiveId(UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID),
+    },
+  ]);
+}
 
 export function canonicalUefiAArch64PlatformLowerings(
   semanticTarget: SemanticTargetSurface = canonicalUefiAArch64SemanticTargetSurface(),
@@ -288,13 +345,21 @@ function canonicalPrimitiveSpec(name: CanonicalUefiPrimitiveName): PlatformPrimi
   return Object.freeze({
     primitiveId: platformPrimitiveId(name),
     contractId: platformContractId(`${name}_contract`),
-    availability: Object.freeze({
-      targetId: targetId("wrela-uefi-aarch64-rpi5-v1"),
-      profiles: Object.freeze([imageProfileId("uefi")]),
-      features: Object.freeze([]),
-    }),
+    availability: availabilityForPrimitive(name),
     signature: signatureForPrimitive(name),
     proofContract: emptyProofContract(),
+  });
+}
+
+function availabilityForPrimitive(name: CanonicalUefiPrimitiveName) {
+  return Object.freeze({
+    targetId: targetId("wrela-uefi-aarch64-rpi5-v1"),
+    profiles: Object.freeze([imageProfileId("uefi")]),
+    features: Object.freeze(
+      name === UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID
+        ? [FULL_IMAGE_VALIDATION_FEATURE]
+        : [],
+    ),
   });
 }
 
@@ -314,7 +379,8 @@ type CanonicalUefiPrimitiveName =
   | "uefi.boot.setWatchdogTimer"
   | "uefi.boot.stall"
   | "uefi.boot.exit"
-  | "uefi.protocol.locate";
+  | "uefi.protocol.locate"
+  | typeof UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID;
 
 function signatureForPrimitive(name: CanonicalUefiPrimitiveName): TargetFunctionSignature {
   switch (name) {
@@ -362,6 +428,8 @@ function signatureForPrimitive(name: CanonicalUefiPrimitiveName): TargetFunction
         [uefiParameter("uefi.Ptr"), uefiParameter("uefi.Ptr"), uefiParameter("uefi.Ptr")],
         "uefi.Status",
       );
+    case UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID:
+      return targetSignature([], "uefi.Ptr");
   }
 }
 
@@ -443,9 +511,9 @@ const CANONICAL_UEFI_PLATFORM_LOWERING_RULES: readonly {
     { kind: "boot-services", field: "set-watchdog-timer" },
     [
       { kind: "source-argument", index: 0 },
-      { kind: "source-argument", index: 1 },
-      { kind: "source-argument", index: 2 },
-      { kind: "source-argument", index: 3 },
+      { kind: "constant-u64", value: 0n },
+      { kind: "constant-u64", value: 0n },
+      { kind: "constant-u64", value: 0n },
     ],
   ),
   firmwareCall("uefi.boot.stall", { kind: "boot-services", field: "stall" }, [
@@ -462,6 +530,13 @@ const CANONICAL_UEFI_PLATFORM_LOWERING_RULES: readonly {
     { kind: "source-argument", index: 1 },
     { kind: "source-argument", index: 2 },
   ]),
+  Object.freeze({
+    primitiveId: UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID,
+    lowering: Object.freeze({
+      kind: "inline" as const,
+      operationKey: UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_OPERATION_KEY,
+    }),
+  }),
 ]);
 
 function firmwareCall(

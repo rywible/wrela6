@@ -23,7 +23,7 @@ import type { LayoutFactProgram } from "../../../src/layout/layout-program";
 import type { ProofMirFunction } from "../../../src/proof-mir/model/program";
 import type { ProofMirBlock, ProofMirValue } from "../../../src/proof-mir/model/graph";
 import { coreCheckedType } from "../../../src/semantic/surface/type-model";
-import { coreTypeId, fieldId } from "../../../src/semantic/ids";
+import { coreTypeId, fieldId, parameterId } from "../../../src/semantic/ids";
 import {
   proofMirBlockId,
   proofMirCallId,
@@ -829,6 +829,14 @@ function validatedBufferReadFunction(function_: ProofMirFunction): ProofMirFunct
   };
 }
 
+export function validConstructOptIrInputWithEntryParameterLoadForTest(): ConstructOptIrInput {
+  const input = validConstructOptIrInputForTest();
+  const checkedMir = mapFirstFunction(input.handoff.checkedMir, (function_) =>
+    entryParameterLoadFunction(reachableTwoBlockFunction(function_)),
+  );
+  return { ...input, handoff: withCheckedMir(input.handoff, checkedMir) };
+}
+
 function replaceFunctionBlock(
   function_: ProofMirFunction,
   replacementBlock: ProofMirBlock,
@@ -840,6 +848,67 @@ function replaceFunctionBlock(
         .entries()
         .map((block) => (block.blockId === replacementBlock.blockId ? replacementBlock : block)),
       (block) => block.blockId,
+    ),
+  };
+}
+
+function entryParameterLoadFunction(function_: ProofMirFunction): ProofMirFunction {
+  const entryBlock = function_.blocks.get(function_.entryBlockId) ?? function_.blocks.entries()[0];
+  if (entryBlock === undefined) {
+    return function_;
+  }
+
+  const parameter = parameterId(9601);
+  const place = proofMirPlaceId(9601);
+  const result = proofMirValueId(9601);
+  const valueType = coreCheckedType(coreTypeId("u8")) as MonoCheckedType;
+  const loadStatement = {
+    statementId: proofMirStatementId(9601),
+    kind: {
+      kind: "load" as const,
+      place,
+      result,
+    },
+    origin: entryBlock.origin,
+  };
+  const rewrittenEntryBlock = {
+    ...entryBlock,
+    statements: [loadStatement, ...entryBlock.statements],
+  };
+
+  return {
+    ...replaceFunctionBlock(function_, rewrittenEntryBlock),
+    signature: {
+      ...function_.signature,
+      parameters: [
+        ...function_.signature.parameters,
+        {
+          parameterId: parameter,
+          name: "entry",
+          type: valueType,
+          mode: "observe" as const,
+          resourceKind: "Copy" as never,
+          sourceSpan: function_.signature.sourceSpan,
+        },
+      ],
+    },
+    values: table(
+      [...function_.values.entries(), proofMirRuntimeValue(result, valueType, entryBlock.origin)],
+      (value) => value.valueId,
+    ),
+    places: table(
+      [
+        ...function_.places.entries(),
+        {
+          placeId: place,
+          root: { kind: "parameter" as const, parameterId: parameter },
+          projection: [],
+          type: valueType,
+          resourceKind: "Copy" as never,
+          origin: entryBlock.origin,
+        },
+      ],
+      (entry) => entry.placeId,
     ),
   };
 }

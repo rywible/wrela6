@@ -62,6 +62,7 @@ export interface AArch64FactPreservationMapping {
   readonly extensionKey?: string;
   readonly subject: AArch64MachineFactSubject;
   readonly payload?: Readonly<Record<string, unknown>>;
+  readonly upstreamVerifierKey?: string;
   readonly targetDeclarationKeys?: readonly string[];
   readonly manifestGate?: string;
 }

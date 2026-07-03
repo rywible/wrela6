@@ -40,7 +40,11 @@ export function testPlaceResolverForKeys(placeKeys: readonly string[]): ProofChe
   for (const placeKey of placeKeys) {
     index.set(placeKey, testPlaceIdForKey(placeKey));
   }
-  return { index };
+  return {
+    index,
+    placeShapeKeyByPlaceId: new Map<string, string>(),
+    equivalentPlaceKeysByPlaceId: new Map<string, readonly string[]>(),
+  };
 }
 
 export function testPlaceResolverForState(

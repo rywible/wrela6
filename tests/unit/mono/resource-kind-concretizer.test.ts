@@ -193,6 +193,7 @@ test("field aggregation rule propagates provider diagnostics", () => {
               code: "MONO_MISSING_REACHABLE_TYPE" as never,
               severity: "error",
               message: "missing",
+              stableDetail: "missing",
               order: {
                 moduleId: 0 as never,
                 spanStart: 0,

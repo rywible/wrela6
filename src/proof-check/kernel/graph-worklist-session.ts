@@ -73,6 +73,17 @@ export function runProofCheckGraphWorklistBody(context: {
     return transitionId;
   };
 
+  const nonExitIncomingEdgeCount = (blockId: ProofMirBlockId): number => {
+    const block = functionGraph.blocks.get(blockId);
+    if (block === undefined) {
+      return 0;
+    }
+    return block.incomingEdges.filter((edgeId) => {
+      const incomingEdge = functionGraph.edges.get(edgeId);
+      return incomingEdge !== undefined && incomingEdge.exit === undefined;
+    }).length;
+  };
+
   enqueueGraphWorklistItem(worklist, queuedKeys, {
     sortKey: graphWorklistSortKey({
       kind: "functionEntry",
@@ -359,7 +370,7 @@ export function runProofCheckGraphWorklistBody(context: {
           continue;
         }
 
-        if (targetBlock.incomingEdges.length > 1) {
+        if (nonExitIncomingEdgeCount(edge.toBlockId) > 1) {
           recordJoinPredecessor({
             toBlockId: edge.toBlockId,
             edgeId: location.edgeId,

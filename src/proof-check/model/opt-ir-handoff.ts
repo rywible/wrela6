@@ -53,8 +53,12 @@ export interface CheckedOptIrHandoff extends CheckedOptIrHandoffFingerprintInput
   readonly handoffFingerprint: CheckedOptIrHandoffFingerprint;
 }
 
-function stableJson(value: unknown): string {
+export function checkedOptIrHandoffStableJson(value: unknown): string {
   return JSON.stringify(toStableValue(value));
+}
+
+function stableJson(value: unknown): string {
+  return checkedOptIrHandoffStableJson(value);
 }
 
 function toStableValue(value: unknown): unknown {

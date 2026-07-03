@@ -12,6 +12,7 @@ import { proofMirSsaLocalKey } from "../domains/graph-ssa";
 import { draftLocalKey } from "../draft/draft-keys";
 import type {
   DraftProofMirGraphStatementSnapshot,
+  DraftProofMirObjectFieldValue,
   DraftProofMirStatementKind,
 } from "../draft/draft-statement";
 import { type ProofMirPlaceId, type ProofMirValueId } from "../ids";
@@ -54,6 +55,14 @@ function createExpressionLowererImpl(implInput: {
   readonly call?: ProofMirCallLowerer;
 }): ProofMirExpressionLowerer {
   const { statements: recordedStatements, validatedBufferRead, call } = implInput;
+  const loweredValueOperands = new Map<string, ProofMirDraftOperand>();
+
+  function loweredValueOperandKey(input: ProofMirExpressionLoweringInput): string | undefined {
+    if (input.expectedType !== undefined) {
+      return undefined;
+    }
+    return `${String(input.blockKey)}|${instantiatedHirIdKey(input.expression.expressionId)}`;
+  }
 
   function recordStatement(
     statementKind: DraftProofMirStatementKind,
@@ -159,7 +168,7 @@ function createExpressionLowererImpl(implInput: {
   ): ProofMirLoweringResult<ProofMirDraftOperand> {
     const originKey = originForExpression(loweringInput.context, expression);
     const valueKey = loweringInput.context.graph.createValue({
-      role: `literal:${literal.kind}`,
+      role: `literal:${literal.kind}:${instantiatedHirIdKey(expression.expressionId)}`,
       origin: originKey,
       type: expression.type,
       resourceKind: expression.resourceKind,
@@ -222,6 +231,7 @@ function createExpressionLowererImpl(implInput: {
       ]);
     }
     const monoPlace = monoPlaceForLocal({
+      program: loweringInput.context.program,
       functionInstanceId: loweringInput.context.functionInstanceId,
       localId: expression.kind.localId,
       parameterId: expression.kind.parameterId,
@@ -278,23 +288,10 @@ function createExpressionLowererImpl(implInput: {
     if (placeResult.kind !== "ok") {
       return placeResult;
     }
-    const placeKey = loweringInput.context.effects.placeFromMono({
-      monoPlace:
-        expression.place ??
-        monoPlaceForLocal({
-          functionInstanceId: loweringInput.context.functionInstanceId,
-          localId: expression.kind.localId,
-          parameterId: expression.kind.parameterId,
-          type: expression.type,
-          resourceKind: expression.resourceKind,
-          sourceOrigin: expression.sourceOrigin,
-        }),
-      originKey: originForExpression(loweringInput.context, expression),
-    });
     return emitLoad({
       loweringInput,
       expression,
-      placeKey,
+      placeKey: placeResult.value.place,
     });
   }
 
@@ -356,6 +353,7 @@ function createExpressionLowererImpl(implInput: {
     }
     if (input.expression.kind.kind === "name" && input.expression.kind.localId !== undefined) {
       const monoPlace = monoPlaceForLocal({
+        program: input.loweringInput.context.program,
         functionInstanceId: input.loweringInput.context.functionInstanceId,
         localId: input.expression.kind.localId,
         parameterId: input.expression.kind.parameterId,
@@ -525,8 +523,10 @@ function createExpressionLowererImpl(implInput: {
     }
     const originKey = originForExpression(loweringInput.context, expression);
     const resultKey = loweringInput.context.graph.createValue({
-      role: `unary:${mapped}`,
+      role: `unary:${mapped}:${instantiatedHirIdKey(expression.expressionId)}`,
       origin: originKey,
+      type: expression.type,
+      resourceKind: expression.resourceKind,
     });
     recordStatement(
       {
@@ -587,8 +587,12 @@ function createExpressionLowererImpl(implInput: {
     }
     const originKey = originForExpression(loweringInput.context, expression);
     const resultKey = loweringInput.context.graph.createValue({
-      role: `${expression.kind.kind}:${expression.kind.operator}`,
+      role: `${expression.kind.kind}:${expression.kind.operator.trim()}:${instantiatedHirIdKey(
+        expression.expressionId,
+      )}`,
       origin: originKey,
+      type: expression.type,
+      resourceKind: expression.resourceKind,
     });
     if (expression.kind.kind === "comparison") {
       const operator = mapComparisonOperator(expression.kind.operator);
@@ -703,13 +707,43 @@ function createExpressionLowererImpl(implInput: {
     const originKey = originForExpression(loweringInput.context, expression);
     if (!needsPlace) {
       const valueKey = loweringInput.context.graph.createValue({
-        role: "object:copy-scalar",
+        role: `object:copy-scalar:${instantiatedHirIdKey(expression.expressionId)}`,
         origin: originKey,
+        type: expression.type,
+        resourceKind: expression.resourceKind,
       });
+      const constructFields: DraftProofMirObjectFieldValue[] = [];
+      for (const entry of fieldValues) {
+        if (entry.operand.kind !== "value") {
+          return loweringError([
+            invalidValueResourceKindDiagnostic({
+              functionInstanceId: loweringInput.context.functionInstanceId,
+              stableDetail: `object:field:${entry.field.name}`,
+              sourceOrigin: entry.field.sourceOrigin,
+            }),
+          ]);
+        }
+        constructFields.push({
+          ...(entry.field.fieldId === undefined ? {} : { fieldId: entry.field.fieldId }),
+          name: entry.field.name,
+          valueKey: entry.operand.value,
+          originKey: originForExpression(loweringInput.context, entry.field.value),
+        });
+      }
+      recordStatement(
+        {
+          kind: "constructObject",
+          resultKey: valueKey,
+          fields: constructFields,
+        },
+        originKey,
+        loweringInput,
+        expression,
+      );
       return loweringOk(valueOperand(valueKey));
     }
     const aggregateValueKey = loweringInput.context.graph.createValue({
-      role: "object:aggregate",
+      role: `object:aggregate:${instantiatedHirIdKey(expression.expressionId)}`,
       origin: originKey,
       type: expression.type,
       resourceKind: expression.resourceKind,
@@ -788,7 +822,7 @@ function createExpressionLowererImpl(implInput: {
     });
   }
 
-  function lowerExpression(
+  function lowerExpressionUncached(
     loweringInput: ProofMirExpressionLoweringInput,
   ): ProofMirLoweringResult<ProofMirDraftOperand> {
     const expression = loweringInput.expression;
@@ -844,6 +878,23 @@ function createExpressionLowererImpl(implInput: {
         return unreachable;
       }
     }
+  }
+
+  function lowerExpression(
+    loweringInput: ProofMirExpressionLoweringInput,
+  ): ProofMirLoweringResult<ProofMirDraftOperand> {
+    const cacheKey = loweredValueOperandKey(loweringInput);
+    if (cacheKey !== undefined) {
+      const cached = loweredValueOperands.get(cacheKey);
+      if (cached !== undefined) {
+        return loweringOk(cached);
+      }
+    }
+    const lowered = lowerExpressionUncached(loweringInput);
+    if (cacheKey !== undefined && lowered.kind === "ok") {
+      loweredValueOperands.set(cacheKey, lowered.value);
+    }
+    return lowered;
   }
 
   function lowerExpressionAsPlace(

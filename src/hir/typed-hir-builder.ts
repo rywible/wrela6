@@ -34,6 +34,7 @@ import type { HirDiagnostic } from "./diagnostics";
 import type { HirOriginId } from "./ids";
 import { lowerRequirementSurface } from "./requirement-lowerer";
 import { lowerMonoClosureSurface } from "./mono-closure-lowerer";
+import { hirEnumCasesForTypeItem } from "./enum-case-model";
 
 export type { LowerTypedHirInput } from "./lowering-context";
 
@@ -246,24 +247,27 @@ function enumCasesForTypeItem(input: {
   const item = input.context.index.item(input.itemId);
   if (item?.kind !== "enum") return [];
 
-  const enumCaseItems = input.context.index
-    .items()
-    .filter((caseItem) => caseItem.kind === "enumCase" && caseItem.parentItemId === input.itemId);
-
-  return enumCaseItems.map((caseItem, ordinal) => ({
+  return hirEnumCasesForTypeItem({
+    index: input.context.index,
+    enumItemId: input.itemId,
     enumTypeId: input.typeId,
-    caseItemId: caseItem.id,
-    name: caseItem.name,
-    ordinal,
-    sourceOrigin: originForEnumCase({
-      context: input.context,
-      caseItemId: caseItem.id,
-      moduleId: input.moduleId,
-      ownerItemId: input.itemId,
-      span: caseItem.span,
-      declaration: caseItem.declaration,
-    }),
-  }));
+  }).map((caseRecord) => {
+    const caseItem = input.context.index.item(caseRecord.caseItemId);
+    return {
+      enumTypeId: input.typeId,
+      caseItemId: caseRecord.caseItemId,
+      name: caseRecord.name,
+      ordinal: caseRecord.ordinal,
+      sourceOrigin: originForEnumCase({
+        context: input.context,
+        caseItemId: caseRecord.caseItemId,
+        moduleId: input.moduleId,
+        ownerItemId: input.itemId,
+        span: caseItem?.span ?? item.span,
+        declaration: caseItem?.declaration ?? item.declaration,
+      }),
+    };
+  });
 }
 
 function lowerTypeRecord(input: {

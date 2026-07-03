@@ -326,7 +326,6 @@ function normalizeDraftPlaceRecord(record: DraftProofMirPlaceRecordInternal): st
     root: normalizePlaceRootKey(record.root),
     projection: record.projection.map(normalizePlaceProjectionKey),
     monoPlaceCanonicalKey: record.monoPlaceCanonicalKey ?? null,
-    originKey: String(record.originKey),
   });
 }
 

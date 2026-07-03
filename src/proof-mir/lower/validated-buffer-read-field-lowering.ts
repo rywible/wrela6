@@ -223,6 +223,8 @@ function lowerLayoutFieldRead(input: {
   const resultKey = input.loweringInput.context.graph.createValue({
     role: `validatedBufferRead:${String(readKind.fieldId)}`,
     origin: originKey,
+    type: input.expression.type,
+    resourceKind: input.expression.resourceKind,
   });
   const read: DraftProofMirValidatedBufferRead = {
     sourcePlaceKey: containerPlaceKey.value,
@@ -311,6 +313,8 @@ function lowerSourceLengthRead(input: {
   const valueKey = input.loweringInput.context.graph.createValue({
     role: "validatedBufferSourceLength",
     origin: originKey,
+    type: input.expression.type,
+    resourceKind: input.expression.resourceKind,
   });
   const bindingKey = input.loweringInput.context.graph.allocateRequirementFactKey(
     `bindLayoutTerm:sourceLength:${String(layoutBuffer.instanceId)}:${String(valueKey)}`,

@@ -17,7 +17,10 @@ import { aarch64OpcodeFormId } from "../../../../../src/target/aarch64/machine-i
 import {
   branchTarget,
   immediateOperand,
+  implicitDefResource,
   implicitUseResource,
+  symbolOperand,
+  useVreg,
 } from "../../../../../src/target/aarch64/machine-ir/operands";
 import { syntheticAArch64Origin } from "../../../../../src/target/aarch64/machine-ir/provenance";
 import {
@@ -170,6 +173,52 @@ describe("AArch64 liveness and interference", () => {
     expect(result.byVreg(0)?.clobberedPhysicalRegisters).toEqual([]);
     expect(result.byVreg(2)?.cutPoints).toEqual([]);
     expect(result.byVreg(2)?.clobberedPhysicalRegisters).toEqual([]);
+  });
+
+  test("omits call-clobber metadata for call arguments consumed by the call", () => {
+    const type = aarch64IntMachineType(64);
+    const result = buildAArch64LiveIntervals({
+      func: aarch64MachineFunction({
+        functionId: aarch64MachineFunctionId(1),
+        symbol: aarch64SymbolId("call.argument"),
+        virtualRegisters: [aarch64Gpr64ForTest(0)],
+        parameters: [],
+        returns: [],
+        frameObjects: [],
+        blocks: [
+          aarch64MachineBlock({
+            blockId: aarch64MachineBlockId(0),
+            frequency: { kind: "entry" },
+            instructions: [
+              aarch64MovzForTest({ instructionId: 0, value: 1n }),
+              aarch64MachineInstruction({
+                instructionId: aarch64MachineInstructionId(1),
+                opcode: aarch64OpcodeFormId("bl"),
+                operands: [
+                  symbolOperand(aarch64SymbolId("helper")),
+                  implicitDefResource({ kind: "NZCV" }),
+                  implicitDefResource({ kind: "FPCR" }),
+                  implicitDefResource({ kind: "FPSR" }),
+                  implicitDefResource({ kind: "vectorState" }),
+                  useVreg(aarch64Gpr64ForTest(0), type),
+                ],
+                flags: { mayTrap: false },
+                origin: syntheticAArch64Origin("fixture.call.argument"),
+              }),
+            ],
+          }),
+        ],
+      }),
+      callBoundaries: [
+        {
+          instructionId: 1,
+          clobberedPhysicalRegisters: ["x0"],
+        },
+      ],
+    });
+
+    expect(result.byVreg(0)?.cutPoints).toEqual([1]);
+    expect(result.byVreg(0)?.clobberedPhysicalRegisters).toEqual([]);
   });
 
   test("real target alias sets expand vector call clobbers to scalar views", () => {

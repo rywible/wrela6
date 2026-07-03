@@ -10,6 +10,7 @@
     "lint": "oxlint .",
     "policy:check": "bun scripts/check-policy.ts",
     "smoke:uefi-aarch64": "bun scripts/smoke-uefi-aarch64.ts",
+    "validate:full-image": "bun run scripts/validate-full-image.ts",
     "test": "bun test",
     "test:unit": "bun test ./tests/unit",
     "test:integration": "bun test ./tests/integration",

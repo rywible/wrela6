@@ -158,9 +158,9 @@ function validationArmRole(
   arm: ReturnType<MatchStatementView["arms"]>[number],
 ): ValidationArmRole | undefined {
   const patternText = arm.pattern()?.qualifiedName()?.text();
-  const tag = patternText?.split(".").at(-1);
-  if (tag === "Ok") return "ok";
-  if (tag === "Err") return "err";
+  const tag = patternText?.split(".").at(-1)?.toLowerCase();
+  if (tag === "ok") return "ok";
+  if (tag === "err") return "err";
   return undefined;
 }
 
@@ -193,7 +193,8 @@ export function lowerValidationMatch(input: {
       ? (input.context.validationResultAliases.get(scrutineePlaceKey) ?? scrutineePlaceKey)
       : undefined;
   const validation =
-    input.context.proofMetadata.findValidationByPendingResultPlaceKey(validationPlaceKey);
+    input.context.proofMetadata.findValidationByPendingResultPlaceKey(validationPlaceKey) ??
+    input.context.proofMetadata.findValidationByExpressionId(input.scrutinee.expressionId);
   if (validation === undefined) {
     if (input.scrutinee.type.kind === "error") return undefined;
     if (!hasValidationResultType({ scrutinee: input.scrutinee, context: input.context })) {

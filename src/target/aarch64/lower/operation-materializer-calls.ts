@@ -20,6 +20,10 @@ import type {
   AArch64FirmwareStaticChar16PointerRequirement,
   AArch64FirmwareTableFieldLayout,
 } from "./firmware-platform-call-contract";
+import {
+  AARCH64_FIRMWARE_IMAGE_HANDLE_VALUE_KEY,
+  AARCH64_FIRMWARE_SYSTEM_TABLE_VALUE_KEY,
+} from "./firmware-platform-call-contract";
 import { abiLocationKey, platformCallTargetKey } from "./materialization-contracts";
 import {
   directCallSymbol,
@@ -42,6 +46,14 @@ export abstract class AArch64CallOperationMaterializer extends AArch64MemoryOper
   protected materializeCall(
     operation: CallOperation,
   ): { readonly kind: "ok" } | { readonly kind: "error"; readonly stableDetail: string } {
+    if (operation.kind === "intrinsicCall") {
+      const intrinsicOperation = operation as OperationOf<"intrinsicCall">;
+      const intrinsicResult = this.materializeStaticChar16IntrinsicResult(intrinsicOperation);
+      if (intrinsicResult !== undefined) {
+        return intrinsicResult;
+      }
+    }
+
     if (operation.kind === "platformCall" && this.context.firmware?.platformCalls !== undefined) {
       const platformOperation = operation as OperationOf<"platformCall">;
       const lowering = this.context.firmware.platformCalls.loweringFor(
@@ -138,10 +150,58 @@ export abstract class AArch64CallOperationMaterializer extends AArch64MemoryOper
     return this.materializeCallResults(operation);
   }
 
+  private materializeStaticChar16IntrinsicResult(
+    operation: OperationOf<"intrinsicCall">,
+  ):
+    | { readonly kind: "ok" }
+    | { readonly kind: "error"; readonly stableDetail: string }
+    | undefined {
+    if (operation.target.kind !== "intrinsic" || operation.resultIds.length !== 1) {
+      return undefined;
+    }
+    const resultValueKey = `optir.value:${String(operation.resultIds[0])}`;
+    const pointer = this.context.firmware?.staticChar16Pointers?.get(resultValueKey);
+    if (pointer === undefined) {
+      return undefined;
+    }
+    if (operation.argumentIds.length !== 0) {
+      return {
+        kind: "error",
+        stableDetail: `intrinsic-call-argument-mismatch:${String(operation.operationId)}:${operation.target.intrinsicKey}:expected:0:actual:${operation.argumentIds.length}`,
+      };
+    }
+
+    const output = this.resultRegister(operation, 0);
+    const pointerRegister = this.materializeStaticReadonlyPointer({
+      symbolName: pointer.symbolName,
+      stableKey: pointer.stableKey,
+      fingerprint: pointer.fingerprint,
+      label: "firmware-static-char16",
+    });
+    const copied = this.emitCopy(
+      output,
+      pointerRegister,
+      `intrinsic-static-char16:${pointer.stableKey}`,
+    );
+    if (copied.kind === "error") {
+      return {
+        kind: "error",
+        stableDetail: `intrinsic-call:invalid-static-char16-result:${String(operation.operationId)}:${operation.target.intrinsicKey}`,
+      };
+    }
+    this.explanation.push(
+      `intrinsic-call:static-char16-result:${operation.target.intrinsicKey}:${pointer.stableKey}`,
+    );
+    return { kind: "ok" };
+  }
+
   private materializeFirmwarePlatformCall(
     operation: OperationOf<"platformCall">,
     lowering: AArch64FirmwarePlatformCallLowering,
   ): { readonly kind: "ok" } | { readonly kind: "error"; readonly stableDetail: string } {
+    if (lowering.kind === "static-readonly-pointer-result") {
+      return this.materializeStaticReadonlyPointerResult(operation, lowering);
+    }
     if (lowering.kind === "compiler-runtime-helper") {
       const argumentMarshalling = this.materializeFirmwareCallArguments(
         operation,
@@ -200,6 +260,51 @@ export abstract class AArch64CallOperationMaterializer extends AArch64MemoryOper
     );
     this.explanation.push(`firmware-platform-call:indirect:${lowering.primitiveId}`);
     return this.materializeFirmwareCallResults(operation, lowering.resultRule);
+  }
+
+  private materializeStaticReadonlyPointerResult(
+    operation: OperationOf<"platformCall">,
+    lowering: Extract<
+      AArch64FirmwarePlatformCallLowering,
+      { readonly kind: "static-readonly-pointer-result" }
+    >,
+  ): { readonly kind: "ok" } | { readonly kind: "error"; readonly stableDetail: string } {
+    if (operation.argumentIds.length !== 0) {
+      return {
+        kind: "error",
+        stableDetail: `firmware-platform-call-argument-mismatch:${String(operation.operationId)}:${lowering.primitiveId}:expected:0:actual:${operation.argumentIds.length}`,
+      };
+    }
+    const expectedResultCount = firmwareResultCount(lowering.resultRule);
+    if (operation.resultIds.length !== expectedResultCount) {
+      return {
+        kind: "error",
+        stableDetail: `firmware-platform-call-result-mismatch:${String(operation.operationId)}:${lowering.resultRule.kind}:expected:${expectedResultCount}:actual:${operation.resultIds.length}`,
+      };
+    }
+
+    const output = this.resultRegister(operation, 0);
+    const pointer = this.materializeStaticReadonlyPointer({
+      symbolName: lowering.symbolName,
+      stableKey: lowering.stableKey,
+      fingerprint: lowering.fingerprint,
+      label: "firmware-static-readonly-result",
+    });
+    const copied = this.emitCopy(
+      output,
+      pointer,
+      `firmware-static-readonly-result:${lowering.stableKey}`,
+    );
+    if (copied.kind === "error") {
+      return {
+        kind: "error",
+        stableDetail: `firmware-platform-call:invalid-static-readonly-result:${String(operation.operationId)}:${lowering.primitiveId}`,
+      };
+    }
+    this.explanation.push(
+      `firmware-platform-call:static-readonly-pointer-result:${lowering.primitiveId}`,
+    );
+    return { kind: "ok" };
   }
 
   private materializeFirmwareTablePointer(
@@ -361,24 +466,36 @@ export abstract class AArch64CallOperationMaterializer extends AArch64MemoryOper
   private materializeStaticChar16Pointer(
     pointer: AArch64FirmwareStaticChar16PointerArgument,
   ): AArch64VirtualRegister {
-    const symbol = aarch64SymbolId(pointer.symbolName);
-    const pageRegister = this.syntheticRegister(
-      `firmware-static-char16-page:${pointer.stableKey}`,
-      POINTER,
+    const pointerRegister = this.materializeStaticReadonlyPointer({
+      symbolName: pointer.symbolName,
+      stableKey: pointer.stableKey,
+      fingerprint: pointer.fingerprint,
+      label: "firmware-static-char16",
+    });
+    this.explanation.push(
+      `firmware-static-char16-pointer:${pointer.stableKey}:${pointer.lifetime}:nul-terminated`,
     );
-    const pointerRegister = this.syntheticRegister(
-      `firmware-static-char16:${pointer.stableKey}`,
-      POINTER,
-    );
+    return pointerRegister;
+  }
+
+  private materializeStaticReadonlyPointer(input: {
+    readonly symbolName: string;
+    readonly stableKey: string;
+    readonly fingerprint: string;
+    readonly label: string;
+  }): AArch64VirtualRegister {
+    const symbol = aarch64SymbolId(input.symbolName);
+    const pageRegister = this.syntheticRegister(`${input.label}-page:${input.stableKey}`, POINTER);
+    const pointerRegister = this.syntheticRegister(`${input.label}:${input.stableKey}`, POINTER);
     this.recordSymbolAddressRelocations(
       symbol,
-      `aarch64-relocation:firmware-static-char16:${pointer.fingerprint}`,
+      `aarch64-relocation:${input.label}:${input.fingerprint}`,
     );
     this.emit(
       "adrp",
       [defVreg(pageRegister, pageRegister.type), symbolOperand(symbol)],
       { mayTrap: false },
-      `firmware-static-char16-page:${pointer.stableKey}`,
+      `${input.label}-page:${input.stableKey}`,
       "integer",
     );
     this.emit(
@@ -390,11 +507,8 @@ export abstract class AArch64CallOperationMaterializer extends AArch64MemoryOper
         symbolOperand(symbol),
       ],
       { mayTrap: false },
-      `firmware-static-char16:${pointer.stableKey}`,
+      `${input.label}:${input.stableKey}`,
       "integer",
-    );
-    this.explanation.push(
-      `firmware-static-char16-pointer:${pointer.stableKey}:${pointer.lifetime}:nul-terminated`,
     );
     return pointerRegister;
   }
@@ -460,16 +574,25 @@ export abstract class AArch64CallOperationMaterializer extends AArch64MemoryOper
     | { readonly kind: "ok"; readonly callOperands: readonly AArch64InstructionOperand[] }
     | { readonly kind: "error"; readonly stableDetail: string } {
     const sourceRegisters: AArch64VirtualRegister[] = [];
+    const valueKeys: string[] = [];
+    if (operation.kind === "sourceCall" && this.context.firmware !== undefined) {
+      const imageHandle = this.firmwareContextRegister("image-handle");
+      if (imageHandle.kind === "error") return imageHandle;
+      const systemTable = this.firmwareContextRegister("system-table");
+      if (systemTable.kind === "error") return systemTable;
+      sourceRegisters.push(imageHandle.register, systemTable.register);
+      valueKeys.push(
+        AARCH64_FIRMWARE_IMAGE_HANDLE_VALUE_KEY,
+        AARCH64_FIRMWARE_SYSTEM_TABLE_VALUE_KEY,
+      );
+    }
     for (let index = 0; index < operation.argumentIds.length; index += 1) {
       const source = this.sourceRegisterAt(operation.argumentIds, index);
       if (source.kind === "error") return source;
       sourceRegisters.push(source.register);
+      valueKeys.push(`optir.value:${String(operation.argumentIds[index])}`);
     }
-    return this.materializeRegistersAsCallArguments(
-      operation,
-      sourceRegisters,
-      operation.argumentIds.map((argumentId) => `optir.value:${String(argumentId)}`),
-    );
+    return this.materializeRegistersAsCallArguments(operation, sourceRegisters, valueKeys);
   }
 
   private materializeRegistersAsCallArguments(

@@ -2,6 +2,7 @@ import type { ParsedModuleGraph } from "../../frontend/module-graph-parser";
 import type { ItemIndex } from "../item-index/item-index";
 import type { CoreTypeCatalog } from "./core-types";
 import type { PlatformPrimitiveNameCatalog } from "./platform-primitives";
+import type { TargetTypeKindSpec } from "../surface/platform-surface";
 import { ResolvedReferencesBuilder, ResolvedPlatformBindingsBuilder } from "./resolution-result";
 import type { ResolvedReferences, ResolvedPlatformBindings } from "./resolution-result";
 import { ReferenceKeyBuilder } from "./reference-key";
@@ -16,12 +17,15 @@ import { scopeBuilder, typeCandidate, functionCandidate, itemCandidate } from ".
 import type { ScopeCandidate } from "./scope";
 import { sortNameResolutionDiagnostics } from "./diagnostics";
 import type { NameResolutionDiagnostic } from "./diagnostics";
+import type { CompilerIntrinsicNameCatalog } from "./reference";
 
 export interface ResolveNamesInput {
   readonly graph: ParsedModuleGraph;
   readonly index: ItemIndex;
   readonly coreTypes: CoreTypeCatalog;
   readonly platformPrimitiveNames: PlatformPrimitiveNameCatalog;
+  readonly compilerIntrinsics?: CompilerIntrinsicNameCatalog;
+  readonly targetTypes?: readonly TargetTypeKindSpec[];
 }
 
 export interface ResolveNamesResult {
@@ -88,6 +92,16 @@ export function resolveNames(input: ResolveNamesInput): ResolveNamesResult {
       builder.addTier("moduleItems", ownCandidates);
     }
 
+    const targetTypeCandidates = targetTypeScopeCandidates(input.targetTypes ?? []);
+    if (targetTypeCandidates.length > 0) {
+      builder.addTier("targetTypes", targetTypeCandidates);
+    }
+
+    const intrinsicCandidates = compilerIntrinsicScopeCandidates(input.compilerIntrinsics);
+    if (intrinsicCandidates.length > 0) {
+      builder.addTier("compilerIntrinsics", intrinsicCandidates);
+    }
+
     const importedScope = importResult.importedScopes.find((scope) => scope.moduleId === mod.id);
     if (importedScope !== undefined && importedScope.candidates.length > 0) {
       builder.addTier("imports", importedScope.candidates);
@@ -145,4 +159,33 @@ export function resolveNames(input: ResolveNamesInput): ResolveNamesResult {
     platformBindings: bindingsBuilder.build(),
     diagnostics: sortNameResolutionDiagnostics(allDiagnostics),
   };
+}
+
+function targetTypeScopeCandidates(targetTypes: readonly TargetTypeKindSpec[]): ScopeCandidate[] {
+  return targetTypes.map((targetType) => {
+    const fullName = String(targetType.targetTypeId);
+    const name = fullName.includes(".") ? fullName.slice(fullName.lastIndexOf(".") + 1) : fullName;
+    return {
+      namespace: "type" as const,
+      name,
+      reference: { kind: "targetType" as const, targetTypeId: targetType.targetTypeId },
+      display: { modulePath: "", itemKind: "targetType", name, denseId: 0 },
+    };
+  });
+}
+
+function compilerIntrinsicScopeCandidates(
+  catalog: CompilerIntrinsicNameCatalog | undefined,
+): ScopeCandidate[] {
+  return (catalog?.intrinsics ?? []).map((intrinsic) => ({
+    namespace: "value" as const,
+    name: intrinsic.sourceName,
+    reference: { kind: "compilerIntrinsic" as const, ...intrinsic },
+    display: {
+      modulePath: "",
+      itemKind: "compilerIntrinsic",
+      name: intrinsic.sourceName,
+      denseId: 0,
+    },
+  }));
 }

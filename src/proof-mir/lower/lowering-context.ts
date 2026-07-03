@@ -135,6 +135,7 @@ export interface ProofMirControlFlowLoweringInput {
   readonly context: ProofMirLoweringContext;
   readonly statement: MonoStatement;
   readonly blockKey: ProofMirCanonicalKey;
+  readonly tailReturn?: ProofMirTailReturnPolicy;
 }
 
 export interface ProofMirCallLoweringInput {
@@ -150,6 +151,7 @@ export interface ProofMirValidationLoweringInput {
   readonly context: ProofMirLoweringContext;
   readonly statement: MonoValidationMatchStatement;
   readonly blockKey: ProofMirCanonicalKey;
+  readonly tailReturn?: ProofMirTailReturnPolicy;
 }
 
 export interface ProofMirAttemptLoweringInput {
@@ -168,6 +170,11 @@ export interface ProofMirReturnLoweringInput {
   readonly context: ProofMirLoweringContext;
   readonly expression: MonoExpression | undefined;
   readonly blockKey: ProofMirCanonicalKey;
+  readonly terminal: boolean;
+}
+
+export interface ProofMirTailReturnPolicy {
+  readonly returnKind: ConcreteResourceKind;
   readonly terminal: boolean;
 }
 

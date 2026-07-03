@@ -48,6 +48,7 @@ import type {
 import type { ConcreteResourceKind } from "../semantic/surface/resource-kind";
 import type { CheckedType } from "../semantic/surface/type-model";
 import type { SourceSpan } from "../shared/source-span";
+import type { HirCompilerIntrinsicCallMetadata } from "../hir/hir";
 import type { InstantiatedHirId, MonoInstanceId } from "./ids";
 
 declare const MONO_CHECKED_TYPE_BRAND: unique symbol;
@@ -172,6 +173,7 @@ export interface MonoCallExpression {
   readonly callee: MonoExpression;
   readonly resolvedTarget?: MonoResolvedCallTarget;
   readonly calleeFunctionId?: FunctionId;
+  readonly compilerIntrinsic?: HirCompilerIntrinsicCallMetadata;
   readonly ownerTypeId?: TypeId;
   readonly ownerTypeArguments: readonly MonoCheckedType[];
   readonly ownerTypeArgumentSource:

@@ -14,8 +14,10 @@ import type {
 import type { ProofMirProgram } from "../../../proof-mir/model/program";
 import type { LayoutEntailmentCertificate } from "../../domains/layout-entailment";
 import { compareCodeUnitStrings } from "../../../shared/deterministic-sort";
+import { stableDigestHex } from "../../../shared/stable-json";
 import { stableNumericSeed } from "../../stable-numeric-seed";
 import type { AttemptTransferResult } from "../../domains/attempts";
+import { buildPlaceKeyToMirPlaceIdIndex } from "../../domains/mir-place-bindings";
 import {
   resolveAttemptContextForBlock,
   resolveAttemptContextForEdge,
@@ -35,17 +37,23 @@ import {
   type ProofCheckDiagnostic,
 } from "../../diagnostics";
 import { proofCheckCoreCertificateId } from "../../ids";
-import type { ProofCheckCertificateId, ProofCheckCoreCertificate } from "../../model/certificates";
+import type {
+  ProofCheckCertificateId,
+  ProofCheckCoreCertificate,
+  ProofCheckCoreCertificateRule,
+} from "../../model/certificates";
 import type { ProofCheckCoreCertificateId } from "../../ids";
 import type {
   CheckedFactDependency,
   CheckedFactKindId,
+  CheckedPacketFactKind,
   CheckedFactPacketEntry,
   CheckedFactScope,
   CheckedFactSubject,
   CheckedOriginFact,
 } from "../../model/fact-packet";
 import type { CheckedFunctionSummary } from "../../model/function-summary";
+import { certificateProvesSubject } from "../../validation/packet-certificate-index";
 import { checkedFactSubjectKey } from "../../validation/packet-validator";
 import type {
   CheckProofAndResourcesInput,
@@ -61,6 +69,8 @@ import {
 
 export interface ProofCheckPlaceResolver {
   index: Map<string, ProofMirPlaceId>;
+  placeShapeKeyByPlaceId: Map<string, string>;
+  equivalentPlaceKeysByPlaceId: Map<string, readonly string[]>;
 }
 
 export interface ProofCheckRegistryContext {
@@ -78,12 +88,114 @@ export interface BuildProofCheckOperationTransferRegistryInput {
 
 export { stableNumericSeed } from "../../stable-numeric-seed";
 
-export function createProofCheckPlaceResolver(): ProofCheckPlaceResolver {
-  return { index: new Map<string, ProofMirPlaceId>() };
+export function createProofCheckPlaceResolver(mir?: ProofMirProgram): ProofCheckPlaceResolver {
+  const placeResolver: ProofCheckPlaceResolver = {
+    index: new Map<string, ProofMirPlaceId>(),
+    placeShapeKeyByPlaceId: new Map<string, string>(),
+    equivalentPlaceKeysByPlaceId: new Map<string, readonly string[]>(),
+  };
+  if (mir !== undefined) {
+    for (const functionGraph of mir.functions.entries()) {
+      registerProofMirFunctionPlaces(placeResolver, functionGraph);
+    }
+  }
+  return placeResolver;
 }
 
 export function placeKeyForMirPlace(placeId: ProofMirPlaceId): string {
   return `proofMirPlace:${String(placeId)}`;
+}
+
+function resolverPlaceIdKey(functionGraph: ProofMirFunction, placeId: ProofMirPlaceId): string {
+  return `${String(functionGraph.functionInstanceId)}:${String(placeId)}`;
+}
+
+export function proofMirPlaceShapeKey(input: {
+  readonly functionGraph: ProofMirFunction;
+  readonly placeId: ProofMirPlaceId;
+}): string | undefined {
+  const place = input.functionGraph.places.get(input.placeId);
+  if (place === undefined) {
+    return undefined;
+  }
+  return stableDigestHex({
+    root: place.root,
+    projection: place.projection,
+  });
+}
+
+export function registerProofMirFunctionPlaces(
+  placeResolver: ProofCheckPlaceResolver,
+  functionGraph: ProofMirFunction,
+): void {
+  for (const [placeKey, placeId] of buildPlaceKeyToMirPlaceIdIndex({
+    functionGraph,
+    functionInstanceId: functionGraph.functionInstanceId,
+  }).entries()) {
+    placeResolver.index.set(placeKey, placeId);
+  }
+
+  const placeIdsByShapeKey = new Map<string, ProofMirPlaceId[]>();
+  for (const place of functionGraph.places.entries()) {
+    const shapeKey = proofMirPlaceShapeKey({ functionGraph, placeId: place.placeId });
+    if (shapeKey === undefined) {
+      continue;
+    }
+    placeResolver.placeShapeKeyByPlaceId.set(
+      resolverPlaceIdKey(functionGraph, place.placeId),
+      shapeKey,
+    );
+    placeIdsByShapeKey.set(shapeKey, [...(placeIdsByShapeKey.get(shapeKey) ?? []), place.placeId]);
+  }
+
+  for (const placeIds of placeIdsByShapeKey.values()) {
+    const placeKeys = Object.freeze(
+      placeIds.map((placeId) => placeKeyForMirPlace(placeId)).sort(compareCodeUnitStrings),
+    );
+    for (const placeId of placeIds) {
+      placeResolver.equivalentPlaceKeysByPlaceId.set(
+        resolverPlaceIdKey(functionGraph, placeId),
+        placeKeys,
+      );
+    }
+  }
+}
+
+export function equivalentProofMirPlaceKeys(input: {
+  readonly functionGraph: ProofMirFunction | undefined;
+  readonly placeId: ProofMirPlaceId;
+  readonly placeResolver?: ProofCheckPlaceResolver;
+}): readonly string[] {
+  const functionGraph = input.functionGraph;
+  if (functionGraph === undefined) {
+    return [placeKeyForMirPlace(input.placeId)];
+  }
+  const resolverKey = resolverPlaceIdKey(functionGraph, input.placeId);
+  const cached = input.placeResolver?.equivalentPlaceKeysByPlaceId.get(resolverKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+  if (input.placeResolver !== undefined) {
+    registerProofMirFunctionPlaces(input.placeResolver, functionGraph);
+    return (
+      input.placeResolver.equivalentPlaceKeysByPlaceId.get(resolverKey) ?? [
+        placeKeyForMirPlace(input.placeId),
+      ]
+    );
+  }
+  const shapeKey = proofMirPlaceShapeKey({ functionGraph, placeId: input.placeId });
+  if (shapeKey === undefined) {
+    return [placeKeyForMirPlace(input.placeId)];
+  }
+  return Object.freeze(
+    functionGraph.places
+      .entries()
+      .filter(
+        (place) => proofMirPlaceShapeKey({ functionGraph, placeId: place.placeId }) === shapeKey,
+      )
+      .map((place) => placeKeyForMirPlace(place.placeId))
+      .sort(compareCodeUnitStrings),
+  );
 }
 
 function parseProofMirPlaceIdPrefix(placeKey: string): ProofMirPlaceId | undefined {
@@ -295,6 +407,7 @@ export function normalizeCoreCertificateId(
   context: ProofCheckRegistryContext,
   certificate: ProofCheckCertificateId,
   subjectKey: string,
+  rule: ProofCheckCoreCertificateRule = "coreEntailment",
 ): ProofCheckCertificateId {
   if (certificate.kind !== "core") {
     return certificate;
@@ -303,12 +416,16 @@ export function normalizeCoreCertificateId(
   const existingWithSameId = context.coreCertificates.find(
     (entry) => String(entry.certificateId) === String(certificate.id),
   );
-  if (existingWithSameId !== undefined) {
+  if (
+    existingWithSameId !== undefined &&
+    existingWithSameId.subjectKey === subjectKey &&
+    existingWithSameId.rule === rule
+  ) {
     return certificate;
   }
 
   const registryId = context.certificateRegistry.allocateCoreCertificateId(subjectKey);
-  recordCoreCertificateIfAbsent(context, registryId, subjectKey);
+  recordCoreCertificateIfAbsent(context, registryId, subjectKey, rule);
   return { kind: "core", id: registryId };
 }
 
@@ -347,6 +464,34 @@ function packetEntryCertificateRegistrySubjectKey(
   return `${ownerKey}:packet:${index}`;
 }
 
+function packetEntryCoreCertificateRule(
+  entry: CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject>,
+): ProofCheckCoreCertificateRule {
+  switch (entry.kind as CheckedPacketFactKind) {
+    case "ownership":
+    case "privateState":
+      return "ownershipTransfer";
+    case "noalias":
+    case "fieldDisjointness":
+      return "loanDisjointness";
+    case "erasure":
+      return "erasure";
+    case "validatedBuffer":
+    case "layoutAbi":
+      return "layoutReadRequirement";
+    case "packetSource":
+      return "packetSource";
+    case "terminalClosure":
+    case "exitClosure":
+      return "exitClosure";
+    case "platformEffect":
+    case "capabilityFlow":
+    case "extension":
+    case "origin":
+      return "coreEntailment";
+  }
+}
+
 function remapPacketEntryCoreCertificates(
   context: ProofCheckRegistryContext,
   entries: readonly CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject>[],
@@ -355,23 +500,71 @@ function remapPacketEntryCoreCertificates(
 ): readonly CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject>[] {
   return entries.map((entry, index) => {
     const registrySubjectKey = packetEntryCertificateRegistrySubjectKey(entry, ownerKey, index);
-    const remappedFromTransition = entry.certificate;
-    const transitionRemappedId =
+    const existingCoreCertificate =
       entry.certificate.kind === "core"
-        ? coreCertificateIdRemap.get(String(entry.certificate.id))
+        ? context.coreCertificates.find(
+            (certificate) => String(certificate.certificateId) === String(entry.certificate.id),
+          )
         : undefined;
     const certificate =
-      transitionRemappedId === undefined
-        ? normalizeCoreCertificateId(context, entry.certificate, registrySubjectKey)
-        : { kind: "core" as const, id: transitionRemappedId };
-    if (remappedFromTransition === certificate) {
+      existingCoreCertificate !== undefined &&
+      certificateProvesSubject(entry, existingCoreCertificate)
+        ? entry.certificate
+        : normalizeCoreCertificateId(
+            context,
+            entry.certificate,
+            registrySubjectKey,
+            packetEntryCoreCertificateRule(entry),
+          );
+    const dependencies = remapCoreCertificateDependencies({
+      dependencies: entry.dependencies,
+      originalCertificate: entry.certificate,
+      normalizedCertificate: certificate,
+      coreCertificateIdRemap,
+    });
+    if (entry.certificate === certificate && dependencies === entry.dependencies) {
       return entry;
     }
     return {
       ...entry,
       certificate,
+      dependencies,
     };
   });
+}
+
+function remapCoreCertificateDependencies(input: {
+  readonly dependencies: readonly CheckedFactDependency[];
+  readonly originalCertificate: ProofCheckCertificateId;
+  readonly normalizedCertificate: ProofCheckCertificateId;
+  readonly coreCertificateIdRemap: ReadonlyMap<string, ProofCheckCoreCertificateId>;
+}): readonly CheckedFactDependency[] {
+  let changed = false;
+  const dependencies = input.dependencies.map((dependency) => {
+    if (dependency.kind !== "coreCertificate") {
+      return dependency;
+    }
+    const remappedByPacketCertificate =
+      input.originalCertificate.kind === "core" &&
+      input.normalizedCertificate.kind === "core" &&
+      String(dependency.certificateId) === String(input.originalCertificate.id)
+        ? input.normalizedCertificate.id
+        : undefined;
+    const remappedByTransition =
+      remappedByPacketCertificate === undefined
+        ? input.coreCertificateIdRemap.get(String(dependency.certificateId))
+        : undefined;
+    const nextCertificateId = remappedByTransition ?? remappedByPacketCertificate;
+    if (
+      nextCertificateId === undefined ||
+      String(nextCertificateId) === String(dependency.certificateId)
+    ) {
+      return dependency;
+    }
+    changed = true;
+    return { ...dependency, certificateId: nextCertificateId };
+  });
+  return changed ? dependencies : input.dependencies;
 }
 
 export function ensureCoreCertificatesRecorded(

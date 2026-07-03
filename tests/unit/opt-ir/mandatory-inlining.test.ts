@@ -12,8 +12,10 @@ import {
   optIrValueId,
 } from "../../../src/opt-ir/ids";
 import {
+  optIrIntrinsicCallOperation,
   optIrIntegerBinaryOperation,
   optIrIntegerCompareOperation,
+  optIrPlatformCallOperation,
   optIrSourceCallOperation,
   type OptIrOperation,
 } from "../../../src/opt-ir/operations";
@@ -77,12 +79,16 @@ describe("mandatory semantic inlining", () => {
     if (result.kind !== "ok") {
       throw new Error("Expected mandatory inlining to succeed.");
     }
-    expect(result.function.blocks[0]?.operations).toEqual([helperOperation.operationId]);
+    expect(result.function.blocks[0]?.operations).toEqual([call.operationId]);
     expect(result.operations.map((operation) => operation.operationId)).toEqual([
+      call.operationId,
       helperOperation.operationId,
     ]);
-    expect(result.operations[0]?.operandIds).toEqual([optIrValueId(1), optIrValueId(2)]);
-    expect(result.operations[0]).toMatchObject({
+    const inlinedOperation = result.operations.find(
+      (operation) => operation.operationId === call.operationId,
+    );
+    expect(inlinedOperation?.operandIds).toEqual([optIrValueId(1), optIrValueId(2)]);
+    expect(inlinedOperation).toMatchObject({
       left: optIrValueId(1),
       right: optIrValueId(2),
     });
@@ -182,12 +188,127 @@ describe("mandatory semantic inlining", () => {
     if (result.kind !== "ok") {
       throw new Error("Expected mandatory inlining to succeed.");
     }
-    expect(result.operations[0]).toMatchObject({
+    const inlinedOperation = result.operations.find(
+      (operation) => operation.operationId === call.operationId,
+    );
+    expect(inlinedOperation).toMatchObject({
       kind: "integerCompare",
       operandIds: [optIrValueId(1), optIrValueId(2)],
       resultIds: [optIrValueId(20)],
       left: optIrValueId(1),
       right: optIrValueId(2),
+    });
+  });
+
+  test("inlines mandatory platform wrappers at the source call site", () => {
+    const call = optIrSourceCallOperation({
+      operationId: optIrOperationId(10),
+      callId: optIrCallId(1),
+      target: { kind: "source", functionInstanceId: monoInstanceId("console.wrapper") },
+      argumentIds: [optIrValueId(1)],
+      resultIds: [optIrValueId(20)],
+      resultTypes: [integer32],
+      originId: optIrOriginId(1),
+    });
+    const platformCall = optIrPlatformCallOperation({
+      operationId: optIrOperationId(30),
+      callId: optIrCallId(2),
+      target: { kind: "platform", platformKey: "uefi.console.outputString" },
+      argumentIds: [optIrValueId(100)],
+      resultIds: [optIrValueId(40)],
+      resultTypes: [integer32],
+      originId: optIrOriginId(2),
+    });
+
+    const result = runMandatoryInliningForTest({
+      caller: functionWithOperations({
+        functionId: 1,
+        instance: "caller",
+        operations: [call.operationId],
+      }),
+      callee: functionWithOperations({
+        functionId: 2,
+        instance: "console.wrapper",
+        parameters: [optIrValueId(100)],
+        operations: [platformCall.operationId],
+        terminatorValues: [optIrValueId(40)],
+        summary: mandatorySummary("platformWrapper"),
+      }),
+      operations: [call, platformCall],
+      facts: [],
+      nextFactId: counter(100, optIrFactId),
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") {
+      throw new Error("Expected mandatory platform wrapper inlining to succeed.");
+    }
+    expect(result.function.blocks[0]?.operations).toEqual([call.operationId]);
+    const inlinedOperation = result.operations.find(
+      (operation) => operation.operationId === call.operationId,
+    );
+    expect(inlinedOperation).toMatchObject({
+      kind: "platformCall",
+      callId: optIrCallId(10),
+      argumentIds: [optIrValueId(1)],
+      resultIds: [optIrValueId(20)],
+    });
+  });
+
+  test("inlines mandatory intrinsic wrappers at the source call site", () => {
+    const call = optIrSourceCallOperation({
+      operationId: optIrOperationId(10),
+      callId: optIrCallId(1),
+      target: { kind: "source", functionInstanceId: monoInstanceId("utf16.wrapper") },
+      argumentIds: [],
+      resultIds: [optIrValueId(20)],
+      resultTypes: [integer32],
+      originId: optIrOriginId(1),
+    });
+    const intrinsic = optIrIntrinsicCallOperation({
+      operationId: optIrOperationId(30),
+      callId: optIrCallId(2),
+      target: {
+        kind: "intrinsic",
+        intrinsicKey: "uefi.utf16_static",
+        sourceValueKey: "hir.expression:2",
+      },
+      argumentIds: [],
+      resultIds: [optIrValueId(40)],
+      resultTypes: [integer32],
+      originId: optIrOriginId(2),
+    });
+
+    const result = runMandatoryInliningForTest({
+      caller: functionWithOperations({
+        functionId: 1,
+        instance: "caller",
+        operations: [call.operationId],
+      }),
+      callee: functionWithOperations({
+        functionId: 2,
+        instance: "utf16.wrapper",
+        operations: [intrinsic.operationId],
+        terminatorValues: [optIrValueId(40)],
+        summary: mandatorySummary("runtimeWrapper"),
+      }),
+      operations: [call, intrinsic],
+      facts: [],
+      nextFactId: counter(100, optIrFactId),
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") {
+      throw new Error("Expected mandatory intrinsic wrapper inlining to succeed.");
+    }
+    expect(result.function.blocks[0]?.operations).toEqual([call.operationId]);
+    const inlinedOperation = result.operations.find(
+      (operation) => operation.operationId === call.operationId,
+    );
+    expect(inlinedOperation).toMatchObject({
+      kind: "intrinsicCall",
+      callId: optIrCallId(10),
+      resultIds: [optIrValueId(20)],
     });
   });
 

@@ -29,7 +29,11 @@ export function mandatoryInlinePolicyForFunction(
 ): (OptIrSemanticInlinePolicy & { readonly kind: "mandatory" }) | undefined {
   const summary = optIrInlinePolicySummary(func.summary);
   const policy = summary?.semanticInlinePolicy;
-  return policy?.kind === "mandatory" && policy.source === "checkedSummary" ? policy : undefined;
+  return policy?.kind === "mandatory" &&
+    policy.source === "checkedSummary" &&
+    isMandatoryInlineReason(policy.reason)
+    ? (policy as OptIrSemanticInlinePolicy & { readonly kind: "mandatory" })
+    : undefined;
 }
 
 export function mandatoryInlineCalleeIds(
@@ -63,6 +67,18 @@ function isInlinePolicy(value: unknown): value is OptIrSemanticInlinePolicy {
     return true;
   }
   return candidate.kind === "mandatory" && candidate.source === "checkedSummary";
+}
+
+function isMandatoryInlineReason(value: unknown): value is OptIrMandatoryInlineReason {
+  return (
+    value === "proofWrapper" ||
+    value === "validationHelper" ||
+    value === "monomorphizedShim" ||
+    value === "resourceWrapper" ||
+    value === "singleCallThunk" ||
+    value === "platformWrapper" ||
+    value === "runtimeWrapper"
+  );
 }
 
 function compareMonoInstanceIds(left: MonoInstanceId, right: MonoInstanceId): number {

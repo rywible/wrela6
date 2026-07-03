@@ -442,7 +442,10 @@ function runSemanticStagesForFunction(
       const result = resolveAArch64ParallelCopies({
         copies: parallelCopiesForFunctionEntry(machineFunction, allocation),
         availableTemporaries: scratchRegisters,
-        unavailableTemporaries: boundaryUnavailableRegisters,
+        // Entry copies run before any body call boundary. The scratch registers are
+        // reserved out of allocation above, so they are safe temporaries here even
+        // when later veneers may clobber the same registers.
+        unavailableTemporaries: [],
         memorySwapAllowed: false,
       });
       return result.kind === "error" ? result : backendOk(result.moves, result.diagnostics);

@@ -125,6 +125,29 @@ export function aarch64AddImmediateForPlanningTest(input: {
   });
 }
 
+export function aarch64AddPageoffForPlanningTest(input: {
+  readonly instructionId: number;
+  readonly output: number;
+  readonly source: number;
+  readonly symbol: string;
+}) {
+  const output = aarch64RegisterForPlanningTest(input.output);
+  const source = aarch64RegisterForPlanningTest(input.source);
+  return aarch64MachineInstruction({
+    instructionId: aarch64MachineInstructionId(input.instructionId),
+    opcode: aarch64OpcodeFormId("add-pageoff"),
+    operands: [
+      defVreg(output, U64),
+      useVreg(source, U64),
+      immediateOperand(0n, U64),
+      symbolOperand(aarch64SymbolId(input.symbol)),
+    ],
+    flags: { mayTrap: false },
+    origin: syntheticAArch64Origin(`planning.add-pageoff.${input.instructionId}`),
+    schedule: schedule(),
+  });
+}
+
 export function aarch64CallForPlanningTest(instructionId: number) {
   return aarch64MachineInstruction({
     instructionId: aarch64MachineInstructionId(instructionId),

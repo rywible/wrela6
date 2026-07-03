@@ -28,6 +28,7 @@ function makeDiagnostic(input: {
   return {
     code: input.code,
     message: input.message,
+    stableDetail: input.stableDetail,
     moduleId: input.moduleId,
     order: {
       moduleId: input.moduleId,

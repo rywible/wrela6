@@ -24,6 +24,12 @@ export interface OptIrProofOnlyValueMarker {
 
 export interface OptIrBlockArgumentBuilder {
   readonly declareValue: (input: OptIrDeclaredValueInput) => OptIrValueId;
+  readonly aliasValue: (input: {
+    readonly valueKey: string;
+    readonly targetValueId: OptIrValueId;
+    readonly runtime: boolean;
+    readonly proofOnlyReason?: string;
+  }) => OptIrValueId;
   readonly parameterFor: (input: OptIrLoweredParameterInput) => OptIrBlockParameter;
   readonly valueIdFor: (valueKey: string) => OptIrValueId | undefined;
   readonly executableValueIds: () => readonly OptIrValueId[];
@@ -51,20 +57,62 @@ export function optIrBlockArgumentBuilder(): OptIrBlockArgumentBuilder {
 
   function declareValue(input: OptIrDeclaredValueInput): OptIrValueId {
     const valueId = valueIdForKey(input.valueKey);
+    markValueKind({
+      valueId,
+      runtime: input.runtime,
+      proofOnlyReason: input.proofOnlyReason,
+    });
+    return valueId;
+  }
+
+  function markValueKind(input: {
+    readonly valueId: OptIrValueId;
+    readonly runtime: boolean;
+    readonly proofOnlyReason?: string;
+  }): void {
     if (input.runtime) {
-      executableValueIds.add(valueId);
-    } else if (!executableValueIds.has(valueId)) {
-      proofOnlyValueIds.add(valueId);
-      erasureMarkers.set(valueId, {
-        valueId,
+      executableValueIds.add(input.valueId);
+      proofOnlyValueIds.delete(input.valueId);
+      erasureMarkers.delete(input.valueId);
+    } else if (!executableValueIds.has(input.valueId)) {
+      proofOnlyValueIds.add(input.valueId);
+      erasureMarkers.set(input.valueId, {
+        valueId: input.valueId,
         reason: input.proofOnlyReason ?? "proofOnly",
       });
     }
-    return valueId;
+  }
+
+  function valueIdStillMapped(valueId: OptIrValueId): boolean {
+    for (const mapped of valueIdsByKey.values()) {
+      if (mapped === valueId) {
+        return true;
+      }
+    }
+    return false;
   }
 
   return {
     declareValue,
+    aliasValue(input) {
+      const previous = valueIdsByKey.get(input.valueKey);
+      valueIdsByKey.set(input.valueKey, input.targetValueId);
+      if (
+        previous !== undefined &&
+        previous !== input.targetValueId &&
+        !valueIdStillMapped(previous)
+      ) {
+        executableValueIds.delete(previous);
+        proofOnlyValueIds.delete(previous);
+        erasureMarkers.delete(previous);
+      }
+      markValueKind({
+        valueId: input.targetValueId,
+        runtime: input.runtime,
+        proofOnlyReason: input.proofOnlyReason,
+      });
+      return input.targetValueId;
+    },
     parameterFor(input) {
       const valueId = declareValue(input);
 

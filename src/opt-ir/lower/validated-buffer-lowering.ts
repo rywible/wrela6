@@ -1,6 +1,8 @@
+import type { LayoutFactProgram, LayoutTerm } from "../../layout/layout-program";
 import { layoutFactKey, type LayoutFactKey } from "../../proof-check/model/fact-packet";
 import type { MonoInstanceId } from "../../mono/ids";
 import type { ProofMirFactId, ProofMirPlaceId, ProofMirValueId } from "../../proof-mir/ids";
+import type { ProofMirLayoutTermChild } from "../../proof-mir/model/layout-bindings";
 import type { ProofMirFunction } from "../../proof-mir/model/graph";
 import {
   optIrAliasClassId,
@@ -11,6 +13,8 @@ import {
   type OptIrPathCertificateId,
   type OptIrValueId,
 } from "../ids";
+import { regionMemoryTypeFactRecord } from "../facts/memory-order-facts";
+import type { OptIrFactRecord } from "../facts/fact-index";
 import {
   optIrMemoryLoadOperation,
   type OptIrEndian,
@@ -61,15 +65,22 @@ export interface LowerValidatedBufferFieldReadInput {
   readonly valueType: OptIrType;
   readonly byteWidth: number;
   readonly targetEndian: "little" | "big";
+  readonly layout: LayoutFactProgram;
   readonly resultId: OptIrValueId;
   readonly operationId: ReturnType<typeof optIrOperationId>;
   readonly originId: OptIrOriginId;
   readonly authorityIndex: ReadonlyMap<string, OptIrValidatedBufferFactForLowering>;
   readonly regions: OptIrRegion[];
   readonly regionsByKey: Map<string, OptIrRegion>;
+  readonly generatedFacts: OptIrGeneratedFactSink;
   readonly provenance: {
     readonly get: (originId: OptIrOriginId) => OptIrRegion["origin"] | undefined;
   };
+}
+
+export interface OptIrGeneratedFactSink {
+  readonly nextFactId: () => OptIrFactId;
+  readonly push: (record: OptIrFactRecord) => void;
 }
 
 export function lowerValidatedBufferFieldRead(
@@ -84,19 +95,40 @@ export function lowerValidatedBufferFieldRead(
     return { kind: "error", code: "missing-authority" };
   }
 
-  const region = validatedPayloadRegionForRead({
+  const region = backedValidatedPayloadRegionForRead({
     function_: input.function_,
     read: input.read,
     layoutKey: input.layoutKey,
+    certifiedOffset: certifiedOffsetForValidatedBufferRead({
+      layout: input.layout,
+      read: input.read,
+    }),
     originId: input.originId,
     regions: input.regions,
     regionsByKey: input.regionsByKey,
     provenance: input.provenance,
   });
+  if (region.createdPayload) {
+    input.generatedFacts.push(
+      regionMemoryTypeFactRecord({
+        factId: input.generatedFacts.nextFactId(),
+        regionId: region.payloadRegion.regionId,
+        memoryType: "validatedPayload",
+        backingRegion: region.backingRegion.regionId,
+        certifiedOffset: region.certifiedOffset,
+        provenanceKey: validatedPayloadProvenanceKey({
+          function_: input.function_,
+          read: input.read,
+          layoutKey: input.layoutKey,
+        }),
+        authority: "proof:validated-buffer-region",
+      }),
+    );
+  }
 
   const access = lowerValidatedBufferRead({
     regionKind: "validatedPayload",
-    region: region.regionId,
+    region: region.payloadRegion.regionId,
     fieldName: String(input.read.fieldId),
     offsetBytes: 0n,
     widthBytes: BigInt(input.byteWidth),
@@ -115,7 +147,7 @@ export function lowerValidatedBufferFieldRead(
   const result = optIrMemoryLoadOperation({
     operationId: input.operationId,
     resultId: input.resultId,
-    region: region.regionId,
+    region: region.payloadRegion.regionId,
     byteOffset: 0n,
     byteWidth: input.byteWidth,
     alignment: Number(access.alignment),
@@ -150,28 +182,43 @@ function optIrEndianForValidatedBufferAccess(endian: "target" | "little" | "big"
   return endian === "target" ? "native" : endian;
 }
 
-function validatedPayloadRegionForRead(input: {
+function backedValidatedPayloadRegionForRead(input: {
   readonly function_: ProofMirFunction;
   readonly read: {
+    readonly sourcePlace: ProofMirPlaceId;
     readonly validatedBufferInstanceId: MonoInstanceId;
     readonly fieldId: unknown;
   };
   readonly layoutKey: LayoutFactKey;
+  readonly certifiedOffset: bigint;
   readonly originId: OptIrOriginId;
   readonly regions: OptIrRegion[];
   readonly regionsByKey: Map<string, OptIrRegion>;
   readonly provenance: {
     readonly get: (originId: OptIrOriginId) => OptIrRegion["origin"] | undefined;
   };
-}): OptIrRegion {
+}): {
+  readonly payloadRegion: OptIrRegion;
+  readonly backingRegion: OptIrRegion;
+  readonly certifiedOffset: bigint;
+  readonly createdPayload: boolean;
+} {
+  const backingRegion = packetSourceRegionForRead(input);
   const regionKey = [
+    "validatedPayload",
     String(input.function_.functionInstanceId),
+    String(input.read.sourcePlace),
     String(input.read.validatedBufferInstanceId),
     String(input.read.fieldId),
   ].join("\u001f");
   const existing = input.regionsByKey.get(regionKey);
   if (existing !== undefined) {
-    return existing;
+    return {
+      payloadRegion: existing,
+      backingRegion,
+      certifiedOffset: input.certifiedOffset,
+      createdPayload: false,
+    };
   }
 
   const ordinal = input.regions.length + 1;
@@ -188,7 +235,151 @@ function validatedPayloadRegionForRead(input: {
   };
   input.regions.push(region);
   input.regionsByKey.set(regionKey, region);
+  return {
+    payloadRegion: region,
+    backingRegion,
+    certifiedOffset: input.certifiedOffset,
+    createdPayload: true,
+  };
+}
+
+function packetSourceRegionForRead(input: {
+  readonly function_: ProofMirFunction;
+  readonly read: {
+    readonly sourcePlace: ProofMirPlaceId;
+  };
+  readonly layoutKey: LayoutFactKey;
+  readonly originId: OptIrOriginId;
+  readonly regions: OptIrRegion[];
+  readonly regionsByKey: Map<string, OptIrRegion>;
+  readonly provenance: {
+    readonly get: (originId: OptIrOriginId) => OptIrRegion["origin"] | undefined;
+  };
+}): OptIrRegion {
+  const regionKey = [
+    "packetSource",
+    String(input.function_.functionInstanceId),
+    String(input.read.sourcePlace),
+  ].join("\u001f");
+  const existing = input.regionsByKey.get(regionKey);
+  if (existing !== undefined) {
+    return existing;
+  }
+
+  const ordinal = input.regions.length + 1;
+  const region: OptIrRegion = {
+    regionId: optIrRegionId(ordinal),
+    kind: "packetSource",
+    owner: { kind: "function", functionId: input.function_.functionInstanceId },
+    lifetime: "activation",
+    aliasClass: optIrAliasClassId(ordinal),
+    layoutKey: input.layoutKey,
+    volatility: "nonVolatile",
+    effects: { mutability: "readOnly", ordering: "readOnlyRegionVersion" },
+    origin: input.provenance.get(input.originId) ?? { originId: input.originId },
+  };
+  input.regions.push(region);
+  input.regionsByKey.set(regionKey, region);
   return region;
+}
+
+function certifiedOffsetForValidatedBufferRead(input: {
+  readonly layout: LayoutFactProgram;
+  readonly read: {
+    readonly validatedBufferInstanceId: MonoInstanceId;
+    readonly fieldId: unknown;
+    readonly offsetTerm?: {
+      readonly path: {
+        readonly root: {
+          readonly kind: string;
+          readonly instanceId?: MonoInstanceId;
+          readonly fieldId?: unknown;
+          readonly slot?: string;
+        };
+        readonly childPath: readonly ProofMirLayoutTermChild[];
+      };
+      readonly unit: string;
+    };
+  };
+}): bigint {
+  const term = layoutTermForValidatedBufferRead(input);
+  return term?.kind === "constant" && term.unit === "byteOffset" && term.value >= 0n
+    ? term.value
+    : 0n;
+}
+
+function layoutTermForValidatedBufferRead(input: {
+  readonly layout: LayoutFactProgram;
+  readonly read: {
+    readonly validatedBufferInstanceId: MonoInstanceId;
+    readonly fieldId: unknown;
+    readonly offsetTerm?: {
+      readonly path: {
+        readonly root: {
+          readonly kind: string;
+          readonly instanceId?: MonoInstanceId;
+          readonly fieldId?: unknown;
+          readonly slot?: string;
+        };
+        readonly childPath: readonly ProofMirLayoutTermChild[];
+      };
+      readonly unit: string;
+    };
+  };
+}): LayoutTerm | undefined {
+  const offsetTerm = input.read.offsetTerm;
+  if (offsetTerm === undefined) {
+    return undefined;
+  }
+  const root = offsetTerm.path.root;
+  if (
+    root?.kind !== "validatedBufferFieldTerm" ||
+    root.slot !== "offset" ||
+    root.instanceId !== input.read.validatedBufferInstanceId ||
+    root.fieldId !== input.read.fieldId
+  ) {
+    return undefined;
+  }
+
+  const buffer = input.layout.validatedBuffers?.get(input.read.validatedBufferInstanceId);
+  const field = buffer?.layoutFields.find((candidate) => candidate.fieldId === input.read.fieldId);
+  if (field === undefined) {
+    return undefined;
+  }
+
+  return offsetTerm.path.childPath.reduce<LayoutTerm | undefined>(
+    (term, child) => layoutTermChild(term, child),
+    field.offset,
+  );
+}
+
+function layoutTermChild(
+  term: LayoutTerm | undefined,
+  child: ProofMirLayoutTermChild,
+): LayoutTerm | undefined {
+  if (term?.kind !== "add" && term?.kind !== "subtract" && term?.kind !== "multiply") {
+    return undefined;
+  }
+  return child === "left" ? term.left : term.right;
+}
+
+function validatedPayloadProvenanceKey(input: {
+  readonly function_: ProofMirFunction;
+  readonly read: {
+    readonly sourcePlace: ProofMirPlaceId;
+    readonly validatedBufferInstanceId: MonoInstanceId;
+    readonly fieldId: unknown;
+  };
+  readonly layoutKey: LayoutFactKey;
+}): string {
+  return [
+    "validated-buffer",
+    String(input.function_.functionInstanceId),
+    String(input.read.sourcePlace),
+    String(input.read.validatedBufferInstanceId),
+    String(input.read.fieldId),
+    String(input.layoutKey),
+  ].join(":");
 }
 
 export function compareRegions(left: OptIrRegion, right: OptIrRegion): number {

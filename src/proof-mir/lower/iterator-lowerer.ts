@@ -48,6 +48,7 @@ import {
   type ProofMirStatementLowerer,
   type ProofMirTerminalLowerer,
 } from "./lowering-context";
+import { allocateProofMirRuntimeCallId } from "./runtime-call-ids";
 import { type ProofMirFunctionScopePlaceLowerer } from "./scope-place-lowerer";
 
 export interface IteratorLoweringEdgeView extends DraftGraphEdgeView {
@@ -118,21 +119,6 @@ function openIteratorObligations(input: {
       originKey: input.originKey,
     });
   }
-}
-
-function allocateProgramRuntimeCallId(
-  context: ProofMirLoweringContext,
-): ReturnType<typeof proofMirRuntimeCallId> {
-  const usedIds = new Set(
-    context.buildContext.programDraft.runtimeCalls
-      .entries()
-      .map((entry) => String(entry.runtimeCallId)),
-  );
-  let candidate = 1;
-  while (usedIds.has(String(proofMirRuntimeCallId(candidate)))) {
-    candidate += 1;
-  }
-  return proofMirRuntimeCallId(candidate);
 }
 
 function resolveIteratorFinishRuntimeOperation(
@@ -526,6 +512,7 @@ const ITERATOR_NEXT_REQUIREMENT_PREFIX = "iterator-next:";
 
 function resolveIteratorLoweringMetadataFromProofMetadata(input: {
   readonly context: ProofMirLoweringContext;
+  readonly callRecorder: ProofMirCallLoweringRecorder;
 }): IteratorLoweringMetadata | undefined {
   const functionInstanceId = input.context.functionInstanceId;
   const program = input.context.program;
@@ -568,7 +555,10 @@ function resolveIteratorLoweringMetadataFromProofMetadata(input: {
   if (finishRuntimeOperationId === undefined) {
     return undefined;
   }
-  const finishRuntimeCallId = allocateProgramRuntimeCallId(input.context);
+  const finishRuntimeCallId = allocateProofMirRuntimeCallId({
+    context: input.context,
+    recorder: input.callRecorder,
+  });
 
   return {
     nextCall: {
@@ -655,6 +645,7 @@ export function lowerForImpl(input: {
         input.iteratorMetadata ??
         resolveIteratorLoweringMetadataFromProofMetadata({
           context: input.context,
+          callRecorder: input.callRecorder,
         });
       if (iteratorMetadata === undefined) {
         return loweringError([

@@ -8,6 +8,7 @@ import {
   productionPackagePipelineDependencies,
   runUefiAArch64PackagePipelineToOptIr,
   type UefiAArch64StageRecord,
+  type UefiAArch64PackageOptIrPipelineOutput,
   type UefiAArch64PackagePipelineDependencies,
 } from "./package-pipeline";
 import { runUefiAArch64BinarySpine, type UefiAArch64BinarySpineOutput } from "./binary-spine";
@@ -44,18 +45,66 @@ export type CompileUefiAArch64ImageResult =
       readonly verification: UefiAArch64TargetVerificationSummary;
     };
 
+export interface CompileUefiAArch64ImageTrace {
+  readonly target: UefiAArch64TargetDriverSurface;
+  readonly packagePipeline: UefiAArch64PackageOptIrPipelineOutput;
+  readonly binarySpine: UefiAArch64BinarySpineOutput;
+}
+
+export type CompileUefiAArch64ImageWithTraceResult =
+  | {
+      readonly kind: "ok";
+      readonly artifact: UefiAArch64ImageArtifact;
+      readonly diagnostics: readonly UefiAArch64TargetDiagnostic[];
+      readonly verification: UefiAArch64TargetVerificationSummary;
+      readonly trace: CompileUefiAArch64ImageTrace;
+    }
+  | {
+      readonly kind: "error";
+      readonly diagnostics: readonly UefiAArch64TargetDiagnostic[];
+      readonly verification: UefiAArch64TargetVerificationSummary;
+      readonly partialTrace: Partial<CompileUefiAArch64ImageTrace>;
+    };
+
 export function compileUefiAArch64Image(
   input: CompileUefiAArch64ImageInput,
 ): CompileUefiAArch64ImageResult {
+  const result = compileUefiAArch64ImageInternal(input);
+  if (result.kind === "ok") {
+    return Object.freeze({
+      kind: "ok" as const,
+      artifact: result.artifact,
+      diagnostics: result.diagnostics,
+      verification: result.verification,
+    });
+  }
+  return Object.freeze({
+    kind: "error" as const,
+    diagnostics: result.diagnostics,
+    verification: result.verification,
+  });
+}
+
+export function compileUefiAArch64ImageWithTrace(
+  input: CompileUefiAArch64ImageInput,
+): CompileUefiAArch64ImageWithTraceResult {
+  return compileUefiAArch64ImageInternal(input);
+}
+
+function compileUefiAArch64ImageInternal(
+  input: CompileUefiAArch64ImageInput,
+): CompileUefiAArch64ImageWithTraceResult {
   const recorder = createCompileVerificationRecorder();
+  const partialTrace: MutableCompileUefiAArch64ImageTrace = {};
   const target = authenticateUefiAArch64TargetDriverSurface(
     input.target ?? canonicalUefiAArch64TargetDriverSurfaceInput(),
   );
   if (target.kind === "error") {
     recorder.failed("target-driver-authenticate");
-    return compileError(target.diagnostics, recorder.summary());
+    return compileError(target.diagnostics, recorder.summary(), partialTrace);
   }
   recorder.passed("target-driver-authenticate");
+  partialTrace.target = target.value;
 
   const packagePipeline = runUefiAArch64PackagePipelineToOptIr(
     {
@@ -66,9 +115,10 @@ export function compileUefiAArch64Image(
   );
   if (packagePipeline.kind === "error") {
     recorder.recordNestedFailure(packagePipeline.verification, "package-pipeline");
-    return compileError(packagePipeline.diagnostics, recorder.summary());
+    return compileError(packagePipeline.diagnostics, recorder.summary(), partialTrace);
   }
   recorder.recordStages(packagePipeline.value.stages);
+  partialTrace.packagePipeline = packagePipeline.value;
 
   const binarySpine = runUefiAArch64BinarySpine({
     target: target.value,
@@ -77,9 +127,10 @@ export function compileUefiAArch64Image(
   });
   if (binarySpine.kind === "error") {
     recorder.recordNestedFailure(binarySpine.verification, "binary-spine");
-    return compileError(binarySpine.diagnostics, recorder.summary());
+    return compileError(binarySpine.diagnostics, recorder.summary(), partialTrace);
   }
   recorder.recordStages(binarySpine.value.stages);
+  partialTrace.binarySpine = binarySpine.value;
 
   const artifact = createUefiAArch64ImageArtifact({
     target: target.value,
@@ -91,18 +142,28 @@ export function compileUefiAArch64Image(
     const sinkResult = writeUefiAArch64ArtifactSink(input.output, artifact);
     if (sinkResult.kind === "error") {
       recorder.failed("artifact-sink");
-      return compileError(sinkResult.diagnostics, recorder.summary());
+      return compileError(sinkResult.diagnostics, recorder.summary(), partialTrace);
     }
     recorder.passed("artifact-sink");
   }
 
-  return Object.freeze({
+  const result = Object.freeze({
     kind: "ok" as const,
     artifact,
     diagnostics: Object.freeze([]),
     verification: recorder.summary(),
+    trace: Object.freeze({
+      target: partialTrace.target,
+      packagePipeline: partialTrace.packagePipeline,
+      binarySpine: partialTrace.binarySpine,
+    }) as CompileUefiAArch64ImageTrace,
   });
+  return result;
 }
+
+type MutableCompileUefiAArch64ImageTrace = {
+  -readonly [Key in keyof CompileUefiAArch64ImageTrace]?: CompileUefiAArch64ImageTrace[Key];
+};
 
 export function createUefiAArch64TargetMetadata(input: {
   readonly target: UefiAArch64TargetDriverSurface;
@@ -213,11 +274,13 @@ function artifactSinkDiagnostics(
 function compileError(
   diagnostics: readonly UefiAArch64TargetDiagnostic[],
   verification: UefiAArch64TargetVerificationSummary,
-): CompileUefiAArch64ImageResult {
+  partialTrace: Partial<CompileUefiAArch64ImageTrace>,
+): CompileUefiAArch64ImageWithTraceResult {
   return Object.freeze({
     kind: "error" as const,
     diagnostics: sortUefiAArch64TargetDiagnostics(diagnostics),
     verification,
+    partialTrace: Object.freeze({ ...partialTrace }),
   });
 }
 

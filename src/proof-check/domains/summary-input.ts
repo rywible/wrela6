@@ -1,4 +1,5 @@
 import type { MonoInstanceId } from "../../mono/ids";
+import type { ProofMirFunction } from "../../proof-mir/model/graph";
 import type { ProofMirProgram } from "../../proof-mir/model/program";
 import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
 import type { ProofCheckRegistryAccumulator } from "../kernel/registry/registry-effects";
@@ -218,6 +219,96 @@ function placeEffectsFromRegistry(input: {
   );
 }
 
+function isExportablePlaceEffect(
+  functionGraph: ProofMirFunction | undefined,
+  effect: CheckedFunctionSummaryPlaceEffectInput,
+): boolean {
+  if (effect.kind === "returns") {
+    return true;
+  }
+  const binder = proofCheckPlaceBinderFromKey(effect.placeKey);
+  if (binder === undefined) {
+    return false;
+  }
+  if (
+    (binder.kind === "parameter" || binder.kind === "argument") &&
+    parameterResourceKind(functionGraph, binder.index) === "Copy"
+  ) {
+    return false;
+  }
+  switch (binder.kind) {
+    case "receiver":
+    case "parameter":
+    case "argument":
+    case "result":
+      return true;
+    case "proofMirPlace": {
+      const place = functionGraph?.places.get(binder.placeId);
+      return place?.root.kind === "receiver" || place?.root.kind === "parameter";
+    }
+    case "subject":
+    case "synthetic":
+      return false;
+    default: {
+      const unreachable: never = binder;
+      return unreachable;
+    }
+  }
+}
+
+function parameterResourceKind(
+  functionGraph: ProofMirFunction | undefined,
+  index: number,
+): string | undefined {
+  return functionGraph?.signature.parameters[index]?.resourceKind;
+}
+
+function filterExportablePlaceEffects(
+  functionGraph: ProofMirFunction | undefined,
+  effects: ProofCheckSummaryPlaceEffectAccumulator,
+): ProofCheckSummaryPlaceEffectAccumulator {
+  return {
+    observed: effects.observed.filter((effect) => isExportablePlaceEffect(functionGraph, effect)),
+    consumed: effects.consumed.filter((effect) => isExportablePlaceEffect(functionGraph, effect)),
+    mutated: effects.mutated.filter((effect) => isExportablePlaceEffect(functionGraph, effect)),
+    produced: effects.produced.filter((effect) => isExportablePlaceEffect(functionGraph, effect)),
+  };
+}
+
+function internalReadRequirementTermKeys(input: {
+  readonly mir: ProofMirProgram;
+  readonly functionGraph: ProofMirFunction | undefined;
+}): ReadonlySet<string> {
+  if (input.functionGraph === undefined) {
+    return new Set();
+  }
+
+  const termKeys = new Set<string>();
+  for (const block of input.functionGraph.blocks.entries()) {
+    for (const statement of block.statements) {
+      if (statement.kind.kind !== "readValidatedBufferField") {
+        continue;
+      }
+      for (const factId of statement.kind.read.readRequires) {
+        const fact = input.mir.facts.get(factId);
+        if (fact === undefined) {
+          continue;
+        }
+        const term = requirementTermFromProofMirFact({
+          mir: input.mir,
+          functionGraph: input.functionGraph,
+          fact,
+        });
+        if (term === undefined) {
+          continue;
+        }
+        termKeys.add(normalizeProofCheckTerm(term, "sourceRequirement").key);
+      }
+    }
+  }
+  return termKeys;
+}
+
 function derivePlaceEffectsFromExitStates(input: {
   readonly entryState: ProofCheckState;
   readonly exitStates: readonly ProofCheckState[];
@@ -266,28 +357,43 @@ export function buildCheckedFunctionSummaryInputFromMir(input: {
     functionInstanceId: input.functionInstanceId,
   });
   const normalReturnExitStates = input.exitStates;
+  const functionGraph = input.mir.functions.get(input.functionInstanceId);
+  const internalReadRequirementKeys = internalReadRequirementTermKeys({
+    mir: input.mir,
+    functionGraph,
+  });
   const returnFactCandidates = returnFactCandidatesForFunction({
     mir: input.mir,
     functionInstanceId: input.functionInstanceId,
     exitStates: normalReturnExitStates,
   });
 
-  const registryEffects =
+  const registryEffects = filterExportablePlaceEffects(
+    functionGraph,
     input.registryArtifacts !== undefined || input.registryAccumulator !== undefined
       ? placeEffectsFromRegistry({
           registryAccumulator: input.registryAccumulator,
           registryArtifacts: input.registryArtifacts,
           functionInstanceId: input.functionInstanceId,
         })
-      : emptySummaryPlaceEffectAccumulator();
-  const derivedEffects = derivePlaceEffectsFromExitStates({
-    entryState: input.entryState,
-    exitStates: normalReturnExitStates,
-  });
+      : emptySummaryPlaceEffectAccumulator(),
+  );
+  const derivedEffects = filterExportablePlaceEffects(
+    functionGraph,
+    derivePlaceEffectsFromExitStates({
+      entryState: input.entryState,
+      exitStates: normalReturnExitStates,
+    }),
+  );
 
   return {
     functionInstanceId: input.functionInstanceId,
-    declaredRequirements: declaredRequirementsResult.requirements,
+    declaredRequirements: declaredRequirementsResult.requirements.filter(
+      (requirement) =>
+        !internalReadRequirementKeys.has(
+          normalizeProofCheckTerm(requirement, "sourceRequirement").key,
+        ),
+    ),
     diagnostics: declaredRequirementsResult.diagnostics,
     normalReturnExitStates,
     returnFactCandidates,

@@ -179,6 +179,34 @@ export function optIrProgramWithBlockArgumentMismatchForTest() {
   });
 }
 
+export function optIrProgramWithEntryParameterEdgeForTest() {
+  const entryParameter = optIrBlockParameter({
+    valueId: optIrValueId(1),
+    type: U32,
+    incomingRole: "entry",
+    originId: optIrOriginId(1),
+  });
+  const entry = blockForTest({
+    blockId: optIrBlockId(1),
+    parameters: [entryParameter],
+  });
+  const edge = edgeForTest({
+    edgeId: optIrEdgeId(1),
+    from: entry.blockId,
+    toBlock: entry.blockId,
+    arguments: [],
+  });
+  const func = functionForTest({
+    blocks: [entry],
+    edges: optIrCfgEdgeTable([edge]),
+    entryBlock: entry.blockId,
+  });
+  return optIrVerifierInputForTest({
+    program: programForFunctionForTest(func),
+    operations: [],
+  });
+}
+
 export function optIrProgramWithDominanceViolationForTest() {
   const useBeforeDefinition = optIrIntegerBinaryOperation({
     operationId: optIrOperationId(1),

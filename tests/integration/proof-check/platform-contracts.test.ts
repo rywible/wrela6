@@ -74,6 +74,18 @@ describe("platform contracts integration", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.resolution.authorityKey).toBe("platform:send");
+    const preconditionEntry = result.packetEntries.find(
+      (entry) =>
+        entry.kind === checkedFactKindId("extension") &&
+        "extensionKey" in entry &&
+        entry.extensionKey === "platform-call-precondition",
+    );
+    expect(preconditionEntry).toBeDefined();
+    if (preconditionEntry === undefined || !("payload" in preconditionEntry)) return;
+    expect(preconditionEntry.payload).toMatchObject({
+      primitiveId: "send",
+      authorityKey: "platform:send",
+    });
   });
 
   test("rejected platform call reports missing catalog precondition deterministically", () => {

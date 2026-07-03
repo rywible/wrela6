@@ -175,11 +175,7 @@ function subjectForImportKind(kind: CheckedPacketFactKind): CheckedFactSubject {
     case "terminalClosure":
       return { kind: "terminal", terminalKey: checkedTerminalClosureKey("terminal:fixture") };
     case "exitClosure":
-      return {
-        kind: "edge",
-        functionInstanceId: monoInstanceId("fixture::main"),
-        edgeId: proofMirControlEdgeId(1),
-      };
+      return { kind: "place", placeId: proofMirPlaceId(1) };
     case "layoutAbi":
       return { kind: "layout", layoutKey: layoutFactKey("layout:fixture") };
     case "origin":
@@ -247,7 +243,7 @@ function dependenciesForImportKind(kind: CheckedPacketFactKind): readonly Checke
     case "terminalClosure":
       return [{ kind: "semanticsCertificate", certificateId: proofSemanticsCertificateId(1) }];
     case "exitClosure":
-      return [core, { kind: "proofMirEdge", edgeId: proofMirControlEdgeId(1) }];
+      return [];
     case "layoutAbi":
       return [{ kind: "layoutFact", layoutKey: layoutFactKey("layout:fixture") }];
     case "origin":

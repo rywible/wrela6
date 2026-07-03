@@ -213,7 +213,7 @@ export function lowerAArch64RegionsStageState(state: AArch64LoweringState): AArc
     subjectKey: "program",
     patternId: "region.validated-payload-zero-copy",
     tier: "planning",
-    factsUsed: regionRecords.flatMap((record) => record.factsUsed),
+    factsUsed: [],
     emittedOpcodes: regionRecords.flatMap((record) => record.emittedOpcodes),
     explanation:
       regionRecords.length === 0

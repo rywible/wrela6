@@ -56,9 +56,12 @@ export function lowerAArch64MemoryOrderStageState(
     subjectKey: "program",
     patternId: "memory-order.public-materialized",
     tier: "planning",
-    factsUsed: state.facts.records
-      .filter((record) => record.extensionKey === "memory-order")
-      .map((record) => Number(record.factId)),
+    factsUsed:
+      emittedOpcodes.length === 0
+        ? []
+        : state.facts.records
+            .filter((record) => record.extensionKey === "memory-order")
+            .map((record) => Number(record.factId)),
     emittedOpcodes,
     explanation:
       emittedOpcodes.length === 0

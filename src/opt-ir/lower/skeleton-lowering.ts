@@ -169,6 +169,7 @@ export function lowerCheckedMirSkeletonForTest(
     origins: new Map(originEntries.map((origin) => [origin.originId, origin])),
     regions: [],
     operations: [],
+    generatedFacts: [],
     valueIdsByKey: new Map(blockArguments.valueEntries()),
     executableValueIds: blockArguments.executableValueIds(),
     proofOnlyValueIds: blockArguments.proofOnlyValueIds(),

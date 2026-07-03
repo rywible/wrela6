@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { emptyOptIrFactSet } from "../../../../src/opt-ir/facts/fact-index";
 import {
   compileUefiAArch64Image,
+  compileUefiAArch64ImageWithTrace,
+  type PackageOptimizedOptIrAdapter,
   type UefiAArch64ImageArtifact,
 } from "../../../../src/target/uefi-aarch64";
 import { optimizedOptIrProgramWithEntryParameterForAArch64Test } from "../../../support/target/aarch64/selection/optimized-opt-ir-fixtures";
@@ -43,6 +45,47 @@ describe("compileUefiAArch64Image", () => {
       ...packagePipelineRunKeys,
       ...binarySpineRunKeys,
     ]);
+  });
+
+  test("trace API compiles the same package with the same public result and completed phase outputs", () => {
+    const packageInput = uefiCompilePackageInputFixture("success");
+    expect(packageInput.kind).toBe("ok");
+    if (packageInput.kind !== "ok") return;
+
+    const input = {
+      packageInput: packageInput.value,
+      target: uefiTargetSurfaceFixture(),
+      artifactName: "trace.efi",
+      smoke: { kind: "disabled" as const },
+      packagePipelineDependencies: uefiAArch64PackagePipelineDependenciesForOptimizedFixture(),
+    };
+
+    const legacy = compileUefiAArch64Image(input);
+    const traced = compileUefiAArch64ImageWithTrace(input);
+
+    expect(legacy.kind).toBe("ok");
+    expect(traced.kind).toBe("ok");
+    if (legacy.kind !== "ok" || traced.kind !== "ok") return;
+
+    expect(traced.artifact.peCoffArtifact.bytes).toEqual(legacy.artifact.peCoffArtifact.bytes);
+    expect(traced.artifact.targetMetadata).toEqual(legacy.artifact.targetMetadata);
+    expect(traced.artifact.artifactName).toBe(legacy.artifact.artifactName);
+    expect(traced.diagnostics).toEqual(legacy.diagnostics);
+    expect(traced.verification.runs.map((run) => run.runKey)).toEqual(
+      legacy.verification.runs.map((run) => run.runKey),
+    );
+    expect(traced.trace.target.targetDriverFingerprint).toBe(
+      traced.artifact.targetMetadata.targetDriverFingerprint,
+    );
+    expect(traced.trace.target.semanticPlatformCatalogFingerprint).toBe(
+      traced.artifact.targetMetadata.semanticPlatformCatalogFingerprint,
+    );
+    expect(traced.trace.packagePipeline.stages.map((stage) => String(stage.stageKey))).toEqual(
+      packagePipelineRunKeys,
+    );
+    expect(traced.trace.binarySpine.stages.map((stage) => String(stage.stageKey))).toEqual(
+      binarySpineRunKeys,
+    );
   });
 
   test("fails before package pipeline stages when target authentication fails", () => {
@@ -121,10 +164,13 @@ describe("compileUefiAArch64Image", () => {
       ...uefiAArch64PackagePipelineDependenciesForOptimizedFixture(),
       buildOptimizedOptIr: () => ({
         kind: "ok" as const,
-        value: Object.freeze({
+        value: unsafePackagePipelineAdapter<PackageOptimizedOptIrAdapter>({
           program: optIrFixture.program,
           operations: Object.freeze([...optIrFixture.operations]),
+          unoptimizedOperations: Object.freeze([...optIrFixture.operations]),
           facts: emptyOptIrFactSet(),
+          staticChar16Strings: Object.freeze([]),
+          staticChar16Pointers: Object.freeze([]),
         }),
         diagnostics: [],
       }),
@@ -153,6 +199,83 @@ describe("compileUefiAArch64Image", () => {
       runKey: "aarch64-lowering",
       status: "failed",
     });
+  });
+
+  test("trace API returns partial trace only for completed phases when later phases fail", () => {
+    const packageInput = uefiCompilePackageInputFixture("success");
+    expect(packageInput.kind).toBe("ok");
+    if (packageInput.kind !== "ok") return;
+
+    const targetFailure = compileUefiAArch64ImageWithTrace({
+      packageInput: packageInput.value,
+      target: { ...uefiTargetSurfaceFixture(), targetKey: "wrong" as never },
+      smoke: { kind: "disabled" },
+      packagePipelineDependencies: uefiAArch64PackagePipelineDependenciesForOptimizedFixture(),
+    });
+    expect(targetFailure.kind).toBe("error");
+    if (targetFailure.kind !== "error") return;
+    expect(targetFailure.partialTrace).toEqual({});
+
+    const packagePipelineDependencies = {
+      ...uefiAArch64PackagePipelineDependenciesForOptimizedFixture(),
+      buildOptimizedOptIr: () => ({
+        kind: "error" as const,
+        diagnostics: [
+          {
+            code: "UEFI_AARCH64_PIPELINE_FAILED" as const,
+            ownerKey: "fake-opt-ir",
+            stableDetail: "fake-opt-ir:failed",
+          },
+        ],
+      }),
+    };
+
+    const pipelineFailure = compileUefiAArch64ImageWithTrace({
+      packageInput: packageInput.value,
+      target: uefiTargetSurfaceFixture(),
+      smoke: { kind: "disabled" },
+      packagePipelineDependencies,
+    });
+    expect(pipelineFailure.kind).toBe("error");
+    if (pipelineFailure.kind !== "error") return;
+    expect(pipelineFailure.partialTrace.target?.targetKey).toBe(
+      uefiTargetSurfaceFixture().targetKey,
+    );
+    expect(pipelineFailure.partialTrace.packagePipeline).toBeUndefined();
+    expect(pipelineFailure.partialTrace.binarySpine).toBeUndefined();
+
+    const sinkFailure = compileUefiAArch64ImageWithTrace({
+      packageInput: packageInput.value,
+      target: uefiTargetSurfaceFixture(),
+      artifactName: "sink-trace.efi",
+      smoke: { kind: "disabled" },
+      packagePipelineDependencies: uefiAArch64PackagePipelineDependenciesForOptimizedFixture(),
+      output: {
+        writeArtifact: () => ({
+          kind: "error" as const,
+          diagnostics: [
+            {
+              code: "UEFI_AARCH64_PIPELINE_FAILED" as const,
+              ownerKey: "fake-sink",
+              stableDetail: "fake-sink:write-failed",
+            },
+          ],
+          verification: { runs: [] },
+        }),
+      },
+    });
+    expect(sinkFailure.kind).toBe("error");
+    if (sinkFailure.kind !== "error") return;
+    expect(sinkFailure.partialTrace.target?.targetKey).toBe(uefiTargetSurfaceFixture().targetKey);
+    expect(
+      sinkFailure.partialTrace.packagePipeline?.stages.map((stage) => String(stage.stageKey)),
+    ).toEqual(packagePipelineRunKeys);
+    expect(
+      sinkFailure.partialTrace.binarySpine?.stages.map((stage) => String(stage.stageKey)),
+    ).toEqual(binarySpineRunKeys);
+    expect(sinkFailure.partialTrace.binarySpine?.peCoffArtifact.artifactName).toBe(
+      "sink-trace.efi",
+    );
   });
 
   test("returns artifact sink errors without throwing", () => {
@@ -217,8 +340,13 @@ const binarySpineRunKeys = [
   "aarch64-lowering",
   "aarch64-backend",
   "static-char16-objects",
+  "validation-fixture-objects",
   "runtime-helper-objects",
   "synthetic-entry-object",
   "linker",
   "pe-coff-writer",
 ];
+
+function unsafePackagePipelineAdapter<Adapter>(value: unknown): Adapter {
+  return Object.freeze(value as object) as Adapter;
+}

@@ -155,6 +155,19 @@ test("object literal lowers checked fields by FieldId", () => {
   expect(expression.kind.fields[0]).toMatchObject({ name: "value", fieldId });
 });
 
+test("object literal accepts applied source expected type", () => {
+  const context = createHirUnitContext("class Box[T]:\nfn make() -> Box[u32]:\n    {}\n");
+  const boxType = context.program.functions.entries()[0]!.returnType;
+  const expression = lowerExpression({
+    view: firstObjectLiteralView(context),
+    expectedType: boxType,
+    context,
+  });
+
+  expect(expression.kind.kind).toBe("object");
+  expect(context.diagnostics.entries()).toEqual([]);
+});
+
 test("object literal emits HIR_OBJECT_FIELD_TYPE_MISMATCH for checked field mismatches", () => {
   const context = createHirUnitContext(
     "class Packet:\n    value: u32\nfn make() -> Packet:\n    { value: true }\n",
@@ -175,10 +188,9 @@ test("member access does not fall back to ordinary name references", () => {
   const context = createHirUnitContext(
     "class Packet:\n    value: u32\nfn process(packet: Packet) -> u32:\n    return packet.value\n",
   );
-  const packetType = context.program.types.entries()[0]!.type;
   context.locals.addSourceLocal({
     name: "packet",
-    type: packetType,
+    type: coreCheckedType(coreTypeId("u32")),
     resourceKind: concreteKind("Copy"),
     sourceOrigin: hirOriginId(0),
     introducedBy: "sourceLet",
@@ -208,5 +220,82 @@ test("member access does not fall back to ordinary name references", () => {
   expect(expression.kind).toEqual({ kind: "error", reason: "missing-member:value" });
   expect(context.diagnostics.entries().map((diagnostic) => String(diagnostic.code))).toContain(
     "HIR_MEMBER_REFERENCE_MISSING",
+  );
+});
+
+test("member access on local source type resolves checked field without completed member", () => {
+  const context = createHirUnitContext(
+    "class Packet:\n    value: u32\nfn process(packet: Packet) -> u32:\n    return packet.value\n",
+  );
+  const packetType = context.program.types.entries()[0]!.type;
+  context.locals.addSourceLocal({
+    name: "packet",
+    type: packetType,
+    resourceKind: concreteKind("Copy"),
+    sourceOrigin: hirOriginId(0),
+    introducedBy: "validationArm",
+  });
+  const field = context.program.fields.entries()[0]!;
+  const originalLookup = context.referenceLookup;
+  Object.assign(context, {
+    referenceLookup: {
+      ...originalLookup,
+      completedMemberForSpan: () => undefined,
+    },
+  });
+
+  const expression = lowerExpression({
+    view: firstMemberAccessView(context),
+    context,
+  });
+
+  expect(expression.kind).toMatchObject({ kind: "member", fieldId: field.fieldId });
+  expect(context.diagnostics.entries()).toEqual([]);
+});
+
+test("enum case member lowers without requiring enum type as value receiver", () => {
+  const context = createHirUnitContext(
+    "enum UefiStatus:\n    success\n    bad_buffer_size\nfn process() -> UefiStatus:\n    return UefiStatus.bad_buffer_size\n",
+  );
+  const expression = lowerExpression({
+    view: firstMemberAccessView(context),
+    expectedType: context.program.types.entries()[0]!.type,
+    context,
+  });
+
+  expect(expression.kind).toEqual({
+    kind: "literal",
+    literal: { kind: "integer", text: "1", value: 1n },
+  });
+  expect(context.diagnostics.entries()).toEqual([]);
+});
+
+test("enum case member lowering reports broken ordinal metadata instead of defaulting to zero", () => {
+  const context = createHirUnitContext(
+    "enum UefiStatus:\n    success\n    bad_buffer_size\nfn process() -> UefiStatus:\n    return UefiStatus.bad_buffer_size\n",
+  );
+  const originalIndex = context.index;
+  const indexWithoutReferencedCase = Object.create(originalIndex) as typeof originalIndex;
+  Object.assign(indexWithoutReferencedCase, {
+    items: () =>
+      originalIndex
+        .items()
+        .filter(
+          (candidate) => !(candidate.kind === "enumCase" && candidate.name === "bad_buffer_size"),
+        ),
+  });
+  Object.assign(context, {
+    index: indexWithoutReferencedCase,
+  });
+
+  const expression = lowerExpression({
+    view: firstMemberAccessView(context),
+    expectedType: context.program.types.entries()[0]!.type,
+    context,
+  });
+
+  expect(expression.kind.kind).toBe("error");
+  expect(context.diagnostics.entries().map((diagnostic) => String(diagnostic.code))).toContain(
+    "HIR_MEMBER_REFERENCE_MISMATCH",
   );
 });

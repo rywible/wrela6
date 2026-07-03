@@ -14,6 +14,7 @@ import type { HirLayoutExpression } from "./hir";
 import type { HirLoweringContext } from "./lowering-context";
 import { currentHirModuleId, hirDiagnostic } from "./lowering-context";
 import type { HirOriginId } from "./ids";
+import { hirEnumCaseOrdinal } from "./enum-case-model";
 
 export type LayoutFieldKind = "parameter" | "layout" | "derived";
 
@@ -142,6 +143,73 @@ function lowerMemberAccess(
   const sourceOrigin = originForLayoutExpression(view.node, input.context);
   const receiver = view.receiver();
   const memberName = view.memberName();
+  const memberSpan =
+    presentTokenSpan(view.memberToken()) ?? view.memberToken()?.span ?? view.node.span;
+  const enumCaseReference =
+    input.context.referenceLookup.referenceForSpan({
+      moduleId: currentHirModuleId(input.context),
+      span: memberSpan,
+      kind: "enumCase",
+    }) ??
+    input.context.referenceLookup.referenceForSpan({
+      moduleId: currentHirModuleId(input.context),
+      span: memberSpan,
+      kind: "memberName",
+    });
+  const referencedCaseItem =
+    enumCaseReference?.kind === "item"
+      ? input.context.index.item(enumCaseReference.itemId)
+      : undefined;
+  const localEnumCaseItem =
+    referencedCaseItem ??
+    (receiver instanceof NameExpressionView && memberName !== undefined
+      ? (() => {
+          const ownerItem = input.context.index.item(input.fieldContext.ownerItemId);
+          const enumItem = input.context.index
+            .itemsInModule(ownerItem?.moduleId ?? currentHirModuleId(input.context))
+            .find(
+              (candidate) =>
+                candidate.kind === "enum" &&
+                candidate.parentItemId === undefined &&
+                candidate.name === receiver.nameText(),
+            );
+          if (enumItem === undefined) return undefined;
+          return input.context.index
+            .items()
+            .find(
+              (candidate) =>
+                candidate.kind === "enumCase" &&
+                candidate.parentItemId === enumItem.id &&
+                candidate.name === memberName,
+            );
+        })()
+      : undefined);
+  if (localEnumCaseItem !== undefined) {
+    const ordinalResult = hirEnumCaseOrdinal({
+      index: input.context.index,
+      caseItemId: localEnumCaseItem.id,
+    });
+    if (ordinalResult.kind === "ok") {
+      const ordinal = ordinalResult.record.ordinal;
+      return {
+        kind: "ok",
+        expression: {
+          kind: "integerLiteral",
+          value: BigInt(ordinal),
+          sourceOrigin,
+        },
+      };
+    }
+    if (ordinalResult.kind === "broken") {
+      reportUnsupportedLayoutExpression({
+        context: input.context,
+        sourceOrigin,
+        ownerKey: input.ownerKey,
+        stableDetail: ordinalResult.stableDetail,
+      });
+      return { kind: "error" };
+    }
+  }
   if (
     receiver instanceof NameExpressionView &&
     receiver.nameText() === "source" &&

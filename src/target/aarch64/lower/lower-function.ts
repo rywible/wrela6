@@ -19,6 +19,7 @@ import {
   aarch64MachineInstruction,
   type AArch64MachineInstruction,
 } from "../machine-ir/machine-instruction";
+import { aarch64AbiBinding, type AArch64AbiBinding } from "../machine-ir/abi-location";
 import { aarch64MachineBlock } from "../machine-ir/machine-block";
 import {
   aarch64MachineFunction,
@@ -37,6 +38,11 @@ import {
   classifyAArch64AbiSignature,
   classifyAArch64CallClobbers,
 } from "./abi-lowering";
+import {
+  AARCH64_FIRMWARE_CONTEXT_VALUE_KEYS,
+  AARCH64_FIRMWARE_IMAGE_HANDLE_VALUE_KEY,
+  AARCH64_FIRMWARE_SYSTEM_TABLE_VALUE_KEY,
+} from "./firmware-platform-call-contract";
 import { lowerAArch64BlockShell } from "./lower-block";
 import {
   machineTypeForOptIrType,
@@ -112,7 +118,27 @@ export function lowerAArch64FunctionShell(input: {
   const entryBlock = input.sourceFunction.blocks.find(
     (block) => block.blockId === input.sourceFunction.entryBlock,
   );
-  const parameterAbiOffset = input.sourceFunction.externalRoot?.reason === "imageEntry" ? 2 : 0;
+  const firmwareContextParameters = firmwareContextParametersForFunction(
+    input.abi,
+    materializationContext,
+  );
+  if (firmwareContextParameters.kind === "error") {
+    return {
+      kind: "error",
+      diagnostics: [
+        loweringDiagnostic({
+          sourceFunction: input.sourceFunction,
+          operationId: undefined,
+          stableDetail: firmwareContextParameters.stableDetail,
+        }),
+      ],
+    };
+  }
+  const parameterAbiOffset =
+    input.sourceFunction.externalRoot?.reason === "imageEntry" ||
+    firmwareContextParameters.parameters.length > 0
+      ? AARCH64_FIRMWARE_CONTEXT_VALUE_KEYS.length
+      : 0;
   const parameterRegisterClasses =
     entryBlock?.parameters.map(
       (parameter) => registerTable.valueRegisters.get(parameter.valueId)?.registerClass ?? "gpr64",
@@ -142,9 +168,13 @@ export function lowerAArch64FunctionShell(input: {
     entryBlock?.parameters.map((parameter, index) =>
       bindAArch64ParameterLocation({
         value: parameter.valueId,
-        location: parameterLocations[index] ?? { kind: "intReg", index },
+        location: parameterLocations[index] ?? {
+          kind: "intReg",
+          index: index + parameterAbiOffset,
+        },
       }),
     ) ?? [];
+  const allParameters = [...firmwareContextParameters.parameters, ...parameters];
   const returns = returnLocationsForFunction(
     input.sourceFunction,
     registerTable.valueRegisters,
@@ -164,7 +194,7 @@ export function lowerAArch64FunctionShell(input: {
   }
   const frameObjects = frameObjectsForAbi({
     abi: input.abi,
-    parameters,
+    parameters: allParameters,
     sourceFunction: input.sourceFunction,
     operations: input.operations,
     valueRegisters: registerTable.valueRegisters,
@@ -232,7 +262,7 @@ export function lowerAArch64FunctionShell(input: {
       functionId: aarch64MachineFunctionId(Number(input.sourceFunction.functionId)),
       symbol: symbolForOptIrFunction(input.sourceFunction),
       virtualRegisters: dedupeVirtualRegisters(materializedRegisters),
-      parameters,
+      parameters: allParameters,
       returns: returns.locations,
       frameObjects: frameObjects.frameObjects,
       callClobbers: frameObjects.callClobbers,
@@ -258,6 +288,47 @@ function materializationContextForFunction(
             ...context.firmware,
             contextRegisters: new Map(),
           },
+  };
+}
+
+function firmwareContextParametersForFunction(
+  abi: AArch64AbiTargetSurface,
+  context: AArch64OperationMaterializationContext | undefined,
+):
+  | { readonly kind: "ok"; readonly parameters: readonly AArch64AbiBinding[] }
+  | { readonly kind: "error"; readonly stableDetail: string } {
+  if (context?.firmware === undefined) {
+    return { kind: "ok", parameters: [] };
+  }
+  const classified = classifyAArch64AbiSignature({
+    abi,
+    role: "parameters",
+    registerClasses: ["gpr64", "gpr64"],
+    valueKeys: [AARCH64_FIRMWARE_IMAGE_HANDLE_VALUE_KEY, AARCH64_FIRMWARE_SYSTEM_TABLE_VALUE_KEY],
+  });
+  if (classified.kind === "error") {
+    return classified;
+  }
+  const imageHandleLocation = classified.classification.locations[0];
+  const systemTableLocation = classified.classification.locations[1];
+  if (imageHandleLocation === undefined || systemTableLocation === undefined) {
+    return {
+      kind: "error",
+      stableDetail: "firmware-context-parameters:missing-abi-locations",
+    };
+  }
+  return {
+    kind: "ok",
+    parameters: Object.freeze([
+      aarch64AbiBinding({
+        valueKey: AARCH64_FIRMWARE_IMAGE_HANDLE_VALUE_KEY,
+        location: imageHandleLocation,
+      }),
+      aarch64AbiBinding({
+        valueKey: AARCH64_FIRMWARE_SYSTEM_TABLE_VALUE_KEY,
+        location: systemTableLocation,
+      }),
+    ]),
   };
 }
 
@@ -459,7 +530,12 @@ function frameObjectsForAbi(input: {
   for (const block of input.sourceFunction.blocks) {
     for (const operationId of block.operations) {
       const operation = input.operations.get(operationId);
-      const outgoingSize = outgoingArgAreaSize(operation, input.valueRegisters, input.abi);
+      const outgoingSize = outgoingArgAreaSize(
+        operation,
+        input.valueRegisters,
+        input.abi,
+        input.materializationContext,
+      );
       if (outgoingSize.kind === "error") {
         return outgoingSize;
       }
@@ -652,20 +728,31 @@ function outgoingArgAreaSize(
   operation: OptIrOperation | undefined,
   valueRegisters: ReadonlyMap<OptIrValueId, AArch64VirtualRegister>,
   abi: AArch64AbiTargetSurface,
+  materializationContext: AArch64OperationMaterializationContext | undefined,
 ):
   | { readonly kind: "ok"; readonly size: number }
   | { readonly kind: "error"; readonly stableDetail: string } {
   if (!isCallOperation(operation)) {
     return { kind: "ok", size: 0 };
   }
+  const hiddenContextKeys =
+    operation.kind === "sourceCall" && materializationContext?.firmware !== undefined
+      ? AARCH64_FIRMWARE_CONTEXT_VALUE_KEYS
+      : [];
   const classified = classifyAArch64AbiSignature({
     abi,
     role: "callArguments",
     callId: operation.callId,
-    registerClasses: operation.argumentIds.map(
-      (argumentId) => valueRegisters.get(argumentId)?.registerClass ?? "gpr64",
-    ),
-    valueKeys: operation.argumentIds.map((argumentId) => `optir.value:${String(argumentId)}`),
+    registerClasses: [
+      ...hiddenContextKeys.map(() => "gpr64" as const),
+      ...operation.argumentIds.map(
+        (argumentId) => valueRegisters.get(argumentId)?.registerClass ?? "gpr64",
+      ),
+    ],
+    valueKeys: [
+      ...hiddenContextKeys,
+      ...operation.argumentIds.map((argumentId) => `optir.value:${String(argumentId)}`),
+    ],
   });
   if (classified.kind === "error") {
     return classified;
@@ -887,5 +974,5 @@ function symbolForOptIrFunction(sourceFunction: OptIrFunction) {
   if (sourceFunction.externalRoot?.reason === "imageEntry") {
     return AARCH64_UEFI_BOOT_SYMBOL;
   }
-  return aarch64SymbolId(`optir.function.${String(sourceFunction.functionId)}`);
+  return aarch64SymbolId(`optir.source.${String(sourceFunction.monoInstanceId)}`);
 }

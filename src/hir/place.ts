@@ -68,6 +68,22 @@ function projectionKey(projection: readonly HirPlaceProjection[]): string {
     .join(".");
 }
 
+export function hirResourcePlaceCanonicalKey(input: {
+  readonly owner: HirProofOwner;
+  readonly root: HirPlaceRoot;
+  readonly projection: readonly HirPlaceProjection[];
+  readonly type: CheckedType;
+  readonly resourceKind: CheckedResourceKind;
+}): string {
+  return [
+    ownerKey(input.owner),
+    `root:${rootKey(input.root)}`,
+    `projection:${projectionKey(input.projection)}`,
+    `type:${checkedTypeFingerprint(input.type)}`,
+    `kind:${resourceKindFingerprint(input.resourceKind)}`,
+  ].join("/");
+}
+
 function placeKind(root: HirPlaceRoot): HirResourcePlace["kind"] {
   switch (root.kind) {
     case "receiver":
@@ -134,12 +150,12 @@ export class HirResourcePlaceInterner {
   }
 
   private canonicalKey(input: PlaceForProjectionInput): string {
-    return [
-      ownerKey(this.owner),
-      `root:${rootKey(input.root)}`,
-      `projection:${projectionKey(input.projection)}`,
-      `type:${checkedTypeFingerprint(input.type)}`,
-      `kind:${resourceKindFingerprint(input.resourceKind)}`,
-    ].join("/");
+    return hirResourcePlaceCanonicalKey({
+      owner: this.owner,
+      root: input.root,
+      projection: input.projection,
+      type: input.type,
+      resourceKind: input.resourceKind,
+    });
   }
 }

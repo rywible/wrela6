@@ -1,0 +1,6 @@
+use UefiStatus from wrela_std.target.uefi.status
+use disable_watchdog from wrela_std.target.uefi.watchdog
+
+uefi image WatchdogOrBootPolicyImage:
+    fn boot() -> UefiStatus:
+        disable_watchdog()

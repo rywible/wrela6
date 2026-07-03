@@ -9,6 +9,7 @@ import type {
   ParameterId,
   CoreTypeId,
   PlatformPrimitiveId,
+  TargetTypeId,
 } from "../ids";
 import type { TypeParameterOwner } from "../item-index/item-records";
 import type { NameReferenceKind } from "./diagnostics";
@@ -20,6 +21,14 @@ export type ResolvedReference =
   | { readonly kind: "item"; readonly itemId: ItemId }
   | { readonly kind: "type"; readonly itemId: ItemId; readonly typeId: TypeId }
   | { readonly kind: "builtinType"; readonly coreTypeId: CoreTypeId }
+  | { readonly kind: "targetType"; readonly targetTypeId: TargetTypeId }
+  | {
+      readonly kind: "compilerIntrinsic";
+      readonly sourceName: string;
+      readonly intrinsicKey: string;
+      readonly parameterShape: readonly string[];
+      readonly returnTargetType: string;
+    }
   | { readonly kind: "function"; readonly itemId: ItemId; readonly functionId: FunctionId }
   | { readonly kind: "image"; readonly itemId: ItemId; readonly imageId: ImageId }
   | { readonly kind: "field"; readonly ownerItemId: ItemId; readonly fieldId: FieldId }
@@ -58,4 +67,16 @@ export interface PlatformPrimitiveBinding {
   readonly itemId: ItemId;
   readonly functionId: FunctionId;
   readonly primitiveId: PlatformPrimitiveId;
+}
+
+export interface CompilerIntrinsicNameSpec {
+  readonly sourceName: string;
+  readonly intrinsicKey: string;
+  readonly parameterShape: readonly string[];
+  readonly returnTargetType: string;
+}
+
+export interface CompilerIntrinsicNameCatalog {
+  readonly intrinsics: readonly CompilerIntrinsicNameSpec[];
+  byName(name: string): CompilerIntrinsicNameSpec | undefined;
 }

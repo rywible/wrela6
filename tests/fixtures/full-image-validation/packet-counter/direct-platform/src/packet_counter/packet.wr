@@ -1,0 +1,33 @@
+use UefiStatus from packet_counter.uefi_status
+
+class Validation[Ok, Err, Source]:
+
+enum PacketKind:
+    count
+    ignored
+
+validated buffer CounterPacket:
+    params:
+        max_frame_bytes: usize
+
+    layout:
+        kind_byte: u8 @ 0
+        counter_delta: u8 @ 1
+        payload_first: u8 @ 2
+        payload: u8 @ 3 len counter_delta
+
+    derive:
+        kind: PacketKind from kind_byte:
+            1 => PacketKind.count
+            otherwise => PacketKind.ignored
+
+    require:
+        source.len >= 2 else UefiStatus.bad_buffer_size
+        source.len <= max_frame_bytes else UefiStatus.bad_buffer_size
+        layout.fits else UefiStatus.bad_buffer_size
+
+pub fn validate_counter_packet(
+    source: Ptr,
+    max_frame_bytes: usize,
+) -> Validation[CounterPacket, UefiStatus, Ptr]:
+    return {}

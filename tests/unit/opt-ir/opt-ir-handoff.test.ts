@@ -12,7 +12,6 @@ import {
 } from "../../../src/proof-check/model/certificates";
 import { emptyCheckedFactPacket } from "../../../src/proof-check/model/fact-packet";
 import {
-  checkProofAndResourcesForClosedFixture,
   proofCheckClosedFixture,
   checkProofAndResourcesForTest,
 } from "../../support/proof-check/proof-check-fixtures";
@@ -22,6 +21,8 @@ import {
   checkedOptIrHandoffStableKey as publicCheckedOptIrHandoffStableKey,
   type CheckedOptIrHandoff as PublicCheckedOptIrHandoff,
 } from "../../../src/proof-check";
+import { layoutAuthorityFingerprintForProofCheckInput } from "../../../src/proof-check/validation/input-validator";
+import { proofAuthorityFingerprintsEqual } from "../../../src/shared/proof-authority-types";
 import {
   checkedOptIrHandoffFingerprint,
   checkedOptIrHandoffStableKey,
@@ -271,7 +272,8 @@ describe("CheckedOptIrHandoff", () => {
   });
 
   test("proof-check success returns one checked OptIR handoff authority object", () => {
-    const result = checkProofAndResourcesForClosedFixture();
+    const input = proofCheckClosedFixture();
+    const result = checkProofAndResourcesForTest(input);
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
@@ -291,6 +293,14 @@ describe("CheckedOptIrHandoff", () => {
       result.checked.terminalGraph.certificateId,
     );
     expect(checkedOptIrHandoff.packetValidation.authorityFingerprints.length).toBeGreaterThan(0);
+    expect(
+      checkedOptIrHandoff.packetValidation.authorityFingerprints.some((candidate) =>
+        proofAuthorityFingerprintsEqual(
+          candidate,
+          layoutAuthorityFingerprintForProofCheckInput(input.layout),
+        ),
+      ),
+    ).toBe(true);
     expect(checkedOptIrHandoff.semanticInlinePolicies).toEqual(
       [...result.checked.checkedFunctions.entries()]
         .map(([functionInstanceId, checkedFunction]) => ({

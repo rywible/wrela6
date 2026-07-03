@@ -3,6 +3,7 @@ import { aarch64SecurityMetadata } from "../../../../src/target/aarch64/machine-
 import { shareAArch64AdrpPageBasesForPlanningState } from "../../../../src/target/aarch64/plan/adrp-page-base-cse";
 import {
   aarch64AddImmediateForPlanningTest,
+  aarch64AddPageoffForPlanningTest,
   aarch64AdrpForPlanningTest,
   aarch64CallForPlanningTest,
   aarch64PlanningStateForTest,
@@ -36,6 +37,31 @@ describe("AArch64 ADRP page-base CSE", () => {
           operand.operand.register.vreg === 1,
       ),
     ).toBe(true);
+  });
+
+  test("does not share ADRP producers that feed low12 relocation pairs", () => {
+    const planned = shareAArch64AdrpPageBasesForPlanningState({
+      state: aarch64PlanningStateForTest({
+        instructions: [
+          aarch64AdrpForPlanningTest({ instructionId: 1, output: 1, symbol: "rodata.table" }),
+          aarch64AddPageoffForPlanningTest({
+            instructionId: 2,
+            output: 3,
+            source: 1,
+            symbol: "rodata.table",
+          }),
+          aarch64AdrpForPlanningTest({ instructionId: 3, output: 2, symbol: "rodata.table" }),
+          aarch64AddPageoffForPlanningTest({
+            instructionId: 4,
+            output: 4,
+            source: 2,
+            symbol: "rodata.table",
+          }),
+        ],
+      }),
+    });
+
+    expect(planningOpcodes(planned)).toEqual(["adrp", "add-pageoff", "adrp", "add-pageoff"]);
   });
 
   test("rejects page mismatch, call boundary, section mismatch, and secret page bases", () => {

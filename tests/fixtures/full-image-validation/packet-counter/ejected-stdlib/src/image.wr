@@ -1,0 +1,6 @@
+use run_packet_counter from packet_counter.counter
+use UefiStatus from wrela_std.target.uefi.status
+
+uefi image PacketCounterImage:
+    fn boot() -> UefiStatus:
+        run_packet_counter()

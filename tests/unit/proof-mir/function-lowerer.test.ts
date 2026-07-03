@@ -244,6 +244,46 @@ describe("ProofMirFunctionLowerer", () => {
     expect(returnDispatched).toBe(true);
   });
 
+  test("lowers the final expression in a value-returning body as an implicit return", () => {
+    let statementDispatched = false;
+    let returnedExpressionKind: string | undefined;
+    const functionInstance = functionInstanceForTest({
+      functionInstanceId: monoInstanceId("fn:implicit-return"),
+      parameters: [{ name: "value", type: "u8" }],
+      bodyLines: ["value"],
+    });
+    const valueReturningFunction: MonoFunctionInstance = {
+      ...functionInstance,
+      signature: {
+        ...functionInstance.signature,
+        returnType: { kind: "core", coreTypeId: "u8" } as never,
+        returnKind: "Copy",
+      },
+    };
+    const fixture = fixtureForFunctionInstance(valueReturningFunction, {
+      statement: {
+        lowerStatement: () => {
+          statementDispatched = true;
+          return { kind: "ok", value: undefined };
+        },
+      },
+      terminal: {
+        lowerReturn: (input) => {
+          returnedExpressionKind = input.expression?.kind.kind;
+          return { kind: "ok", value: undefined };
+        },
+        lowerPanic: () => ({ kind: "ok", value: undefined }),
+        lowerReachableMonoError: () => ({ kind: "ok", value: undefined }),
+      },
+    });
+    const lowered = lowerFunctionInstance(fixture, valueReturningFunction);
+
+    expect(lowered.kind).toBe("ok");
+    if (lowered.kind !== "ok") return;
+    expect(statementDispatched).toBe(false);
+    expect(returnedExpressionKind).toBe("name");
+  });
+
   test("failed body statement abandons the function draft", () => {
     const functionInstance = functionInstanceForTest({
       functionInstanceId: monoInstanceId("fn:fail"),

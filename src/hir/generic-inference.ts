@@ -94,6 +94,7 @@ function diagnostic(
   return {
     code,
     message: detail,
+    stableDetail: detail,
     span,
     order: {
       moduleId: diagnosticModuleId,

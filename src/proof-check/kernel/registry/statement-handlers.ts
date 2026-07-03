@@ -1,6 +1,12 @@
-import type { ProofMirStatement } from "../../../proof-mir/model/graph";
+import {
+  proofMirOwnedPlaceId,
+  type ProofMirControlEdgeId,
+  type ProofMirPlaceId,
+} from "../../../proof-mir/ids";
+import type { ProofMirFunction, ProofMirStatement } from "../../../proof-mir/model/graph";
 import { recordAttempt } from "../../domains/attempts";
 import { openLoan, closeLoan } from "../../domains/loans";
+import { placeBinderForMirOwnedPlace } from "../../domains/mir-place-bindings";
 import {
   advancePrivateStateInputFromMir,
   factScopeForProgramPoint,
@@ -13,7 +19,7 @@ import {
 import { advancePrivateState } from "../../domains/private-state";
 import {
   observeCopyPlace,
-  transferAssignPlace,
+  applySummaryProduceEffect,
   transferConsumePlace,
   transferMovePlace,
 } from "../../domains/ownership";
@@ -28,18 +34,24 @@ import {
   validatedBufferPacketEntriesForRead,
 } from "../../domains/validated-buffers";
 import { createValidation } from "../../domains/validation";
-import { normalizeProofCheckTerm } from "../../model/fact-language";
+import {
+  normalizeProofCheckTerm,
+  proofCheckPlaceBinderKey,
+  type ProofCheckRequirementTerm,
+} from "../../model/fact-language";
 import { proofCheckDiagnostic } from "../../diagnostics";
 import {
   proofCheckProgramPointKey,
   type ProofCheckTransition,
   type ProofCheckTransitionResult,
 } from "../transition-api";
+import type { ProofCheckState } from "../state";
 import { callGraphEdgeForStatement, handleCallTransfer } from "./call-handlers";
 import { handleExtensionStatement } from "./extension-statement-handlers";
 import {
   certificateIdForSubject,
   errorTransition,
+  equivalentProofMirPlaceKeys,
   handleTakeSessionStatement,
   identityTransition,
   missingMirMetadataTransition,
@@ -50,8 +62,75 @@ import {
   recordLayoutEntailmentCertificates,
   resolveFunctionGraph,
   structuredPlace,
+  type ProofCheckPlaceResolver,
   type ProofCheckRegistryContext,
 } from "./transition-helpers";
+
+function summaryPlaceKeyForMirPlace(input: {
+  readonly context: ProofCheckRegistryContext;
+  readonly functionInstanceId: Parameters<typeof proofMirOwnedPlaceId>[0];
+  readonly placeId: ProofMirPlaceId;
+}): string {
+  const functionGraph = resolveFunctionGraph(input.context.input.mir, input.functionInstanceId);
+  if (functionGraph === undefined) {
+    return placeKeyForMirPlace(input.placeId);
+  }
+  return proofCheckPlaceBinderKey(
+    placeBinderForMirOwnedPlace(
+      functionGraph,
+      proofMirOwnedPlaceId(input.functionInstanceId, input.placeId),
+    ),
+  );
+}
+
+function readHasValidatedLayoutAlias(input: {
+  readonly state: ProofCheckState;
+  readonly functionGraph: ProofMirFunction;
+  readonly sourcePlace: ProofMirPlaceId;
+  readonly packetPlace?: ProofMirPlaceId;
+  readonly layoutKey: string;
+  readonly placeResolver?: ProofCheckPlaceResolver;
+}): boolean {
+  const candidatePlaceIds = [
+    input.sourcePlace,
+    ...(input.packetPlace === undefined ? [] : [input.packetPlace]),
+  ];
+  for (const placeId of candidatePlaceIds) {
+    for (const placeKey of equivalentProofMirPlaceKeys({
+      functionGraph: input.functionGraph,
+      placeId,
+      placeResolver: input.placeResolver,
+    })) {
+      if (input.state.layout.get(placeKey)?.layoutKey === input.layoutKey) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function statementWitnessEdgeIds(input: {
+  readonly transition: ProofCheckTransition;
+  readonly functionGraph: ProofMirFunction;
+}): readonly ProofMirControlEdgeId[] {
+  if (input.transition.location.kind !== "statement") {
+    return [];
+  }
+  const block = input.functionGraph.blocks.get(input.transition.location.blockId);
+  return block?.terminator.outgoingEdges ?? [];
+}
+
+function readRequirementIsDischarged(input: {
+  readonly state: ProofCheckState;
+  readonly requirement: ProofCheckRequirementTerm;
+  readonly hasValidatedLayoutAlias: boolean;
+}): boolean {
+  const normalizedKey = normalizeProofCheckTerm(input.requirement).key;
+  if ([...input.state.facts.values()].some((fact) => fact.termKey === normalizedKey)) {
+    return true;
+  }
+  return input.hasValidatedLayoutAlias && input.requirement.kind === "layoutFits";
+}
 
 export function handleStatement(input: {
   readonly transition: ProofCheckTransition;
@@ -67,6 +146,7 @@ export function handleStatement(input: {
     case "unary":
     case "binary":
     case "comparison":
+    case "constructObject":
     case "requireFact":
     case "recordFactEvidence":
     case "bindLayoutTerm":
@@ -84,24 +164,45 @@ export function handleStatement(input: {
         }),
         {
           kind: "observes",
-          placeKey: placeKeyForMirPlace(statementKind.place),
+          placeKey: summaryPlaceKeyForMirPlace({
+            context: input.context,
+            functionInstanceId: input.transition.functionInstanceId,
+            placeId: statementKind.place,
+          }),
           borrowMode: "shared",
         },
       );
     case "store":
-      return ownershipTransition(
-        input.transition,
-        input.context,
-        transferAssignPlace({
-          state,
-          source: structuredPlace(statementKind.place),
-          destination: structuredPlace(statementKind.place),
-          resourceKind: "Copy",
-          operationOriginKey: ownerKey,
-          placeResolver: input.context.placeResolver,
-        }),
-        { kind: "mutates", placeKey: placeKeyForMirPlace(statementKind.place) },
-      );
+      return (() => {
+        const functionGraph = resolveFunctionGraph(
+          input.context.input.mir,
+          input.transition.functionInstanceId,
+        );
+        const storedValue = functionGraph?.values.get(statementKind.value);
+        const placeKey = summaryPlaceKeyForMirPlace({
+          context: input.context,
+          functionInstanceId: input.transition.functionInstanceId,
+          placeId: statementKind.place,
+        });
+        const resourceKind = storedValue?.resourceKind ?? "Copy";
+        return ownershipTransition(
+          input.transition,
+          input.context,
+          applySummaryProduceEffect({
+            state,
+            place: structuredPlace(statementKind.place),
+            resourceKind,
+            operationOriginKey: ownerKey,
+            dependencyValueIds: [statementKind.value],
+            placeResolver: input.context.placeResolver,
+          }),
+          {
+            kind: "produces",
+            placeKey,
+            resourceKind,
+          },
+        );
+      })();
     case "movePlace":
       return ownershipTransition(
         input.transition,
@@ -113,7 +214,14 @@ export function handleStatement(input: {
           operationOriginKey: ownerKey,
           placeResolver: input.context.placeResolver,
         }),
-        { kind: "mutates", placeKey: placeKeyForMirPlace(statementKind.place) },
+        {
+          kind: "mutates",
+          placeKey: summaryPlaceKeyForMirPlace({
+            context: input.context,
+            functionInstanceId: input.transition.functionInstanceId,
+            placeId: statementKind.place,
+          }),
+        },
       );
     case "consumePlace": {
       const functionGraph = resolveFunctionGraph(
@@ -131,7 +239,14 @@ export function handleStatement(input: {
           placeResolver: input.context.placeResolver,
           ...(functionGraph === undefined ? {} : { functionGraph }),
         }),
-        { kind: "consumes", placeKey: placeKeyForMirPlace(statementKind.place) },
+        {
+          kind: "consumes",
+          placeKey: summaryPlaceKeyForMirPlace({
+            context: input.context,
+            functionInstanceId: input.transition.functionInstanceId,
+            placeId: statementKind.place,
+          }),
+        },
       );
     }
     case "borrowPlace":
@@ -334,14 +449,41 @@ export function handleStatement(input: {
           "readValidatedBufferField:missing-layout-field",
         );
       }
+      const witnessEdgeIds = statementWitnessEdgeIds({
+        transition: input.transition,
+        functionGraph,
+      });
+      if (witnessEdgeIds.length === 0) {
+        return missingMirMetadataTransition(
+          input.transition,
+          "readValidatedBufferField:missing-witness-edge",
+        );
+      }
+      const hasValidatedLayoutAlias = readHasValidatedLayoutAlias({
+        state,
+        functionGraph,
+        sourcePlace: statementKind.read.sourcePlace,
+        ...(statementKind.read.packetPlace === undefined
+          ? {}
+          : { packetPlace: statementKind.read.packetPlace }),
+        layoutKey: String(statementKind.read.validatedBufferInstanceId),
+        placeResolver: input.context.placeResolver,
+      });
       const dischargedRequirementTerms = readRequirement.readRequirements.filter((requirement) =>
-        [...state.facts.values()].some(
-          (fact) => fact.termKey === normalizeProofCheckTerm(requirement).key,
-        ),
+        readRequirementIsDischarged({
+          state,
+          requirement,
+          hasValidatedLayoutAlias,
+        }),
       );
       const readResult = checkValidatedBufferReadRequirement({
         state,
-        read: readRequirement,
+        read: hasValidatedLayoutAlias
+          ? {
+              ...readRequirement,
+              requiresPacketSource: false,
+            }
+          : readRequirement,
         factTerms: dischargedRequirementTerms,
         layoutProgram: input.context.input.mir.layout,
         ownerKey,
@@ -357,6 +499,7 @@ export function handleStatement(input: {
         certificates: recordedLayoutCertificates.certificates,
         validatedBufferInstanceId: String(statementKind.read.validatedBufferInstanceId),
         placeId: statementKind.read.sourcePlace,
+        edgeIds: witnessEdgeIds,
         operationOriginKey: ownerKey,
       });
       return okCoreTransition({

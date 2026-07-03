@@ -318,11 +318,8 @@ function walkStatement(node: RedNode, context: ResolutionWalkContext): Resolutio
     case SyntaxKind.MatchStatement: {
       const matchStmt = stmtViews.MatchStatementView.from(node);
       if (matchStmt === undefined) break;
-      const cond = matchStmt.condition();
-      if (cond !== undefined) {
-        const expr = cond.expression();
-        if (expr !== undefined) resolveExpression(expr, context);
-      }
+      const expr = matchStmt.condition()?.expression() ?? matchStmt.expression();
+      if (expr !== undefined) resolveExpression(expr, context);
       for (const arm of matchStmt.arms()) {
         const pattern = arm.pattern();
         if (pattern !== undefined) {
@@ -671,6 +668,10 @@ function resolveMemberAccessExpression(
   }
 
   const fullSegments = [baseName, ...segments];
+
+  if (context.localNames.has(baseName)) {
+    return;
+  }
 
   const prefixResult = context.moduleNamespace.resolveQualifiedPrefix(fullSegments);
 
@@ -1090,7 +1091,10 @@ function referenceKindFromResolved(
     case "type":
       return "typeName";
     case "builtinType":
+    case "targetType":
       return "typeName";
+    case "compilerIntrinsic":
+      return "functionName";
     case "typeParameter":
       return "typeParameter";
     case "field":

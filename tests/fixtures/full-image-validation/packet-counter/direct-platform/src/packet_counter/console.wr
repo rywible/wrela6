@@ -1,0 +1,9 @@
+use UefiStatus from packet_counter.uefi_status
+
+platform fn output_string(message: Utf16Static) -> UefiStatus
+
+pub fn write_packet_counter_marker(count: u8) -> UefiStatus:
+    if count == 0:
+        return UefiStatus.bad_buffer_size
+    else:
+        return output_string(utf16_static("WRELA_PACKET_COUNTER_OK\r\n"))

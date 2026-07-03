@@ -629,6 +629,8 @@ function collectDefinedValueIds(statement: ProofMirStatement): ProofMirValueId[]
       return [statement.kind.result];
     case "comparison":
       return [statement.kind.result];
+    case "constructObject":
+      return [statement.kind.result];
     case "call":
       return statement.kind.call.result === undefined
         ? []
@@ -721,6 +723,11 @@ function collectStatementUses(
     case "comparison":
       noteUse(uses, statement.kind.left, site);
       noteUse(uses, statement.kind.right, site);
+      break;
+    case "constructObject":
+      for (const field of statement.kind.fields) {
+        noteUse(uses, field.value, site);
+      }
       break;
     case "call":
       noteOperandUses(statement.kind.call.receiver?.operand, site, uses);

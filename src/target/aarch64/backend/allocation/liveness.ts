@@ -105,6 +105,7 @@ export function buildAArch64LiveIntervals(input: AArch64LivenessInput): AArch64L
           noSpill: noSpill.has(vreg),
           clobberedPhysicalRegisters: clobbersForCuts(
             cuts,
+            segments,
             callClobbersByOrder,
             fallbackCallClobbers,
           ),
@@ -424,12 +425,25 @@ function mergeCallClobbersByOrder(
 
 function clobbersForCuts(
   cuts: readonly number[],
+  segments: readonly AArch64LiveSegment[],
   callClobbersByOrder: ReadonlyMap<number, readonly string[]>,
   fallbackCallClobbers: readonly string[],
 ): readonly string[] {
   if (cuts.length === 0) return Object.freeze([]);
-  const registers = cuts.flatMap((cut) => callClobbersByOrder.get(cut) ?? fallbackCallClobbers);
+  const registers = cuts
+    .filter((cut) => isLiveAfterCallInstruction(segments, cut))
+    .flatMap((cut) => callClobbersByOrder.get(cut) ?? fallbackCallClobbers);
   return sortedUniqueRegisters(registers);
+}
+
+function isLiveAfterCallInstruction(
+  segments: readonly AArch64LiveSegment[],
+  callOrder: number,
+): boolean {
+  const orderAfterCall = callOrder + 1;
+  return segments.some(
+    (segment) => segment.startOrder <= callOrder && segment.endOrder > orderAfterCall,
+  );
 }
 
 function instructionIdFromCallKey(callKey: string): number | undefined {

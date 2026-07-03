@@ -6,6 +6,7 @@ import type { CheckedResourceKind } from "./resource-kind";
 import { concreteKind, errorKind, joinResourceKinds, parametricKind } from "./resource-kind";
 import {
   coreCheckedType,
+  targetCheckedType,
   sourceCheckedType,
   genericParameterCheckedType,
   appliedType,
@@ -217,6 +218,8 @@ function checkedTypeFromReference(
   switch (reference.kind) {
     case "builtinType":
       return checkTypeArguments(coreCheckedType(reference.coreTypeId), input);
+    case "targetType":
+      return checkTypeArguments(targetCheckedType(reference.targetTypeId), input);
     case "type": {
       if (!input.allowInterfaces) {
         const itemRecord = input.index.item(reference.itemId);

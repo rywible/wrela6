@@ -53,9 +53,9 @@ export const aarch64MemorySimdFpEncoderFamilies = Object.freeze([
 
 function encodeMemorySimdFpInstruction(input: AArch64EncodeInput) {
   if (input.instruction.opcode === "ldr-unsigned-immediate")
-    return encodeLoadStoreUnsignedImmediate(input, 0xf9400000);
+    return encodeLoadStoreUnsignedImmediate(input, loadUnsignedImmediateBaseWord);
   if (input.instruction.opcode === "str-unsigned-immediate")
-    return encodeLoadStoreUnsignedImmediate(input, 0xf9000000);
+    return encodeLoadStoreUnsignedImmediate(input, storeUnsignedImmediateBaseWord);
   if (input.instruction.opcode === "ldr-register-offset")
     return encodeThreeRegisterMemory(input, 0xf8606800);
   if (input.instruction.opcode === "ldp-signed-offset")
@@ -111,10 +111,14 @@ const VECTOR_THREE_REGISTER_BASES = new Map<string, number>([
   ["dotprod", 0x6e809400],
 ]);
 
-function encodeLoadStoreUnsignedImmediate(input: AArch64EncodeInput, baseWord: number) {
+function encodeLoadStoreUnsignedImmediate(
+  input: AArch64EncodeInput,
+  baseWordForWidth: (width: number) => number | undefined,
+) {
   const [destination, base, offset] = input.instruction.operands;
   const width = input.instruction.accessWidthBytes ?? 8;
-  if (width !== 8) {
+  const baseWord = baseWordForWidth(width);
+  if (baseWord === undefined) {
     return encodingError(`encoding:unsupported-access-width:${input.instruction.opcode}:${width}`);
   }
   if (destination?.kind !== "register" || base?.kind !== "memory-base") {
@@ -159,6 +163,36 @@ function encodeLoadStoreUnsignedImmediate(input: AArch64EncodeInput, baseWord: n
   return encodingOk({
     bytes: writeU32Le(baseWord | (scaledOffset << 10) | (baseNumber << 5) | destinationNumber),
   });
+}
+
+function loadUnsignedImmediateBaseWord(width: number): number | undefined {
+  switch (width) {
+    case 1:
+      return 0x39400000;
+    case 2:
+      return 0x79400000;
+    case 4:
+      return 0xb9400000;
+    case 8:
+      return 0xf9400000;
+    default:
+      return undefined;
+  }
+}
+
+function storeUnsignedImmediateBaseWord(width: number): number | undefined {
+  switch (width) {
+    case 1:
+      return 0x39000000;
+    case 2:
+      return 0x79000000;
+    case 4:
+      return 0xb9000000;
+    case 8:
+      return 0xf9000000;
+    default:
+      return undefined;
+  }
 }
 
 function encodeEndianRegister(input: AArch64EncodeInput, baseWord: number) {

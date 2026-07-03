@@ -216,6 +216,38 @@ export function programWithOrderSensitiveOperationsForTest(): {
   );
 }
 
+export function programWithSiblingBranchDuplicateOperationsForTest(): {
+  readonly program: OptIrProgram;
+  readonly function: OptIrFunction;
+  readonly operations: ReadonlyMap<OptIrOperationId, OptIrOperation>;
+} {
+  const condition = constantOperationForDataflowTest(1, 10, 1n);
+  const thenValue = constantOperationForDataflowTest(2, 11, 7n);
+  const elseValue = constantOperationForDataflowTest(3, 12, 7n);
+  return fixtureProgram(
+    [
+      {
+        blockId: optIrBlockId(1),
+        parameters: [],
+        operations: [condition.operationId],
+        terminator: {
+          kind: "branch",
+          operationId: optIrOperationId(101),
+          condition: condition.resultIds[0] ?? optIrValueId(0),
+          trueEdge: optIrEdgeId(1),
+          falseEdge: optIrEdgeId(2),
+          originId: optIrOriginId(1),
+        },
+        originId: optIrOriginId(1),
+      },
+      block(2, [thenValue.operationId], [thenValue.resultIds[0] ?? optIrValueId(0)]),
+      block(3, [elseValue.operationId], [elseValue.resultIds[0] ?? optIrValueId(0)]),
+    ],
+    [edge(1, 1, 2, "branchTrue", [], undefined), edge(2, 1, 3, "branchFalse", [], undefined)],
+    [condition, thenValue, elseValue],
+  );
+}
+
 export function programWithNonCommonableOperationsForTest(): {
   readonly program: OptIrProgram;
   readonly function: OptIrFunction;

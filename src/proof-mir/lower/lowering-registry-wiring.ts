@@ -11,6 +11,7 @@ import { createProofMirIteratorLowerer } from "./iterator-lowerer";
 import {
   createProofMirLoweringRegistry,
   type ProofMirControlFlowLowerer,
+  type ProofMirExpressionLowerer,
   type ProofMirLoweringRegistry,
 } from "./lowering-context";
 import { extendProofMirControlFlowLowererWithLoops, type ActiveLoopFrame } from "./loop-lowerer";
@@ -71,20 +72,29 @@ export function createWiredProofMirLoweringRegistry(input?: {
   const currentBlockRef: { blockKey?: ProofMirCanonicalKey } = {};
   const continuationBlockRef: { blockKey?: ProofMirCanonicalKey } = {};
   const validatedBufferReadLowerer = createProofMirValidatedBufferReadLowerer();
-  const expressionLowerer = createProofMirExpressionLowerer({
-    validatedBufferRead: validatedBufferReadLowerer,
-  });
   const callRecorder = input?.callRecorder ?? createCallLoweringRecorder();
+  const wiredExpressionLowererRef: {
+    current?: ReturnType<typeof createProofMirExpressionLowerer>;
+  } = {};
+  const expressionDelegate: ProofMirExpressionLowerer = {
+    lowerExpression(loweringInput) {
+      return wiredExpressionLowererRef.current!.lowerExpression(loweringInput);
+    },
+    lowerExpressionAsPlace(loweringInput) {
+      return wiredExpressionLowererRef.current!.lowerExpressionAsPlace(loweringInput);
+    },
+  };
   const callLowerer = createProofMirCallLowerer({
-    expression: expressionLowerer,
+    expression: expressionDelegate,
     recorder: callRecorder,
-    valueIdForKey: expressionLowerer.valueIdForKey,
-    placeIdForKey: expressionLowerer.placeIdForKey,
+    valueIdForKey: (key) => wiredExpressionLowererRef.current!.valueIdForKey(key),
+    placeIdForKey: (key) => wiredExpressionLowererRef.current!.placeIdForKey(key),
   });
   const wiredExpressionLowerer = createProofMirExpressionLowerer({
     validatedBufferRead: validatedBufferReadLowerer,
     call: callLowerer,
   });
+  wiredExpressionLowererRef.current = wiredExpressionLowerer;
   const statementLowerer = createProofMirStatementLowerer({
     expression: wiredExpressionLowerer,
     call: callLowerer,
@@ -122,7 +132,11 @@ export function createWiredProofMirLoweringRegistry(input?: {
     statement: statementLowerer,
     controlFlow,
     call: callLowerer,
-    validation: createProofMirValidationLowerer(),
+    validation: createProofMirValidationLowerer({
+      statement: statementLowerer,
+      terminal: terminalLowerer,
+      controlFlow,
+    }),
     attempt: createProofMirAttemptLowerer({ expression: wiredExpressionLowerer }),
     take: createProofMirTakeLowerer({
       expression: wiredExpressionLowerer,

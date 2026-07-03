@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { proofCheckDiagnosticCode } from "../../../src/proof-check/diagnostics";
 import {
   applySummaryPlaceEffect,
+  applySummaryProduceEffect,
   checkUsePlace,
   observeCopyPlace,
   transferAssignPlace,
@@ -23,6 +24,7 @@ import {
   uninitializedPlaceForTest,
 } from "../../support/proof-check/state-fixtures";
 import { proofCheckStatePatchForTest } from "./state-patch-reducer.test";
+import { proofMirPlaceId, proofMirValueId } from "../../../src/proof-mir/ids";
 
 const defaultCertificate: ProofCheckCertificateId = {
   kind: "core",
@@ -325,5 +327,33 @@ describe("transferAssignPlace and applySummaryPlaceEffect", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.patches).toEqual([]);
+  });
+
+  test("summary produce effect records place, value, and certificate ownership evidence", () => {
+    const state = proofCheckStateForTest({
+      places: [uninitializedPlaceForTest("proofMirPlace:0")],
+    });
+
+    const result = applySummaryProduceEffect({
+      state,
+      place: proofCheckPlaceForTest("proofMirPlace:0"),
+      resourceKind: "Copy",
+      operationOriginKey: "origin:call:produce-result",
+      dependencyValueIds: [proofMirValueId(1)],
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const ownershipEntry = result.packetEntries[0];
+    expect(ownershipEntry).toBeDefined();
+    if (ownershipEntry === undefined) return;
+    expect(ownershipEntry?.kind).toBe(checkedFactKindId("ownership"));
+    expect(ownershipEntry.certificate.kind).toBe("core");
+    if (ownershipEntry.certificate.kind !== "core") return;
+    expect(ownershipEntry?.dependencies).toEqual([
+      { kind: "proofMirPlace", placeId: proofMirPlaceId(0) },
+      { kind: "proofMirValue", valueId: proofMirValueId(1) },
+      { kind: "coreCertificate", certificateId: ownershipEntry.certificate.id },
+    ]);
   });
 });

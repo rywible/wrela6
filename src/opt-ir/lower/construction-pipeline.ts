@@ -7,7 +7,11 @@ import {
   type OptIrProgram,
 } from "../program";
 import { type InternalConstructOptIrInput } from "../internal-construction-api";
-import { importCheckedFactPacketIntoOptIrFactSet, type OptIrFactSet } from "../facts/fact-index";
+import {
+  importCheckedFactPacketIntoOptIrFactSet,
+  optIrFactSetFromRecords,
+  type OptIrFactSet,
+} from "../facts/fact-index";
 import { authenticatedLayoutFactKeys } from "../layout-fact-keys";
 import { lowerCheckedMirProgram } from "./lower-checked-mir";
 import type { OptIrValidatedBufferFactForLowering } from "./validated-buffer-lowering";
@@ -18,9 +22,15 @@ import {
   type OptIrProofErasureProvenance,
 } from "./proof-erasure";
 import { runConstructionCleanup } from "../passes/cleanup";
+import { lowerZeroSizedResultOperations } from "../passes/zero-sized-operation-lowering";
 import { verifyOptIrProgram } from "../verify/structural-verifier";
 import { optIrDiagnosticCode, optIrDiagnosticOrderKey, type OptIrDiagnostic } from "../diagnostics";
-import { optIrPathCertificateId, type OptIrFunctionId, type OptIrOriginId } from "../ids";
+import {
+  optIrFactId,
+  optIrPathCertificateId,
+  type OptIrFunctionId,
+  type OptIrOriginId,
+} from "../ids";
 import type { OptIrOperation } from "../operations";
 import type { OptIrRegion } from "../regions";
 import { stableDigestHex } from "../../shared/stable-json";
@@ -53,6 +63,7 @@ export function runOptIrConstructionPipeline(
     targetId: input.target.targetId,
     targetEndian: input.target.dataModel.endian,
     validatedBufferFacts: validatedBufferFactsForLowering(factImport.factSet),
+    nextGeneratedFactId: nextGeneratedFactId(factImport.factSet),
   });
   if (lowering.kind === "error") {
     return {
@@ -67,9 +78,10 @@ export function runOptIrConstructionPipeline(
     regions: optIrRegionTable(lowering.program.regions.entries()),
     constants: optIrConstantTable(lowering.program.constants.entries()),
   });
+  const loweredProgramWithSummaries = attachCheckedFunctionSummaries(loweredProgram, input.handoff);
 
   const erasure = runPerFunctionOperationPass({
-    program: loweredProgram,
+    program: loweredProgramWithSummaries,
     operations: lowering.operations,
     transform: (function_, operations) => {
       // Imported facts are preserved program-wide via construction-fact-filter.ts.
@@ -96,9 +108,21 @@ export function runOptIrConstructionPipeline(
     return erasure;
   }
 
-  const cleanup = runPerFunctionOperationPass({
+  const zeroSizedAggregates = runPerFunctionOperationPass({
     program: erasure.program,
     operations: erasure.operations,
+    transform: (function_, operations) => {
+      const lowered = lowerZeroSizedResultOperations({ operations });
+      return { kind: "ok" as const, function: function_, operations: lowered.operations };
+    },
+  });
+  if (zeroSizedAggregates.kind === "error") {
+    return zeroSizedAggregates;
+  }
+
+  const cleanup = runPerFunctionOperationPass({
+    program: zeroSizedAggregates.program,
+    operations: zeroSizedAggregates.operations,
     transform: (function_, operations) => {
       const cleanup = runConstructionCleanup({
         function: function_,
@@ -112,7 +136,11 @@ export function runOptIrConstructionPipeline(
     return cleanup;
   }
 
-  const facts = filterImportedFactsAfterProofErasure(factImport.factSet, lowering);
+  const factsBeforeProofErasure = optIrFactSetFromRecords([
+    ...factImport.factSet.records,
+    ...lowering.generatedFacts,
+  ]);
+  const facts = filterImportedFactsAfterProofErasure(factsBeforeProofErasure, lowering);
   const verifiedProgram = withProvenanceSnapshot(
     cleanup.program,
     cleanup.operations,
@@ -146,6 +174,62 @@ export function runOptIrConstructionPipeline(
           ]
         : [],
   };
+}
+
+function attachCheckedFunctionSummaries(
+  program: OptIrProgram,
+  handoff: InternalConstructOptIrInput["handoff"],
+): OptIrProgram {
+  const policiesByFunction = new Map(
+    handoff.semanticInlinePolicies.map((policy) => [policy.functionInstanceId, policy] as const),
+  );
+  const externalRootsByFunction = new Map(
+    handoff.checkedMir.mir.image.externalRoots.map(
+      (externalRoot) => [externalRoot.functionInstanceId, externalRoot] as const,
+    ),
+  );
+  return optIrProgram({
+    ...program,
+    functions: optIrFunctionTable(
+      program.functions.entries().map((function_) => {
+        const checkedSummary = handoff.checkedMir.summaries.get(function_.monoInstanceId);
+        const policy = policiesByFunction.get(function_.monoInstanceId);
+        const externalRoot = externalRootsByFunction.get(function_.monoInstanceId);
+        if (checkedSummary === undefined && policy === undefined && externalRoot === undefined) {
+          return function_;
+        }
+        return {
+          ...function_,
+          ...(externalRoot === undefined
+            ? {}
+            : {
+                externalRoot: Object.freeze({
+                  reason: externalRoot.reason,
+                  originId: function_.originId,
+                }),
+              }),
+          ...(checkedSummary === undefined && policy === undefined
+            ? {}
+            : {
+                summary: Object.freeze({
+                  ...checkedSummary,
+                  ...(policy === undefined
+                    ? {}
+                    : {
+                        semanticInlinePolicy: Object.freeze({
+                          kind: policy.kind,
+                          reason: policy.reason,
+                          source: policy.source,
+                          certificateId: policy.summaryCertificateId,
+                          summaryCertificateId: policy.summaryCertificateId,
+                        }),
+                      }),
+                }),
+              }),
+        };
+      }),
+    ),
+  });
 }
 
 function runPerFunctionOperationPass(input: {
@@ -305,6 +389,14 @@ function validatedBufferFactsForLowering(
       })
       .sort((left, right) => left.factId - right.factId),
   );
+}
+
+function nextGeneratedFactId(factSet: OptIrFactSet) {
+  const maxFactId = factSet.records.reduce(
+    (max, record) => Math.max(max, Number(record.factId)),
+    -1,
+  );
+  return optIrFactId(maxFactId + 1);
 }
 
 function withProvenanceSnapshot(

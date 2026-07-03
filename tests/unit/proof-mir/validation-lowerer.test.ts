@@ -109,6 +109,18 @@ describe("ProofMirValidationLowerer", () => {
     if (lowered.terminator?.kind !== "matchValidation") return;
     expect(lowered.terminator.errBindings).toHaveLength(1);
     expect(lowered.terminator.errBindings[0]?.bindingKind).toBe("error");
+    const errOperandPlaceKey = lowered.terminator.errBindings[0]?.operandPlaceKey;
+    expect(errOperandPlaceKey).toBeDefined();
+    if (errOperandPlaceKey === undefined) return;
+    expect(lowered.validateStatement.kind.kind).toBe("validate");
+    if (lowered.validateStatement.kind.kind !== "validate") return;
+    expect(lowered.validateStatement.kind.validation.errPayloadPlaceKey).toEqual(
+      errOperandPlaceKey,
+    );
+    expect(lowered.errEdge.effects).toContainEqual({
+      kind: "introducePlace",
+      placeKey: errOperandPlaceKey,
+    });
   });
 
   test("missing validation arm metadata returns invalid binding diagnostic", () => {

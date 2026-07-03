@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { buildItemIndex } from "../../../src/semantic/item-index";
+import { CoreTypeCatalog, resolveNames } from "../../../src/semantic/names";
+import { platformPrimitiveNameCatalogFake } from "../../support/semantic/name-resolution-fakes";
+import { parseModuleGraphForTest } from "../../support/frontend/module-graph-test-support";
 import {
   checkSemanticSurfaceForTest,
   voidTargetSignature,
@@ -10,12 +14,79 @@ import {
   semanticTargetSurface,
 } from "../../../src/semantic/surface/platform-surface";
 import type { PlatformPrimitiveSpec } from "../../../src/semantic/surface/platform-surface";
+import { checkSemanticSurface } from "../../../src/semantic/surface/semantic-surface-checker";
 import {
   platformPrimitiveId,
   platformContractId,
   targetId,
   imageProfileId,
 } from "../../../src/semantic/ids";
+import {
+  canonicalUefiAArch64SemanticTargetSurface,
+  uefiAArch64CompilerIntrinsicNameCatalog,
+} from "../../../src/target/uefi-aarch64";
+
+function checkSemanticSurfaceForUefiSource(source: string) {
+  const graph = parseModuleGraphForTest([["main.wr", source]]);
+  const index = buildItemIndex({ graph }).index;
+  const coreTypes = CoreTypeCatalog.default();
+  const targetSurface = canonicalUefiAArch64SemanticTargetSurface();
+  const names = resolveNames({
+    graph,
+    index,
+    coreTypes,
+    platformPrimitiveNames: platformPrimitiveNameCatalogFake([]),
+    compilerIntrinsics: uefiAArch64CompilerIntrinsicNameCatalog(),
+    targetTypes: targetSurface.targetTypeKinds,
+  });
+
+  const surface = checkSemanticSurface({
+    graph,
+    index,
+    references: names.references,
+    platformBindings: names.platformBindings,
+    coreTypes,
+    targetSurface,
+  });
+
+  return {
+    ...surface,
+    nameDiagnostics: names.diagnostics,
+  };
+}
+
+test("UEFI utf16_static intrinsic records accepted string literal calls", () => {
+  const result = checkSemanticSurfaceForUefiSource(
+    'fn marker() -> Utf16Static:\n    utf16_static("OK\\r\\n")\nuefi image Boot:\n    fn main() -> Never\n',
+  );
+
+  expect(result.nameDiagnostics).toEqual([]);
+  expect(
+    result.diagnostics.filter(
+      (diagnostic) => diagnostic.code === "SURFACE_INVALID_COMPILER_INTRINSIC_CALL",
+    ),
+  ).toEqual([]);
+  expect(result.program.compilerIntrinsicCalls.entries()).toMatchObject([
+    {
+      intrinsicKey: "uefi.utf16_static",
+      literalValue: "OK\r\n",
+      returnTypeKey: "uefi.Utf16Static",
+    },
+  ]);
+});
+
+test("UEFI utf16_static intrinsic rejects nonliteral calls before HIR", () => {
+  const result = checkSemanticSurfaceForUefiSource(
+    "fn marker() -> Utf16Static:\n    let marker = 1\n    utf16_static(marker)\nuefi image Boot:\n    fn main() -> Never\n",
+  );
+
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+    "SURFACE_INVALID_COMPILER_INTRINSIC_CALL",
+  );
+  expect(result.diagnostics.map((diagnostic) => diagnostic.message)).toContain(
+    "Compiler intrinsic 'utf16_static' requires argument 1 to be a string literal.",
+  );
+});
 
 test("valid uefi image produces checked program and image seed", () => {
   const result = checkSemanticSurfaceForTest([

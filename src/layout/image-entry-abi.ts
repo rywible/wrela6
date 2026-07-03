@@ -178,6 +178,12 @@ function validateImageEntryReturnCompatibility(input: {
   ) {
     return undefined;
   }
+  if (directIntegerReturnCompatibleWithNever(input.physical, input.source)) {
+    return undefined;
+  }
+  if (directIntegerReturnCompatible(input.physical, input.source)) {
+    return undefined;
+  }
   return layoutDiagnostic({
     severity: "error",
     code: "LAYOUT_ABI_CLASSIFICATION_FAILED",
@@ -186,6 +192,30 @@ function validateImageEntryReturnCompatibility(input: {
     rootCauseKey: "image-entry",
     stableDetail: `physical:${layoutAbiValueShapeStableDetail(input.physical)}:source:${layoutAbiValueShapeStableDetail(input.source)}`,
   });
+}
+
+function directIntegerReturnCompatibleWithNever(
+  physical: LayoutAbiValueShape,
+  source: LayoutAbiValueShape,
+): boolean {
+  if (source.kind !== "none" || source.reason !== "never") return false;
+  if (physical.kind !== "direct" || physical.lanes.length !== 1) return false;
+  return physical.lanes[0]?.kind === "integer";
+}
+
+function directIntegerReturnCompatible(
+  physical: LayoutAbiValueShape,
+  source: LayoutAbiValueShape,
+): boolean {
+  if (physical.kind !== "direct" || source.kind !== "direct") return false;
+  if (physical.lanes.length !== 1 || source.lanes.length !== 1) return false;
+  const physicalLane = physical.lanes[0]!;
+  const sourceLane = source.lanes[0]!;
+  return (
+    physicalLane.kind === "integer" &&
+    sourceLane.kind === "integer" &&
+    sourceLane.sizeBytes <= physicalLane.sizeBytes
+  );
 }
 
 function emptyEnumFactTable(): LayoutEnumFactTable {

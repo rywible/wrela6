@@ -41,6 +41,7 @@ import {
 } from "./target-surfaces";
 import { materializeUefiAArch64StaticChar16ObjectModule } from "./static-char16-objects";
 import type { UefiAArch64TargetDriverSurface } from "./target-driver-surface";
+import { materializeUefiAArch64ValidationFixturePacketObjectModule } from "./validation-fixture-packet-objects";
 
 const SOURCE_MODULE_KEY = "wrela-source-object";
 const BINARY_SPINE_VERIFIER_KEY = "uefi-aarch64-binary-spine";
@@ -50,6 +51,7 @@ export type UefiAArch64BinarySpineStageKey =
   | "aarch64-lowering"
   | "aarch64-backend"
   | "static-char16-objects"
+  | "validation-fixture-objects"
   | "runtime-helper-objects"
   | "synthetic-entry-object"
   | "linker"
@@ -59,6 +61,7 @@ export interface UefiAArch64BinarySpineOutput {
   readonly stages: readonly UefiAArch64StageRecord<UefiAArch64BinarySpineStageKey>[];
   readonly backendObjects: readonly AArch64LinkInputModule[];
   readonly staticChar16Objects: readonly AArch64LinkInputModule[];
+  readonly validationFixtureObjects: readonly AArch64LinkInputModule[];
   readonly helperObjects: readonly AArch64LinkInputModule[];
   readonly linkedLayout: AArch64LinkedImageLayout;
   readonly peCoffArtifact: PeCoffEfiImageArtifact;
@@ -103,6 +106,7 @@ export function runUefiAArch64BinarySpine(
         platformCalls: uefiAArch64FirmwarePlatformCallContext({
           firmwareTables: input.target.firmwareTables,
           platformLowerings: input.target.platformLowerings,
+          validationFixturePacketSources: input.optIr.optIr.validationFixturePacketSources,
         }),
         staticChar16Pointers: new Map(
           input.optIr.optIr.staticChar16Pointers.map((record) => [record.valueKey, record.pointer]),
@@ -151,6 +155,19 @@ export function runUefiAArch64BinarySpine(
     );
   }
   stages.passed("static-char16-objects");
+
+  const validationFixtureObjects = materializeUefiAArch64ValidationFixturePacketObjectModule({
+    backendTarget: surfaces.value.backendTarget,
+    validationFixturePacketSources: input.optIr.optIr.validationFixturePacketSources ?? [],
+  });
+  if (validationFixtureObjects.kind === "error") {
+    return binarySpineError(
+      "validation-fixture-objects",
+      stages.failed("validation-fixture-objects"),
+      validationFixtureObjects.diagnostics,
+    );
+  }
+  stages.passed("validation-fixture-objects");
 
   const helperObjects = materializeUefiAArch64RuntimeHelperObjects({
     backendTarget: surfaces.value.backendTarget,
@@ -201,6 +218,7 @@ export function runUefiAArch64BinarySpine(
     objectModules: Object.freeze([
       ...backendObjects,
       ...staticChar16Objects.value.modules,
+      ...validationFixtureObjects.value.modules,
       ...helperObjects.value.modules,
     ]),
     entry: { wrelaBootLinkageName: input.target.entryProfile.bootFunctionSymbol },
@@ -238,6 +256,7 @@ export function runUefiAArch64BinarySpine(
       stages: stages.records(),
       backendObjects,
       staticChar16Objects: staticChar16Objects.value.modules,
+      validationFixtureObjects: validationFixtureObjects.value.modules,
       helperObjects: helperObjects.value.modules,
       linkedLayout: linked.layout,
       peCoffArtifact: peCoffArtifact.artifact,

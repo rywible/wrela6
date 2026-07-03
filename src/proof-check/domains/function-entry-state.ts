@@ -85,6 +85,23 @@ export function functionEntrySignatureFromMir(input: {
   };
 }
 
+export function functionEntryKnownPlaceKeysFromMir(input: {
+  readonly functionGraph: ProofMirFunction;
+  readonly functionInstanceId: MonoInstanceId;
+}): readonly string[] {
+  return input.functionGraph.places
+    .entries()
+    .map((place) =>
+      proofCheckPlaceBinderKey(
+        placeBinderForMirOwnedPlace(
+          input.functionGraph,
+          proofMirOwnedPlaceId(input.functionInstanceId, place.placeId),
+        ),
+      ),
+    )
+    .sort(compareCodeUnitStrings);
+}
+
 function validatedBufferInstanceIdForParameter(
   mir: ProofMirProgram,
   parameter: MonoParameter,

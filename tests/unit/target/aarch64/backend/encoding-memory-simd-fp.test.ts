@@ -56,6 +56,52 @@ describe("AArch64 memory/SIMD/FP encoder", () => {
     ]);
   });
 
+  test("encodes byte loads with unscaled unsigned offset", () => {
+    const result = encodeAArch64PhysicalInstructionWithFamilies(
+      {
+        catalog: RPI5_BACKEND_CATALOGS.encodingCatalog,
+        registerModel: RPI5_BACKEND_CATALOGS.registerModel,
+        instruction: {
+          opcode: "ldr-unsigned-immediate",
+          operands: [
+            { kind: "register", register: "x1" },
+            { kind: "memory-base", register: "x2" },
+            { kind: "immediate", value: 2n },
+          ],
+          accessWidthBytes: 1,
+        },
+      },
+      aarch64MemorySimdFpEncoderFamilies,
+    );
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error("expected byte ldr encoding");
+    expect([...result.value.bytes]).toEqual([0x41, 0x08, 0x40, 0x39]);
+  });
+
+  test("encodes halfword loads with scaled unsigned offset", () => {
+    const result = encodeAArch64PhysicalInstructionWithFamilies(
+      {
+        catalog: RPI5_BACKEND_CATALOGS.encodingCatalog,
+        registerModel: RPI5_BACKEND_CATALOGS.registerModel,
+        instruction: {
+          opcode: "ldr-unsigned-immediate",
+          operands: [
+            { kind: "register", register: "x1" },
+            { kind: "memory-base", register: "x2" },
+            { kind: "immediate", value: 2n },
+          ],
+          accessWidthBytes: 2,
+        },
+      },
+      aarch64MemorySimdFpEncoderFamilies,
+    );
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error("expected halfword ldr encoding");
+    expect([...result.value.bytes]).toEqual([0x41, 0x04, 0x40, 0x79]);
+  });
+
   test("rejects unsupported unsigned load/store access widths instead of misencoding size bits", () => {
     const result = encodeAArch64PhysicalInstructionWithFamilies(
       {
@@ -66,9 +112,9 @@ describe("AArch64 memory/SIMD/FP encoder", () => {
           operands: [
             { kind: "register", register: "x1" },
             { kind: "memory-base", register: "x2" },
-            { kind: "immediate", value: 4n },
+            { kind: "immediate", value: 3n },
           ],
-          accessWidthBytes: 4,
+          accessWidthBytes: 3,
         },
       },
       aarch64MemorySimdFpEncoderFamilies,
@@ -77,7 +123,7 @@ describe("AArch64 memory/SIMD/FP encoder", () => {
     expect(result.kind).toBe("error");
     if (result.kind !== "error") throw new Error("expected unsupported width rejection");
     expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual([
-      "encoding:unsupported-access-width:ldr-unsigned-immediate:4",
+      "encoding:unsupported-access-width:ldr-unsigned-immediate:3",
     ]);
   });
 

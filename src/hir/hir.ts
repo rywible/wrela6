@@ -167,6 +167,7 @@ export interface HirCallArgument {
 export interface HirCallExpression {
   readonly callee: HirExpression;
   readonly calleeFunctionId?: FunctionId;
+  readonly compilerIntrinsic?: HirCompilerIntrinsicCallMetadata;
   readonly ownerTypeId?: TypeId;
   readonly ownerTypeArguments: readonly CheckedType[];
   readonly ownerTypeArgumentSource:
@@ -180,6 +181,15 @@ export interface HirCallExpression {
   readonly receiver?: HirExpression;
   readonly sourceOrigin?: HirOriginId;
   readonly recovered?: boolean;
+}
+
+export interface HirCompilerIntrinsicCallMetadata {
+  readonly intrinsicKey: string;
+  readonly literalValue: string;
+  readonly returnTypeKey: string;
+  readonly sourceValueKey: string;
+  readonly hirExpressionId: HirExpressionId;
+  readonly semanticReferenceKey: string;
 }
 
 export interface HirObjectField {

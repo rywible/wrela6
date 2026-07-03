@@ -1,0 +1,18 @@
+use write_packet_counter_marker from packet_counter.console
+use validation_fixture_packet_source from packet_counter.fixture_source
+use validate_counter_packet, PacketKind from packet_counter.packet
+use UefiStatus from packet_counter.uefi_status
+
+fn run_packet_counter() -> UefiStatus:
+    let source = validation_fixture_packet_source()
+
+    match validate_counter_packet(source=source, max_frame_bytes=64):
+        case Ok(packet):
+            if packet.kind == PacketKind.count:
+                let count = packet.counter_delta + packet.payload_first
+                write_packet_counter_marker(count=count)
+            else:
+                write_packet_counter_marker(count=0)
+
+        case Err(status):
+            return status

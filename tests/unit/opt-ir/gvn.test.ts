@@ -9,6 +9,7 @@ import {
   programWithNonCommonableOperationsForTest,
   programWithOrderSensitiveOperationsForTest,
   programWithPureDuplicateOperationsForTest,
+  programWithSiblingBranchDuplicateOperationsForTest,
 } from "../../support/opt-ir/dataflow-fixtures";
 
 describe("OptIR GVN", () => {
@@ -30,6 +31,10 @@ describe("OptIR GVN", () => {
         valueNumber: "integerBinary|integer-binary|integer-binary|1:10,2:11|operator:add|types:i32",
       },
     ]);
+    expect(result.operations.get(optIrOperationId(5))).toMatchObject({
+      left: optIrValueId(12),
+      right: optIrValueId(12),
+    });
     expect(result.worklistOrder).toEqual([
       "function:1",
       "block:1",
@@ -68,6 +73,20 @@ describe("OptIR GVN", () => {
 
     expect(result.removedOperationIds).toEqual([]);
     expect(result.replacements).toEqual([]);
+  });
+
+  test("does not common equivalent operations from sibling branches", () => {
+    const fixture = programWithSiblingBranchDuplicateOperationsForTest();
+
+    const result = runGvn({
+      program: fixture.program,
+      operations: fixture.operations,
+    });
+
+    expect(result.removedOperationIds).toEqual([]);
+    expect(result.replacements).toEqual([]);
+    expect(result.operations.has(optIrOperationId(2))).toBe(true);
+    expect(result.operations.has(optIrOperationId(3))).toBe(true);
   });
 
   test("value numbering is deterministic by function, block, operation, and value id", () => {

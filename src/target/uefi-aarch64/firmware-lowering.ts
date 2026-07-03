@@ -13,10 +13,17 @@ import type {
 } from "./platform-catalog";
 import type { UefiAArch64FirmwareTableSurface, UefiFirmwareTablePath } from "./firmware-tables";
 import { lookupUefiFirmwareTableField } from "./firmware-tables";
+import type { UefiAArch64ValidationFixturePacketSource } from "./package-input";
+import {
+  UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_OPERATION_KEY,
+  UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID,
+} from "./validation-fixture-packet-rule";
+import { uefiAArch64ValidationFixturePacketPointer } from "./validation-fixture-packet-objects";
 
 export function uefiAArch64FirmwarePlatformCallContext(input: {
   readonly firmwareTables: UefiAArch64FirmwareTableSurface;
   readonly platformLowerings: readonly UefiAArch64PlatformPrimitiveLowering[];
+  readonly validationFixturePacketSources?: readonly UefiAArch64ValidationFixturePacketSource[];
 }): AArch64FirmwarePlatformCallContext {
   const byPrimitive = new Map<string, AArch64FirmwarePlatformCallLowering>();
   for (const lowering of input.platformLowerings) {
@@ -24,6 +31,7 @@ export function uefiAArch64FirmwarePlatformCallContext(input: {
       primitiveId: String(lowering.primitiveId),
       rule: lowering.lowering,
       firmwareTables: input.firmwareTables,
+      validationFixturePacketSources: input.validationFixturePacketSources,
     });
     if (adapted !== undefined) {
       byPrimitive.set(String(lowering.primitiveId), adapted);
@@ -38,6 +46,7 @@ export function uefiLoweringRuleToAArch64FirmwarePlatformCallLowering(input: {
   readonly primitiveId: string;
   readonly rule: UefiFirmwareLoweringRule;
   readonly firmwareTables: UefiAArch64FirmwareTableSurface;
+  readonly validationFixturePacketSources?: readonly UefiAArch64ValidationFixturePacketSource[];
 }): AArch64FirmwarePlatformCallLowering | undefined {
   switch (input.rule.kind) {
     case "firmware-call": {
@@ -65,8 +74,28 @@ export function uefiLoweringRuleToAArch64FirmwarePlatformCallLowering(input: {
         argumentRules: Object.freeze(input.rule.arguments.map(argumentRuleToAArch64)),
         resultRule: resultRuleToAArch64(input.rule.result),
       });
-    case "inline":
+    case "inline": {
+      if (
+        input.primitiveId === UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID &&
+        input.rule.operationKey === UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_OPERATION_KEY
+      ) {
+        const source = input.validationFixturePacketSources?.[0];
+        if (source === undefined) return undefined;
+        const pointer = uefiAArch64ValidationFixturePacketPointer(source);
+        return Object.freeze({
+          kind: "static-readonly-pointer-result" as const,
+          primitiveId: input.primitiveId,
+          symbolName: pointer.symbolName,
+          stableKey: pointer.stableKey,
+          fingerprint: pointer.fingerprint,
+          resultRule: Object.freeze({
+            kind: "pointer-result" as const,
+            capabilityKey: UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_OPERATION_KEY,
+          }),
+        });
+      }
       return undefined;
+    }
   }
 }
 

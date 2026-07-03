@@ -32,6 +32,7 @@ import {
   type CheckedFactSubject,
   type CheckedOriginFact,
 } from "../model/fact-packet";
+import { checkedFactSubjectKey } from "../validation/packet-fact-keys";
 import type { ProofCheckStatePatchEntry } from "../kernel/state-patch";
 import { type CheckedDivergenceFact, type ProofCheckState } from "../kernel/state";
 import { checkReturnWithLoans } from "./loans";
@@ -362,11 +363,16 @@ function buildExitClosurePacketEntry(input: {
   readonly emptyExitStateKey: string;
   readonly operationOriginKey: string;
 }): CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject> {
-  const subjectKey = `exit:${input.emptyExitStateKey}`;
+  const exitKey = `exit:${input.emptyExitStateKey}`;
+  const subject: CheckedFactSubject = {
+    kind: "place",
+    placeId: proofMirPlaceId(stableNumericSeed(exitKey)),
+  };
+  const subjectKey = checkedFactSubjectKey(subject);
   return {
-    factId: proofCheckPacketFactId(stableNumericSeed(subjectKey)),
+    factId: proofCheckPacketFactId(stableNumericSeed(exitKey)),
     kind: checkedFactKindId("exitClosure"),
-    subject: { kind: "place", placeId: proofMirPlaceId(stableNumericSeed(subjectKey)) },
+    subject,
     scope: defaultScope(),
     dependencies: [],
     invalidatedBy: [],

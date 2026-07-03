@@ -105,7 +105,7 @@ describe("Proof MIR program model types", () => {
     expect(program.image.entryFunctionInstanceId).toBe(monoInstanceId("function:main"));
   });
 
-  test("ProofMirCallTarget supports sourceFunction, certifiedPlatform, and compilerRuntime", () => {
+  test("ProofMirCallTarget supports sourceFunction, certifiedPlatform, compilerIntrinsic, and compilerRuntime", () => {
     const sourceFunction: ProofMirCallTarget = {
       kind: "sourceFunction",
       functionInstanceId: monoInstanceId("function:add_one"),
@@ -122,9 +122,16 @@ describe("Proof MIR program model types", () => {
       runtimeId: proofMirRuntimeOperationId(1),
       runtimeCallId: proofMirRuntimeCallId(0),
     };
+    const compilerIntrinsic: ProofMirCallTarget = {
+      kind: "compilerIntrinsic",
+      intrinsicKey: "uefi.utf16_static",
+      sourceValueKey: "hir.expression:1",
+      returnTypeKey: "uefi.Utf16Static",
+    };
 
     expect(sourceFunction.kind).toBe("sourceFunction");
     expect(certifiedPlatform.kind).toBe("certifiedPlatform");
+    expect(compilerIntrinsic.kind).toBe("compilerIntrinsic");
     expect(compilerRuntime.kind).toBe("compilerRuntime");
   });
 

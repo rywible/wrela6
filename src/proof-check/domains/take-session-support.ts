@@ -292,6 +292,7 @@ export function liveAttemptKeys(state: ProofCheckState): readonly string[] {
 
 export function livePacketKeys(state: ProofCheckState): readonly string[] {
   return [...state.packetSources.values()]
+    .filter((packetSource) => state.places.get(packetSource.packetKey)?.lifecycle === "owned")
     .map((packetSource) => packetSource.packetKey)
     .sort(compareCodeUnitStrings);
 }

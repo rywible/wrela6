@@ -667,10 +667,10 @@ tests/integration/validation/full-image/packet-counter-production-pipeline.test.
 - Direct-platform variant declares only allowed platform primitives directly and imports no `wrela_std`.
 - The fixture includes a validation source provider:
   - `platform fn validation_fixture_packet_source() -> ReadableBuffer`
-- The positive fixture bytes are exactly `01 02 41 42`.
+- The positive fixture bytes are exactly `01 02 03 41 42`.
 - The exact negative sibling fixture path is `tests/fixtures/full-image-validation/packet-counter-bad-payload/toolchain-stdlib`.
-- The negative sibling fixture uses the same source modules as `packet-counter/toolchain-stdlib`, but the fixture catalog supplies packet bytes `01 09 41`.
-- The negative sibling must return `UefiStatus.bad_buffer_size` because `counter_delta = 9` requires a payload ending at byte `11`, while the source has only one payload byte.
+- The negative sibling fixture uses the same source modules as `packet-counter/toolchain-stdlib`, but the fixture catalog supplies packet bytes `01 09 03 41`.
+- The negative sibling must return `UefiStatus.bad_buffer_size` because `counter_delta = 9` requires a payload ending at byte `12`, while the source has only one payload byte.
 - The fixture contains at least one fixed field, one derived enum-like field, one length/layout guard, one source call, one platform call, one static `utf16_static` marker, and one status return.
 - Parser import discovery resolves every fixture module in all three modes.
 
@@ -695,17 +695,15 @@ enum PacketKind:
     count
     ignored
 
-dataclass PacketLimits:
-    max_frame_bytes: usize
-
 validated buffer CounterPacket:
     params:
-        limits: PacketLimits
+        max_frame_bytes: usize
 
     layout:
-        kind_byte: u8 at 0
-        counter_delta: u8 at 1
-        payload: bytes at 2 len usize(counter_delta)
+        kind_byte: u8 @ 0
+        counter_delta: u8 @ 1
+        payload_first: u8 @ 2
+        payload: u8 @ 3 len counter_delta
 
     derive:
         kind: PacketKind from kind_byte:
@@ -714,40 +712,48 @@ validated buffer CounterPacket:
 
     require:
         source.len >= 2 else UefiStatus.bad_buffer_size
-        source.len <= limits.max_frame_bytes else UefiStatus.bad_buffer_size
+        source.len <= max_frame_bytes else UefiStatus.bad_buffer_size
         layout.fits else UefiStatus.bad_buffer_size
+
+pub fn validate_counter_packet(
+    source: Ptr,
+    max_frame_bytes: usize,
+) -> Validation[CounterPacket, UefiStatus, Ptr]:
+    return {}
 ```
 
 ```wrela
 // src/packet_counter/counter.wr
 use write_packet_counter_marker from packet_counter.console
 use validation_fixture_packet_source from packet_counter.fixture_source
-use CounterPacket, PacketKind, PacketLimits from packet_counter.packet
+use validate_counter_packet, PacketKind from packet_counter.packet
 use UefiStatus from packet_counter.uefi_status
 
 fn run_packet_counter() -> UefiStatus:
-    let limits = PacketLimits(max_frame_bytes=64)
+    let source = validation_fixture_packet_source()
 
-    take validation_fixture_packet_source() as source:
-        match CounterPacket.validate(source=source, limits=limits):
-            case Ok(packet):
-                if packet.kind == PacketKind.count:
-                    let count = usize(packet.counter_delta) + 1
-                    write_packet_counter_marker(count=count)
-                else:
-                    write_packet_counter_marker(count=0)
+    match validate_counter_packet(source=source, max_frame_bytes=64):
+        case Ok(packet):
+            if packet.kind == PacketKind.count:
+                let count = packet.counter_delta + packet.payload_first
+                write_packet_counter_marker(count=count)
+            else:
+                write_packet_counter_marker(count=0)
 
-            case Err(status):
-                return status
+        case Err(status):
+            return status
 ```
 
 ```wrela
 // stdlib-mode src/packet_counter/console.wr
 use write_console_string from wrela_std.target.uefi.console
-use UefiStatus from packet_counter.uefi_status
+use UefiStatus from wrela_std.target.uefi.status
 
-pub fn write_packet_counter_marker(count: usize) -> UefiStatus:
-    write_console_string(utf16_static("WRELA_PACKET_COUNTER_OK\r\n"))
+pub fn write_packet_counter_marker(count: u8) -> UefiStatus:
+    if count == 0:
+        return UefiStatus.bad_buffer_size
+    else:
+        return write_console_string(utf16_static("WRELA_PACKET_COUNTER_OK\r\n"))
 ```
 
 ```wrela
@@ -756,8 +762,11 @@ use UefiStatus from packet_counter.uefi_status
 
 platform fn output_string(message: Utf16Static) -> UefiStatus
 
-pub fn write_packet_counter_marker(count: usize) -> UefiStatus:
-    output_string(utf16_static("WRELA_PACKET_COUNTER_OK\r\n"))
+pub fn write_packet_counter_marker(count: u8) -> UefiStatus:
+    if count == 0:
+        return UefiStatus.bad_buffer_size
+    else:
+        return output_string(utf16_static("WRELA_PACKET_COUNTER_OK\r\n"))
 ```
 
 ```wrela
@@ -2232,6 +2241,29 @@ bun test tests/audit/full-image-validation-audit.test.ts
 bun run format
 bun run agent:check
 ```
+
+## Implementation Notes 2026-07-03
+
+- The production confidence path now retains the package-pipeline phase adapters in the trace (`parsedGraph`, typed HIR, monomorphization, layout facts, proof MIR, proof check, unoptimized OptIR, and optimized OptIR). This lets the full-image reference checkers prove coverage from real compiler outputs instead of relying on injected OptIR fixtures.
+- PacketCounter bring-up exposed additional compiler/backend fixes beyond the original validation harness tasks:
+  - validation error-arm payload places are tracked through proof MIR and proof-check transfer,
+  - validated-buffer OptIR lowering now materializes backed `packetSource` and `validatedPayload` regions with imported memory-region facts,
+  - source-call lowering forwards hidden UEFI firmware context parameters through nested source functions,
+  - source-call symbols use stable monomorphized function instance IDs so backend definitions match relocations,
+  - OptIR memory-order facts are translated to backend `memory-order-and-region-type` authorities,
+  - AArch64 call-clobber interference only applies to values live through a call, not call arguments consumed by the call,
+  - duplicate static CHAR16 metadata is scoped/remapped across loaded source functions.
+- The reference checkers intentionally read structured retained compiler domains. PacketCounter proof and OptIR coverage is derived from layout facts, proof-MIR statements, checked proof domains, static CHAR16 metadata, and platform-call records. This is stricter than the original flat `factPacket.facts` sketch and matches the production trace shape.
+- Non-PacketCounter reference policies are scenario-specific: `smoke-console` checks the smoke marker and console primitive, `status-error` checks the `bad_buffer_size` status constant and exit closure, and `watchdog-or-boot-policy` checks the watchdog platform primitive and exit closure.
+- The compiler now emits an extra `validation-fixture-objects` stage for PacketCounter fixture packet bytes. The stage is accepted as production validation evidence because the object is produced by the target driver from deterministic fixture metadata, not by injecting optimized OptIR.
+- The current PacketCounter fixtures remain compact compiler-validation fixtures rather than a full UEFI device bring-up program. They exercise real parser, semantic, proof, OptIR, backend, linker, and PE generation paths for packet validation, but do not yet model the richer `firmware.reserve_restricted_memory`, virtio discovery/binding, machine planning, and `Result[Never, BootError]` application loop shape shown in the design conversation.
+- The design sketch names the packet primitive output `ReadableBuffer`. The implemented fixture surface maps that role onto the current UEFI target's pointer-compatible packet source (`Ptr`) plus compiler-owned packet-source metadata, so the validation bytes still flow through a deterministic object module while the richer buffer type is left for a future target-surface expansion.
+- Final PacketCounter bring-up also required production hardening that was not explicit in the first plan draft: validated-buffer read values now retain source expression type/resource metadata into Proof MIR and OptIR; arithmetic/unary expression values do the same; AArch64 lowering preserves memory access widths into physical/layout instructions; the encoder and authenticated decoder catalog cover 1/2/4/8-byte unsigned load/store forms; OptIR GVN only commons values when the chosen definition dominates the use; and aggregate planning records no longer double-spend memory-order or validated-payload facts that are already preserved by concrete memory-load selections.
+- Independent review found that `proof-fact-reference` was too willing to synthesize PacketCounter proof coverage from layout facts and OptIR call shape. The final implementation emits a checked proof-packet extension for accepted platform-call precondition discharge, requires checked validated-buffer facts for the source-length requirement, and keeps layout/OptIR structural evidence from satisfying those proof requirements by itself.
+- Independent review also found that the UEFI TCB golden fixture used the production EFI status helper. The final golden fixture stores explicit EFI status literals and the audit now covers the production full-image golden fixture file.
+- A follow-up independent review found that source-root report accounting could double-count nested ejected stdlib roots when a source key matched both the project root and the stdlib root. The final runner assigns each source file to its most-specific configured source root before computing per-root counts.
+- The same follow-up review found that optimized OptIR reference coverage could be satisfied from retained unoptimized operations. The final OptIR reference checker now requires optimized `optIr.operations` for optimized coverage and keeps unoptimized operations available only as trace context outside that evidence check.
+- The final thermo-nuclear maintainability pass found several touched files crossing the 1k-line decomposition threshold. The implementation now splits UEFI layout target surfaces, package-pipeline static CHAR16 handling, package-pipeline stage-input glue, package-pipeline semantic target shaping, Proof-MIR validation setup support, OptIR Proof-MIR lowering helpers, and proof-check hidden ownership analysis into focused modules. No changed source file now crosses from below 1k lines to 1k+ lines.
 
 ## Definition Of Done
 

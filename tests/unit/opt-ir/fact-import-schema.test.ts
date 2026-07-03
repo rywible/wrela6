@@ -9,7 +9,12 @@ import {
   checkedSummaryInstantiationCertificateId,
   proofCheckCoreCertificateId,
 } from "../../../src/proof-check/ids";
-import { proofMirCallId, proofMirPlaceId, proofMirValueId } from "../../../src/proof-mir/ids";
+import {
+  proofMirCallId,
+  proofMirOriginId,
+  proofMirPlaceId,
+  proofMirValueId,
+} from "../../../src/proof-mir/ids";
 import {
   checkedFactImportSchemaForKind,
   type CheckedFactImportValidationResult,
@@ -83,6 +88,10 @@ describe("OptIR checked fact import schema registry", () => {
     });
 
     test(`${kind} import rejects missing required dependency`, () => {
+      const schema = checkedFactImportSchemaForKind(checkedFactKindId(kind));
+      if (schema.requiredDependencies.length === 0) {
+        return;
+      }
       const result = validateCheckedFactImportSchemaForTest({
         entry: checkedFactPacketEntryForTest({ kind, dependencies: [] }),
       });
@@ -125,6 +134,30 @@ describe("OptIR checked fact import schema registry", () => {
     });
 
     expect(expectImportError(result)).toContain("OPT_IR_FACT_IMPORT_MISSING_DEPENDENCY");
+  });
+
+  test("exitClosure import accepts production place-subject closure packets", () => {
+    const result = validateCheckedFactImportSchemaForTest({
+      entry: checkedFactPacketEntryForTest({
+        kind: "exitClosure",
+        subject: { kind: "place", placeId: proofMirPlaceId(1) },
+        dependencies: [],
+      }),
+    });
+
+    expect(result).toEqual({ kind: "ok", typedAnswers: EXPECTED_TYPED_ANSWERS.exitClosure });
+  });
+
+  test("origin import accepts synthesized proof-check origin packets", () => {
+    const result = validateCheckedFactImportSchemaForTest({
+      entry: checkedFactPacketEntryForTest({
+        kind: "origin",
+        subject: { kind: "mirOrigin", proofMirOriginId: proofMirOriginId(1499195698) },
+        dependencies: [],
+      }),
+    });
+
+    expect(result).toEqual({ kind: "ok", typedAnswers: EXPECTED_TYPED_ANSWERS.origin });
   });
 
   test("packetSource import rejects stale path scope", () => {

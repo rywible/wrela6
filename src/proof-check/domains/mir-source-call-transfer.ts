@@ -132,6 +132,7 @@ function bindingForOperand(input: {
 
 function buildSourceCallOperandBindings(input: {
   readonly callerGraph: ProofMirFunction;
+  readonly calleeGraph?: ProofMirFunction;
   readonly callerFunctionInstanceId: MonoInstanceId;
   readonly mirCall: ProofMirCall;
 }): SourceCallOperandBindings {
@@ -162,6 +163,10 @@ function buildSourceCallOperandBindings(input: {
     }
     argumentsBindings.push(binding);
     placeKeys.set(`argument:${index}`, binding.placeKey);
+    const calleeParameter = input.calleeGraph?.signature.parameters[index];
+    if (calleeParameter !== undefined) {
+      placeKeys.set(`parameter:${index}:${String(calleeParameter.parameterId)}`, binding.placeKey);
+    }
     if (argument.parameterId !== undefined) {
       const parameterIndex = input.callerGraph.signature.parameters.findIndex(
         (parameter) => String(parameter.parameterId) === String(argument.parameterId),
@@ -442,7 +447,7 @@ export function calleeRequirementTermsForSummary(input: {
   });
   const requiredKeys = new Set(input.summary.requiredFacts.map((fact) => fact.termKey));
   if (requiredKeys.size === 0) {
-    return declared;
+    return [];
   }
   return declared.filter((term) =>
     requiredKeys.has(normalizeProofCheckTerm(term, "sourceRequirement").key),
@@ -476,6 +481,7 @@ export function buildCheckedSourceCallTransferInput(input: {
       ? undefined
       : buildSourceCallOperandBindings({
           callerGraph,
+          ...(calleeGraph === undefined ? {} : { calleeGraph }),
           callerFunctionInstanceId,
           mirCall,
         });

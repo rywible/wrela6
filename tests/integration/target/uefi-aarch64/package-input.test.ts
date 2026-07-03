@@ -38,6 +38,36 @@ describe("UEFI compiler package input", () => {
     ]);
   });
 
+  test("normalizes enabled target features deterministically", () => {
+    const result = compilerPackageInput({
+      packageKey: "smoke-basic",
+      sourceRoots: [
+        { kind: "project", rootKey: "project", rootPath: "src", trustedForAuthority: false },
+      ],
+      sourceFiles: [{ sourceKey: "src/image.wr", moduleName: "image", text: "module image\n" }],
+      enabledTargetFeatures: ["zeta", "alpha", "zeta"],
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.value.enabledTargetFeatures).toEqual(["alpha", "zeta"]);
+    expect(Object.isFrozen(result.value.enabledTargetFeatures)).toBe(true);
+  });
+
+  test("does not enable fixture-only target features by default", () => {
+    const result = compilerPackageInput({
+      packageKey: "smoke-basic",
+      sourceRoots: [
+        { kind: "project", rootKey: "project", rootPath: "src", trustedForAuthority: false },
+      ],
+      sourceFiles: [{ sourceKey: "src/image.wr", moduleName: "image", text: "module image\n" }],
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.value.enabledTargetFeatures).toEqual([]);
+  });
+
   test("rejects duplicate source keys and duplicate module names deterministically", () => {
     const result = compilerPackageInput({
       packageKey: "smoke-basic",
@@ -131,6 +161,90 @@ describe("UEFI compiler package input", () => {
         text: "module core.unit\n",
       },
     ]);
+  });
+
+  test("passes enabled target features through fixture package input", () => {
+    const result = packageInputFromFixtureProject("/fixtures/smoke-basic", {
+      entryModuleName: "image",
+      sourceRoots: defaultUefiAArch64SourceRoots({
+        projectSourceRoot: "src",
+        stdlibMode: "none",
+      }),
+      enabledTargetFeatures: ["full-image-validation-fixture"],
+      filesystem: {
+        readDirectory: (path) => (path === "/fixtures/smoke-basic/src" ? ["image.wr"] : []),
+        isDirectory: () => false,
+        readTextFile: (path) => {
+          if (path !== "/fixtures/smoke-basic/src/image.wr") {
+            throw new Error(`Unexpected read: ${path}`);
+          }
+          return "module image\n";
+        },
+      },
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.value.enabledTargetFeatures).toEqual(["full-image-validation-fixture"]);
+  });
+
+  test("accepts frozen validation fixture packet bytes only with the validation feature", () => {
+    const result = packageInputFromFixtureProject("/fixtures/packet-counter", {
+      entryModuleName: "image",
+      sourceRoots: defaultUefiAArch64SourceRoots({
+        projectSourceRoot: "src",
+        stdlibMode: "none",
+      }),
+      enabledTargetFeatures: ["full-image-validation-fixture"],
+      validationFixturePacketSource: {
+        primitiveId: "uefi.validation.fixturePacketSource",
+        feature: "full-image-validation-fixture",
+        stableKey: "packet-counter:test",
+        bytes: [0x01, 0x02, 0x41, 0x42],
+      },
+      filesystem: {
+        readDirectory: (path) => (path === "/fixtures/packet-counter/src" ? ["image.wr"] : []),
+        isDirectory: () => false,
+        readTextFile: (path) => {
+          if (path !== "/fixtures/packet-counter/src/image.wr") {
+            throw new Error(`Unexpected read: ${path}`);
+          }
+          return "module image\n";
+        },
+      },
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.value.validationFixturePacketSource?.bytes).toEqual([0x01, 0x02, 0x41, 0x42]);
+    expect(Object.isFrozen(result.value.validationFixturePacketSource)).toBe(true);
+    expect(Object.isFrozen(result.value.validationFixturePacketSource?.bytes)).toBe(true);
+  });
+
+  test("rejects validation fixture packet bytes for packages without the validation feature", () => {
+    const result = packageInputFromFixtureProject("/fixtures/packet-counter", {
+      entryModuleName: "image",
+      sourceRoots: defaultUefiAArch64SourceRoots({
+        projectSourceRoot: "src",
+        stdlibMode: "none",
+      }),
+      validationFixturePacketSource: {
+        primitiveId: "uefi.validation.fixturePacketSource",
+        feature: "full-image-validation-fixture",
+        stableKey: "packet-counter:test",
+        bytes: [0x01],
+      },
+      filesystem: {
+        readDirectory: (path) => (path === "/fixtures/packet-counter/src" ? ["image.wr"] : []),
+        isDirectory: () => false,
+        readTextFile: () => "module image\n",
+      },
+    });
+
+    expect(result.kind).toBe("error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+      "package-input:validation-fixture-packet-source:feature-disabled",
+    );
   });
 
   test("package fixture preserves the existing target surface fixture export", () => {

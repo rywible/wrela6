@@ -248,6 +248,7 @@ export function hirDiagnostic(input: {
   return {
     code,
     message: input.message,
+    stableDetail: input.stableDetail,
     ...(input.originId !== undefined ? { originId: input.originId } : {}),
     order: {
       moduleId: input.moduleId ?? moduleId(0),

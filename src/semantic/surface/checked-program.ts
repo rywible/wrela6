@@ -286,6 +286,39 @@ function validatedBufferFieldModelTable(
   };
 }
 
+// ── Checked compiler intrinsic calls ───────────────────────
+
+export interface CheckedCompilerIntrinsicCall {
+  readonly key: SyntaxReferenceKey;
+  readonly sourceName: string;
+  readonly intrinsicKey: string;
+  readonly literalValue: string;
+  readonly returnTypeKey: string;
+  readonly returnType: CheckedType;
+  readonly sourceSpan: SourceSpan;
+}
+
+export interface CheckedCompilerIntrinsicCallTable {
+  get(key: SyntaxReferenceKey): CheckedCompilerIntrinsicCall | undefined;
+  entries(): readonly CheckedCompilerIntrinsicCall[];
+}
+
+function checkedCompilerIntrinsicCallTable(
+  records: readonly CheckedCompilerIntrinsicCall[],
+): CheckedCompilerIntrinsicCallTable {
+  const sorted = [...records].sort((left, right) => {
+    return compareCodeUnitStrings(
+      completedMemberKeyString(left.key),
+      completedMemberKeyString(right.key),
+    );
+  });
+  const byKey = new Map(sorted.map((record) => [completedMemberKeyString(record.key), record]));
+  return {
+    get: (key) => byKey.get(completedMemberKeyString(key)),
+    entries: () => [...sorted],
+  };
+}
+
 // ── CheckedSemanticProgram ─────────────────────────────────
 
 export interface CheckedSemanticProgram {
@@ -296,6 +329,7 @@ export interface CheckedSemanticProgram {
   readonly completedMembers: CompletedMemberReferenceTable;
   readonly proofSurface: CheckedProofSurface;
   readonly certifiedPlatformBindings: CertifiedPlatformBindingTable;
+  readonly compilerIntrinsicCalls: CheckedCompilerIntrinsicCallTable;
   readonly monoClosureFacts: CheckedMonoClosureFacts;
   readonly validatedBufferFields: ValidatedBufferFieldModelTable;
 }
@@ -309,6 +343,7 @@ export class CheckedProgramBuilder {
   private readonly genericParamRecords: CheckedGenericParameterRecord[] = [];
   private readonly completedMemberEntries: CompletedMemberReference[] = [];
   private readonly platformBindingRecords: CertifiedPlatformBinding[] = [];
+  private readonly compilerIntrinsicCallRecords: CheckedCompilerIntrinsicCall[] = [];
   private proofSurface: CheckedProofSurface | undefined;
   private monoClosureFacts: CheckedMonoClosureFacts | undefined;
   private validatedBufferFieldModels: ValidatedBufferFieldModel[] = [];
@@ -337,6 +372,10 @@ export class CheckedProgramBuilder {
     this.platformBindingRecords.push(binding);
   }
 
+  addCompilerIntrinsicCall(call: CheckedCompilerIntrinsicCall): void {
+    this.compilerIntrinsicCallRecords.push(call);
+  }
+
   setProofSurface(surface: CheckedProofSurface): void {
     this.proofSurface = surface;
   }
@@ -358,6 +397,7 @@ export class CheckedProgramBuilder {
       completedMembers: completedMemberReferenceTable(this.completedMemberEntries),
       proofSurface: this.proofSurface ?? checkedProofSurfaceEmpty(),
       certifiedPlatformBindings: certifiedPlatformBindingTable(this.platformBindingRecords),
+      compilerIntrinsicCalls: checkedCompilerIntrinsicCallTable(this.compilerIntrinsicCallRecords),
       monoClosureFacts: this.monoClosureFacts ?? checkedMonoClosureFactsEmpty(),
       validatedBufferFields: validatedBufferFieldModelTable(this.validatedBufferFieldModels),
     };

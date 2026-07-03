@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
+import { buildItemIndex } from "../../../src/semantic/item-index";
+import { CoreTypeCatalog, resolveNames } from "../../../src/semantic/names";
+import { checkSemanticSurface } from "../../../src/semantic/surface";
 import { buildLayoutTypeResolutionTable } from "../../../src/layout/layout-type-resolution";
 import type { HirImage } from "../../../src/hir/hir";
+import { lowerTypedHir } from "../../../src/hir";
 import { hirOriginId } from "../../../src/hir/ids";
 import {
   monomorphizeWholeImage,
@@ -8,7 +12,11 @@ import {
   selectMonoImageRoot,
 } from "../../../src/mono/monomorphizer";
 import { monoDiagnosticCode } from "../../../src/mono/diagnostics";
-import { functionId, imageId, itemId } from "../../../src/semantic/ids";
+import { functionId, imageId, itemId, targetTypeId } from "../../../src/semantic/ids";
+import { uefiAArch64CompilerIntrinsicNameCatalog } from "../../../src/target/uefi-aarch64";
+import { parseModuleGraphForTest } from "../../support/frontend/module-graph-test-support";
+import { platformPrimitiveNameCatalogFake } from "../../support/semantic/name-resolution-fakes";
+import { semanticTargetSurfaceFake } from "../../support/semantic/semantic-surface-fakes";
 import {
   genericPacketProgramForMonoTest,
   minimalClosedProgramForMonoTest,
@@ -25,6 +33,53 @@ function imageWithoutEntry(): HirImage {
     devices: [],
     sourceOrigin: hirOriginId(0),
   };
+}
+
+function programWithReachableUefiCompilerIntrinsic() {
+  const graph = parseModuleGraphForTest([
+    [
+      "main.wr",
+      [
+        "fn marker() -> Utf16Static:",
+        '    utf16_static("OK\\r\\n")',
+        "uefi image Boot:",
+        "    fn main() -> Never:",
+        "        marker()",
+        "        return",
+      ].join("\n"),
+    ],
+  ]);
+  const index = buildItemIndex({ graph }).index;
+  const coreTypes = CoreTypeCatalog.default();
+  const targetSurface = semanticTargetSurfaceFake({
+    targetTypeKinds: [{ targetTypeId: targetTypeId("uefi.Utf16Static"), kind: "Copy" }],
+  });
+  const names = resolveNames({
+    graph,
+    index,
+    coreTypes,
+    platformPrimitiveNames: platformPrimitiveNameCatalogFake([]),
+    compilerIntrinsics: uefiAArch64CompilerIntrinsicNameCatalog(),
+    targetTypes: targetSurface.targetTypeKinds,
+  });
+  const surface = checkSemanticSurface({
+    graph,
+    index,
+    references: names.references,
+    platformBindings: names.platformBindings,
+    coreTypes,
+    targetSurface,
+  });
+  const typedHir = lowerTypedHir({
+    graph,
+    index,
+    references: names.references,
+    coreTypes,
+    program: surface.program,
+    image: surface.image,
+  });
+  expect(typedHir.diagnostics).toEqual([]);
+  return typedHir.program;
 }
 
 test("monomorphizer reports missing selected image before graph work", () => {
@@ -60,6 +115,23 @@ test("minimal non-generic selected image closes to an ok monomorphized program",
     expect(result.program.proofMetadata.obligations.entries()).toEqual([]);
     expect(result.reachablePlatformPrimitiveIds).toEqual([]);
   }
+});
+
+test("reachable compiler intrinsic calls close without fake call targets", () => {
+  const result = monomorphizeWholeImage({ program: programWithReachableUefiCompilerIntrinsic() });
+
+  expect(result.kind).toBe("ok");
+  if (result.kind !== "ok") return;
+  const intrinsicCalls = result.program.functions
+    .entries()
+    .flatMap((func) => func.bodyIndex?.expressions.entries() ?? [])
+    .filter((expression) => expression.kind.kind === "call")
+    .map((expression) => (expression.kind.kind === "call" ? expression.kind.call : undefined))
+    .filter((call) => call?.compilerIntrinsic !== undefined);
+
+  expect(intrinsicCalls).toHaveLength(1);
+  expect(intrinsicCalls[0]?.resolvedTarget).toBeUndefined();
+  expect(intrinsicCalls[0]?.compilerIntrinsic?.intrinsicKey).toBe("uefi.utf16_static");
 });
 
 test("project function reaches vendored stdlib declaration through ordinary HIR graph", () => {

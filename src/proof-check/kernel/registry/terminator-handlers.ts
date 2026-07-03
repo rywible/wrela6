@@ -2,6 +2,10 @@ import { matchAttempt } from "../../domains/attempts";
 import { checkProofCheckExtensionTransfer } from "../../domains/extensions";
 import { matchValidation } from "../../domains/validation";
 import {
+  introducedValidationArmLayoutPlaceKeysFromEdge,
+  introducedValidationArmPlaceKeysFromEdge,
+} from "../../domains/validation-arm-cleanup";
+import {
   proofCheckProgramPointKey,
   type ProofCheckTransition,
   type ProofCheckTransitionResult,
@@ -13,6 +17,7 @@ import {
   missingMirMetadataTransition,
   patchTransition,
   resolveAttemptContextForTransition,
+  resolveFunctionGraph,
   resolveValidationContextForTransition,
   type ProofCheckRegistryContext,
 } from "./transition-helpers";
@@ -42,6 +47,18 @@ export function handleTerminator(input: {
     if (validationContext === undefined) {
       return missingMirMetadataTransition(input.transition, "matchValidation:missing-context");
     }
+    const functionGraph = resolveFunctionGraph(
+      input.context.input.mir,
+      input.transition.functionInstanceId,
+    );
+    const okEdge =
+      functionGraph === undefined
+        ? undefined
+        : functionGraph.edges.get(terminatorKind.match.okTarget.edgeId);
+    const errEdge =
+      functionGraph === undefined
+        ? undefined
+        : functionGraph.edges.get(terminatorKind.match.errTarget.edgeId);
     return patchTransition(
       input.transition,
       input.context,
@@ -55,7 +72,26 @@ export function handleTerminator(input: {
         ...(validationContext.payloadPlaceKey === undefined
           ? {}
           : { payloadPlaceKey: validationContext.payloadPlaceKey }),
+        ...(validationContext.errPayloadPlaceKey === undefined
+          ? {}
+          : { errPayloadPlaceKey: validationContext.errPayloadPlaceKey }),
+        additionalOkOwnedPlaceKeys: introducedValidationArmPlaceKeysFromEdge({
+          functionGraph,
+          edge: okEdge,
+          placeResolver: input.context.placeResolver,
+        }),
+        additionalOkLayoutPlaceKeys: introducedValidationArmLayoutPlaceKeysFromEdge({
+          functionGraph,
+          edge: okEdge,
+          placeResolver: input.context.placeResolver,
+        }),
+        additionalErrOwnedPlaceKeys: introducedValidationArmPlaceKeysFromEdge({
+          functionGraph,
+          edge: errEdge,
+          placeResolver: input.context.placeResolver,
+        }),
         operationOriginKey: ownerKey,
+        placeResolver: input.context.placeResolver,
       }),
     );
   }

@@ -74,6 +74,7 @@ function freezeDraftObservedOperand(
   switch (frozen.kind) {
     case "value":
     case "place":
+    case "valueAndPlace":
       return frozen;
     default:
       return undefined;

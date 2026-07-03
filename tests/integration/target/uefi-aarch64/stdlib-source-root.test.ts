@@ -120,7 +120,11 @@ function expectParsedImportResolves(
   if (parsed.value.parsedGraph === undefined) return;
 
   const modules = parsed.value.parsedGraph.modules;
-  const importerModule = modules.find((module) => module.path.key === importer);
+  const importerModule = modules.find((module) => module.path.key === modulePathKey(importer));
   expect(importerModule?.imports.map((request) => request.moduleName)).toContain(importedModule);
-  expect(modules.map((module) => module.path.key)).toContain(importedModule);
+  expect(modules.map((module) => module.path.key)).toContain(modulePathKey(importedModule));
+}
+
+function modulePathKey(moduleName: string): string {
+  return `${moduleName.replace(/\./g, "/")}.wr`;
 }

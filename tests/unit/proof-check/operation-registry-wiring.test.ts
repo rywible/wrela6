@@ -45,6 +45,14 @@ describe("operation registry wiring", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.checked.facts.validatedBuffers.length).toBeGreaterThan(0);
+    expect(
+      result.checked.facts.validatedBuffers.every((entry) =>
+        entry.dependencies.some(
+          (dependency) =>
+            dependency.kind === "proofMirEdge" && readTagFunction.edges.has(dependency.edgeId),
+        ),
+      ),
+    ).toBe(true);
   });
 
   test("mirProofMetadataKey is stable for validation and attempt ids", () => {

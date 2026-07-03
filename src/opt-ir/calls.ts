@@ -26,6 +26,7 @@ export type OptIrCallTarget =
   | {
       readonly kind: "intrinsic";
       readonly intrinsicKey: string;
+      readonly sourceValueKey?: string;
     }
   | {
       readonly kind: "externalUnknown";

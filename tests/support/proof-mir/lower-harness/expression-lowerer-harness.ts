@@ -46,6 +46,7 @@ import {
   createDraftGraphBuilder,
   type DraftGraphBuilder,
 } from "../../../../src/proof-mir/draft/draft-graph-builder";
+import type { DraftProofMirValueRecord } from "../../../../src/proof-mir/draft/draft-program";
 import { draftLocalKey } from "../../../../src/proof-mir/draft/draft-keys";
 import type { DraftProofMirGraphStatementSnapshot } from "../../../../src/proof-mir/draft/draft-statement";
 import type { ProofMirDraftOperand } from "../../../../src/proof-mir/lower/lowering-operands";
@@ -95,6 +96,7 @@ export type LowerProofMirExpressionForTestResult =
       readonly kind: "ok";
       readonly operand: ProofMirDraftOperand;
       readonly statements: readonly DraftProofMirGraphStatementSnapshot[];
+      readonly values: readonly DraftProofMirValueRecord[];
     }
   | { readonly kind: "error"; readonly diagnostics: readonly ProofMirDiagnostic[] };
 
@@ -209,6 +211,7 @@ export function lowerProofMirExpressionForTest(
     kind: "ok",
     operand: lowered.value,
     statements: expressionLowerer.statements(),
+    values: graph.functionDraft().values.entries(),
   };
 }
 

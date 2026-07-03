@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { proofMirDiagnostic, proofMirDiagnosticCode } from "../../../src/proof-mir/diagnostics";
+import { buildProofMir } from "../../../src/proof-mir/proof-mir-builder";
 import { targetId } from "../../../src/semantic/ids";
 import {
   closedProofMirFixture,
@@ -70,6 +71,22 @@ describe("proofMirBuildInputForSource", () => {
     const input = proofMirBuildInputForSource(source);
 
     expect(input.program.functions.entries().length).toBeGreaterThan(1);
+  });
+
+  test("builds nested call arguments through the wired expression lowerer", () => {
+    const source = [
+      "fn value() -> u32:",
+      "    return 1",
+      "fn sink(input: u32) -> u32:",
+      "    return input",
+      "uefi image Boot:",
+      "    fn main() -> Never:",
+      "        sink(value())",
+      "        return",
+    ].join("\n");
+    const result = buildProofMir(proofMirBuildInputForSource(source));
+
+    expect(result.kind).toBe("ok");
   });
 });
 

@@ -16,6 +16,7 @@ import {
   errorCheckedType,
   genericParameterCheckedType,
   sourceCheckedType,
+  targetCheckedType,
 } from "../semantic/surface/type-model";
 import { coreTypeId, type CoreTypeId, type TargetTypeId, type TypeId } from "../semantic/ids";
 import type { CertifiedPlatformBinding } from "../semantic/surface/checked-program";
@@ -99,6 +100,8 @@ function resolveTypeArgument(input: {
     baseType = sourceCheckedType({ itemId: reference.itemId, typeId: reference.typeId });
   } else if (reference?.kind === "typeParameter") {
     baseType = genericParameterCheckedType({ owner: reference.owner, index: reference.index });
+  } else if (reference?.kind === "targetType") {
+    baseType = targetCheckedType(reference.targetTypeId);
   }
 
   if (baseType === undefined) {
@@ -213,22 +216,44 @@ function containsErrorType(type: CheckedType): boolean {
 
 interface ResolvedCallee {
   readonly functionId?: FunctionId;
+  readonly compilerIntrinsic?: import("../semantic/surface/checked-program").CheckedCompilerIntrinsicCall;
   readonly receiver?: HirExpression;
   readonly name: string;
+}
+
+function syntaxReferenceKeyString(
+  key: import("../semantic/names/reference").SyntaxReferenceKey,
+): string {
+  return `${key.moduleId}:${key.span.start}:${key.span.end}:${key.kind}:${key.ordinal}`;
+}
+
+function compilerIntrinsicSourceValueKey(input: {
+  readonly ownerFunctionId?: FunctionId;
+  readonly expressionId: import("./ids").HirExpressionId;
+}): string {
+  const ownerKey =
+    input.ownerFunctionId === undefined ? "function:unknown" : `function:${input.ownerFunctionId}`;
+  return `hir.expression:${ownerKey}:${input.expressionId}`;
 }
 
 function resolveCallee(view: CallExpressionView, context: HirLoweringContext): ResolvedCallee {
   const callee = unwrapTypeApplication(view.callee());
   if (callee instanceof NameExpressionView) {
     const span = presentTokenSpan(callee.nameToken()) ?? callee.node.span;
-    const reference = context.referenceLookup.referenceForSpan({
+    const referenceEntry = context.referenceLookup.referenceEntryForSpan({
       moduleId: currentHirModuleId(context),
       span,
       kind: "functionName",
     });
+    const reference = referenceEntry?.reference;
+    const compilerIntrinsic =
+      reference?.kind === "compilerIntrinsic" && referenceEntry !== undefined
+        ? context.program.compilerIntrinsicCalls.get(referenceEntry.key)
+        : undefined;
     return {
       name: callee.nameText() ?? "",
       ...(reference?.kind === "function" ? { functionId: reference.functionId } : {}),
+      ...(compilerIntrinsic !== undefined ? { compilerIntrinsic } : {}),
     };
   }
 
@@ -326,6 +351,7 @@ function reportUncertifiedPlatformEnsure(input: {
 function lowerArgumentExpression(
   view: ArgumentView | NamedArgumentView,
   context: HirLoweringContext,
+  expectedType: CheckedType | undefined,
 ): HirExpression {
   const expressionView = view instanceof NamedArgumentView ? view.value() : view.expression();
   if (expressionView === undefined) {
@@ -343,7 +369,43 @@ function lowerArgumentExpression(
     context.bodyIndex.addExpression(expression);
     return expression;
   }
-  return lowerExpression({ view: expressionView, context });
+  return lowerExpression({
+    view: expressionView,
+    context,
+    ...(expectedType === undefined ? {} : { expectedType }),
+  });
+}
+
+function expectedTypeForCallArgument(input: {
+  readonly argument: ArgumentView | NamedArgumentView;
+  readonly positionalIndex: number;
+  readonly signature: CheckedFunctionSignature | undefined;
+}): CheckedType | undefined {
+  const signature = input.signature;
+  if (signature === undefined) return undefined;
+  const parameter = (() => {
+    if (input.argument instanceof NamedArgumentView) {
+      const name = input.argument.nameText();
+      return signature.parameters.find((candidate) => candidate.name === name);
+    }
+    return signature.parameters[input.positionalIndex];
+  })();
+  if (parameter === undefined) return undefined;
+  return canUseAsCallArgumentExpectedType(parameter.type) ? parameter.type : undefined;
+}
+
+function canUseAsCallArgumentExpectedType(type: CheckedType): boolean {
+  switch (type.kind) {
+    case "core":
+    case "source":
+    case "target":
+      return true;
+    case "applied":
+      return type.arguments.every(canUseAsCallArgumentExpectedType);
+    case "genericParameter":
+    case "error":
+      return false;
+  }
 }
 
 function reportCallArgumentMismatch(input: {
@@ -438,7 +500,10 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
       ? input.context.program.functions.get(calleeFunctionId)
       : undefined;
 
-  if (calleeFunctionId === undefined || originalSignature === undefined) {
+  if (
+    resolvedCallee.compilerIntrinsic === undefined &&
+    (calleeFunctionId === undefined || originalSignature === undefined)
+  ) {
     input.context.diagnostics.report(
       hirDiagnostic({
         code: "HIR_CALL_CALLEE_NOT_FUNCTION",
@@ -455,7 +520,15 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
   const loweredByName = new Map<string, HirCallArgument>();
   const positional: HirCallArgument[] = [];
   for (const sourceArgument of sourceArguments) {
-    const loweredExpression = lowerArgumentExpression(sourceArgument, input.context);
+    const loweredExpression = lowerArgumentExpression(
+      sourceArgument,
+      input.context,
+      expectedTypeForCallArgument({
+        argument: sourceArgument,
+        positionalIndex: positional.length,
+        signature: originalSignature,
+      }),
+    );
     if (sourceArgument instanceof NamedArgumentView) {
       const name = sourceArgument.nameText() ?? "";
       loweredByName.set(name, { name, expression: loweredExpression });
@@ -589,9 +662,27 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
     }
   }
 
+  const calleeExpressionValue = calleeExpression(input.view, input.context, resolvedCallee);
+  const expressionId = input.context.bodyIndex.nextExpressionId();
+  const compilerIntrinsic =
+    resolvedCallee.compilerIntrinsic !== undefined
+      ? {
+          intrinsicKey: resolvedCallee.compilerIntrinsic.intrinsicKey,
+          literalValue: resolvedCallee.compilerIntrinsic.literalValue,
+          returnTypeKey: resolvedCallee.compilerIntrinsic.returnTypeKey,
+          sourceValueKey: compilerIntrinsicSourceValueKey({
+            ownerFunctionId: input.context.ownerFunctionId,
+            expressionId,
+          }),
+          hirExpressionId: expressionId,
+          semanticReferenceKey: syntaxReferenceKeyString(resolvedCallee.compilerIntrinsic.key),
+        }
+      : undefined;
+
   const call: HirCallExpression = {
-    callee: calleeExpression(input.view, input.context, resolvedCallee),
+    callee: calleeExpressionValue,
     ...(calleeFunctionId !== undefined ? { calleeFunctionId } : {}),
+    ...(compilerIntrinsic !== undefined ? { compilerIntrinsic } : {}),
     ...(ownerTypeId !== undefined ? { ownerTypeId } : {}),
     ownerTypeArguments,
     ownerTypeArgumentSource,
@@ -600,8 +691,8 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
     ...(resolvedCallee.receiver !== undefined ? { receiver: resolvedCallee.receiver } : {}),
     sourceOrigin: origin,
     recovered:
-      calleeFunctionId === undefined ||
-      signature === undefined ||
+      (resolvedCallee.compilerIntrinsic === undefined &&
+        (calleeFunctionId === undefined || signature === undefined)) ||
       hasGenericMismatch ||
       hasArgumentMismatch ||
       !hasConstructibilityAuthority ||
@@ -609,10 +700,14 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
   };
 
   const expression: HirExpression = {
-    expressionId: input.context.bodyIndex.nextExpressionId(),
+    expressionId,
     kind: { kind: "call", call },
-    type: signature?.returnType ?? errorCheckedType(),
-    resourceKind: signature?.returnKind ?? errorKind(),
+    type:
+      resolvedCallee.compilerIntrinsic?.returnType ?? signature?.returnType ?? errorCheckedType(),
+    resourceKind:
+      resolvedCallee.compilerIntrinsic !== undefined
+        ? concreteKind("Copy")
+        : (signature?.returnKind ?? errorKind()),
     sourceOrigin: origin,
   };
   input.context.bodyIndex.addExpression(expression);

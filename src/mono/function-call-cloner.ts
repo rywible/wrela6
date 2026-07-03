@@ -240,6 +240,9 @@ export function cloneCall(input: {
     ...(input.call.calleeFunctionId !== undefined
       ? { calleeFunctionId: input.call.calleeFunctionId }
       : {}),
+    ...(input.call.compilerIntrinsic !== undefined
+      ? { compilerIntrinsic: input.call.compilerIntrinsic }
+      : {}),
     ...(input.call.ownerTypeId !== undefined ? { ownerTypeId: input.call.ownerTypeId } : {}),
     ownerTypeArguments,
     ownerTypeArgumentSource: input.call.ownerTypeArgumentSource,
@@ -275,7 +278,10 @@ export function cloneCall(input: {
       targetOwnerTypeArguments: ownerTypeArguments,
       targetFunctionTypeArguments: typeArguments,
     });
-  } else if (input.call.calleeFunctionId === undefined || input.call.recovered === true) {
+  } else if (
+    (input.call.calleeFunctionId === undefined || input.call.recovered === true) &&
+    (input.call.compilerIntrinsic === undefined || input.call.recovered === true)
+  ) {
     input.diagnostics.push(
       monoDiagnostic({
         severity: "error",

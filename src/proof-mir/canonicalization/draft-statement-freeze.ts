@@ -499,6 +499,27 @@ export function freezeDraftStatementKind(
       }
       return { kind: "comparison", operator: kind.operator, left, right, result };
     }
+    case "constructObject": {
+      const result = resolveValueId(lookups, kind.resultKey);
+      if (result === undefined) {
+        return undefined;
+      }
+      const fields = [];
+      for (const field of kind.fields) {
+        const value = resolveValueId(lookups, field.valueKey);
+        const origin = resolveOriginId(lookups, field.originKey);
+        if (value === undefined || origin === undefined) {
+          return undefined;
+        }
+        fields.push({
+          ...(field.fieldId === undefined ? {} : { fieldId: field.fieldId }),
+          name: field.name,
+          value,
+          origin,
+        });
+      }
+      return { kind: "constructObject", result, fields };
+    }
     case "call": {
       const payload = lookups.callByKey.get(String(kind.callKey));
       if (payload === undefined) {

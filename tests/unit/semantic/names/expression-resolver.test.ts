@@ -528,6 +528,89 @@ describe("resolveExpressions", () => {
     expect(deferred.some((entry) => entry.memberName === "valid")).toBe(true);
   });
 
+  test("member access on match pattern local does not report payload as unresolved owner", () => {
+    const graph = parseModuleGraphForTest([
+      [
+        "app/main.wr",
+        "fn test(result: u32):\n    match result:\n        case Ok(packet):\n            packet.kind\n",
+      ],
+    ]);
+    const { index } = buildItemIndex({ graph });
+    const moduleNamespace = buildModuleNamespace(index);
+    const memberNamespace = buildMemberNamespace(index);
+    const referenceKeys = new ReferenceKeyBuilder();
+    const importResult = resolveImports({ graph, index, moduleNamespace, referenceKeys });
+    const moduleContexts = buildModuleContexts(index, importResult.importedScopes);
+
+    resolveTypeReferences({
+      graph,
+      index,
+      coreTypes: CoreTypeCatalog.default(),
+      moduleNamespace,
+      memberNamespace,
+      moduleContexts,
+      referenceKeys,
+    });
+
+    const result = resolveExpressions({
+      graph,
+      index,
+      coreTypes: CoreTypeCatalog.default(),
+      moduleNamespace,
+      memberNamespace,
+      moduleContexts,
+      referenceKeys,
+    });
+
+    expect(
+      result.diagnostics.some(
+        (diagnostic) =>
+          diagnostic.code === "NAME_UNRESOLVED_NAME" && diagnostic.message.includes("'packet'"),
+      ),
+    ).toBe(false);
+  });
+
+  test("resolves direct match scrutinee expression references", () => {
+    const graph = parseModuleGraphForTest([
+      [
+        "app/main.wr",
+        "fn make() -> u32:\n    1\nfn test():\n    match make():\n        case Ok(value):\n            value\n",
+      ],
+    ]);
+    const { index } = buildItemIndex({ graph });
+    const moduleNamespace = buildModuleNamespace(index);
+    const memberNamespace = buildMemberNamespace(index);
+    const referenceKeys = new ReferenceKeyBuilder();
+    const importResult = resolveImports({ graph, index, moduleNamespace, referenceKeys });
+    const moduleContexts = buildModuleContexts(index, importResult.importedScopes);
+
+    resolveTypeReferences({
+      graph,
+      index,
+      coreTypes: CoreTypeCatalog.default(),
+      moduleNamespace,
+      memberNamespace,
+      moduleContexts,
+      referenceKeys,
+    });
+
+    const result = resolveExpressions({
+      graph,
+      index,
+      coreTypes: CoreTypeCatalog.default(),
+      moduleNamespace,
+      memberNamespace,
+      moduleContexts,
+      referenceKeys,
+    });
+
+    expect(
+      result.references
+        .entries()
+        .some((entry) => entry.key.kind === "functionName" && entry.reference.kind === "function"),
+    ).toBe(true);
+  });
+
   test("resolves module-qualified member chain", () => {
     const graph = parseModuleGraphForTest([
       ["app/main.wr", "fn test():\n    std.io.Writer.default\n"],

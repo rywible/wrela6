@@ -26,6 +26,12 @@ export type ProofMirCallTarget =
       readonly abi: ProofMirLayoutReference & { readonly kind: "platformAbi" };
     }
   | {
+      readonly kind: "compilerIntrinsic";
+      readonly intrinsicKey: string;
+      readonly sourceValueKey: string;
+      readonly returnTypeKey: string;
+    }
+  | {
       readonly kind: "compilerRuntime";
       readonly runtimeId: ProofMirRuntimeOperationId;
       readonly runtimeCallId: ProofMirRuntimeCallId;

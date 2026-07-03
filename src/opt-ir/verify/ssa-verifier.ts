@@ -147,14 +147,15 @@ function verifyEdgeArguments(input: {
   if (input.toBlock === undefined) {
     return;
   }
-  if (input.edge.arguments.length !== input.toBlock.parameters.length) {
+  const edgeParameters = edgeSuppliedParameters(input.toBlock);
+  if (input.edge.arguments.length !== edgeParameters.length) {
     input.diagnostics.push(
       makeOptIrVerifierDiagnostic({
         code: "OPT_IR_BLOCK_ARGUMENT_MISMATCH",
         messageTemplate: "CFG edge arguments do not match destination block parameter arity.",
         ownerKey: `edge:${input.edge.edgeId}`,
         rootCauseKey: `block:${input.toBlock.blockId}`,
-        stableDetail: `block-argument-arity:${input.edge.edgeId}:${input.edge.arguments.length}:${input.toBlock.parameters.length}`,
+        stableDetail: `block-argument-arity:${input.edge.edgeId}:${input.edge.arguments.length}:${edgeParameters.length}`,
         originId: input.edge.originId,
         functionId: input.context.functionId,
       }),
@@ -163,7 +164,7 @@ function verifyEdgeArguments(input: {
   }
   input.edge.arguments.forEach((valueId, index) => {
     const argumentDefinition = input.definitions.get(valueId);
-    const parameter = input.toBlock?.parameters[index];
+    const parameter = edgeParameters[index];
     if (
       argumentDefinition !== undefined &&
       parameter !== undefined &&
@@ -183,6 +184,10 @@ function verifyEdgeArguments(input: {
       );
     }
   });
+}
+
+function edgeSuppliedParameters(block: OptIrBlock) {
+  return block.parameters.filter((parameter) => parameter.incomingRole !== "entry");
 }
 
 function verifyValueDominance(input: {
