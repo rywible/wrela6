@@ -8,6 +8,10 @@ function sourceText(path: string): string {
   return readFileSync(join(workspaceRoot, path), "utf8");
 }
 
+function monoSource(path: string): string {
+  return sourceText(`src/mono/${path}`);
+}
+
 function tsFilesUnder(path: string): readonly string[] {
   const absolute = join(workspaceRoot, path);
   const result: string[] = [];
@@ -32,7 +36,7 @@ test("mono runtime modules stay below the thermo-nuclear size threshold", () => 
 });
 
 test("mono runtime does not expose whole-program test-harness body instantiation", () => {
-  const source = sourceText("src/mono/function-instantiator.ts");
+  const source = monoSource("function-instantiator.ts");
 
   expect(source).not.toContain("instantiateMonoFunctionBodyFromProgram");
   expect(source).not.toContain("input: InstantiateMonoFunctionBodyInput | TypedHirProgram");
@@ -40,8 +44,8 @@ test("mono runtime does not expose whole-program test-harness body instantiation
 });
 
 test("closed-boundary and body-index scans use typed visitors instead of reflective object walks", () => {
-  const functionSource = sourceText("src/mono/function-instantiator.ts");
-  const boundarySource = sourceText("src/mono/closed-boundary-checker.ts");
+  const functionSource = monoSource("function-instantiator.ts");
+  const boundarySource = monoSource("closed-boundary-checker.ts");
 
   expect(functionSource).not.toContain("function visit(value: unknown)");
   expect(functionSource).not.toContain("Record<string, unknown>");

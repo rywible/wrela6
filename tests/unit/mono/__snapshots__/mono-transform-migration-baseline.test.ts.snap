@@ -1,0 +1,280 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`mono transform migration fixtures preserve cloned body identity and remaps 1`] = `
+[
+  "fn:0|ownerType:none|owner:<>|fn:<>",
+  "fn:10|ownerType:none|owner:<>|fn:<>",
+  "fn:1|ownerType:none|owner:<>|fn:<>",
+  "fn:2|ownerType:none|owner:<>|fn:<>",
+  "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>",
+  "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>",
+  "fn:4|ownerType:none|owner:<>|fn:<>",
+  "fn:9|ownerType:none|owner:<>|fn:<8:core:u32>",
+]
+`;
+
+exports[`mono transform migration fixtures preserve cloned body identity and remaps 2`] = `
+[
+  {
+    "functionInstanceIds": [
+      "fn:10|ownerType:none|owner:<>|fn:<>",
+      "fn:9|ownerType:none|owner:<>|fn:<8:core:u32>",
+    ],
+    "functions": [
+      {
+        "bodySourceOrigin": "11",
+        "expressionIds": [
+          "fn:10|ownerType:none|owner:<>|fn:<>/000000000000",
+          "fn:10|ownerType:none|owner:<>|fn:<>/000000000001",
+          "fn:10|ownerType:none|owner:<>|fn:<>/000000000002",
+          "fn:10|ownerType:none|owner:<>|fn:<>/000000000003",
+          "fn:10|ownerType:none|owner:<>|fn:<>/000000000004",
+        ],
+        "expressionOrigins": [
+          "fn:10|ownerType:none|owner:<>|fn:<>/000000000000@18",
+          "fn:10|ownerType:none|owner:<>|fn:<>/000000000001@17",
+          "fn:10|ownerType:none|owner:<>|fn:<>/000000000002@17",
+          "fn:10|ownerType:none|owner:<>|fn:<>/000000000003@16",
+          "fn:10|ownerType:none|owner:<>|fn:<>/000000000004@16",
+        ],
+        "instanceId": "fn:10|ownerType:none|owner:<>|fn:<>",
+        "sourceFunctionId": "10",
+        "statementIds": [
+          "fn:10|ownerType:none|owner:<>|fn:<>/000000000000",
+        ],
+        "statementOrigins": [
+          "fn:10|ownerType:none|owner:<>|fn:<>/000000000000@19",
+        ],
+      },
+      {
+        "bodySourceOrigin": "9",
+        "expressionIds": [
+          "fn:9|ownerType:none|owner:<>|fn:<8:core:u32>/000000000000",
+        ],
+        "expressionOrigins": [
+          "fn:9|ownerType:none|owner:<>|fn:<8:core:u32>/000000000000@14",
+        ],
+        "instanceId": "fn:9|ownerType:none|owner:<>|fn:<8:core:u32>",
+        "sourceFunctionId": "9",
+        "statementIds": [
+          "fn:9|ownerType:none|owner:<>|fn:<8:core:u32>/000000000000",
+        ],
+        "statementOrigins": [
+          "fn:9|ownerType:none|owner:<>|fn:<8:core:u32>/000000000000@15",
+        ],
+      },
+    ],
+    "graphEdges": [
+      "function:fn:10|ownerType:none|owner:<>|fn:<>/call:fn:10|ownerType:none|owner:<>|fn:<>/000000000002 -> function:fn:9|ownerType:none|owner:<>|fn:<8:core:u32>@17",
+      "function:fn:10|ownerType:none|owner:<>|fn:<>/call:fn:10|ownerType:none|owner:<>|fn:<>/000000000004 -> function:fn:9|ownerType:none|owner:<>|fn:<8:core:u32>@16",
+      "image:0 -> function:fn:10|ownerType:none|owner:<>|fn:<>@12",
+    ],
+    "label": "generic-call",
+    "proofMetadata": {
+      "attemptIds": [],
+      "callSiteRequirementIds": [],
+      "counts": {
+        "attempts": 0,
+        "callSiteRequirements": 0,
+        "obligations": 0,
+        "resourcePlaces": 1,
+        "sessions": 0,
+        "terminalCalls": 0,
+        "validations": 0,
+      },
+      "obligationIds": [],
+      "resourcePlaceIds": [
+        "function:fn:9|ownerType:none|owner:<>|fn:<8:core:u32>/000000000000",
+      ],
+      "sessionIds": [],
+      "terminalCallIds": [],
+      "validationIds": [],
+    },
+  },
+  {
+    "functionInstanceIds": [
+      "fn:0|ownerType:none|owner:<>|fn:<>",
+      "fn:1|ownerType:none|owner:<>|fn:<>",
+      "fn:2|ownerType:none|owner:<>|fn:<>",
+      "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>",
+      "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>",
+      "fn:4|ownerType:none|owner:<>|fn:<>",
+    ],
+    "functions": [
+      {
+        "bodySourceOrigin": "0",
+        "expressionIds": [],
+        "expressionOrigins": [],
+        "instanceId": "fn:0|ownerType:none|owner:<>|fn:<>",
+        "sourceFunctionId": "0",
+        "statementIds": [
+          "fn:0|ownerType:none|owner:<>|fn:<>/000000000000",
+          "fn:0|ownerType:none|owner:<>|fn:<>/000000000001",
+        ],
+        "statementOrigins": [
+          "fn:0|ownerType:none|owner:<>|fn:<>/000000000000@7",
+          "fn:0|ownerType:none|owner:<>|fn:<>/000000000001@8",
+        ],
+      },
+      {
+        "bodySourceOrigin": "1",
+        "expressionIds": [
+          "fn:1|ownerType:none|owner:<>|fn:<>/000000000000",
+        ],
+        "expressionOrigins": [
+          "fn:1|ownerType:none|owner:<>|fn:<>/000000000000@9",
+        ],
+        "instanceId": "fn:1|ownerType:none|owner:<>|fn:<>",
+        "sourceFunctionId": "1",
+        "statementIds": [
+          "fn:1|ownerType:none|owner:<>|fn:<>/000000000000",
+        ],
+        "statementOrigins": [
+          "fn:1|ownerType:none|owner:<>|fn:<>/000000000000@10",
+        ],
+      },
+      {
+        "bodySourceOrigin": "2",
+        "expressionIds": [
+          "fn:2|ownerType:none|owner:<>|fn:<>/000000000000",
+        ],
+        "expressionOrigins": [
+          "fn:2|ownerType:none|owner:<>|fn:<>/000000000000@11",
+        ],
+        "instanceId": "fn:2|ownerType:none|owner:<>|fn:<>",
+        "sourceFunctionId": "2",
+        "statementIds": [
+          "fn:2|ownerType:none|owner:<>|fn:<>/000000000000",
+        ],
+        "statementOrigins": [
+          "fn:2|ownerType:none|owner:<>|fn:<>/000000000000@12",
+        ],
+      },
+      {
+        "bodySourceOrigin": "3",
+        "expressionIds": [
+          "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000000",
+          "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000001",
+          "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000002",
+          "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000003",
+        ],
+        "expressionOrigins": [
+          "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000000@14",
+          "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000001@16",
+          "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000002@16",
+          "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000003@18",
+        ],
+        "instanceId": "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>",
+        "sourceFunctionId": "3",
+        "statementIds": [
+          "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000000",
+          "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000001",
+          "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000002",
+        ],
+        "statementOrigins": [
+          "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000000@15",
+          "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000001@17",
+          "fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000002@19",
+        ],
+      },
+      {
+        "bodySourceOrigin": "3",
+        "expressionIds": [
+          "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000000",
+          "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000001",
+          "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000002",
+          "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000003",
+        ],
+        "expressionOrigins": [
+          "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000000@14",
+          "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000001@16",
+          "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000002@16",
+          "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000003@18",
+        ],
+        "instanceId": "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>",
+        "sourceFunctionId": "3",
+        "statementIds": [
+          "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000000",
+          "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000001",
+          "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000002",
+        ],
+        "statementOrigins": [
+          "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000000@15",
+          "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000001@17",
+          "fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000002@19",
+        ],
+      },
+      {
+        "bodySourceOrigin": "5",
+        "expressionIds": [
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000000",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000001",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000002",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000003",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000004",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000005",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000006",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000007",
+        ],
+        "expressionOrigins": [
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000000@21",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000001@21",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000002@20",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000003@20",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000004@24",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000005@24",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000006@23",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000007@23",
+        ],
+        "instanceId": "fn:4|ownerType:none|owner:<>|fn:<>",
+        "sourceFunctionId": "4",
+        "statementIds": [
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000000",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000001",
+        ],
+        "statementOrigins": [
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000000@22",
+          "fn:4|ownerType:none|owner:<>|fn:<>/000000000001@25",
+        ],
+      },
+    ],
+    "graphEdges": [
+      "function:fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/call:fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000002 -> function:fn:0|ownerType:none|owner:<>|fn:<>@16",
+      "function:fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/call:fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000002 -> function:fn:0|ownerType:none|owner:<>|fn:<>@16",
+      "function:fn:4|ownerType:none|owner:<>|fn:<>/call:fn:4|ownerType:none|owner:<>|fn:<>/000000000001 -> function:fn:1|ownerType:none|owner:<>|fn:<>@21",
+      "function:fn:4|ownerType:none|owner:<>|fn:<>/call:fn:4|ownerType:none|owner:<>|fn:<>/000000000003 -> function:fn:3|ownerType:none|owner:<>|fn:<7:core:u8>@20",
+      "function:fn:4|ownerType:none|owner:<>|fn:<>/call:fn:4|ownerType:none|owner:<>|fn:<>/000000000005 -> function:fn:2|ownerType:none|owner:<>|fn:<>@24",
+      "function:fn:4|ownerType:none|owner:<>|fn:<>/call:fn:4|ownerType:none|owner:<>|fn:<>/000000000007 -> function:fn:3|ownerType:none|owner:<>|fn:<8:core:u32>@23",
+      "image:0 -> function:fn:4|ownerType:none|owner:<>|fn:<>@6",
+    ],
+    "label": "proof-metadata",
+    "proofMetadata": {
+      "attemptIds": [],
+      "callSiteRequirementIds": [],
+      "counts": {
+        "attempts": 0,
+        "callSiteRequirements": 0,
+        "obligations": 2,
+        "resourcePlaces": 2,
+        "sessions": 0,
+        "terminalCalls": 2,
+        "validations": 0,
+      },
+      "obligationIds": [
+        "function:fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000000",
+        "function:fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000000",
+      ],
+      "resourcePlaceIds": [
+        "function:fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000000",
+        "function:fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000000",
+      ],
+      "sessionIds": [],
+      "terminalCallIds": [
+        "function:fn:3|ownerType:none|owner:<>|fn:<7:core:u8>/000000000000",
+        "function:fn:3|ownerType:none|owner:<>|fn:<8:core:u32>/000000000000",
+      ],
+      "validationIds": [],
+    },
+  },
+]
+`;
