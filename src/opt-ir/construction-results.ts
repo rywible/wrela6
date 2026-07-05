@@ -14,14 +14,14 @@ export interface ConstructedOptIrProvenanceSnapshot {
 
 export type ConstructedOptIrProgram = Omit<OptIrProgram, "provenance"> & {
   readonly provenance: ConstructedOptIrProvenanceSnapshot;
-  readonly operations?: readonly OptIrOperation[];
-  readonly optimizationRegions?: readonly OptIrRegion[];
 };
 
 export type ConstructOptIrResult =
   | {
       readonly kind: "ok";
       readonly program: ConstructedOptIrProgram;
+      readonly operations: readonly OptIrOperation[];
+      readonly optimizationRegions: readonly OptIrRegion[];
       readonly facts: OptIrFactSet;
       readonly provenance: ConstructedOptIrProvenanceSnapshot;
       readonly proofErasureProvenance: OptIrProofErasureProvenance;

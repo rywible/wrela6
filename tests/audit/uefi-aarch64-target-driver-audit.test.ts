@@ -17,6 +17,8 @@ const PURE_UEFI_TARGET_FILES = [
   "runtime-catalog.ts",
   "entry-contract.ts",
   "entry-thunk.ts",
+  "entry-thunk-instructions.ts",
+  "entry-thunk-unwind.ts",
   "watchdog-policy.ts",
   "firmware-strings.ts",
   "static-char16-objects.ts",
@@ -134,15 +136,14 @@ describe("UEFI AArch64 target-driver audit", () => {
 
   test("public API exposes compile and pure target helpers", async () => {
     const wrela = await import("../../src");
+    const uefiAarch64 = await import("../../src/target/uefi-aarch64");
 
     expect(typeof wrela.compileUefiAArch64Image).toBe("function");
-    expect(typeof wrela.target.uefiAarch64.compileUefiAArch64Image).toBe("function");
-    expect(typeof wrela.target.uefiAarch64.productionUefiAArch64ResolvedTargetSurfaces).toBe(
-      "function",
-    );
+    expect(typeof uefiAarch64.compileUefiAArch64Image).toBe("function");
+    expect(typeof uefiAarch64.productionUefiAArch64ResolvedTargetSurfaces).toBe("function");
     expect("evaluateUefiAArch64ExitBootServicesTrace" in wrela).toBe(false);
-    expect("evaluateUefiAArch64EntryContextInitialization" in wrela.target.uefiAarch64).toBe(false);
-    expect("materializeUefiAArch64FirmwarePlatformCall" in wrela.target.uefiAarch64).toBe(false);
+    expect("evaluateUefiAArch64EntryContextInitialization" in uefiAarch64).toBe(false);
+    expect("materializeUefiAArch64FirmwarePlatformCall" in uefiAarch64).toBe(false);
   });
 
   test("review regressions stay out of the UEFI AArch64 driver", () => {

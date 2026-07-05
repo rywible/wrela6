@@ -9,10 +9,11 @@ import {
   childNodes,
   childToken,
   childTokens,
+  createSyntaxQuery,
   descendants,
   presentTokenText,
 } from "../../../../src/frontend/ast/syntax-query";
-import { RedNode } from "../../../../src/frontend/syntax";
+import { buildSyntaxIndex, RedNode } from "../../../../src/frontend/syntax";
 
 function parseRoot(sourceCode: string): RedNode {
   const source = SourceText.from("query-test.wr", sourceCode);
@@ -55,6 +56,17 @@ describe("syntax query helpers", () => {
   test("childNodes returns multiple matches", () => {
     const root = parseRoot("class A:\n    field: U8\nclass B:\n    field: U8\n");
     expect(childNodes(root, SyntaxKind.ClassDeclaration)).toHaveLength(2);
+  });
+
+  test("child lookup can use a supplied syntax index", () => {
+    const root = parseRoot("class Box:\n    field: U8\n");
+    const query = createSyntaxQuery({ root, index: buildSyntaxIndex(root) });
+    const classNode = childNode(root, SyntaxKind.ClassDeclaration, query)!;
+    const block = childNode(classNode, SyntaxKind.Block, query)!;
+
+    expect(blockItems(block, query).map((node) => node.kind)).toEqual([
+      SyntaxKind.FieldDeclaration,
+    ]);
   });
 
   test("childTokens returns token children", () => {

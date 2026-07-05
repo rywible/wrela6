@@ -311,7 +311,7 @@ describe("resolved relocation application", () => {
     {
       family: "rel32" as const,
       widthBytes: 4,
-      expectedDataBytes: [4, 240, 255, 255, 170, 187, 204, 221],
+      expectedDataBytes: [0, 240, 255, 255, 170, 187, 204, 221],
     },
     {
       family: "section-relative" as const,

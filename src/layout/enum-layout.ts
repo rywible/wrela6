@@ -1,9 +1,14 @@
 import type { LayoutBuilderResult } from "./builder-context";
-import { layoutDiagnostic, type LayoutDiagnostic } from "./diagnostics";
+import type { ComputeSourceAggregateNestedType } from "./aggregate-layout";
+import { enumLayoutDiagnostic, FIXTURE_ENUM_SOURCE_ORIGIN } from "./enum-layout-diagnostics";
+import { enumPayloadFieldsForCase, type EnumLayoutCaseInput } from "./enum-payload-layout";
 import type {
   LayoutEnumCaseFact,
   LayoutEnumFact,
+  LayoutFieldFact,
+  TargetLayoutFacts,
   LayoutTypeFact,
+  LayoutTypeFactTable,
   LayoutTypeKey,
 } from "./layout-program";
 import type {
@@ -14,11 +19,9 @@ import type {
 import type { MonoTypeInstance } from "../mono/mono-hir";
 import type { CoreTypeId, TargetTypeId } from "../semantic/ids";
 import { itemId } from "../semantic/ids";
-import type { MonoInstanceId } from "../mono/ids";
 import { monoInstanceId } from "../mono/ids";
 import { enumLayoutOwnerKey } from "./layout-owners";
-
-const FIXTURE_SOURCE_ORIGIN = "layout-fixture:0:0";
+import type { LayoutTypeResolver } from "./layout-type-resolver";
 
 export interface ComputeEnumLayoutInput {
   readonly cases: readonly string[];
@@ -27,11 +30,18 @@ export interface ComputeEnumLayoutInput {
   readonly target: LayoutTargetSurface;
   readonly typeInstance?: MonoTypeInstance;
   readonly owner?: LayoutTypeKey & { readonly kind: "source" };
+  readonly typeResolver?: LayoutTypeResolver;
+  readonly typeFacts?: LayoutTypeFactTable;
+  readonly precomputedTypeFacts?: ReadonlyMap<string, LayoutTypeFact>;
+  readonly targetFacts?: TargetLayoutFacts;
+  readonly nestedSourceTypes?: readonly ComputeSourceAggregateNestedType[];
+  readonly sourceTypeKeys?: ReadonlyMap<string, LayoutTypeKey & { readonly kind: "source" }>;
 }
 
 export interface ComputeEnumLayoutValue {
   readonly enumFact: LayoutEnumFact;
   readonly typeFact: LayoutTypeFact;
+  readonly fieldFacts: readonly LayoutFieldFact[];
 }
 
 function alignUp(sizeBytes: bigint, alignmentBytes: bigint): bigint {
@@ -83,41 +93,21 @@ function unsignedMaximumForBitWidth(bitWidth: number): bigint {
   return (1n << BigInt(bitWidth)) - 1n;
 }
 
-function enumLayoutDiagnostic(
-  instanceId: string,
-  input: {
-    readonly code: string;
-    readonly message: string;
-    readonly stableDetail: string;
-    readonly sourceOrigin?: string;
-  },
-): LayoutDiagnostic {
-  const ownerKey = String(enumLayoutOwnerKey(instanceId as MonoInstanceId));
-  return layoutDiagnostic({
-    severity: "error",
-    code: input.code,
-    message: input.message,
-    sourceOrigin: input.sourceOrigin,
-    ownerKey,
-    rootCauseKey: ownerKey,
-    stableDetail: input.stableDetail,
-  });
-}
-
 function syntheticEnumCases(
   owner: LayoutTypeKey & { readonly kind: "source" },
   caseNames: readonly string[],
-): readonly LayoutEnumCaseFact[] {
+): readonly EnumLayoutCaseInput[] {
   return caseNames.map((name, ordinal) => ({
     itemId: itemId(ordinal + 1),
     name,
     ordinal,
     discriminant: 0n,
-    sourceOrigin: FIXTURE_SOURCE_ORIGIN,
+    payloadFieldIds: [],
+    sourceOrigin: FIXTURE_ENUM_SOURCE_ORIGIN,
   }));
 }
 
-function enumCasesFromTypeInstance(typeInstance: MonoTypeInstance): readonly LayoutEnumCaseFact[] {
+function enumCasesFromTypeInstance(typeInstance: MonoTypeInstance): readonly EnumLayoutCaseInput[] {
   return [...typeInstance.enumCases]
     .sort((left, right) => left.ordinal - right.ordinal)
     .map((caseRecord) => ({
@@ -125,6 +115,7 @@ function enumCasesFromTypeInstance(typeInstance: MonoTypeInstance): readonly Lay
       name: caseRecord.name,
       ordinal: caseRecord.ordinal,
       discriminant: 0n,
+      payloadFieldIds: Object.freeze([...caseRecord.payloadFieldIds]),
       sourceOrigin: caseRecord.sourceOrigin,
     }));
 }
@@ -139,7 +130,9 @@ export function computeEnumLayout(
       : ({ kind: "source", instanceId: monoInstanceId("type:Enum") } as const));
   const ownerKey = enumLayoutOwnerKey(owner.instanceId);
   const sourceOrigin =
-    input.typeInstance?.sourceOrigin ?? input.owner?.instanceId.toString() ?? FIXTURE_SOURCE_ORIGIN;
+    input.typeInstance?.sourceOrigin ??
+    input.owner?.instanceId.toString() ??
+    FIXTURE_ENUM_SOURCE_ORIGIN;
 
   if (input.typeInstance !== undefined) {
     if (input.typeInstance.sourceKind !== "enum") {
@@ -152,21 +145,6 @@ export function computeEnumLayout(
             code: "LAYOUT_UNSUPPORTED_SOURCE_REPRESENTATION",
             message: "layout enum facts require a fieldless enum type instance",
             stableDetail: `sourceKind:${input.typeInstance.sourceKind}`,
-            sourceOrigin: input.typeInstance.sourceOrigin,
-          }),
-        ],
-      };
-    }
-    if (input.typeInstance.fields.length > 0) {
-      return {
-        kind: "error",
-        ownerKey,
-        dependencies: [],
-        diagnostics: [
-          enumLayoutDiagnostic(String(owner.instanceId), {
-            code: "LAYOUT_UNSUPPORTED_ENUM_PAYLOAD",
-            message: "layout does not support payload-bearing enum cases",
-            stableDetail: "payload-fields:present",
             sourceOrigin: input.typeInstance.sourceOrigin,
           }),
         ],
@@ -237,7 +215,7 @@ export function computeEnumLayout(
       ? unsignedMaximumForBitWidth(sizeTypeSpec.bitWidth)
       : input.target.dataModel.maximumObjectSizeBytes;
 
-  const assignedCases: LayoutEnumCaseFact[] = [];
+  const assignedCases: EnumLayoutCaseInput[] = [];
   let minimumDiscriminant: bigint | undefined;
   let maximumDiscriminant: bigint | undefined;
 
@@ -346,19 +324,95 @@ export function computeEnumLayout(
     };
   }
 
+  const fieldsById = new Map(
+    (input.typeInstance?.fields ?? []).map((field) => [field.fieldId, field] as const),
+  );
+  const payloadOffsetBytes = assignedCases.some((caseFact) => caseFact.payloadFieldIds.length > 0)
+    ? tagSpec.sizeBytes
+    : undefined;
+  let maximumPayloadSizeBytes = 0n;
+  let maximumPayloadAlignmentBytes = 1n;
+  const casesWithPayload: LayoutEnumCaseFact[] = [];
+  const fieldFacts: LayoutFieldFact[] = [];
+  let payloadFieldIndex = 0;
+  for (const caseFact of assignedCases) {
+    if (payloadOffsetBytes === undefined || caseFact.payloadFieldIds.length === 0) {
+      const { payloadFieldIds: _payloadFieldIds, ...layoutCase } = caseFact;
+      void _payloadFieldIds;
+      casesWithPayload.push(layoutCase);
+      continue;
+    }
+    const payloadLayout = enumPayloadFieldsForCase({
+      caseFact,
+      fieldsById,
+      target: input.target,
+      payloadOffsetBytes,
+      owner,
+      typeResolver: input.typeResolver,
+      typeFacts: input.typeFacts,
+      precomputedTypeFacts: input.precomputedTypeFacts,
+      targetFacts: input.targetFacts,
+      nestedSourceTypes: input.nestedSourceTypes,
+      sourceTypeKeys: input.sourceTypeKeys,
+    });
+    if (payloadLayout.kind === "error") return payloadLayout;
+    maximumPayloadSizeBytes =
+      payloadLayout.value.sizeBytes > maximumPayloadSizeBytes
+        ? payloadLayout.value.sizeBytes
+        : maximumPayloadSizeBytes;
+    maximumPayloadAlignmentBytes =
+      payloadLayout.value.alignmentBytes > maximumPayloadAlignmentBytes
+        ? payloadLayout.value.alignmentBytes
+        : maximumPayloadAlignmentBytes;
+    const { payloadFieldIds: _payloadFieldIds, ...layoutCase } = caseFact;
+    void _payloadFieldIds;
+    let previousPayloadFieldEnd = payloadOffsetBytes;
+    for (const payloadField of payloadLayout.value.fields) {
+      fieldFacts.push({
+        owner,
+        fieldId: payloadField.fieldId,
+        fieldName: payloadField.name,
+        fieldType: payloadField.type,
+        offsetBytes: payloadField.offsetBytes,
+        sizeBytes: payloadField.sizeBytes,
+        alignmentBytes: payloadField.alignmentBytes,
+        index: payloadFieldIndex,
+        paddingBeforeBytes: payloadField.offsetBytes - previousPayloadFieldEnd,
+        sourceOrigin: payloadField.sourceOrigin,
+      });
+      payloadFieldIndex += 1;
+      previousPayloadFieldEnd = payloadField.offsetBytes + payloadField.sizeBytes;
+    }
+    casesWithPayload.push({
+      ...layoutCase,
+      payloadOffsetBytes,
+      payloadFields: payloadLayout.value.fields,
+    });
+  }
+
   const enumFact: LayoutEnumFact = {
     owner,
     tagType: selectedTagType,
     tagOffsetBytes: 0n,
-    cases: assignedCases,
+    cases: casesWithPayload,
     sourceOrigin,
   };
 
+  const payloadEndBytes =
+    payloadOffsetBytes !== undefined
+      ? payloadOffsetBytes + maximumPayloadSizeBytes
+      : tagSpec.sizeBytes;
+  const enumAlignment =
+    maximumPayloadAlignmentBytes > tagSpec.alignmentBytes
+      ? maximumPayloadAlignmentBytes
+      : tagSpec.alignmentBytes;
+  const enumSizeBytes = alignUp(payloadEndBytes, enumAlignment);
+
   const typeFact: LayoutTypeFact = {
     key: owner,
-    sizeBytes: tagSpec.sizeBytes,
-    alignmentBytes: tagSpec.alignmentBytes,
-    strideBytes: alignUp(tagSpec.sizeBytes, tagSpec.alignmentBytes),
+    sizeBytes: enumSizeBytes,
+    alignmentBytes: enumAlignment,
+    strideBytes: alignUp(enumSizeBytes, enumAlignment),
     representation: { kind: "enum" },
     sourceOrigin,
   };
@@ -367,7 +421,7 @@ export function computeEnumLayout(
     kind: "ok",
     ownerKey,
     dependencies: [],
-    value: { enumFact, typeFact },
+    value: { enumFact, typeFact, fieldFacts },
     diagnostics: [],
   };
 }

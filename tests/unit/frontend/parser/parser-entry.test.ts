@@ -67,9 +67,7 @@ describe("Parser", () => {
       "PARSE_EXPECTED_TOP_LEVEL_DECLARATION",
     ]);
     expect(result.parserDiagnostics[0]?.ownerKey).toBe("parser:top-level-declaration");
-    expect(result.parserDiagnostics[0]?.stableDetail).toBe(
-      "PARSE_EXPECTED_TOP_LEVEL_DECLARATION:test.wr:0:5",
-    );
+    expect(result.parserDiagnostics[0]?.stableDetail).toBe("span:0:5");
   });
 
   test("parseLexResult delegates to parse", () => {

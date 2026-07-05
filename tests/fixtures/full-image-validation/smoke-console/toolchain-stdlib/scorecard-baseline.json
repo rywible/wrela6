@@ -4,11 +4,11 @@
   "caseKey": "smoke-console/toolchain-stdlib",
   "metrics": {
     "optIrOperationsPre": 4,
-    "optIrOperationsPost": 3,
-    "objectSectionBytes": 120,
-    "executableTextBytes": 1028,
-    "finalImageBytes": 4096,
-    "staticInstructionEstimate": 257,
-    "staticCycleEstimate": 289
+    "optIrOperationsPost": 2,
+    "objectSectionBytes": 76,
+    "executableTextBytes": 984,
+    "finalImageBytes": 3584,
+    "staticInstructionEstimate": 246,
+    "staticCycleEstimate": 272
   }
 }

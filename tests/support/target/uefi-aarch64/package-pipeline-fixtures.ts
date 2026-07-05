@@ -52,6 +52,7 @@ export function uefiAArch64PackagePipelineDependenciesForOptimizedFixture(): Uef
       const optIr = unsafePackagePipelineAdapter<PackageOptimizedOptIrAdapter>({
         program: fixture.program,
         operations: Object.freeze([...fixture.operations]),
+        optimizationRegions: Object.freeze([...fixture.optimizationRegions]),
         unoptimizedOperations: Object.freeze([...fixture.operations]),
         facts: emptyOptIrFactSet(),
         staticChar16Strings: Object.freeze([]),

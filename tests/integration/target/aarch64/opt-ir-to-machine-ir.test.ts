@@ -607,6 +607,7 @@ describe("OptIR to AArch64 machine IR integration", () => {
     const result = lowerOptIrToAArch64({
       program: fixture.program,
       operations: fixture.operations,
+      optimizationRegions: fixture.optimizationRegions,
       facts: aarch64MemoryOrderFactSetForTest({
         operationId: optIrOperationId(5),
         accessKind: "load",
@@ -640,6 +641,7 @@ describe("OptIR to AArch64 machine IR integration", () => {
     const result = lowerOptIrToAArch64({
       program: fixture.program,
       operations: fixture.operations,
+      optimizationRegions: fixture.optimizationRegions,
       facts: aarch64VirtioReleaseFactSetForTest(),
       target: fakeAArch64TargetSurface(),
     });
@@ -663,6 +665,7 @@ describe("OptIR to AArch64 machine IR integration", () => {
     const result = lowerOptIrToAArch64({
       program: fixture.program,
       operations: fixture.operations,
+      optimizationRegions: fixture.optimizationRegions,
       facts: aarch64MemoryOrderFactSetForTest({
         operationId: optIrOperationId(9),
         accessKind: "store",
@@ -690,6 +693,7 @@ describe("OptIR to AArch64 machine IR integration", () => {
     const result = lowerOptIrToAArch64({
       program: fixture.program,
       operations: fixture.operations,
+      optimizationRegions: fixture.optimizationRegions,
       facts: aarch64RegionMemoryTypeFactSetForTest({
         regionId: optIrRegionId(3),
         memoryType: "deviceMmio",
@@ -709,6 +713,7 @@ describe("OptIR to AArch64 machine IR integration", () => {
     const result = lowerOptIrToAArch64({
       program: fixture.program,
       operations: fixture.operations,
+      optimizationRegions: fixture.optimizationRegions,
       facts: emptyOptIrFactSet(),
       target: fakeAArch64TargetSurface(),
     });
@@ -725,6 +730,7 @@ describe("OptIR to AArch64 machine IR integration", () => {
     const result = lowerOptIrToAArch64({
       program: fixture.program,
       operations: fixture.operations,
+      optimizationRegions: fixture.optimizationRegions,
       facts: aarch64VirtioReleaseFactSetForTest(),
       target: fakeAArch64TargetSurface(),
     });

@@ -50,7 +50,11 @@ import type { CheckedType } from "../semantic/surface/type-model";
 import type { SourceSpan } from "../shared/source-span";
 import type { HirCompilerIntrinsicCallMetadata } from "../hir/hir";
 import type { InstantiatedHirId, MonoInstanceId } from "./ids";
+import type { MonoEnumConstructorExpression } from "./mono-enum";
+import type { MonoObjectField } from "./mono-object";
 
+export type { MonoEnumConstructorExpression, MonoEnumPayloadFieldBinding } from "./mono-enum";
+export type { MonoObjectField } from "./mono-object";
 declare const MONO_CHECKED_TYPE_BRAND: unique symbol;
 
 export type MonoCheckedType = CheckedType & { readonly [MONO_CHECKED_TYPE_BRAND]: true };
@@ -189,13 +193,6 @@ export interface MonoCallExpression {
   readonly recovered?: boolean;
 }
 
-export interface MonoObjectField {
-  readonly fieldId?: FieldId;
-  readonly name: string;
-  readonly value: MonoExpression;
-  readonly sourceOrigin: string;
-}
-
 export type MonoExpressionKind =
   | { readonly kind: "literal"; readonly literal: MonoLiteralValue }
   | {
@@ -216,6 +213,7 @@ export type MonoExpressionKind =
       readonly typeId?: TypeId;
       readonly fields: readonly MonoObjectField[];
     }
+  | { readonly kind: "enumConstructor"; readonly constructor: MonoEnumConstructorExpression }
   | { readonly kind: "call"; readonly call: MonoCallExpression }
   | { readonly kind: "attempt"; readonly attempt: MonoAttempt }
   | { readonly kind: "validationCreation"; readonly validation: MonoValidation }
@@ -644,6 +642,7 @@ export interface MonoEnumCaseRecord {
   readonly caseItemId: ItemId;
   readonly name: string;
   readonly ordinal: number;
+  readonly payloadFieldIds: readonly FieldId[];
   readonly sourceOrigin: string;
 }
 
@@ -946,6 +945,7 @@ export const MONO_EXPRESSION_KIND_COVERAGE: Readonly<
   name: true,
   member: true,
   object: true,
+  enumConstructor: true,
   call: true,
   attempt: true,
   validationCreation: true,

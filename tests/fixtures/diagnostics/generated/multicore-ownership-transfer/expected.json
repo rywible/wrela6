@@ -1,0 +1,9 @@
+{
+  "sourceSection": "Multicore Ownership Transfer",
+  "stage": "parse",
+  "diagnostics": [
+    {
+      "code": "LEX_MALFORMED_INTEGER"
+    }
+  ]
+}

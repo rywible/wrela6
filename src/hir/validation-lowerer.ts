@@ -1,5 +1,4 @@
 import type { MatchStatementView } from "../frontend/ast/statement-views";
-import { functionId } from "../semantic/ids";
 import { concreteKind } from "../semantic/surface/resource-kind";
 import type { CheckedType } from "../semantic/surface/type-model";
 import type { CheckedValidationContractSurface } from "../semantic/surface/proof-contracts";
@@ -15,7 +14,12 @@ import type { HirLoweringContext } from "./lowering-context";
 import type { HirBlockLowerer } from "./lowering-context";
 import { ownedValidationId } from "./ids";
 import type { HirOriginId } from "./ids";
-import { currentHirModuleId, hirDiagnostic } from "./lowering-context";
+import {
+  currentHirModuleId,
+  hirDiagnostic,
+  hirOwnerKey,
+  requireHirFunctionOwner,
+} from "./lowering-context";
 
 export function lowerValidationCreation(input: {
   readonly call: HirCallExpression;
@@ -31,10 +35,12 @@ export function lowerValidationCreation(input: {
           ?.place
       : input.call.arguments.find((argument) => argument.place !== undefined)?.place;
   if (contract === undefined || sourcePlace === undefined) return undefined;
-  const owner = {
-    kind: "function" as const,
-    functionId: input.context.ownerFunctionId ?? functionId(0),
-  };
+  const owner = requireHirFunctionOwner({
+    context: input.context,
+    sourceOrigin: input.sourceOrigin,
+    stableDetail: "validation-owner",
+  });
+  if (owner === undefined) return undefined;
   const validationId = ownedValidationId(owner, input.context.proofMetadata.count("validation"));
   const pendingResultPlace = input.context.places.placeForProjection({
     root: { kind: "temporary", ordinal: input.context.proofMetadata.count("validation") },
@@ -174,7 +180,7 @@ function reportAmbiguousValidationMatch(input: {
       code: "HIR_AMBIGUOUS_VALIDATION_MATCH",
       message: "Validation match arms must contain exactly one Ok arm and one Err arm.",
       originId: input.sourceOrigin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${input.sourceOrigin}`,
       stableDetail: input.stableDetail,
     }),
@@ -206,16 +212,19 @@ export function lowerValidationMatch(input: {
         code: "HIR_UNLINKED_VALIDATION_MATCH",
         message: "Validation match scrutinee is not a recorded validation result.",
         originId: sourceOrigin,
-        ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+        ownerKey: hirOwnerKey(input.context),
         originKey: `origin:${sourceOrigin}`,
         stableDetail: "validation-match",
       }),
     );
+    const owner = requireHirFunctionOwner({
+      context: input.context,
+      sourceOrigin,
+      stableDetail: "validation-match-owner",
+    });
+    if (owner === undefined) return undefined;
     return {
-      validationMatchId: ownedValidationId(
-        { kind: "function", functionId: input.context.ownerFunctionId ?? functionId(0) },
-        input.context.proofMetadata.count("validation"),
-      ),
+      validationMatchId: ownedValidationId(owner, input.context.proofMetadata.count("validation")),
       scrutinee: input.scrutinee,
       sourceOrigin,
       recovered: true,

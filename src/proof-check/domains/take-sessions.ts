@@ -27,5 +27,5 @@ export {
   checkValidatedTakePlaceOperation,
   transferTakeSession,
   takeSessionTransferChain,
-  applyTakeSessionPatchesForTest,
+  applyTakeSessionPatches,
 } from "./take-session-operations";

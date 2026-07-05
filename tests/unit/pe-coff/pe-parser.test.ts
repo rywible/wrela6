@@ -25,6 +25,7 @@ const COFF_HEADER_OFFSET = PE_HEADER_OFFSET_BYTES + PE_SIGNATURE_SIZE_BYTES;
 const OPTIONAL_HEADER_OFFSET = COFF_HEADER_OFFSET + PE_COFF_FILE_HEADER_SIZE_BYTES;
 const SECTION_TABLE_OFFSET = OPTIONAL_HEADER_OFFSET + PE32_PLUS_OPTIONAL_HEADER_SIZE_BYTES;
 const BASE_RELOCATION_DIRECTORY_OFFSET = OPTIONAL_HEADER_OFFSET + 112 + 5 * 8;
+const EXCEPTION_DIRECTORY_OFFSET = OPTIONAL_HEADER_OFFSET + 112 + 3 * 8;
 
 describe("strict PE/COFF parser", () => {
   test("parses a serialized PE32+ image", () => {
@@ -113,6 +114,74 @@ describe("strict PE/COFF parser", () => {
     );
   });
 
+  test("rejects invalid UEFI AArch64 image layout invariants", () => {
+    const bytes = serializedImageBytesForParserTest();
+
+    expect(stableDetails(patchedU16Le(bytes, OPTIONAL_HEADER_OFFSET + 68, 3))).toContain(
+      "optional-header:subsystem:3",
+    );
+    expect(stableDetails(patchedU32Le(bytes, OPTIONAL_HEADER_OFFSET + 16, 0x2000))).toContain(
+      "entry-point:not-executable:8192",
+    );
+    expect(stableDetails(patchedU32Le(bytes, SECTION_TABLE_OFFSET + 12, 0x1800))).toContain(
+      "section-rva:misaligned:.text:6144",
+    );
+    expect(
+      stableDetails(
+        patchedU32Le(bytes, SECTION_TABLE_OFFSET + PE_SECTION_HEADER_SIZE_BYTES + 12, 0x1000),
+      ),
+    ).toContain("section-rva:not-increasing:.pdata");
+    expect(stableDetails(patchedU32Le(bytes, SECTION_TABLE_OFFSET + 36, 0x40000040))).toContain(
+      "section-flags:text-not-executable:.text",
+    );
+  });
+
+  test("rejects malformed exception directory metadata", () => {
+    const bytes = serializedImageBytesForParserTest();
+
+    expect(stableDetails(patchedU32Le(bytes, EXCEPTION_DIRECTORY_OFFSET + 4, 4))).toContain(
+      "exception-directory:size-unaligned:4",
+    );
+    expect(
+      stableDetails(serializedUnalignedExceptionDirectoryImageBytesForParserTest(10)),
+    ).toContain("exception-directory:size-unaligned:10");
+    expect(stableDetails(serializedLegacyExceptionImageBytesForParserTest())).toContain(
+      "exception-directory:size-unaligned:12",
+    );
+    expect(stableDetails(patchedU32Le(bytes, exceptionRawOffset(bytes), 0x4000))).toContain(
+      "exception-directory:begin-rva-not-executable:16384",
+    );
+    expect(stableDetails(patchedU32Le(bytes, exceptionRawOffset(bytes) + 4, 0x9000))).toContain(
+      "exception-directory:unwind-rva-section-missing:36864",
+    );
+  });
+
+  test("rejects malformed AArch64 exception directory metadata", () => {
+    const bytes = serializedAArch64ExceptionImageBytesForParserTest();
+
+    expect(stableDetails(patchedU32Le(bytes, exceptionRawOffset(bytes), 0x4000))).toContain(
+      "exception-directory:begin-rva-not-executable:16384",
+    );
+    expect(stableDetails(patchedU32Le(bytes, exceptionRawOffset(bytes) + 4, 0x9000))).toContain(
+      "exception-directory:unwind-rva-section-missing:36864",
+    );
+    expect(stableDetails(patchedU32Le(bytes, exceptionRawOffset(bytes) + 4, 0x1000))).toContain(
+      "exception-directory:unwind-rva-not-xdata:4096:.text",
+    );
+    expect(stableDetails(patchedU32Le(bytes, exceptionRawOffset(bytes), 0xfffff388))).toContain(
+      "exception-directory:begin-rva-not-executable:4294964104",
+    );
+    expect(
+      stableDetails(
+        patchedU32Le(
+          patchedU32Le(bytes, exceptionRawOffset(bytes), 0),
+          exceptionRawOffset(bytes) + 4,
+          0,
+        ),
+      ),
+    ).toContain("exception-directory:empty-entry:0");
+  });
+
   test("rejects nonzero section name padding and trailing file bytes", () => {
     const bytes = serializedImageBytesForParserTest();
 
@@ -178,11 +247,99 @@ function stableDetails(bytes: ArrayLike<number>): readonly string[] {
   return result.diagnostics.map((diagnostic) => diagnostic.stableDetail);
 }
 
-function serializedImageWithBaseRelocations(): Uint8Array {
+function serializedAArch64ExceptionImageBytesForParserTest(): Uint8Array {
   const target = writerTargetForTest();
   const layout = linkedImageLayoutForPeCoffTest({
-    baseRelocations: [dir64RelocationForTest({ rva: 0x4000 })],
+    sections: [
+      linkedSectionForParserTest(".text", 0x1000, 0x20, 0x60000020, [0xc0, 0x03, 0x5f, 0xd6]),
+      linkedSectionForParserTest(
+        ".pdata",
+        0x2000,
+        0x08,
+        0x40000040,
+        [0x00, 0x10, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00],
+      ),
+      linkedSectionForParserTest(".xdata", 0x3000, 0x10, 0x40000040, [0x01, 0x02, 0x03, 0x04]),
+      linkedSectionForParserTest(".data", 0x4000, 0x10, 0xc0000040, [0xaa, 0xbb, 0xcc, 0xdd]),
+    ],
+    dataDirectorySources: [
+      {
+        stableKey: "data-directory:exception:.pdata",
+        directoryKind: "exception",
+        sectionKey: ".pdata",
+        rva: 0x2000,
+        sizeBytes: 0x08,
+      },
+    ],
   });
+  return serializedBytesForParserLayout(target, layout);
+}
+
+function serializedLegacyExceptionImageBytesForParserTest(): Uint8Array {
+  const target = writerTargetForTest();
+  const layout = linkedImageLayoutForPeCoffTest({
+    sections: [
+      linkedSectionForParserTest(".text", 0x1000, 0x20, 0x60000020, [0xc0, 0x03, 0x5f, 0xd6]),
+      linkedSectionForParserTest(
+        ".pdata",
+        0x2000,
+        0x0c,
+        0x40000040,
+        [0x00, 0x10, 0x00, 0x00, 0x20, 0x10, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00],
+      ),
+      linkedSectionForParserTest(".xdata", 0x3000, 0x10, 0x40000040, [0x01, 0x02, 0x03, 0x04]),
+      linkedSectionForParserTest(".data", 0x4000, 0x10, 0xc0000040, [0xaa, 0xbb, 0xcc, 0xdd]),
+    ],
+    dataDirectorySources: [
+      {
+        stableKey: "data-directory:exception:.pdata",
+        directoryKind: "exception",
+        sectionKey: ".pdata",
+        rva: 0x2000,
+        sizeBytes: 0x0c,
+      },
+    ],
+  });
+  return serializedBytesForParserLayout(target, layout);
+}
+
+function serializedUnalignedExceptionDirectoryImageBytesForParserTest(
+  sizeBytes: number,
+): Uint8Array {
+  const target = writerTargetForTest();
+  const layout = linkedImageLayoutForPeCoffTest({
+    sections: [
+      linkedSectionForParserTest(".text", 0x1000, 0x20, 0x60000020, [0xc0, 0x03, 0x5f, 0xd6]),
+      linkedSectionForParserTest(
+        ".pdata",
+        0x2000,
+        0x10,
+        0x40000040,
+        [
+          0x00, 0x10, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x30, 0x00,
+          0x00,
+        ],
+      ),
+      linkedSectionForParserTest(".xdata", 0x3000, 0x10, 0x40000040, [0x01, 0x02, 0x03, 0x04]),
+      linkedSectionForParserTest(".data", 0x4000, 0x10, 0xc0000040, [0xaa, 0xbb, 0xcc, 0xdd]),
+    ],
+    dataDirectorySources: [
+      {
+        stableKey: "data-directory:exception:.pdata",
+        directoryKind: "exception",
+        sectionKey: ".pdata",
+        rva: 0x2000,
+        sizeBytes,
+      },
+    ],
+  });
+  return serializedBytesForParserLayout(target, layout);
+}
+
+function serializedBytesForParserLayout(
+  target: ReturnType<typeof writerTargetForTest>,
+  layout: ReturnType<typeof linkedImageLayoutForPeCoffTest>,
+): Uint8Array {
   const relocations = serializePeBaseRelocations({ target, relocations: layout.baseRelocations });
   if (relocations.kind !== "ok") throw new Error("expected relocations");
   const sections = planPeCoffSections({
@@ -213,12 +370,63 @@ function serializedImageWithBaseRelocations(): Uint8Array {
   return serialized.value.bytes;
 }
 
+function linkedSectionForParserTest(
+  stableKey: string,
+  rva: number,
+  virtualSizeBytes: number,
+  flags: number,
+  bytes: Uint8Array | readonly number[],
+) {
+  return {
+    stableKey,
+    classKey: stableKey,
+    flags,
+    alignmentBytes: 4096,
+    rva,
+    virtualSizeBytes,
+    bytes: Uint8Array.from(bytes),
+    contributions: [
+      {
+        stableKey: `contribution:${stableKey}`,
+        sourceModuleKey: "module:test",
+        sourceObjectSectionKey: stableKey,
+        sourceObjectSectionClass: stableKey,
+        outputSectionKey: stableKey,
+        offsetBytes: 0,
+        sizeBytes: virtualSizeBytes,
+        alignmentBytes: 1,
+      },
+    ],
+  };
+}
+
+function serializedImageWithBaseRelocations(): Uint8Array {
+  const target = writerTargetForTest();
+  const layout = linkedImageLayoutForPeCoffTest({
+    baseRelocations: [dir64RelocationForTest({ rva: 0x4000 })],
+  });
+  return serializedBytesForParserLayout(target, layout);
+}
+
 function relocationRawOffset(bytes: ArrayLike<number>): number {
   const result = parsePeCoffImage(bytes);
   if (result.kind !== "ok") throw new Error("expected parsed image");
   const reloc = result.value.sectionHeaders.find((section) => section.name === ".reloc");
   if (reloc === undefined) throw new Error("expected reloc section");
   return reloc.rawDataPointerBytes;
+}
+
+function exceptionRawOffset(bytes: ArrayLike<number>): number {
+  const result = parsePeCoffImage(bytes);
+  if (result.kind !== "ok") throw new Error("expected parsed image");
+  const directory = result.value.dataDirectories[3];
+  if (directory === undefined) throw new Error("expected exception directory");
+  const section = result.value.sectionHeaders.find(
+    (candidate) =>
+      directory.rva >= candidate.rva && directory.rva < candidate.rva + candidate.virtualSizeBytes,
+  );
+  if (section === undefined) throw new Error("expected exception section");
+  return section.rawDataPointerBytes + (directory.rva - section.rva);
 }
 
 function relocSectionHeaderOffset(bytes: ArrayLike<number>): number {

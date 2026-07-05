@@ -1,9 +1,7 @@
 import {
   ArgumentView,
   CallExpressionView,
-  MemberAccessExpressionView,
   NamedArgumentView,
-  NameExpressionView,
   TypeApplicationExpressionView,
   type ExpressionView,
 } from "../frontend/ast/expression-views";
@@ -24,10 +22,10 @@ import type { CertifiedPlatformBinding } from "../semantic/surface/checked-progr
 import type { CheckedFunctionSignature } from "../semantic/surface/checked-program";
 import type { CheckedType } from "../semantic/surface/type-model";
 import { checkedTypesEqual } from "../semantic/surface/type-model";
-import type { FunctionId, ItemId } from "../semantic/ids";
+import type { FunctionId } from "../semantic/ids";
 import type { HirCallArgument, HirCallExpression, HirExpression } from "./hir";
 import type { HirLoweringContext } from "./lowering-context";
-import { currentHirModuleId, hirDiagnostic } from "./lowering-context";
+import { currentHirModuleId, hirDiagnostic, hirOwnerKey } from "./lowering-context";
 import { lowerExpression } from "./expression-lowerer";
 import { lowerRequirementSurface } from "./requirement-lowerer";
 import { lowerValidationCreation } from "./validation-lowerer";
@@ -35,6 +33,11 @@ import { composeCallProofMetadata } from "./call-proof-metadata";
 import { inferCallTypeArguments } from "./generic-inference";
 import { substituteCheckedSignature } from "./generic-substitution";
 import { checkConstructibility } from "./constructibility";
+import {
+  lowerEnumConstructorExpression,
+  reportEnumConstructorMismatch,
+} from "./enum-constructor-call-lowerer";
+import { resolveCallee, type ResolvedCallee } from "./call-callee-resolver";
 
 export interface LowerCallExpressionInput {
   readonly view: CallExpressionView;
@@ -111,7 +114,7 @@ function resolveTypeArgument(input: {
         code: "HIR_EXPLICIT_TYPE_ARGUMENT_NOT_TYPE",
         message: "Explicit call type argument is not a resolved type.",
         originId: input.origin,
-        ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+        ownerKey: hirOwnerKey(input.context),
         originKey: `origin:${input.origin}`,
         stableDetail: input.view.qualifiedNameText() ?? "type-argument",
       }),
@@ -131,7 +134,7 @@ function resolveTypeArgument(input: {
         code: "HIR_EXPLICIT_TYPE_ARGUMENT_NOT_TYPE",
         message: "Explicit call type argument cannot be applied.",
         originId: input.origin,
-        ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+        ownerKey: hirOwnerKey(input.context),
         originKey: `origin:${input.origin}`,
         stableDetail: input.view.qualifiedNameText() ?? "type-argument",
       }),
@@ -176,7 +179,7 @@ function reportCallTypeMismatch(input: {
       code: "HIR_EXPRESSION_TYPE_MISMATCH",
       message: "Call expression type does not match expected type.",
       originId: input.origin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${input.origin}`,
       stableDetail: "call-expression-type",
     }),
@@ -215,13 +218,6 @@ function containsErrorType(type: CheckedType): boolean {
   return type.arguments.some((argument) => containsErrorType(argument));
 }
 
-interface ResolvedCallee {
-  readonly functionId?: FunctionId;
-  readonly compilerIntrinsic?: import("../semantic/surface/checked-program").CheckedCompilerIntrinsicCall;
-  readonly receiver?: HirExpression;
-  readonly name: string;
-}
-
 function syntaxReferenceKeyString(
   key: import("../semantic/names/reference").SyntaxReferenceKey,
 ): string {
@@ -237,86 +233,21 @@ function compilerIntrinsicSourceValueKey(input: {
   return `hir.expression:${ownerKey}:${input.expressionId}`;
 }
 
-function resolveCallee(view: CallExpressionView, context: HirLoweringContext): ResolvedCallee {
-  const callee = unwrapTypeApplication(view.callee());
-  if (callee instanceof NameExpressionView) {
-    const span = presentTokenSpan(callee.nameToken()) ?? callee.node.span;
-    const referenceEntry = context.referenceLookup.referenceEntryForSpan({
-      moduleId: currentHirModuleId(context),
-      span,
-      kind: "functionName",
-    });
-    const reference = referenceEntry?.reference;
-    const compilerIntrinsic =
-      reference?.kind === "compilerIntrinsic" && referenceEntry !== undefined
-        ? context.program.compilerIntrinsicCalls.get(referenceEntry.key)
-        : undefined;
-    return {
-      name: callee.nameText() ?? "",
-      ...(reference?.kind === "function" ? { functionId: reference.functionId } : {}),
-      ...(compilerIntrinsic !== undefined ? { compilerIntrinsic } : {}),
-    };
-  }
-
-  if (callee instanceof MemberAccessExpressionView) {
-    const receiverView = callee.receiver();
-    const receiver =
-      receiverView !== undefined ? lowerExpression({ view: receiverView, context }) : undefined;
-    const memberSpan =
-      presentTokenSpan(callee.memberToken()) ?? callee.memberToken()?.span ?? callee.node.span;
-    const reference =
-      context.referenceLookup.completedMemberForSpan({
-        moduleId: currentHirModuleId(context),
-        span: memberSpan,
-        kind: "memberName",
-      }) ??
-      context.referenceLookup.completedMemberForSpan({
-        moduleId: currentHirModuleId(context),
-        span: memberSpan,
-      });
-    const fallbackFunctionId =
-      reference?.kind === "function" || receiver === undefined
-        ? undefined
-        : functionIdForReceiverMember({
-            context,
-            receiver,
-            memberName: callee.memberName() ?? "",
-          });
-    return {
-      name: callee.memberName() ?? "",
-      ...(receiver !== undefined ? { receiver } : {}),
-      ...(reference?.kind === "function"
-        ? { functionId: reference.functionId }
-        : fallbackFunctionId !== undefined
-          ? { functionId: fallbackFunctionId }
-          : {}),
-    };
-  }
-
-  return { name: "" };
-}
-
-function ownerItemIdForReceiverType(
-  context: HirLoweringContext,
-  type: CheckedType,
-): ItemId | undefined {
-  if (type.kind === "source") return type.itemId;
-  if (type.kind !== "applied" || type.constructor.kind !== "source") return undefined;
-  return context.index.type(type.constructor.typeId)?.itemId;
-}
-
-function functionIdForReceiverMember(input: {
+function reportMissingCallName(input: {
   readonly context: HirLoweringContext;
-  readonly receiver: HirExpression;
-  readonly memberName: string;
-}): FunctionId | undefined {
-  const ownerItemId = ownerItemIdForReceiverType(input.context, input.receiver.type);
-  if (ownerItemId === undefined) return undefined;
-  return input.context.program.functions.entries().find((signature) => {
-    if (signature.ownerItemId !== ownerItemId) return false;
-    const item = input.context.index.item(signature.itemId);
-    return item?.name === input.memberName;
-  })?.functionId;
+  readonly origin: import("./ids").HirOriginId;
+  readonly stableDetail: string;
+}): void {
+  input.context.diagnostics.report(
+    hirDiagnostic({
+      code: "HIR_MISSING_NAME_TEXT",
+      message: "Call expression is missing source name text.",
+      originId: input.origin,
+      ownerKey: hirOwnerKey(input.context),
+      originKey: `origin:${input.origin}`,
+      stableDetail: input.stableDetail,
+    }),
+  );
 }
 
 function calleeExpression(
@@ -377,7 +308,7 @@ function reportUncertifiedPlatformEnsure(input: {
       code: "HIR_PLATFORM_ENSURE_NOT_CERTIFIED",
       message: "Platform ensured facts require a certified platform contract edge.",
       originId: input.origin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${input.origin}`,
       stableDetail: `platform-ensure:${input.calleeFunctionId}:${input.count}`,
     }),
@@ -477,7 +408,7 @@ function reportCallArgumentMismatch(input: {
       code: "HIR_CALL_ARGUMENT_MISMATCH",
       message: "Call arguments do not match the checked function signature.",
       originId: input.origin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${input.origin}`,
       stableDetail: input.stableDetail,
     }),
@@ -510,7 +441,8 @@ function checkCallArguments(input: {
     reportCallArgumentMismatch({
       context: input.context,
       origin: input.origin,
-      stableDetail: `unknown-named:${argument.name ?? ""}`,
+      stableDetail:
+        argument.name !== undefined ? `unknown-named:${argument.name}` : "unknown-named:missing",
     });
   }
 
@@ -552,7 +484,12 @@ function constructorAuthorized(input: {
 
 export function lowerCallExpression(input: LowerCallExpressionInput): HirExpression {
   const origin = originForCall(input.view, input.context);
-  const resolvedCallee = resolveCallee(input.view, input.context);
+  const resolvedCallee = resolveCallee({
+    view: input.view,
+    context: input.context,
+    origin,
+    unwrapTypeApplication,
+  });
   const calleeFunctionId = resolvedCallee.functionId;
   const originalSignature =
     calleeFunctionId !== undefined
@@ -561,6 +498,7 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
 
   if (
     resolvedCallee.compilerIntrinsic === undefined &&
+    resolvedCallee.enumCaseItemId === undefined &&
     (calleeFunctionId === undefined || originalSignature === undefined)
   ) {
     input.context.diagnostics.report(
@@ -568,7 +506,7 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
         code: "HIR_CALL_CALLEE_NOT_FUNCTION",
         message: "Call callee is not a resolved function.",
         originId: origin,
-        ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+        ownerKey: hirOwnerKey(input.context),
         originKey: `origin:${origin}`,
         stableDetail: "callee",
       }),
@@ -592,6 +530,7 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
   const sourceArguments = input.view.argumentList()?.arguments() ?? [];
   const loweredByName = new Map<string, HirCallArgument>();
   const positional: HirCallArgument[] = [];
+  const duplicateArgumentNames = new Set<string>();
   for (const sourceArgument of sourceArguments) {
     const loweredExpression = lowerArgumentExpression(
       sourceArgument,
@@ -603,10 +542,47 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
       }),
     );
     if (sourceArgument instanceof NamedArgumentView) {
-      const name = sourceArgument.nameText() ?? "";
+      const name = sourceArgument.nameText();
+      if (name === undefined) {
+        reportMissingCallName({ context: input.context, origin, stableDetail: "argument" });
+        continue;
+      }
+      if (loweredByName.has(name)) {
+        duplicateArgumentNames.add(name);
+      }
       loweredByName.set(name, { name, expression: loweredExpression });
     } else {
       positional.push({ expression: loweredExpression });
+    }
+  }
+
+  if (resolvedCallee.enumCaseItemId !== undefined) {
+    for (const name of duplicateArgumentNames) {
+      reportEnumConstructorMismatch({
+        context: input.context,
+        origin,
+        stableDetail: `duplicate:${name}`,
+      });
+    }
+    if (duplicateArgumentNames.size === 0) {
+      const enumConstructor = lowerEnumConstructorExpression({
+        view: input.view,
+        context: input.context,
+        origin,
+        caseItemId: resolvedCallee.enumCaseItemId,
+        expectedType: input.expectedType,
+        loweredByName,
+        positional,
+      });
+      if (enumConstructor !== undefined) {
+        reportCallTypeMismatch({
+          context: input.context,
+          origin,
+          expectedType: input.expectedType,
+          actualType: enumConstructor.type,
+        });
+        return enumConstructor;
+      }
     }
   }
 
@@ -831,8 +807,8 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
         : {}),
       terminalSurface: input.context.program.proofSurface.terminalSurfaces.get(calleeFunctionId),
       predicateSurface: predicateSurface(input.context, calleeFunctionId),
-      privateTransitionSurface:
-        input.context.program.proofSurface.privateTransitions.get(calleeFunctionId)[0],
+      privateTransitionSurfaces:
+        input.context.program.proofSurface.privateTransitions.get(calleeFunctionId),
     });
     lowerValidationCreation({
       call,

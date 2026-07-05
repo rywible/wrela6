@@ -222,29 +222,22 @@ function syntheticObjectFactoryForTest(): AArch64SyntheticObjectFactory {
       objects: [
         {
           objectKey: "unwind",
-          pdataBytes: entryCodeBytes,
+          pdataBytes: Uint8Array.of(0, 0, 0, 0, 0, 0, 0, 0),
           xdataBytes: entryCodeBytes,
           functionLinkageName: "Boot.main",
+          xdataSymbolStableKey: "symbol:xdata:test",
           frameShape: "frameless-leaf",
           pdataRelocation: {
             stableKey: "reloc:pdata:function",
             offsetBytes: 0,
             widthBytes: 4,
-            family: "branch26",
-            instructionPatch: {
-              bitRange: [0, 25] as const,
-              encodingOwner: { opcode: "bl", catalogEntryKey: "encoding:bl" },
-            },
+            family: "addr32nb",
           },
           xdataRelocation: {
             stableKey: "reloc:xdata:function",
-            offsetBytes: 0,
+            offsetBytes: 4,
             widthBytes: 4,
-            family: "branch26",
-            instructionPatch: {
-              bitRange: [0, 25] as const,
-              encodingOwner: { opcode: "bl", catalogEntryKey: "encoding:bl" },
-            },
+            family: "addr32nb",
           },
         },
       ],

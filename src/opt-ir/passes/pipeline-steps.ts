@@ -1,4 +1,3 @@
-import { buildOptIrMemorySsa } from "../analyses/memory-ssa";
 import { computeOptIrEscapeAnalysis } from "../analyses/escape-analysis";
 import { optIrFunctionTable, optIrProgram } from "../program";
 import { optIrDefaultVectorPolicy } from "../policy/vector-policy";
@@ -12,10 +11,8 @@ import {
 } from "./egraph-materialization";
 import { runGvn } from "./gvn";
 import { runLicm } from "./licm";
-import { licmLoopOperationIdsInProgramOrder } from "./licm-loop-candidates";
 import { runLoopVectorization } from "./loop-vectorization";
 import { runMandatoryInlining } from "./mandatory-inlining";
-import { runMemoryOptimization } from "./memory-optimization";
 import {
   discoverBoundsCandidates,
   discoverEndianFoldCandidates,
@@ -53,10 +50,16 @@ import {
   sortedOperations,
 } from "./pipeline-state";
 import type { PipelineState, PipelineStepResult } from "./pipeline-types";
+import {
+  compilerMetadataEntries,
+  createCompilerStageMetadata,
+  scalarReplacementMetadata,
+} from "../../pipeline";
 import { runScalarReplacement } from "./scalar-replacement";
 import { runScalarSimplification } from "./scalar-simplification";
 import { runSccp } from "./sccp";
 import { runSlpVectorization } from "./slp-vectorization";
+import { productionStackPromotionEscapeAnalysisInput } from "./stack-promotion-escape";
 import { runStackPromotion } from "./stack-promotion";
 import { runVectorizationCleanup } from "./vectorization-cleanup";
 import {
@@ -65,6 +68,7 @@ import {
 } from "./vector-materialization";
 import { runWholeProgramInlining } from "./whole-program-inlining";
 import { runWholeProgramSpecialization } from "./whole-program-specialization";
+import type { OptIrPassContext } from "./pass-execution";
 import { runWrelaBoundsZeroCopy } from "./wrela-optimizations/bounds-zero-copy";
 import { runWrelaEndianParserCollapse } from "./wrela-optimizations/endian-parser-collapse";
 import { runWrelaMoveCopyWrapperElision } from "./wrela-optimizations/move-copy-wrapper-elision";
@@ -145,11 +149,15 @@ function removeUnreferencedInlinedCallees(input: {
   };
 }
 
-export function runWholeProgramInliningStep(state: PipelineState): PipelineState {
+export function runWholeProgramInliningStep(
+  state: PipelineState,
+  context: OptIrPassContext,
+): PipelineState {
   const result = runWholeProgramInlining({
     program: state.program,
     operations: state.operations,
     budget: defaultScopeExpansionBudget(),
+    freshIds: context.freshIds,
   });
   return {
     ...state,
@@ -227,85 +235,6 @@ export function runDeadCodeEliminationStep(state: PipelineState): PipelineState 
   );
 }
 
-export function runMemorySsaAnalysisStep(state: PipelineState): PipelineStepResult {
-  const result = buildOptIrMemorySsa({
-    program: state.program,
-    regions: state.optimizationRegions,
-    operationForId(operationId) {
-      return operationMap(state.operations).get(operationId);
-    },
-  });
-  if (result.kind === "error") {
-    return {
-      ...state,
-      diagnostics: [
-        ...state.diagnostics,
-        pipelineInfoDiagnostic(
-          "opt-ir-optimization",
-          "memory-ssa",
-          "memory-ssa:conservative-incomplete-call-headers",
-        ),
-      ],
-    };
-  }
-  return state;
-}
-
-export function runMemoryOptimizationStep(state: PipelineState, passId: string): PipelineState {
-  const result = runMemoryOptimization({
-    program: state.program,
-    regions: state.optimizationRegions,
-    operations: state.operations,
-    operationForId(operationId) {
-      return operationMap(state.operations).get(operationId);
-    },
-  });
-  const removed = new Set(result.removedOperationIds);
-  const diagnostics = [
-    ...state.diagnostics,
-    ...result.valueForwards.map((valueForward) =>
-      pipelineInfoDiagnostic(
-        "opt-ir-optimization",
-        passId,
-        `memory:value-forward:${Number(valueForward.sourceValue)}:${Number(
-          valueForward.replacementValue,
-        )}`,
-      ),
-    ),
-    ...result.rewriteRecords.map((record) =>
-      pipelineInfoDiagnostic(
-        "opt-ir-optimization",
-        passId,
-        `memory:${record.subject.kind}:${Number(
-          record.subject.kind === "operation"
-            ? record.subject.operationId
-            : record.subject.regionId,
-        )}:${record.invariant.kind}`,
-      ),
-    ),
-  ];
-  const next = {
-    ...state,
-    program: removeOperationsFromProgram(result.program, removed),
-    operations: sortedOperations(
-      state.operations.filter((operation) => !removed.has(operation.operationId)),
-    ),
-    diagnostics,
-  };
-  if (result.valueForwards.length === 0) {
-    return next;
-  }
-  return runPerFunctionPass(next, (func, operations) =>
-    runCopyPropagation({
-      function: func,
-      operations,
-      valueCopies: result.valueForwards.map(
-        (valueForward) => [valueForward.sourceValue, valueForward.replacementValue] as const,
-      ),
-    }),
-  );
-}
-
 export function runScalarReplacementStep(state: PipelineState): PipelineState {
   const regions = state.optimizationRegions;
   const result = runScalarReplacement({
@@ -319,6 +248,16 @@ export function runScalarReplacementStep(state: PipelineState): PipelineState {
     program: result.program,
     operations: result.operations,
     optimizationRegions: result.optimizationRegions,
+    metadata: createCompilerStageMetadata([
+      ...compilerMetadataEntries(state.metadata ?? createCompilerStageMetadata()),
+      scalarReplacementMetadata({
+        replacedRegionIds: result.replacedRegionIds.map((regionId) => String(regionId)),
+        rejectedCandidates: result.rejectedCandidates.map((candidate) => ({
+          regionId: String(candidate.regionId),
+          reason: candidate.reason,
+        })),
+      }),
+    ]),
     diagnostics: [
       ...state.diagnostics,
       ...result.rewriteRecords.map((record) =>
@@ -338,7 +277,7 @@ export function runScalarReplacementStep(state: PipelineState): PipelineState {
 
 export function runStackPromotionStep(state: PipelineState): PipelineState {
   const regions = state.optimizationRegions;
-  const escape = computeOptIrEscapeAnalysis({ regions });
+  const escape = computeOptIrEscapeAnalysis(productionStackPromotionEscapeAnalysisInput(regions));
   const result = runStackPromotion({
     program: state.program,
     regions,
@@ -347,6 +286,9 @@ export function runStackPromotionStep(state: PipelineState): PipelineState {
       valid: region.kind === "stackLocal" && region.lifetime === "activation",
     })),
     escapedRegionIds: escape.escapedRegions(),
+    nonEscapingRegionIds: regions
+      .filter((region) => escape.doesNotEscape(region.regionId))
+      .map((region) => region.regionId),
   });
   return {
     ...state,
@@ -369,11 +311,11 @@ export function runStackPromotionStep(state: PipelineState): PipelineState {
   };
 }
 
-export function runLicmStep(state: PipelineState): PipelineState {
+export function runLicmStep(state: PipelineState, context: OptIrPassContext): PipelineState {
   const result = runLicm({
     program: state.program,
     operations: state.operations,
-    loopOperationIds: licmLoopOperationIdsInProgramOrder(state),
+    freshIds: context.freshIds,
     effectBoundaryOperationIds: state.operations
       .filter((operation) => !operation.effects.isRuntimePure)
       .map((operation) => operation.operationId),
@@ -445,6 +387,7 @@ export function runFactGatedEGraphStep(state: PipelineState): PipelineState {
       const result = runOptIrFactGatedEGraphMaterialization({
         program: current.program,
         operations: current.operations,
+        optimizationRegions: current.optimizationRegions,
         facts: current.facts,
         tracingEnabled: false,
       });

@@ -5,6 +5,7 @@ import type {
   HasTypeParameters,
   HasFields,
   HasMemberFunctions,
+  HasEnumCases,
 } from "../../frontend/ast/declaration-views";
 import { FunctionDeclarationView } from "../../frontend/ast/function-views";
 import { TypeReferenceView } from "../../frontend/ast/type-views";
@@ -180,6 +181,12 @@ function hasMemberFunctions(decl: DeclarationView): decl is DeclarationView & Ha
   );
 }
 
+function hasEnumCases(decl: DeclarationView): decl is DeclarationView & HasEnumCases {
+  return (
+    typeof (decl as DeclarationView & { readonly enumCases?: unknown }).enumCases === "function"
+  );
+}
+
 function buildTypeParamScopeCandidates(
   typeParams: TypeParameterView[],
   owner: TypeParameterOwner,
@@ -299,6 +306,17 @@ function walkTypeLike(
       const fieldType = field.type();
       if (fieldType !== undefined) {
         resolveTypeReference(fieldType, declCtx);
+      }
+    }
+  }
+
+  if (hasEnumCases(decl)) {
+    for (const enumCase of decl.enumCases()) {
+      for (const payloadField of enumCase.payloadFields()) {
+        const fieldType = payloadField.type();
+        if (fieldType !== undefined) {
+          resolveTypeReference(fieldType, declCtx);
+        }
       }
     }
   }

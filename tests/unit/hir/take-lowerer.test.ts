@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { classifyTakeExpression } from "../../../src/hir/take-lowerer";
-import { createHirUnitContext, lowerTypedHirForTest } from "../../support/hir/typed-hir-fixtures";
+import {
+  createHirUnitContext,
+  createProgramHirUnitContext,
+  lowerTypedHirForTest,
+} from "../../support/hir/typed-hir-fixtures";
 import {
   successfulCallFake,
   streamTakeSurface,
@@ -32,6 +36,27 @@ test("take-only stream call creates session metadata", () => {
 
   expect(result.kind.kind).toBe("stream");
   expect(context.proofMetadata.sessions.entries()).toHaveLength(1);
+});
+
+test("take-only stream call without a function owner reports and creates no sentinel metadata", () => {
+  const context = createProgramHirUnitContext("fn process():\n    return\n");
+  const result = classifyTakeExpression({
+    expression: {
+      kind: "call",
+      call: successfulCallFake({ calleeFunctionId: functionId(1) }),
+      sourceOrigin: hirOriginId(0),
+    } as any,
+    context,
+    takeSurfaces: [streamTakeSurface(functionId(1))],
+  });
+
+  expect(result.kind.kind).toBe("error");
+  expect(context.diagnostics.entries().map((diagnostic) => String(diagnostic.code))).toContain(
+    "HIR_MISSING_OWNER_FUNCTION",
+  );
+  expect(context.proofMetadata.sessions.entries()).toEqual([]);
+  expect(context.proofMetadata.brands.entries()).toEqual([]);
+  expect(context.proofMetadata.obligations.entries()).toEqual([]);
 });
 
 test("buffer take creates a buffer obligation", () => {

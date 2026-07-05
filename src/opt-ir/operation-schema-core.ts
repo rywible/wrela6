@@ -25,6 +25,10 @@ export type OptIrCoreOperationKind =
   | "aggregateConstruct"
   | "aggregateExtract"
   | "aggregateInsert"
+  | "enumTagStore"
+  | "enumPayloadStore"
+  | "enumTagLoad"
+  | "enumPayloadLoad"
   | "layoutOffset"
   | "layoutByteRange"
   | "layoutEndianDecode";
@@ -72,6 +76,10 @@ const [
   AGGREGATE_CONSTRUCT_SEMANTICS,
   AGGREGATE_EXTRACT_SEMANTICS,
   AGGREGATE_INSERT_SEMANTICS,
+  ENUM_TAG_STORE_SEMANTICS,
+  ENUM_PAYLOAD_STORE_SEMANTICS,
+  ENUM_TAG_LOAD_SEMANTICS,
+  ENUM_PAYLOAD_LOAD_SEMANTICS,
   LAYOUT_OFFSET_SEMANTICS,
   LAYOUT_BYTE_RANGE_SEMANTICS,
   LAYOUT_ENDIAN_DECODE_SEMANTICS,
@@ -86,6 +94,10 @@ const [
   "aggregate-construct",
   "aggregate-extract",
   "aggregate-insert",
+  "enum-tag-store",
+  "enum-payload-store",
+  "enum-tag-load",
+  "enum-payload-load",
   "layout-offset",
   "layout-byte-range",
   "layout-endian-decode",
@@ -102,6 +114,10 @@ const [
   AGGREGATE_CONSTRUCT_INTERPRETER,
   AGGREGATE_EXTRACT_INTERPRETER,
   AGGREGATE_INSERT_INTERPRETER,
+  ENUM_TAG_STORE_INTERPRETER,
+  ENUM_PAYLOAD_STORE_INTERPRETER,
+  ENUM_TAG_LOAD_INTERPRETER,
+  ENUM_PAYLOAD_LOAD_INTERPRETER,
   LAYOUT_OFFSET_INTERPRETER,
   LAYOUT_BYTE_RANGE_INTERPRETER,
   LAYOUT_ENDIAN_DECODE_INTERPRETER,
@@ -116,6 +132,10 @@ const [
   "aggregate-construct",
   "aggregate-extract",
   "aggregate-insert",
+  "enum-tag-store",
+  "enum-payload-store",
+  "enum-tag-load",
+  "enum-payload-load",
   "layout-offset",
   "layout-byte-range",
   "layout-endian-decode",
@@ -144,6 +164,7 @@ const INTEGER_COMPARE_TO_BOOL = catalogEntry(OPT_IR_TYPE_RULE_IDS, 3, "integer-c
 const SAME_BOOLEAN = catalogEntry(OPT_IR_TYPE_RULE_IDS, 4, "same-boolean");
 const AGGREGATE_FIELD_TYPE = catalogEntry(OPT_IR_TYPE_RULE_IDS, 5, "aggregate-field-type");
 const LAYOUT_VALUE = catalogEntry(OPT_IR_TYPE_RULE_IDS, 6, "layout-value");
+const ENUM_ACCESS_TYPE = catalogEntry(OPT_IR_TYPE_RULE_IDS, 12, "enum-access-type");
 const PURE_EFFECT = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 0, "pure");
 const CORE_LOWERING_REQUIREMENT = Object.freeze({ kind: "core" } as const);
 
@@ -277,6 +298,53 @@ export const OPT_IR_CORE_OPERATION_SCHEMAS = Object.freeze([
     effectRule: PURE_EFFECT,
     interpreterRule: AGGREGATE_INSERT_INTERPRETER,
     canonicalForm: optIrCanonicalFormId(9),
+    loweringRequirement: CORE_LOWERING_REQUIREMENT,
+  }),
+  freezeSchema({
+    operationKind: "enumTagStore",
+    operandSchema: [{ role: "tag", typeFamily: "integer", cardinality: "one" }],
+    resultSchema: [{ role: "enum", typeFamily: "any", cardinality: "one" }],
+    typeRule: ENUM_ACCESS_TYPE,
+    semanticsRule: ENUM_TAG_STORE_SEMANTICS,
+    effectRule: PURE_EFFECT,
+    interpreterRule: ENUM_TAG_STORE_INTERPRETER,
+    canonicalForm: optIrCanonicalFormId(13),
+    loweringRequirement: CORE_LOWERING_REQUIREMENT,
+  }),
+  freezeSchema({
+    operationKind: "enumPayloadStore",
+    operandSchema: [
+      { role: "enum", typeFamily: "any", cardinality: "one" },
+      { role: "payload", typeFamily: "any", cardinality: "one" },
+    ],
+    resultSchema: [{ role: "enum", typeFamily: "any", cardinality: "one" }],
+    typeRule: ENUM_ACCESS_TYPE,
+    semanticsRule: ENUM_PAYLOAD_STORE_SEMANTICS,
+    effectRule: PURE_EFFECT,
+    interpreterRule: ENUM_PAYLOAD_STORE_INTERPRETER,
+    canonicalForm: optIrCanonicalFormId(14),
+    loweringRequirement: CORE_LOWERING_REQUIREMENT,
+  }),
+  freezeSchema({
+    operationKind: "enumTagLoad",
+    operandSchema: [{ role: "enum", typeFamily: "any", cardinality: "one" }],
+    resultSchema: [{ role: "tag", typeFamily: "integer", cardinality: "one" }],
+    typeRule: ENUM_ACCESS_TYPE,
+    semanticsRule: ENUM_TAG_LOAD_SEMANTICS,
+    effectRule: PURE_EFFECT,
+    interpreterRule: ENUM_TAG_LOAD_INTERPRETER,
+    canonicalForm: optIrCanonicalFormId(15),
+    loweringRequirement: CORE_LOWERING_REQUIREMENT,
+  }),
+  freezeSchema({
+    operationKind: "enumPayloadLoad",
+    operandSchema: [{ role: "enum", typeFamily: "any", cardinality: "one" }],
+    resultSchema: [{ role: "payload", typeFamily: "any", cardinality: "one" }],
+    typeRule: ENUM_ACCESS_TYPE,
+    semanticsRule: ENUM_PAYLOAD_LOAD_SEMANTICS,
+    effectRule: PURE_EFFECT,
+    interpreterRule: ENUM_PAYLOAD_LOAD_INTERPRETER,
+    canonicalForm: optIrCanonicalFormId(16),
     loweringRequirement: CORE_LOWERING_REQUIREMENT,
   }),
   freezeSchema({

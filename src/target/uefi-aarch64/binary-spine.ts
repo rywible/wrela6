@@ -115,6 +115,7 @@ export function runUefiAArch64BinarySpine(
   const lowered = lowerOptIrToAArch64({
     program: input.optIr.optIr.program,
     operations: input.optIr.optIr.operations,
+    optimizationRegions: input.optIr.optIr.optimizationRegions,
     facts: input.optIr.optIr.facts,
     target: surfaces.value.aarch64Target,
     options: {

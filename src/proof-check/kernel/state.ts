@@ -50,6 +50,9 @@ export interface CheckedAttemptState {
 export interface CheckedActiveFact {
   readonly factKey: string;
   readonly termKey: string;
+  readonly predicateKey?: string;
+  readonly placeKey?: string;
+  readonly argumentKeys?: readonly string[];
 }
 
 export interface CheckedPrivateStateFact {
@@ -99,6 +102,8 @@ export interface ProofCheckStreamMember {
 
 export interface ProofCheckPrivatePredicateRequirement {
   readonly predicateKey: string;
+  readonly placeKey?: string;
+  readonly argumentKeys?: readonly string[];
   readonly generation: "current" | string;
 }
 

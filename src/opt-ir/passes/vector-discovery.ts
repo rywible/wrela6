@@ -2,6 +2,7 @@ import { computeOptIrLoopTree } from "../analyses/loop-tree";
 import { deriveCertifiedLoopTripCount } from "../analyses/loop-trip-count";
 import { optIrBoundsAuthorityIsProven } from "../facts/bounds-facts";
 import type { OptIrFactSet } from "../facts/fact-index";
+import { createOptIrFreshIdAllocator } from "../id-allocation";
 import { optIrBlockId, optIrOriginId } from "../ids";
 import type { OptIrOperationKind } from "../operation-kinds";
 import { hasMemoryAccess, type OptIrMemoryAccessOperation } from "../operation-access";
@@ -9,7 +10,6 @@ import type { OptIrMemoryAccessDescriptor, OptIrOperation } from "../operations"
 import type { OptIrProgram } from "../program";
 import type { OptIrTargetSurface } from "../target-surface";
 import type { OptIrScalarType } from "../types";
-import { nextOperationOrdinal, nextValueOrdinal } from "./pipeline-candidates";
 import { operationMap } from "./pipeline-state";
 import {
   classifyLoopVectorizationShape,
@@ -54,6 +54,10 @@ export function discoverLoopVectorizationCandidates(
     return [];
   }
   const operationById = operationMap(input.operations);
+  const freshIds = createOptIrFreshIdAllocator({
+    program: input.program,
+    operations: input.operations,
+  });
   const candidates: OptIrLoopLoadPackCandidate[] = [];
 
   for (const function_ of input.program.functions.entries()) {
@@ -81,6 +85,7 @@ export function discoverLoopVectorizationCandidates(
       if (loadMemoryAccesses.length === 0) {
         continue;
       }
+      const vectorIds = reserveLoopVectorIds(freshIds, loadMemoryAccesses.length);
       const scalarOperationIds = loadMemoryAccesses.map((access) => access.operationId);
       const tripCount = deriveCertifiedLoopTripCount({
         function: function_,
@@ -96,8 +101,8 @@ export function discoverLoopVectorizationCandidates(
         latchBlockIds: Object.freeze([...loop.latches]),
         bodyBlockIds: Object.freeze([...loop.blocks]),
         scalarOperationIds: Object.freeze(scalarOperationIds),
-        nextOperationId: nextOperationOrdinal(input.operations),
-        nextValueId: nextValueOrdinal(input.operations),
+        nextOperationId: vectorIds.nextOperationId,
+        nextValueId: vectorIds.nextValueId,
         originId: bodyBlocks[0]?.originId ?? optIrOriginId(0),
         laneType,
         lanes,
@@ -126,6 +131,18 @@ export function discoverLoopVectorizationCandidates(
       return shape.kind === "vectorizable";
     }),
   );
+}
+
+function reserveLoopVectorIds(
+  freshIds: ReturnType<typeof createOptIrFreshIdAllocator>,
+  operationCount: number,
+): { readonly nextOperationId: number; readonly nextValueId: number } {
+  const operationIds = Array.from({ length: operationCount }, () => Number(freshIds.operationId()));
+  const valueIds = Array.from({ length: operationCount }, () => Number(freshIds.valueId()));
+  return {
+    nextOperationId: operationIds[0] ?? Number(freshIds.operationId()),
+    nextValueId: valueIds[0] ?? Number(freshIds.valueId()),
+  };
 }
 
 function targetVectorLoadOperationKind(tailPlan: OptIrLoopVectorTailPlan): OptIrOperationKind {

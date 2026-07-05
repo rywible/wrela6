@@ -1,2 +1,4 @@
-// Ordinary stdlib source wrapper; target authority comes from certified platform contracts.
-class Result[Ok, Err]:
+// Ordinary stdlib tagged union for fallible values.
+enum Result[Ok, Err]:
+    ok(value: Ok)
+    err(error: Err)

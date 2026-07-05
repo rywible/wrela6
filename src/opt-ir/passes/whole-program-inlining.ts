@@ -8,6 +8,7 @@ import {
   reserveInlineExpansionBudget,
 } from "../policy/expansion-budget";
 import { type OptIrFunctionId, type OptIrOperationId } from "../ids";
+import type { OptIrFreshIdAllocator } from "../id-allocation";
 import type { OptIrOperation } from "../operations";
 import { optIrFunctionTable, type OptIrFunction, type OptIrProgram } from "../program";
 import {
@@ -32,6 +33,7 @@ export interface RunWholeProgramInliningInput {
   readonly program: OptIrProgram;
   readonly operations: readonly OptIrOperation[];
   readonly budget: OptIrExpansionBudgetInput;
+  readonly freshIds: OptIrFreshIdAllocator;
   readonly escapedCallableFunctionIds?: readonly OptIrFunctionId[];
 }
 
@@ -130,11 +132,11 @@ export function runWholeProgramInlining(
     }
 
     const rewrite = inlineSourceCall({
-      program: currentProgram,
       caller,
       callee,
       callOperation: candidate.callOperation,
       operations: currentOperations,
+      freshIds: input.freshIds,
     });
     if (rewrite.kind === "denied") {
       ledger.release(reservation.reservation);
@@ -251,11 +253,11 @@ function preReservationDecision(
 }
 
 function inlineSourceCall(input: {
-  readonly program: OptIrProgram;
   readonly caller: OptIrFunction;
   readonly callee: OptIrFunction;
   readonly callOperation: SourceCallOperation;
   readonly operations: readonly OptIrOperation[];
+  readonly freshIds: OptIrFreshIdAllocator;
 }): InlineRewriteResult {
   const entryBlock = input.callee.blocks.find((block) => block.blockId === input.callee.entryBlock);
   if (
@@ -306,14 +308,13 @@ function inlineSourceCall(input: {
   }
 
   const splice = buildInlineSplice({
-    program: input.program,
     caller: input.caller,
     callee: input.callee,
     entryBlock,
     callSite,
     callOperation: input.callOperation,
     calleeOperations: completeCalleeOperations,
-    operations: input.operations,
+    freshIds: input.freshIds,
   });
   if (splice === undefined) {
     return { kind: "denied", reason: "inline:denied:rewrite-legality" };

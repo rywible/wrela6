@@ -14,7 +14,7 @@ import {
   type TargetFunctionSignature,
   type TargetParameterSpec,
 } from "../../semantic/surface/platform-surface";
-import { concreteKind, derivedKind } from "../../semantic/surface/resource-kind";
+import { concreteKind, joinResourceKinds } from "../../semantic/surface/resource-kind";
 import type { CheckedResourceKind } from "../../semantic/surface/resource-kind";
 import {
   coreCheckedType,
@@ -136,7 +136,7 @@ function sourceFirmwareEntrySignature(input: {
       }),
     ]),
     returnType: input.resultType,
-    returnKind: derivedKind("fieldAggregation", []),
+    returnKind: concreteKind("Copy"),
     requiredModifiers: Object.freeze([]),
     forbiddenModifiers: Object.freeze([]),
   });
@@ -252,7 +252,7 @@ function sourceApiResultSignature(
     bridge,
     parameterTypeNames,
     returnType: bridge.resultOf(okType.type),
-    returnKind: derivedKind("fieldAggregation", []),
+    returnKind: sourceApiResultResourceKind(bridge, okTypeName, okType.resourceKind),
   });
 }
 
@@ -316,6 +316,16 @@ function sourceApiEffectiveResourceKind(
   declaredKind: CheckedResourceKind,
 ): CheckedResourceKind {
   return SOURCE_API_LINEAR_AGGREGATES.has(typeName) ? concreteKind("Linear") : declaredKind;
+}
+
+function sourceApiResultResourceKind(
+  bridge: UefiAArch64SourceApiBridge,
+  okTypeName: UefiAArch64SourceApiTypeName,
+  okDeclaredKind: CheckedResourceKind,
+): CheckedResourceKind {
+  const okKind = sourceApiEffectiveResourceKind(okTypeName, okDeclaredKind);
+  const errKind = bridge.typeByName.get("BootError")?.resourceKind ?? concreteKind("Copy");
+  return joinResourceKinds([okKind, errKind]);
 }
 
 const SOURCE_API_LINEAR_AGGREGATES = new Set<UefiAArch64SourceApiTypeName>([

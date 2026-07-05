@@ -60,6 +60,10 @@ const AGGREGATE_OPERATION_KINDS = [
   "aggregateConstruct",
   "aggregateExtract",
   "aggregateInsert",
+  "enumTagStore",
+  "enumPayloadStore",
+  "enumTagLoad",
+  "enumPayloadLoad",
 ] as const satisfies readonly OptIrOperationKind[];
 
 const MEMORY_OPERATION_KINDS = [

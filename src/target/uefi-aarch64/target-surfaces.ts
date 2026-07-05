@@ -209,6 +209,26 @@ export function productionUefiAArch64OptIrTargetSurface(
               isSourceStatusPayloadType(type, statusCarrierPayloadTypeIds)
                 ? optIrUnsignedIntegerType(64)
                 : undefined,
+            lowerConstruct: (input: {
+              readonly type: CheckedType;
+              readonly fields: readonly {
+                readonly name: string;
+                readonly type: CheckedType | undefined;
+              }[];
+            }) => {
+              if (!isSourceStatusCarrierType(input.type, statusCarrierConstructorTypeIds)) {
+                return undefined;
+              }
+              const errorField = input.fields.find(
+                (field) =>
+                  field.name === "error" &&
+                  field.type !== undefined &&
+                  isSourceStatusPayloadType(field.type, statusCarrierPayloadTypeIds),
+              );
+              return errorField === undefined
+                ? undefined
+                : { kind: "fieldAlias" as const, fieldName: errorField.name };
+            },
             lowerSwitchCaseLabel: (input: { readonly type: CheckedType; readonly label: string }) =>
               isSourceStatusCarrierType(input.type, statusCarrierConstructorTypeIds)
                 ? sourceApiResultSwitchCaseLabel(input.label)
@@ -357,8 +377,10 @@ function isSourceStatusPayloadType(
 
 function sourceApiResultSwitchCaseLabel(label: string): string | undefined {
   switch (label) {
+    case "ok":
     case "Ok":
       return "0";
+    case "err":
     case "Err":
       return "1";
     default:

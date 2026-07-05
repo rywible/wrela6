@@ -7,6 +7,8 @@ import {
 import { optIrFactId, optIrMemoryVersionId, optIrOperationId } from "../../../src/opt-ir/ids";
 import {
   constantOnlyMemoryFixtureForTest,
+  cfgOrderedStoreLoadFixtureForTest,
+  joinWithPartialStoreFixtureForTest,
   multiRegionCallDroppingOneTokenForTest,
   multiRegionCallFixtureForTest,
   outOfOrderOperationIdStoresFixtureForTest,
@@ -49,6 +51,42 @@ describe("OptIR memory SSA and effect-token indexes", () => {
     expect(index.index.versionAfter(optIrOperationId(1), fixture.namedRegions.stack.regionId)).toBe(
       optIrMemoryVersionId(2),
     );
+  });
+
+  test("assigns memory versions by CFG reachability instead of numeric block id", () => {
+    const fixture = cfgOrderedStoreLoadFixtureForTest();
+    const index = buildMemorySsaForTest(fixture);
+
+    expect(index.kind).toBe("ok");
+    if (index.kind !== "ok") {
+      return;
+    }
+    expect(index.index.versionAfter(optIrOperationId(1), fixture.namedRegions.stack.regionId)).toBe(
+      optIrMemoryVersionId(1),
+    );
+    expect(
+      index.index.versionBefore(optIrOperationId(2), fixture.namedRegions.stack.regionId),
+    ).toBe(optIrMemoryVersionId(1));
+  });
+
+  test("records unknown merge state when only one predecessor stores", () => {
+    const fixture = joinWithPartialStoreFixtureForTest();
+    const index = buildMemorySsaForTest(fixture);
+
+    expect(index.kind).toBe("ok");
+    if (index.kind !== "ok") {
+      return;
+    }
+    expect(
+      index.index.versionBefore(optIrOperationId(2), fixture.namedRegions.stack.regionId),
+    ).toBeUndefined();
+    expect(index.index.unknownMergeStates()).toEqual([
+      {
+        operationId: optIrOperationId(2),
+        regionId: fixture.namedRegions.stack.regionId,
+        stableDetail: `memory-ssa:unknown-merge:${fixture.namedRegions.stack.regionId}:0:1:native`,
+      },
+    ]);
   });
 
   test("skips immutable constant regions even when they are loaded", () => {

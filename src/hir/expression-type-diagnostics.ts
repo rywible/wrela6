@@ -6,7 +6,12 @@ import {
   type CheckedType,
 } from "../semantic/surface/type-model";
 import type { HirOriginId } from "./ids";
-import { hirDiagnostic, type HirLoweringContext } from "./lowering-context";
+import {
+  hirDiagnostic,
+  hirOwnerKey,
+  reportMissingOwnerFunction,
+  type HirLoweringContext,
+} from "./lowering-context";
 
 export function reportTypeMismatch(input: {
   readonly context: HirLoweringContext;
@@ -17,12 +22,19 @@ export function reportTypeMismatch(input: {
   if (input.expectedType === undefined) return;
   if (input.actualType.kind === "error") return;
   if (checkedTypesEqual(input.expectedType, input.actualType)) return;
+  if (input.context.ownerFunctionId === undefined) {
+    reportMissingOwnerFunction({
+      context: input.context,
+      sourceOrigin: input.sourceOrigin,
+      stableDetail: "HIR_EXPRESSION_TYPE_MISMATCH",
+    });
+  }
   input.context.diagnostics.report(
     hirDiagnostic({
       code: "HIR_EXPRESSION_TYPE_MISMATCH",
       message: "Expression type does not match expected type.",
       originId: input.sourceOrigin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${input.sourceOrigin}`,
       stableDetail: "expression-type",
     }),
@@ -62,7 +74,7 @@ export function reportIntegerLiteralOutOfRange(input: {
       code: "HIR_INTEGER_LITERAL_OUT_OF_RANGE",
       message: "Integer literal is outside the expected type range.",
       originId: input.sourceOrigin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${input.sourceOrigin}`,
       stableDetail: `${input.valueText}:${checkedTypeFingerprint(input.type)}`,
     }),
@@ -83,7 +95,7 @@ export function reportBinaryOperandTypeMismatch(input: {
       code: "HIR_BINARY_OPERAND_TYPE_MISMATCH",
       message: "Binary expression operands must have matching types.",
       originId: input.sourceOrigin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${input.sourceOrigin}`,
       stableDetail: `${input.operator}:${checkedTypeFingerprint(input.leftType)}:${checkedTypeFingerprint(input.rightType)}`,
     }),
@@ -125,7 +137,7 @@ export function reportArithmeticRequiresInteger(input: {
       code: "HIR_ARITHMETIC_REQUIRES_INTEGER",
       message: input.message ?? "Arithmetic operands must be integers.",
       originId: input.sourceOrigin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${input.sourceOrigin}`,
       stableDetail: input.stableDetail,
     }),

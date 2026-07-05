@@ -112,6 +112,7 @@ export function hirImageOriginId(value: number): HirImageOriginId {
 }
 
 export type HirProofOwner =
+  | { readonly kind: "program" }
   | { readonly kind: "function"; readonly functionId: FunctionId }
   | { readonly kind: "image"; readonly imageId: ImageId }
   | { readonly kind: "type"; readonly typeId: TypeId };
@@ -131,6 +132,8 @@ export function ownedId<IdValue>(
 
 function ownerKey(owner: HirProofOwner): string {
   switch (owner.kind) {
+    case "program":
+      return "program";
     case "function":
       return `function:${owner.functionId}`;
     case "image":

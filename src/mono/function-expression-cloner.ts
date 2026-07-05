@@ -12,6 +12,7 @@ import {
 } from "./function-place-cloner";
 import {
   type MonoAttempt,
+  type MonoEnumPayloadFieldBinding,
   type MonoExpression,
   type MonoExpressionId,
   type MonoFunctionInstance,
@@ -23,6 +24,7 @@ import {
 } from "./mono-hir";
 import { type MonoResourceKindConcretizationContext } from "./resource-kind-concretizer";
 import { type MonoSubstitution } from "./substitution";
+import { canonicalTypeInstanceId } from "./instantiation-key";
 export type CloneExpressionResult =
   | { readonly kind: "ok"; readonly expression: MonoExpression }
   | { readonly kind: "error" };
@@ -83,6 +85,20 @@ export function cloneExpression(input: {
       });
     case "object":
       return cloneObjectExpression({
+        inner: input.source.kind,
+        expressionId: monoExpressionId,
+        source: input.source,
+        sourceOrigin,
+        instance: input.instance,
+        substitution: input.substitution,
+        remap: input.remap,
+        program: input.program,
+        context: input.context,
+        outgoingEdges: input.outgoingEdges,
+        diagnostics: input.diagnostics,
+      });
+    case "enumConstructor":
+      return cloneEnumConstructorExpression({
         inner: input.source.kind,
         expressionId: monoExpressionId,
         source: input.source,
@@ -174,6 +190,100 @@ export function cloneExpression(input: {
         reason: input.source.kind.reason,
       });
   }
+}
+
+function enumTypeInstanceIdForConstructor(input: {
+  readonly enumTypeId: import("../semantic/ids").TypeId;
+  readonly type: MonoExpression["type"];
+}) {
+  if (
+    input.type.kind === "applied" &&
+    input.type.constructor.kind === "source" &&
+    input.type.constructor.typeId === input.enumTypeId
+  ) {
+    return canonicalTypeInstanceId({
+      typeId: input.enumTypeId,
+      typeArguments: input.type.arguments as readonly import("./mono-hir").MonoCheckedType[],
+    });
+  }
+  if (input.type.kind === "source" && input.type.typeId === input.enumTypeId) {
+    return canonicalTypeInstanceId({ typeId: input.enumTypeId, typeArguments: [] });
+  }
+  return undefined;
+}
+
+function cloneEnumConstructorExpression(input: {
+  readonly inner: Extract<HirExpression["kind"], { readonly kind: "enumConstructor" }>;
+  readonly expressionId: MonoExpressionId;
+  readonly source: HirExpression;
+  readonly sourceOrigin: string;
+  readonly instance: MonoFunctionInstance;
+  readonly substitution: MonoSubstitution;
+  readonly remap: MutableMonoFunctionRemap;
+  readonly program: TypedHirProgram;
+  readonly context: MonoResourceKindConcretizationContext;
+  readonly outgoingEdges: MonoOutgoingEdge[];
+  readonly diagnostics: MonoDiagnostic[];
+}): CloneExpressionResult {
+  const monoType = normalizeMonoCheckedTypeForClone({
+    type: input.source.type,
+    substitution: input.substitution,
+    program: input.program,
+    diagnostics: input.diagnostics,
+  });
+  if (monoType.kind === "error") return { kind: "error" };
+  const monoKind = concretizeResourceKindForClone({
+    kind: input.source.resourceKind,
+    type: monoType.type,
+    context: input.context,
+    substitution: input.substitution,
+    diagnostics: input.diagnostics,
+  });
+  if (monoKind.kind === "error") return { kind: "error" };
+  const payloadFields: MonoEnumPayloadFieldBinding[] = [];
+  for (const field of input.inner.constructor.payloadFields) {
+    const clonedValue = cloneExpression({
+      source: field.value,
+      instance: input.instance,
+      substitution: input.substitution,
+      remap: input.remap,
+      program: input.program,
+      context: input.context,
+      outgoingEdges: input.outgoingEdges,
+      diagnostics: input.diagnostics,
+    });
+    if (clonedValue.kind === "error") return { kind: "error" };
+    payloadFields.push({
+      fieldId: field.fieldId,
+      name: field.name,
+      value: clonedValue.expression,
+      sourceOrigin: String(field.sourceOrigin),
+    });
+  }
+  const enumTypeInstanceId = enumTypeInstanceIdForConstructor({
+    enumTypeId: input.inner.constructor.enumTypeId,
+    type: monoType.type,
+  });
+  return {
+    kind: "ok",
+    expression: {
+      expressionId: input.expressionId,
+      kind: {
+        kind: "enumConstructor",
+        constructor: {
+          ...(enumTypeInstanceId !== undefined ? { enumTypeInstanceId } : {}),
+          enumTypeId: input.inner.constructor.enumTypeId,
+          caseItemId: input.inner.constructor.caseItemId,
+          caseName: input.inner.constructor.caseName,
+          caseOrdinal: input.inner.constructor.caseOrdinal,
+          payloadFields,
+        },
+      },
+      type: monoType.type,
+      resourceKind: monoKind.value,
+      sourceOrigin: input.sourceOrigin,
+    },
+  };
 }
 
 function cloneLiteralExpression(input: {

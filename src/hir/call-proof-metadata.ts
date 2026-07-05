@@ -1,5 +1,4 @@
 import type { CertifiedPlatformBinding } from "../semantic/surface/checked-program";
-import { functionId } from "../semantic/ids";
 import type {
   CheckedPredicateFactSurface,
   CheckedTerminalSurface,
@@ -22,6 +21,7 @@ import {
   recordPredicateFact,
   recordPrivateTransition,
 } from "./fact-lowerer";
+import { requireHirFunctionOwner } from "./lowering-context";
 
 export function composeCallProofMetadata(input: {
   readonly call: HirCallExpression;
@@ -32,14 +32,16 @@ export function composeCallProofMetadata(input: {
   readonly platformEnsuredFacts?: readonly CheckedPlatformEnsuredFactSurface[];
   readonly terminalSurface?: CheckedTerminalSurface;
   readonly predicateSurface?: CheckedPredicateFactSurface;
-  readonly privateTransitionSurface?: CheckedPrivateTransitionSurface;
+  readonly privateTransitionSurfaces?: readonly CheckedPrivateTransitionSurface[];
 }): void {
   if (input.call.recovered === true) return;
-  const owner = {
-    kind: "function" as const,
-    functionId: input.context.ownerFunctionId ?? functionId(0),
-  };
   const sourceOrigin = input.call.sourceOrigin ?? hirOriginId(0);
+  const owner = requireHirFunctionOwner({
+    context: input.context,
+    sourceOrigin,
+    stableDetail: "call-proof-owner",
+  });
+  if (owner === undefined) return;
   const callExpressionId = input.callExpressionId ?? input.call.callee.expressionId;
   for (const requirement of input.sourceRequirements) {
     input.context.proofMetadata.addCallSiteRequirement({
@@ -111,10 +113,10 @@ export function composeCallProofMetadata(input: {
     });
   }
 
-  if (input.privateTransitionSurface !== undefined) {
+  for (const surface of input.privateTransitionSurfaces ?? []) {
     recordPrivateTransition({
       call: input.call,
-      surface: input.privateTransitionSurface,
+      surface,
       context: input.context,
     });
   }

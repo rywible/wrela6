@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { createHirUnitContext, firstExpressionView } from "../../support/hir/typed-hir-fixtures";
+import {
+  createHirUnitContext,
+  firstExpressionView,
+  lowerTypedHirForTest,
+} from "../../support/hir/typed-hir-fixtures";
 import { lowerExpression } from "../../../src/hir/expression-lowerer";
 import { descendants } from "../../../src/frontend/ast/syntax-query";
 import { SyntaxKind } from "../../../src/frontend";
@@ -8,7 +12,7 @@ import {
   ObjectLiteralExpressionView,
 } from "../../../src/frontend/ast/expression-views";
 import { coreTypeId } from "../../../src/semantic/ids";
-import { coreCheckedType } from "../../../src/semantic/surface/type-model";
+import { coreCheckedType, checkedTypesEqual } from "../../../src/semantic/surface/type-model";
 import { concreteKind } from "../../../src/semantic/surface/resource-kind";
 import { hirOriginId } from "../../../src/hir/ids";
 
@@ -40,6 +44,69 @@ test("integer literal uses expected integer type", () => {
   expect(expression.type).toEqual(coreCheckedType(coreTypeId("u32")));
 });
 
+test("enum payload construction lowers to HIR constructor", () => {
+  const result = lowerTypedHirForTest([
+    [
+      "main.wr",
+      [
+        "enum Result:",
+        "    Ok(value: u8)",
+        "    Err(error: u16)",
+        "",
+        "fn wrap(status: u8) -> Result:",
+        "    return Result.Ok(value=status)",
+      ].join("\n"),
+    ],
+  ]);
+
+  const constructor = result.program.functions
+    .entries()
+    .flatMap((func) => func.bodyIndex?.expressions.entries() ?? [])
+    .find((expression) => expression.kind.kind === "enumConstructor");
+
+  expect(constructor?.kind.kind).toBe("enumConstructor");
+  if (constructor?.kind.kind !== "enumConstructor") return;
+  expect(constructor.kind.constructor.caseName).toBe("Ok");
+  expect(constructor.kind.constructor.payloadFields.map((field) => field.name)).toEqual(["value"]);
+});
+
+test("enum constructor missing-field failure records the returned error expression", () => {
+  const context = createHirUnitContext(
+    [
+      "enum Result:",
+      "    Ok(value: u8)",
+      "    Err(error: u16)",
+      "",
+      "fn wrap(status: u8) -> Result:",
+      "    return Result.Ok(value=status)",
+    ].join("\n"),
+  );
+  const expectedType = context.program.types.entries()[0]!.type;
+  Object.assign(context, {
+    program: {
+      ...context.program,
+      fields: {
+        ...context.program.fields,
+        get: () => undefined,
+      },
+    },
+  });
+
+  const expression = lowerExpression({
+    view: firstExpressionView(context.graph),
+    expectedType,
+    context,
+  });
+  const expressions = context.bodyIndex.build().expressions;
+
+  expect(expression.kind).toEqual({
+    kind: "error",
+    reason: "enum-constructor-missing-payload-field",
+  });
+  expect(expressions.get(expression.expressionId)).toEqual(expression);
+  expect(context.bodyIndex.nextExpressionId()).not.toBe(expression.expressionId);
+});
+
 test("integer literal outside expected type range emits HIR_INTEGER_LITERAL_OUT_OF_RANGE", () => {
   const context = createHirUnitContext("fn process() -> u8:\n    return 300\n");
   const expression = lowerExpression({
@@ -51,6 +118,27 @@ test("integer literal outside expected type range emits HIR_INTEGER_LITERAL_OUT_
   expect(expression.kind.kind).toBe("error");
   expect(context.diagnostics.entries().map((diagnostic) => String(diagnostic.code))).toContain(
     "HIR_INTEGER_LITERAL_OUT_OF_RANGE",
+  );
+});
+
+test("integer literal parse failure emits error HIR instead of zero", () => {
+  const context = createHirUnitContext("fn process() -> u64:\n    return 1\n");
+  const view = Object.create(firstExpressionView(context.graph)) as ReturnType<
+    typeof firstExpressionView
+  >;
+  Object.assign(view, { literalText: () => "0xg" });
+
+  const expression = lowerExpression({
+    view,
+    context,
+  });
+
+  expect(expression.kind).toEqual({ kind: "error", reason: "invalid-integer-literal" });
+  expect(context.diagnostics.entries()).toContainEqual(
+    expect.objectContaining({
+      code: "HIR_INVALID_INTEGER_LITERAL",
+      stableDetail: "0xg",
+    }),
   );
 });
 
@@ -95,6 +183,28 @@ test("name expression uses local scope before semantic references", () => {
   expect(expression.kind).toMatchObject({ kind: "name", name: "value" });
 });
 
+test("missing name text emits diagnostic with source span and error expression", () => {
+  const context = createHirUnitContext("fn process(value: u32) -> u32:\n    return value\n");
+  const view = Object.create(firstExpressionView(context.graph)) as ReturnType<
+    typeof firstExpressionView
+  >;
+  Object.assign(view, { nameText: () => undefined });
+
+  const expression = lowerExpression({
+    view,
+    context,
+  });
+
+  expect(expression.kind).toEqual({ kind: "error", reason: "missing-name-text" });
+  expect(context.diagnostics.entries()).toContainEqual(
+    expect.objectContaining({
+      code: "HIR_MISSING_NAME_TEXT",
+      span: view.node.span,
+      stableDetail: "name",
+    }),
+  );
+});
+
 test("bool literal reports expected type mismatch", () => {
   const context = createHirUnitContext("fn process() -> u32:\n    return true\n");
 
@@ -107,6 +217,31 @@ test("bool literal reports expected type mismatch", () => {
   expect(context.diagnostics.entries().map((diagnostic) => String(diagnostic.code))).toContain(
     "HIR_EXPRESSION_TYPE_MISMATCH",
   );
+});
+
+test("diagnostics that require a function owner report missing owner instead of function zero", () => {
+  const context = createHirUnitContext("fn process() -> u32:\n    return true\n");
+  Object.assign(context, {
+    ownerFunctionId: undefined,
+    ownerItemId: undefined,
+    ownerModuleId: undefined,
+  });
+
+  lowerExpression({
+    view: firstExpressionView(context.graph),
+    expectedType: coreCheckedType(coreTypeId("u32")),
+    context,
+  });
+
+  expect(context.diagnostics.entries()).toContainEqual(
+    expect.objectContaining({
+      code: "HIR_MISSING_OWNER_FUNCTION",
+      stableDetail: "HIR_EXPRESSION_TYPE_MISMATCH",
+    }),
+  );
+  expect(
+    context.diagnostics.entries().map((diagnostic) => diagnostic.order.ownerKey),
+  ).not.toContain("function:0");
 });
 
 test("bool literal lowers from literal syntax", () => {
@@ -290,6 +425,35 @@ test("object literal emits HIR_OBJECT_FIELD_TYPE_MISMATCH for checked field mism
   );
 });
 
+test("missing object field name text emits diagnostic and excludes unknown empty field", () => {
+  const context = createHirUnitContext(
+    "class Packet:\n    value: u32\nfn make() -> Packet:\n    { value: 1 }\n",
+  );
+  const packetType = context.program.types.entries()[0]!.type;
+  const view = firstObjectLiteralView(context);
+  const fieldView = view.fields()[0]!;
+  const fieldViewWithoutName = Object.create(fieldView) as typeof fieldView;
+  Object.assign(fieldViewWithoutName, { nameText: () => undefined });
+  Object.assign(view, { fields: () => [fieldViewWithoutName] });
+
+  const expression = lowerExpression({
+    view,
+    expectedType: packetType,
+    context,
+  });
+
+  expect(expression.kind.kind).toBe("object");
+  if (expression.kind.kind !== "object") throw new Error("expected object");
+  expect(expression.kind.fields).toHaveLength(0);
+  expect(context.diagnostics.entries()).toContainEqual(
+    expect.objectContaining({
+      code: "HIR_MISSING_NAME_TEXT",
+      span: fieldViewWithoutName.node.span,
+      stableDetail: "object-field",
+    }),
+  );
+});
+
 test("member access does not fall back to ordinary name references", () => {
   const context = createHirUnitContext(
     "class Packet:\n    value: u32\nfn process(packet: Packet) -> u32:\n    return packet.value\n",
@@ -326,6 +490,30 @@ test("member access does not fall back to ordinary name references", () => {
   expect(expression.kind).toEqual({ kind: "error", reason: "missing-member:value" });
   expect(context.diagnostics.entries().map((diagnostic) => String(diagnostic.code))).toContain(
     "HIR_MEMBER_REFERENCE_MISSING",
+  );
+});
+
+test("missing member name text emits diagnostic with source span and error expression", () => {
+  const context = createHirUnitContext(
+    "class Packet:\n    value: u32\nfn process(packet: Packet) -> u32:\n    return packet.value\n",
+  );
+  const view = Object.create(firstMemberAccessView(context)) as ReturnType<
+    typeof firstMemberAccessView
+  >;
+  Object.assign(view, { memberName: () => undefined });
+
+  const expression = lowerExpression({
+    view,
+    context,
+  });
+
+  expect(expression.kind).toEqual({ kind: "error", reason: "missing-member-name-text" });
+  expect(context.diagnostics.entries()).toContainEqual(
+    expect.objectContaining({
+      code: "HIR_MISSING_NAME_TEXT",
+      span: view.node.span,
+      stableDetail: "member",
+    }),
   );
 });
 
@@ -369,10 +557,38 @@ test("enum case member lowers without requiring enum type as value receiver", ()
     context,
   });
 
-  expect(expression.kind).toEqual({
-    kind: "literal",
-    literal: { kind: "integer", text: "1", value: 1n },
+  expect(expression.kind).toMatchObject({
+    kind: "enumConstructor",
+    constructor: { caseName: "bad_buffer_size", caseOrdinal: 1, payloadFields: [] },
   });
+  expect(context.diagnostics.entries()).toEqual([]);
+});
+
+test("fieldless generic enum case adopts expected applied enum type", () => {
+  const context = createHirUnitContext(
+    [
+      "enum Option[Value]:",
+      "    some(value: Value)",
+      "    none",
+      "enum UefiStatus:",
+      "    success",
+      "fn process() -> Option[UefiStatus]:",
+      "    return Option.none",
+    ].join("\n"),
+  );
+  const expectedType = context.program.functions.entries()[0]!.returnType;
+
+  const expression = lowerExpression({
+    view: firstMemberAccessView(context),
+    expectedType,
+    context,
+  });
+
+  expect(expression.kind).toMatchObject({
+    kind: "enumConstructor",
+    constructor: { caseName: "none", payloadFields: [] },
+  });
+  expect(checkedTypesEqual(expression.type, expectedType)).toBe(true);
   expect(context.diagnostics.entries()).toEqual([]);
 });
 

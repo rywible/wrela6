@@ -139,8 +139,12 @@ export function instantiateMonoType(input: InstantiateMonoTypeInput): Instantiat
     sourceOrigin: sourceType.sourceOrigin,
   };
 
+  const sourceFieldIds = [
+    ...sourceType.fieldIds,
+    ...sourceType.enumCases.flatMap((caseRecord) => caseRecord.payloadFieldIds),
+  ].filter((fieldId, index, fieldIds) => fieldIds.indexOf(fieldId) === index);
   const fieldInstances: MonoFieldRecord[] = [];
-  for (const fieldId of sourceType.fieldIds) {
+  for (const fieldId of sourceFieldIds) {
     const sourceField = input.program.fields.get(fieldId);
     if (sourceField === undefined) {
       return {
@@ -218,6 +222,7 @@ export function instantiateMonoType(input: InstantiateMonoTypeInput): Instantiat
           caseItemId: caseRecord.caseItemId,
           name: caseRecord.name,
           ordinal: caseRecord.ordinal,
+          payloadFieldIds: caseRecord.payloadFieldIds,
           sourceOrigin: String(caseRecord.sourceOrigin),
         }))
       : [];

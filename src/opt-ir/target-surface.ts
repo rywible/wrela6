@@ -80,6 +80,16 @@ export interface OptIrIntrinsicLoweringSurface {
 
 export interface OptIrSourceTypeAbiSurface {
   readonly lowerType: (type: CheckedType) => OptIrType | undefined;
+  readonly lowerConstruct?: (input: {
+    readonly type: CheckedType;
+    readonly fields: readonly {
+      readonly name: string;
+      readonly type: CheckedType | undefined;
+    }[];
+  }) =>
+    | { readonly kind: "integerConstant"; readonly value: bigint }
+    | { readonly kind: "fieldAlias"; readonly fieldName: string }
+    | undefined;
   readonly lowerSwitchCaseLabel?: (input: {
     readonly type: CheckedType;
     readonly label: string;

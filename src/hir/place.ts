@@ -24,6 +24,8 @@ export interface TemporaryPlaceInput {
 
 function ownerKey(owner: HirProofOwner): string {
   switch (owner.kind) {
+    case "program":
+      return "program";
     case "function":
       return `function:${owner.functionId}`;
     case "image":

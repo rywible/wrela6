@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import { lowerValidationCreation, lowerValidationMatch } from "../../../src/hir/validation-lowerer";
-import { createHirUnitContext } from "../../support/hir/typed-hir-fixtures";
+import {
+  createHirUnitContext,
+  createProgramHirUnitContext,
+} from "../../support/hir/typed-hir-fixtures";
 import {
   parameterPlace,
   successfulCallFake,
@@ -70,4 +73,25 @@ test("direct validation call match links by scrutinee expression id", () => {
 
   expect(match?.validation?.validationId).toEqual(validation?.validationId);
   expect(context.diagnostics.entries()).toEqual([]);
+});
+
+test("validation creation without a function owner reports and creates no sentinel metadata", () => {
+  const context = createProgramHirUnitContext("fn process():\n    return\n");
+  const validation = lowerValidationCreation({
+    call: {
+      ...successfulCallFake({
+        calleeFunctionId: functionId(0),
+        arguments: [{ expression: {} as any, place: parameterPlace(0 as any) }],
+      }),
+    },
+    context,
+    sourceOrigin: 0 as any,
+    contracts: [validationContractForBuffer(typeId(1))],
+  });
+
+  expect(validation).toBeUndefined();
+  expect(context.diagnostics.entries().map((diagnostic) => String(diagnostic.code))).toContain(
+    "HIR_MISSING_OWNER_FUNCTION",
+  );
+  expect(context.proofMetadata.validations.entries()).toEqual([]);
 });

@@ -1,3 +1,4 @@
+import { computeOptIrLiveness } from "../analyses/liveness";
 import type { OptIrOperationId, OptIrValueId } from "../ids";
 import type { OptIrOperation } from "../operations";
 import type { OptIrFunction } from "../program";
@@ -16,40 +17,44 @@ export interface DeadCodeEliminationResult {
 }
 
 export function runDeadCodeElimination(input: DeadCodeEliminationInput): DeadCodeEliminationResult {
-  const liveValues = new Set<OptIrValueId>(input.liveOutValues ?? []);
   const survivorIds = new Set<OptIrOperationId>();
   const removedOperationIds: OptIrOperationId[] = [];
-  const blockOperationIds = input.function.blocks.flatMap((block) => block.operations);
 
-  for (const block of input.function.blocks) {
-    const terminator = block.terminator;
-    if (terminator === undefined) {
-      continue;
-    }
-    addTerminatorOperands(terminator, liveValues);
-  }
-  for (const edge of input.function.edges.entries()) {
-    for (const argumentId of edge.arguments) {
-      liveValues.add(argumentId);
-    }
-  }
+  const liveness = computeOptIrLiveness({
+    func: input.function,
+    operationForId(operationId) {
+      return input.operations.get(operationId);
+    },
+  });
 
-  for (let index = blockOperationIds.length - 1; index >= 0; index -= 1) {
-    const operationId = blockOperationIds[index];
-    const operation = operationId === undefined ? undefined : input.operations.get(operationId);
-    if (operation === undefined) {
-      continue;
-    }
+  for (const block of [...input.function.blocks].reverse()) {
+    const liveValues = new Set<OptIrValueId>([
+      ...liveness.liveOut(block.blockId),
+      ...(input.liveOutValues ?? []),
+    ]);
+    addTerminatorOperands(block.terminator, liveValues);
 
-    if (shouldKeepOperation(operation, liveValues, input.canRemoveOperation)) {
-      survivorIds.add(operation.operationId);
-      for (const operandId of operation.operandIds) {
-        liveValues.add(operandId);
+    for (let index = block.operations.length - 1; index >= 0; index -= 1) {
+      const operationId = block.operations[index];
+      const operation = operationId === undefined ? undefined : input.operations.get(operationId);
+      if (operation === undefined) {
+        continue;
       }
-    } else {
-      removedOperationIds.push(operation.operationId);
+
+      if (shouldKeepOperation(operation, liveValues, input.canRemoveOperation)) {
+        survivorIds.add(operation.operationId);
+        for (const resultId of operation.resultIds) {
+          liveValues.delete(resultId);
+        }
+        for (const operandId of operation.operandIds) {
+          liveValues.add(operandId);
+        }
+      } else {
+        removedOperationIds.push(operation.operationId);
+      }
     }
   }
+  const blockOperationIds = input.function.blocks.flatMap((block) => block.operations);
 
   const functionOutput: OptIrFunction = {
     ...input.function,

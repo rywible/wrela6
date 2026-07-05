@@ -120,6 +120,10 @@ describe("OptIR canonical operation lowering", () => {
         tagType: byte,
         tagValue: 2,
         payloads: [optIrValueId(21)],
+        enumTypeKey: "Result",
+        caseName: "ok",
+        caseOrdinal: 2,
+        payloadFieldNames: ["value"],
         originId: optIrOriginId(6),
       },
       {
@@ -127,6 +131,9 @@ describe("OptIR canonical operation lowering", () => {
         enumValue: optIrValueId(20),
         tagOutput: optIrValueId(22),
         tagType: byte,
+        enumTypeKey: "Result",
+        caseName: "ok",
+        caseOrdinal: 2,
         cases: [
           { label: "0", edge: optIrEdgeId(1) },
           { label: "2", edge: optIrEdgeId(2) },
@@ -142,9 +149,18 @@ describe("OptIR canonical operation lowering", () => {
     }
     expect(result.operations.map((operation) => operation.kind)).toEqual([
       "constant",
-      "aggregateConstruct",
-      "aggregateExtract",
+      "enumTagStore",
+      "enumPayloadStore",
+      "enumTagLoad",
     ]);
+    expect(result.operations[1]).toMatchObject({
+      kind: "enumTagStore",
+      enumCase: { enumTypeKey: "Result", caseName: "ok", tagValue: "2" },
+    });
+    expect(result.operations[2]).toMatchObject({
+      kind: "enumPayloadStore",
+      enumCase: { payloadFieldName: "value" },
+    });
     expect(result.terminators).toEqual([
       {
         kind: "switch",

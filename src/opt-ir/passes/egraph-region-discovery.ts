@@ -5,6 +5,7 @@ import { optIrRegionId, optIrRewriteRegionId, type OptIrOperationId } from "../i
 import { hasMemoryAccess } from "../operation-access";
 import type { OptIrOperation } from "../operations";
 import type { OptIrFunction, OptIrProgram } from "../program";
+import type { OptIrRegion } from "../regions";
 import {
   selectEGraphRegions,
   type OptIrEGraphBoundaryKind,
@@ -15,17 +16,14 @@ import {
   isExternalRootRuntimeOperation,
   operationMatchesPacketParserRuntimeKey,
 } from "../rewrites/wrela-operation-patterns";
-import {
-  operationMap,
-  operationsInProgramOrder,
-  optimizationRegionsForProgram,
-} from "./pipeline-state";
+import { operationMap, operationsInProgramOrder } from "./pipeline-state";
 
 type OptIrDiscoveredLoop = ReturnType<ReturnType<typeof computeOptIrLoopTree>["loops"]>[number];
 
 export interface OptIrEGraphRegionDiscoveryInput {
   readonly program: OptIrProgram;
   readonly operations: readonly OptIrOperation[];
+  readonly optimizationRegions: readonly OptIrRegion[];
   readonly facts: OptIrFactSet;
 }
 
@@ -41,7 +39,7 @@ export function discoverOptIrEGraphRegionCandidatePool(
   input: OptIrEGraphRegionDiscoveryInput,
 ): readonly OptIrEGraphRegionCandidate[] {
   const byId = operationMap(input.operations);
-  const regions = optimizationRegionsForProgram(input.program);
+  const regions = input.optimizationRegions;
   const tokenIndexResult = buildOptIrEffectTokenIndex({
     program: input.program,
     regions,

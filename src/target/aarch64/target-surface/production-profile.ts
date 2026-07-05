@@ -26,6 +26,9 @@ export const WRELA_UEFI_AARCH64_RPI5_REQUIRED_FEATURES = [
 ] as const;
 
 const OUT_OF_PROFILE_EXTENSION_FAMILIES = ["BTI", "MOPS", "MTE", "PAuth", "SVE", "SVE2"] as const;
+const OUT_OF_PROFILE_EXTENSION_FAMILY_SET: ReadonlySet<string> = new Set(
+  OUT_OF_PROFILE_EXTENSION_FAMILIES,
+);
 
 export interface AArch64ProductionProfile {
   readonly profileId: string;
@@ -99,7 +102,7 @@ export function authenticateAArch64ProductionProfile(
   }
 
   const requestedOutOfProfile = profile.requestedExtensionFamilies
-    .filter((family) => OUT_OF_PROFILE_EXTENSION_FAMILIES.includes(family as never))
+    .filter((family) => OUT_OF_PROFILE_EXTENSION_FAMILY_SET.has(family))
     .sort();
   for (const family of requestedOutOfProfile) {
     diagnostics.push(diagnostic(`profile:${profile.profileId}:out-of-profile-family:${family}`));

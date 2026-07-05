@@ -20,6 +20,10 @@ export const OPT_IR_OPERATION_KINDS = [
   "aggregateConstruct",
   "aggregateExtract",
   "aggregateInsert",
+  "enumTagStore",
+  "enumPayloadStore",
+  "enumTagLoad",
+  "enumPayloadLoad",
   "layoutOffset",
   "layoutByteRange",
   "layoutEndianDecode",
@@ -63,6 +67,7 @@ const OPT_IR_TYPE_RULE_ID_NAMES = [
   "call-signature-results",
   "vector-lane-result",
   "proof-erased-no-result",
+  "enum-access-type",
 ] as const;
 
 export type OptIrTypeRuleId = (typeof OPT_IR_TYPE_RULE_ID_NAMES)[number] & BrandedOptIrTypeRuleId;

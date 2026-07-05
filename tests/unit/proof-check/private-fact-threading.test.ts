@@ -80,6 +80,39 @@ describe("provePrivatePredicateRequirement", () => {
     expect(result.kind).toBe("ok");
   });
 
+  test("same private predicate on different arguments does not satisfy the wrong requirement", () => {
+    const state = proofCheckStateForTest({
+      privateState: [privateGenerationForTest("cell", "generation:2")],
+      facts: [
+        privatePredicateFactForTest("cell.is_linked", "generation:2", {
+          placeKey: "cell",
+          argumentKeys: ["door:left"],
+        }),
+      ],
+    });
+
+    const mismatched = provePrivatePredicateRequirement({
+      state,
+      requirement: privatePredicateRequirementForTest("cell.is_linked", "current", {
+        placeKey: "cell",
+        argumentKeys: ["door:right"],
+      }),
+    });
+    const matched = provePrivatePredicateRequirement({
+      state,
+      requirement: privatePredicateRequirementForTest("cell.is_linked", "current", {
+        placeKey: "cell",
+        argumentKeys: ["door:left"],
+      }),
+    });
+
+    expect(mismatched.kind).toBe("missing");
+    expect(matched.kind).toBe("ok");
+    if (matched.kind !== "ok") return;
+    expect(matched.certificate.subjectKey).toContain("cell.is_linked(door:left)");
+    expect(matched.certificate.dependencyKeys).toEqual(["cell.is_linked(door:left)@generation:2"]);
+  });
+
   test("explicit-generation predicate facts satisfy explicit requirements", () => {
     const state = proofCheckStateForTest({
       privateState: [privateGenerationForTest("cell", "generation:2")],

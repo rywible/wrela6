@@ -246,6 +246,11 @@ function collectReferencesFromExpression(
         collectReferencesFromExpression(field.value, references);
       }
       return;
+    case "enumConstructor":
+      for (const field of expression.kind.constructor.payloadFields) {
+        collectReferencesFromExpression(field.value, references);
+      }
+      return;
     case "unary":
       collectReferencesFromExpression(expression.kind.operand, references);
       return;

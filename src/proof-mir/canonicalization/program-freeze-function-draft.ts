@@ -1,11 +1,5 @@
-import type {
-  MonoFunctionInstance,
-  MonoFunctionSignature,
-  MonoProofMetadata,
-} from "../../mono/mono-hir";
+import type { MonoFunctionInstance, MonoProofMetadata } from "../../mono/mono-hir";
 import { type MonoInstanceId } from "../../mono/ids";
-import { functionId } from "../../semantic/ids";
-import { SourceSpan } from "../../shared/source-span";
 import { proofMirDiagnostic, type ProofMirDiagnostic } from "../diagnostics";
 import type {
   DraftProofMirGraphBlockSnapshot,
@@ -101,6 +95,22 @@ export interface FreezeFunctionDraftProgramLookups {
     key: ProofMirCanonicalKey,
     referenceKind: string,
   ) => ProofMirOriginId | undefined;
+}
+
+function missingFunctionInstanceDiagnostic(
+  functionInstanceId: MonoInstanceId,
+  ownerKey: string,
+): ProofMirDiagnostic {
+  return proofMirDiagnostic({
+    severity: "error",
+    code: "PROOF_MIR_INVALID_CANONICAL_ID_ASSIGNMENT",
+    message:
+      "Proof MIR freeze function draft references a missing monomorphized function instance.",
+    functionInstanceId,
+    ownerKey,
+    rootCauseKey: "missing-function-instance",
+    stableDetail: `missing-function-instance:${String(functionInstanceId)}`,
+  });
 }
 
 function statementRecordPayload(record: DraftProofMirStatementRecord): string {
@@ -238,6 +248,11 @@ export function freezeFunctionDraft(input: {
 }): ProofMirFunction | "error" {
   const functionInstanceId = input.functionDraft.functionInstanceId;
   const ownerKey = ownerKeyForFunction(functionInstanceId);
+  const functionInstance = input.functionInstance;
+  if (functionInstance === undefined) {
+    input.diagnostics.push(missingFunctionInstanceDiagnostic(functionInstanceId, ownerKey));
+    return "error";
+  }
 
   const originAssignment = freezeOriginAssignment({
     entries: input.functionDraft.origins.entries(),
@@ -622,22 +637,8 @@ export function freezeFunctionDraft(input: {
       : blockAssignment.lookup.resolve(entryBlockRecord.key)!;
   const functionOrigin = originAssignment.lookup.entries()[0]?.id ?? proofMirOriginId(0);
 
-  const signature: MonoFunctionSignature = input.functionInstance?.signature ?? {
-    functionId: functionId(0),
-    itemId: functionId(0) as never,
-    parameters: [],
-    returnType: missingMonoTypePlaceholder() as never,
-    returnKind: "Copy",
-    modifiers: {
-      isPlatform: false,
-      isTerminal: false,
-      isPredicate: false,
-      isConstructor: false,
-      isPrivate: false,
-    },
-    sourceSpan: SourceSpan.from(0, 0),
-  };
-  const sourceFunctionId = input.functionInstance?.sourceFunctionId ?? functionId(0);
+  const signature = functionInstance.signature;
+  const sourceFunctionId = functionInstance.sourceFunctionId;
 
   const frozenValues: ProofMirValue[] = [];
   for (const record of valueAssignment.entries) {

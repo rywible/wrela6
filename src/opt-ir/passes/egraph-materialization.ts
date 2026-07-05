@@ -21,6 +21,7 @@ import type { OptIrBlockId, OptIrOperationId } from "../ids";
 import type { OptIrInterpreterSlice } from "../interpreter";
 import type { OptIrOperation } from "../operations";
 import type { OptIrProgram } from "../program";
+import type { OptIrRegion } from "../regions";
 import { defaultOptIrEGraphExtractionPolicy } from "../policy/egraph-extraction-policy";
 import {
   runFactGatedEGraphPass,
@@ -51,6 +52,7 @@ export const DEFAULT_OPT_IR_EGRAPH_SATURATION_LIMITS: OptIrEGraphSaturationLimit
 export interface OptIrFactGatedEGraphMaterializationInput {
   readonly program: OptIrProgram;
   readonly operations: readonly OptIrOperation[];
+  readonly optimizationRegions: readonly OptIrRegion[];
   readonly facts: OptIrFactSet;
   readonly tracingEnabled: boolean;
 }
@@ -91,6 +93,7 @@ export function runOptIrFactGatedEGraphMaterialization(
   const regions = discoverOptIrEGraphRegionCandidates({
     program: input.program,
     operations: input.operations,
+    optimizationRegions: input.optimizationRegions,
     facts: input.facts,
   });
   const selectedPending = selectFirstImprovingRegionRewrite({

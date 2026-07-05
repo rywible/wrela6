@@ -7,7 +7,9 @@ test("W1-10a resolves contract type ids from canonical stdlib core modules", () 
     [
       "wrela_std/core.wr",
       [
-        "class Result[Ok, Err]:",
+        "enum Result[Ok, Err]:",
+        "    ok(value: Ok)",
+        "    err(error: Err)",
         "class Validation[Ok, Err, Source]:",
         "class Attempt[Ok, Err, Input]:",
       ].join("\n"),
@@ -52,7 +54,9 @@ test("W1-10a resolves direct-platform contract type ids from wrela_abi.core modu
     [
       "wrela_abi/core.wr",
       [
-        "class Result[Ok, Err]:",
+        "enum Result[Ok, Err]:",
+        "    ok(value: Ok)",
+        "    err(error: Err)",
         "class Validation[Ok, Err, Source]:",
         "class Attempt[Ok, Err, Input]:",
       ].join("\n"),

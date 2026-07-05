@@ -7,11 +7,13 @@ import {
   stableDiagnosticDetail,
   type Diagnostic,
 } from "../../shared/diagnostics";
+import { SyntaxIndex, buildSyntaxIndex } from "./syntax-index";
 
 export class SyntaxTree {
   readonly source: SourceText;
   private readonly greenRoot: GreenNode;
   private redRoot: RedNode | undefined;
+  private syntaxIndex: SyntaxIndex | undefined;
 
   constructor(params: { source: SourceText; greenRoot: GreenNode }) {
     this.source = params.source;
@@ -27,6 +29,13 @@ export class SyntaxTree {
 
   reconstruct(): string {
     return this.greenRoot.reconstruct();
+  }
+
+  index(): SyntaxIndex {
+    if (this.syntaxIndex === undefined) {
+      this.syntaxIndex = buildSyntaxIndex(this);
+    }
+    return this.syntaxIndex;
   }
 
   get diagnostics(): readonly ParserDiagnostic[] {
@@ -49,11 +58,13 @@ export class SyntaxTree {
         source: this.source,
         span,
         ownerKey: diagnostic.ownerKey ?? `parser:${diagnostic.code}`,
-        stableDetail: stableDiagnosticDetail({
-          code: diagnostic.code,
-          source: this.source,
-          span,
-        }),
+        stableDetail:
+          diagnostic.stableDetail ??
+          stableDiagnosticDetail({
+            code: diagnostic.code,
+            source: this.source,
+            span: this.index().anchorForSpan(span)?.span ?? span,
+          }),
       });
     }
     let childOffset = offset;

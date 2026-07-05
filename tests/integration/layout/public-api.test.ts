@@ -83,6 +83,7 @@ import type {
   WireIntegerEncoding,
   WireScalarEncoding,
 } from "../../../src/layout";
+import * as layout from "../../../src/layout";
 import {
   computeRepresentationLayoutFacts,
   layoutDeterministicTable,
@@ -98,7 +99,6 @@ import {
   validateLayoutTargetSurface,
 } from "../../../src/layout";
 import { monomorphizeWholeImage } from "../../../src/mono/monomorphizer";
-import * as wrela from "../../../src";
 import { imageProfileId } from "../../../src/semantic/ids";
 import {
   layoutImageProfileCatalogFake,
@@ -216,11 +216,11 @@ test("layout public API computes facts from closed mono program", () => {
   expect(layoutResult.kind).toBe("ok");
 });
 
-test("layout public API is exported from src/layout and src root namespace", () => {
+test("layout public API is exported from src/layout", () => {
   expect(typeof computeRepresentationLayoutFacts).toBe("function");
-  expect(typeof wrela.layout.computeRepresentationLayoutFacts).toBe("function");
+  expect(typeof layout.computeRepresentationLayoutFacts).toBe("function");
   expect(typeof layoutDeterministicTable).toBe("function");
-  expect(typeof wrela.layout.layoutDeterministicTable).toBe("function");
+  expect(typeof layout.layoutDeterministicTable).toBe("function");
   expect(typeof layoutDiagnostic).toBe("function");
   expect(typeof layoutDiagnosticCode).toBe("function");
   expect(typeof sortLayoutDiagnostics).toBe("function");
@@ -235,9 +235,9 @@ test("layout public API is exported from src/layout and src root namespace", () 
 });
 
 test("layout public API does not expose layout fact builder internals", () => {
-  expect("createLayoutFactBuilderContext" in wrela.layout).toBe(false);
-  expect("recordBuilderResult" in wrela.layout).toBe(false);
-  expect("computeEnumLayout" in wrela.layout).toBe(false);
-  expect("buildLayoutTypeResolver" in wrela.layout).toBe(false);
-  expect("seedPrimitiveTypeFacts" in wrela.layout).toBe(false);
+  expect("createLayoutFactBuilderContext" in layout).toBe(false);
+  expect("recordBuilderResult" in layout).toBe(false);
+  expect("computeEnumLayout" in layout).toBe(false);
+  expect("buildLayoutTypeResolver" in layout).toBe(false);
+  expect("seedPrimitiveTypeFacts" in layout).toBe(false);
 });

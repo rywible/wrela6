@@ -1,6 +1,6 @@
 import type { CheckedTakeModeSurface } from "../semantic/surface/proof-contracts";
 import { TakeStatementView } from "../frontend/ast/statement-views";
-import { functionId, type FunctionId } from "../semantic/ids";
+import type { FunctionId } from "../semantic/ids";
 import { isProofRelevantKind } from "../semantic/surface/resource-kind";
 import type { CheckedResourceKind } from "../semantic/surface/resource-kind";
 import type { CheckedType } from "../semantic/surface/type-model";
@@ -16,12 +16,21 @@ import type { HirBlockLowerer, HirLoweringContext } from "./lowering-context";
 import type { HirExpressionLowerer } from "./lowering-context";
 import { ownedBrandId, ownedObligationId, ownedSessionId } from "./ids";
 import type { HirOriginId, HirStatementId } from "./ids";
-import { currentHirModuleId, hirDiagnostic } from "./lowering-context";
+import {
+  currentHirModuleId,
+  hirDiagnostic,
+  hirOwnerKey,
+  requireHirFunctionOwner,
+} from "./lowering-context";
 
 type CheckedStreamTakeModeSurface = Extract<CheckedTakeModeSurface, { readonly kind: "stream" }>;
 
-function owner(context: HirLoweringContext) {
-  return { kind: "function" as const, functionId: context.ownerFunctionId ?? functionId(0) };
+function owner(input: {
+  readonly context: HirLoweringContext;
+  readonly sourceOrigin: HirOriginId;
+  readonly stableDetail: string;
+}) {
+  return requireHirFunctionOwner(input);
 }
 
 function sourceOriginForTake(view: TakeStatementView, context: HirLoweringContext): HirOriginId {
@@ -51,7 +60,7 @@ function reportUnclassifiedTake(input: {
       code: "HIR_UNCLASSIFIED_TAKE",
       message: "Take expression could not be classified by checked take-mode contracts.",
       originId: input.sourceOrigin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${input.sourceOrigin}`,
       stableDetail: "take",
     }),
@@ -67,7 +76,7 @@ function reportProofRelevantKindNotConcrete(input: {
       code: "HIR_PROOF_RELEVANT_KIND_NOT_CONCRETE",
       message: "Proof-relevant take classification requires a concrete checked resource kind.",
       originId: input.sourceOrigin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${input.sourceOrigin}`,
       stableDetail: "take-resource-kind",
     }),
@@ -83,7 +92,7 @@ function reportTakeOnlyCallRequired(input: {
       code: "HIR_TAKE_ONLY_CALL_REQUIRED",
       message: "Stream-producing call is missing checked take-only authorization.",
       originId: input.sourceOrigin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${input.sourceOrigin}`,
       stableDetail: "stream-call",
     }),
@@ -123,11 +132,18 @@ function addStreamMetadata(input: {
   readonly itemType: CheckedType;
   readonly itemResourceKind: CheckedResourceKind;
   readonly statementOrdinal: number;
-}): Pick<
-  Extract<HirTakeKind, { readonly kind: "stream" }>,
-  "sessionId" | "itemBrandId" | "closureObligationId" | "itemType" | "itemResourceKind"
-> {
-  const currentOwner = owner(input.context);
+}):
+  | Pick<
+      Extract<HirTakeKind, { readonly kind: "stream" }>,
+      "sessionId" | "itemBrandId" | "closureObligationId" | "itemType" | "itemResourceKind"
+    >
+  | undefined {
+  const currentOwner = owner({
+    context: input.context,
+    sourceOrigin: input.sourceOrigin,
+    stableDetail: "take-owner",
+  });
+  if (currentOwner === undefined) return undefined;
   const ordinal = input.context.proofMetadata.count("session");
   const brandOrdinal = functionBrandCount({
     context: input.context,
@@ -171,7 +187,6 @@ export function classifyTakeExpression(input: {
   readonly takeSurfaces?: readonly CheckedTakeModeSurface[];
   readonly statementId?: HirStatementId;
 }): { readonly kind: HirTakeKind } {
-  const currentOwner = owner(input.context);
   const statementOrdinal = (input.statementId ??
     input.context.bodyIndex.peekNextStatementId()) as number;
   const legacyExpression = input.expression as unknown as {
@@ -191,7 +206,7 @@ export function classifyTakeExpression(input: {
     isStreamSurfaceForCall(surface, call),
   );
   if (streamSurface !== undefined) {
-    const { sessionId, itemBrandId, closureObligationId } = addStreamMetadata({
+    const streamMetadata = addStreamMetadata({
       context: input.context,
       sourceOrigin: input.expression.sourceOrigin,
       kind: "take",
@@ -199,6 +214,8 @@ export function classifyTakeExpression(input: {
       itemResourceKind: streamSurface.itemResourceKind,
       statementOrdinal,
     });
+    if (streamMetadata === undefined) return { kind: { kind: "error" } };
+    const { sessionId, itemBrandId, closureObligationId } = streamMetadata;
     return {
       kind: {
         kind: "stream",
@@ -220,6 +237,12 @@ export function classifyTakeExpression(input: {
   if (bufferSurface !== undefined) {
     const bufferPlace = input.expression.place;
     if (bufferPlace === undefined) return { kind: { kind: "error" } };
+    const currentOwner = owner({
+      context: input.context,
+      sourceOrigin: input.expression.sourceOrigin,
+      stableDetail: "buffer-take-owner",
+    });
+    if (currentOwner === undefined) return { kind: { kind: "error" } };
     const obligationId = ownedObligationId(
       currentOwner.functionId,
       input.context.proofMetadata.count("obligation"),
@@ -242,6 +265,12 @@ export function classifyTakeExpression(input: {
   if (validatedBufferSurface !== undefined) {
     const validatedBufferPlace = input.expression.place;
     if (validatedBufferPlace === undefined) return { kind: { kind: "error" } };
+    const currentOwner = owner({
+      context: input.context,
+      sourceOrigin: input.expression.sourceOrigin,
+      stableDetail: "validated-buffer-take-owner",
+    });
+    if (currentOwner === undefined) return { kind: { kind: "error" } };
     const ordinal = input.context.proofMetadata.count("session");
     const brandOrdinal = functionBrandCount({
       context: input.context,
@@ -424,7 +453,7 @@ export function classifyForIteration(input: {
     }
     return { kind: "ordinary" };
   }
-  const { sessionId, itemBrandId, closureObligationId } = addStreamMetadata({
+  const streamMetadata = addStreamMetadata({
     context: input.context,
     sourceOrigin: input.sourceOrigin,
     kind: "streamFor",
@@ -432,6 +461,8 @@ export function classifyForIteration(input: {
     itemResourceKind: streamSurface.itemResourceKind,
     statementOrdinal,
   });
+  if (streamMetadata === undefined) return { kind: "error" };
+  const { sessionId, itemBrandId, closureObligationId } = streamMetadata;
   return {
     kind: "stream",
     sessionId,

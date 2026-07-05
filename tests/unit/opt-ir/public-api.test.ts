@@ -35,6 +35,10 @@ describe("OptIR public construction API", () => {
     }
 
     expect(result.program.functions.entries()).toHaveLength(1);
+    expect(Array.isArray(result.operations)).toBe(true);
+    expect(Array.isArray(result.optimizationRegions)).toBe(true);
+    expect("operations" in result.program).toBe(false);
+    expect("optimizationRegions" in result.program).toBe(false);
     expect(result.facts.records).toEqual([]);
     expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual([
       "construction-cleanup",
@@ -165,9 +169,7 @@ describe("OptIR public construction API", () => {
       throw new Error("Expected construction to erase proof-only markers.");
     }
 
-    expect(result.program.operations?.map((operation) => operation.kind)).not.toContain(
-      "proofErasedMarker",
-    );
+    expect(result.operations.map((operation) => operation.kind)).not.toContain("proofErasedMarker");
   });
 
   test("constructOptIr preserves erasure facts for proof-only values through valid lineage", () => {
@@ -275,9 +277,7 @@ describe("OptIR public construction API", () => {
       throw new Error("Expected validated-buffer read construction to succeed.");
     }
 
-    const memoryLoad = result.program.operations?.find(
-      (operation) => operation.kind === "memoryLoad",
-    );
+    const memoryLoad = result.operations.find((operation) => operation.kind === "memoryLoad");
     expect(memoryLoad?.kind).toBe("memoryLoad");
     if (memoryLoad?.kind !== "memoryLoad") {
       throw new Error("Expected validated-buffer read to lower to a memory load.");
@@ -292,14 +292,14 @@ describe("OptIR public construction API", () => {
       pathCertificates: [optIrPathCertificateId(9501)],
     });
     expect(result.program.regions.entries()).toHaveLength(2);
-    expect(result.program.optimizationRegions?.map((region) => region.kind)).toEqual([
+    expect(result.optimizationRegions.map((region) => region.kind)).toEqual([
       "packetSource",
       "validatedPayload",
     ]);
-    const packetSourceRegion = result.program.optimizationRegions?.find(
+    const packetSourceRegion = result.optimizationRegions.find(
       (region) => region.kind === "packetSource",
     );
-    const payloadRegion = result.program.optimizationRegions?.find(
+    const payloadRegion = result.optimizationRegions.find(
       (region) => region.kind === "validatedPayload",
     );
     if (packetSourceRegion === undefined || payloadRegion === undefined) {
@@ -370,9 +370,10 @@ describe("OptIR public construction API", () => {
     expect(optimizerCalled).toBe(false);
   });
 
-  test("OptIR is exported as a top-level namespace and direct barrel", () => {
-    expect(Object.keys(topLevelExports)).toContain("optIr");
+  test("OptIR construction facade is exported from root and direct barrel", () => {
     expect(Object.keys(topLevelExports)).toContain("constructOptIr");
+    expect(Object.keys(topLevelExports)).toContain("buildOptimizedOptIr");
+    expect(Object.keys(topLevelExports)).not.toContain("optIr");
     expect(Object.keys(optIrBarrel)).toEqual(
       expect.arrayContaining(["constructOptIr", "buildOptimizedOptIr", "optimizeOptIr"]),
     );

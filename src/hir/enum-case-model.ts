@@ -1,5 +1,5 @@
 import type { ItemIndex } from "../semantic/item-index";
-import type { ItemId, TypeId } from "../semantic/ids";
+import type { FieldId, ItemId, TypeId } from "../semantic/ids";
 
 export interface HirEnumCaseOrdinalRecord {
   readonly enumItemId: ItemId;
@@ -7,6 +7,7 @@ export interface HirEnumCaseOrdinalRecord {
   readonly caseItemId: ItemId;
   readonly name: string;
   readonly ordinal: number;
+  readonly payloadFieldIds: readonly FieldId[];
 }
 
 export type HirEnumCaseOrdinalResult =
@@ -67,6 +68,10 @@ export function hirEnumCasesForTypeItem(input: {
           caseItemId: caseItem.id,
           name: caseItem.name,
           ordinal,
+          payloadFieldIds: input.index
+            .fieldsForItem(caseItem.id)
+            .filter((field) => field.role === "enumPayload")
+            .map((field) => field.id),
         }),
       ),
   );

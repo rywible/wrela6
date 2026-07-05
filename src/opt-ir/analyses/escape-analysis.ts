@@ -8,6 +8,13 @@ export type OptIrEscapeReason =
   | "unknownCall"
   | "externalFlow";
 
+export type OptIrEscapeEvidenceKind =
+  | "addressTakenLocals"
+  | "callbackCaptures"
+  | "exportedRoots"
+  | "unknownCallRegions"
+  | "externalFlowRegions";
+
 export interface OptIrEscapeAnalysisInput {
   readonly regions: readonly OptIrRegion[];
   readonly addressTakenLocals?: readonly OptIrRegionId[];
@@ -19,12 +26,15 @@ export interface OptIrEscapeAnalysisInput {
 
 export interface OptIrEscapeAnalysis {
   readonly hasEscaped: (regionId: OptIrRegionId) => boolean;
+  readonly doesNotEscape: (regionId: OptIrRegionId) => boolean;
   readonly reasonFor: (regionId: OptIrRegionId) => OptIrEscapeReason | undefined;
   readonly escapedRegions: () => readonly OptIrRegionId[];
+  readonly missingEvidenceKinds: () => readonly OptIrEscapeEvidenceKind[];
 }
 
 export function computeOptIrEscapeAnalysis(input: OptIrEscapeAnalysisInput): OptIrEscapeAnalysis {
   const reasons = new Map<OptIrRegionId, OptIrEscapeReason>();
+  const missingEvidence = missingEvidenceKinds(input);
   mark(reasons, input.addressTakenLocals, "addressTakenLocal");
   mark(reasons, input.callbackCaptures, "callbackCapture");
   mark(reasons, input.exportedRoots, "exportedRoot");
@@ -35,13 +45,29 @@ export function computeOptIrEscapeAnalysis(input: OptIrEscapeAnalysisInput): Opt
     hasEscaped(regionId: OptIrRegionId) {
       return reasons.has(regionId);
     },
+    doesNotEscape(regionId: OptIrRegionId) {
+      return missingEvidence.length === 0 && !reasons.has(regionId);
+    },
     reasonFor(regionId: OptIrRegionId) {
       return reasons.get(regionId);
     },
     escapedRegions() {
       return [...reasons.keys()].sort((left, right) => Number(left) - Number(right));
     },
+    missingEvidenceKinds() {
+      return missingEvidence;
+    },
   });
+}
+
+function missingEvidenceKinds(input: OptIrEscapeAnalysisInput): readonly OptIrEscapeEvidenceKind[] {
+  const missing: OptIrEscapeEvidenceKind[] = [];
+  if (input.addressTakenLocals === undefined) missing.push("addressTakenLocals");
+  if (input.callbackCaptures === undefined) missing.push("callbackCaptures");
+  if (input.exportedRoots === undefined) missing.push("exportedRoots");
+  if (input.unknownCallRegions === undefined) missing.push("unknownCallRegions");
+  if (input.externalFlowRegions === undefined) missing.push("externalFlowRegions");
+  return Object.freeze(missing);
 }
 
 function mark(

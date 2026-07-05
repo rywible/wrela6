@@ -111,6 +111,7 @@ export interface AArch64FunctionBackendArtifact {
   readonly securityHelperCalls: readonly AArch64HelperCallSecurity[];
   readonly frameShape: string;
   readonly frameSizeBytes: number;
+  readonly savedRegisters: readonly string[];
   readonly wipeSlotKeys: readonly string[];
 }
 
@@ -654,6 +655,7 @@ function runSemanticStagesForFunction(
       securityHelperCalls: securityHelperCallsForInstructions(instructions),
       frameShape: unwind.value.classification,
       frameSizeBytes: unwind.value.frameSizeBytes,
+      savedRegisters: unwind.value.savedRegisters,
       wipeSlotKeys: Object.freeze(
         frame.value.wipeSlots.map((slot) => slot.slotKey).sort(compareCodeUnitStrings),
       ),

@@ -820,10 +820,7 @@ function optimizationRegionForId(
   state: AArch64LoweringState,
   regionId: OptIrRegionId,
 ): OptIrRegion | undefined {
-  const optimizationRegions = (
-    state.program as { readonly optimizationRegions?: readonly OptIrRegion[] }
-  ).optimizationRegions;
-  return optimizationRegions?.find((region) => region.regionId === regionId);
+  return state.optimizationRegions.find((region) => region.regionId === regionId);
 }
 
 function vectorPolicyForOperation(

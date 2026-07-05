@@ -32,7 +32,6 @@ import {
   type OptIrOriginId,
 } from "../ids";
 import type { OptIrOperation } from "../operations";
-import type { OptIrRegion } from "../regions";
 import { stableDigestHex } from "../../shared/stable-json";
 import { targetId } from "../../semantic/ids";
 import type {
@@ -140,14 +139,18 @@ export function runOptIrConstructionPipeline(
     ...lowering.generatedFacts,
   ]);
   const facts = filterImportedFactsAfterProofErasure(factsBeforeProofErasure, lowering);
-  const verifiedProgram = withProvenanceSnapshot(
-    cleanup.program,
-    cleanup.operations,
-    lowering.regions,
+  const operations = sortedOperations(cleanup.operations);
+  const optimizationRegions = Object.freeze(
+    [...lowering.regions].sort((left, right) => left.regionId - right.regionId),
   );
+  const verifiedProgram = withProvenanceSnapshot(cleanup.program);
+  const operationTable = buildConstructionOperationTable(operations);
+  if (operationTable.kind === "error") {
+    return { kind: "error", diagnostics: operationTable.diagnostics };
+  }
   const verifier = verifyOptIrProgram({
     program: verifiedProgram,
-    operations: operationMap(cleanup.operations),
+    operations: operationTable.operations,
     options: { checkDominance: true, recomputeOperationMetadata: true },
   });
   if (verifier.kind === "error") {
@@ -157,6 +160,8 @@ export function runOptIrConstructionPipeline(
   return {
     kind: "ok",
     program: verifiedProgram,
+    operations,
+    optimizationRegions,
     facts,
     provenance: snapshotProvenance(verifiedProgram.provenance.originIds),
     proofErasureProvenance: erasure.proofErasureProvenance ?? mergeProofErasureProvenances([]),
@@ -346,10 +351,31 @@ function proofOnlyOperationIdsForFunction(
     .map((operation) => operation.operationId);
 }
 
-function operationMap(
-  operations: readonly OptIrOperation[],
-): ReadonlyMap<OptIrOperation["operationId"], OptIrOperation> {
-  return new Map(operations.map((operation) => [operation.operationId, operation]));
+export function buildConstructionOperationTable(operations: readonly OptIrOperation[]):
+  | {
+      readonly kind: "ok";
+      readonly operations: ReadonlyMap<OptIrOperation["operationId"], OptIrOperation>;
+    }
+  | { readonly kind: "error"; readonly diagnostics: readonly OptIrDiagnostic[] } {
+  const byId = new Map<OptIrOperation["operationId"], OptIrOperation>();
+  for (const operation of operations) {
+    if (byId.has(operation.operationId)) {
+      const stableDetail = `operation-table:duplicate-operation-id:${Number(operation.operationId)}`;
+      return {
+        kind: "error",
+        diagnostics: [
+          constructionDiagnostic(
+            "OPT_IR_INPUT_CONTRACT_INVALID",
+            "constructOptIr",
+            stableDetail,
+            stableDetail,
+          ),
+        ],
+      };
+    }
+    byId.set(operation.operationId, operation);
+  }
+  return { kind: "ok", operations: byId };
 }
 
 function sortedOperations(operations: readonly OptIrOperation[]): readonly OptIrOperation[] {
@@ -398,18 +424,10 @@ function nextGeneratedFactId(factSet: OptIrFactSet) {
   return optIrFactId(maxFactId + 1);
 }
 
-function withProvenanceSnapshot(
-  program: OptIrProgram,
-  operations: readonly OptIrOperation[] = [],
-  optimizationRegions: readonly OptIrRegion[] = [],
-): ConstructedOptIrProgram {
+function withProvenanceSnapshot(program: OptIrProgram): ConstructedOptIrProgram {
   return {
     ...program,
     provenance: snapshotProvenance(program.provenance.originIds),
-    operations: sortedOperations(operations),
-    optimizationRegions: Object.freeze(
-      [...optimizationRegions].sort((left, right) => left.regionId - right.regionId),
-    ),
   };
 }
 

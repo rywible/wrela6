@@ -301,6 +301,47 @@ test("ordinary match constructor pattern binds applied result payload locals bef
   ]);
 });
 
+test("ordinary match binds lowercase stdlib Result constructor payload locals", () => {
+  const { context, node } = firstStatement(
+    SyntaxKind.MatchStatement,
+    [
+      "fn process(result: u32):",
+      "    match result:",
+      "        case ok(packet):",
+      "            packet",
+      "        case Result.err(status):",
+      "            status",
+    ].join("\n"),
+  );
+  const packetType = sourceCheckedType({ itemId: itemId(20), typeId: typeId(20) });
+  const statusType = coreCheckedType(coreTypeId("u32"));
+  context.locals.addSourceLocal({
+    name: "result",
+    type: appliedType({
+      constructor: { kind: "source", typeId: typeId(21) },
+      arguments: [packetType, statusType],
+      resourceKind: concreteKind("Copy"),
+    }),
+    resourceKind: concreteKind("Copy"),
+    sourceOrigin: hirOriginId(0),
+    introducedBy: "sourceLet",
+  });
+
+  const statement = lowerStatement({ node, context });
+
+  expect(context.diagnostics.entries().map((diagnostic) => String(diagnostic.code))).not.toContain(
+    "HIR_NAME_REFERENCE_MISSING",
+  );
+  expect(statement.kind.kind).toBe("match");
+  if (statement.kind.kind !== "match") throw new Error("expected match statement");
+  expect(statement.kind.statement.arms[0]?.bindingLocals).toEqual([
+    expect.objectContaining({ name: "packet", type: packetType }),
+  ]);
+  expect(statement.kind.statement.arms[1]?.bindingLocals).toEqual([
+    expect.objectContaining({ name: "status", type: statusType }),
+  ]);
+});
+
 test("match lowers linked checked refinement surface into proof metadata", () => {
   const { context, node } = firstStatement(
     SyntaxKind.MatchStatement,

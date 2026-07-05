@@ -17,6 +17,7 @@ import {
   aarch64ObjectUnwindRecord,
   type AArch64ObjectModule,
   type AArch64ObjectInstructionPatch,
+  type AArch64ObjectSymbol,
   type AArch64ObjectUnwindRecord,
 } from "../../target/aarch64/backend/object/object-module";
 import { verifyAArch64ObjectModule } from "../../target/aarch64/backend/verify/encoding-object-verifier";
@@ -76,6 +77,9 @@ export interface AArch64SyntheticUnwindSourceRecord {
   readonly frameShape: string;
   readonly functionStableKey?: string;
   readonly functionLinkageName?: string;
+  readonly functionLengthBytes?: number;
+  readonly frameSizeBytes?: number;
+  readonly savedRegisters?: readonly string[];
 }
 
 export type AArch64SyntheticUnwindObjectFactoryResult =
@@ -90,6 +94,7 @@ export interface AArch64UnwindObjectFactoryOutput {
   readonly pdataBytes: Uint8Array;
   readonly xdataBytes: Uint8Array;
   readonly functionLinkageName: string;
+  readonly xdataSymbolStableKey?: string;
   readonly frameShape: string;
   readonly pdataRelocation: AArch64UnwindObjectRelocationFactoryOutput;
   readonly xdataRelocation: AArch64UnwindObjectRelocationFactoryOutput;
@@ -293,6 +298,16 @@ function unwindObjectModule(
         stableKey: externalSymbolKey(object.functionLinkageName),
         linkageName: object.functionLinkageName,
       }),
+      ...(object.xdataSymbolStableKey === undefined
+        ? []
+        : [
+            aarch64ObjectSymbol({
+              kind: "local-definition",
+              stableKey: object.xdataSymbolStableKey,
+              sectionKey: ".xdata",
+              offsetBytes: 0,
+            }),
+          ]),
     ],
     relocations: [
       aarch64ObjectRelocation({
@@ -309,11 +324,14 @@ function unwindObjectModule(
       }),
       aarch64ObjectRelocation({
         stableKey: object.xdataRelocation.stableKey,
-        sectionKey: ".xdata",
+        sectionKey: ".pdata",
         offsetBytes: object.xdataRelocation.offsetBytes,
         widthBytes: object.xdataRelocation.widthBytes,
         family: object.xdataRelocation.family,
-        target: { kind: "linkage-name", linkageName: object.functionLinkageName },
+        target:
+          object.xdataSymbolStableKey === undefined
+            ? { kind: "linkage-name", linkageName: object.functionLinkageName }
+            : { kind: "symbol-stable-key", stableKey: object.xdataSymbolStableKey },
         addend: object.xdataRelocation.addend,
         ...(object.xdataRelocation.instructionPatch === undefined
           ? {}
@@ -350,10 +368,44 @@ function unwindSourceRecords(
             functionSymbol?.kind === "external-declaration"
               ? functionSymbol.linkageName
               : undefined,
+          functionLengthBytes: functionLengthBytesForUnwindSource(
+            module.objectModule,
+            functionSymbol,
+          ),
+          frameSizeBytes: record.frameSizeBytes,
+          savedRegisters: record.savedRegisters,
         });
       }),
     ),
   );
+}
+
+function functionLengthBytesForUnwindSource(
+  objectModule: AArch64ObjectModule,
+  functionSymbol: AArch64ObjectSymbol | undefined,
+): number | undefined {
+  if (functionSymbol?.kind !== "global-definition") {
+    return undefined;
+  }
+  const section = objectModule.sections.find(
+    (candidate) => String(candidate.stableKey) === String(functionSymbol.sectionKey),
+  );
+  if (section === undefined) {
+    return undefined;
+  }
+  const nextSymbolOffset = objectModule.symbols
+    .filter(
+      (symbol): symbol is Extract<AArch64ObjectSymbol, { readonly kind: "global-definition" }> =>
+        symbol.kind === "global-definition" &&
+        String(symbol.sectionKey) === String(functionSymbol.sectionKey) &&
+        symbol.offsetBytes > functionSymbol.offsetBytes,
+    )
+    .map((symbol) => symbol.offsetBytes)
+    .sort((left, right) => left - right)[0];
+  const functionEndOffset = nextSymbolOffset ?? section.bytes.length;
+  return functionEndOffset > functionSymbol.offsetBytes
+    ? functionEndOffset - functionSymbol.offsetBytes
+    : undefined;
 }
 
 function functionStableKeyFromUnwindRecord(stableKey: string): string | undefined {

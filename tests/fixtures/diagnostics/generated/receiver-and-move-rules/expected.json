@@ -1,0 +1,9 @@
+{
+  "sourceSection": "Receiver And Move Rules",
+  "stage": "parse",
+  "diagnostics": [
+    {
+      "code": "LEX_MALFORMED_INTEGER"
+    }
+  ]
+}

@@ -207,22 +207,38 @@ describe("AArch64 post-allocation scheduler and peepholes", () => {
     ]);
   });
 
-  test("declares transfer metadata for safe peephole pair formation", () => {
+  test("peephole finalization preserves both load destination definitions", () => {
     const result = scheduleAArch64PostAllocation({
       instructions: [
-        { id: 1, stableKey: "load:a", opcode: "ldr", memoryKey: "sp:0" },
-        { id: 2, stableKey: "load:b", opcode: "ldr", memoryKey: "sp:8" },
+        {
+          id: 1,
+          stableKey: "load:a",
+          opcode: "ldr",
+          memoryKey: "sp:0",
+          definedRegisters: ["x0"],
+          usedRegisters: ["sp"],
+        },
+        {
+          id: 2,
+          stableKey: "load:b",
+          opcode: "ldr",
+          memoryKey: "sp:8",
+          definedRegisters: ["x1"],
+          usedRegisters: ["sp"],
+        },
       ],
       enablePeepholes: true,
     });
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected schedule");
-    expect(result.value.instructions.map((instruction) => instruction.opcode)).toEqual(["ldp"]);
-    expect(result.value.peepholes[0]?.transferPlan).toEqual({
-      behavior: "merge",
-      sourceKeys: ["load:a", "load:b"],
-      destinationKeys: ["peephole:ldp:load:a:load:b"],
-    });
+    expect(result.value.instructions.map((instruction) => instruction.stableKey)).toEqual([
+      "load:a",
+      "load:b",
+    ]);
+    expect(
+      result.value.instructions.flatMap((instruction) => instruction.definedRegisters ?? []),
+    ).toEqual(["x0", "x1"]);
+    expect(result.value.peepholes).toEqual([]);
   });
 });

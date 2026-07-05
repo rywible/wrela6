@@ -22,6 +22,7 @@ import {
   optIrRegionTable,
 } from "../../../src/opt-ir/program";
 import { runLicmForTest } from "../../../src/opt-ir/passes/licm";
+import { createOptIrFreshIdAllocator } from "../../../src/opt-ir/id-allocation";
 import { optIrUnsignedIntegerType } from "../../../src/opt-ir/types";
 import { targetId } from "../../../src/semantic/ids";
 import type { MonoFunctionSignature } from "../../../src/mono/mono-hir";
@@ -92,7 +93,7 @@ describe("W4-02d real LICM hoisting", () => {
     const result = runLicmForTest({
       program,
       operations: [invariant],
-      loopOperationIds: [invariant.operationId],
+      freshIds: createOptIrFreshIdAllocator({ program, operations: [invariant] }),
       effectBoundaryOperationIds: [],
     });
     const function_ = result.program.functions.get(optIrFunctionId(1));

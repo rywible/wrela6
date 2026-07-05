@@ -50,6 +50,7 @@ export function optimizedOptIrArtifact(
     value: Object.freeze({
       program: adapter.program,
       operations: Object.freeze([...adapter.operations]),
+      optimizationRegions: Object.freeze([...adapter.optimizationRegions]),
       unoptimizedOperations: Object.freeze([...adapter.unoptimizedOperations]),
       facts: adapter.facts,
       staticChar16Strings: staticMetadata.staticChar16Strings,
@@ -175,7 +176,6 @@ export function materializeStaticChar16ConstantPoolReferences(input: {
   const program = Object.freeze({
     ...input.program,
     constants: optIrConstantTable(constants),
-    operations: Object.freeze(operations),
   });
   return Object.freeze({
     kind: "ok" as const,
@@ -266,6 +266,7 @@ export function readonlyPointersFromOptIrConstantPool(
 function isOptimizedOptIrArtifact(candidate: unknown): candidate is PackageOptimizedOptIrAdapter & {
   readonly program: UefiAArch64OptimizedOptIrArtifact["program"];
   readonly operations: UefiAArch64OptimizedOptIrArtifact["operations"];
+  readonly optimizationRegions: UefiAArch64OptimizedOptIrArtifact["optimizationRegions"];
   readonly unoptimizedOperations: UefiAArch64OptimizedOptIrArtifact["unoptimizedOperations"];
   readonly facts: UefiAArch64OptimizedOptIrArtifact["facts"];
 } {
@@ -275,6 +276,7 @@ function isOptimizedOptIrArtifact(candidate: unknown): candidate is PackageOptim
     typeof adapter.program === "object" &&
     adapter.program !== null &&
     Array.isArray(adapter.operations) &&
+    Array.isArray(adapter.optimizationRegions) &&
     Array.isArray(adapter.unoptimizedOperations) &&
     typeof adapter.facts === "object" &&
     adapter.facts !== null

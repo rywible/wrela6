@@ -66,6 +66,39 @@ export class MemberAccessExpressionView extends AstView {
   }
 }
 
+export class ParenthesizedExpressionView extends AstView {
+  static from(node: RedNode): ParenthesizedExpressionView | undefined {
+    return node.kind === SyntaxKind.ParenthesizedExpression
+      ? new ParenthesizedExpressionView(node)
+      : undefined;
+  }
+
+  expression(): ExpressionView | undefined {
+    return expressionViewFrom(
+      this.node.children().find((child): child is RedNode => child instanceof RedNode),
+    );
+  }
+}
+
+export class IndexExpressionView extends AstView {
+  static from(node: RedNode): IndexExpressionView | undefined {
+    return node.kind === SyntaxKind.IndexExpression ? new IndexExpressionView(node) : undefined;
+  }
+
+  receiver(): ExpressionView | undefined {
+    const children = this.node.children();
+    const receiver = children[0];
+    return receiver instanceof RedNode ? expressionViewFrom(receiver) : undefined;
+  }
+
+  index(): ExpressionView | undefined {
+    const expressionChildren = this.node
+      .children()
+      .filter((child): child is RedNode => child instanceof RedNode);
+    return expressionViewFrom(expressionChildren[1]);
+  }
+}
+
 export class CallExpressionView extends AstView {
   static from(node: RedNode): CallExpressionView | undefined {
     return node.kind === SyntaxKind.CallExpression ? new CallExpressionView(node) : undefined;
@@ -445,7 +478,9 @@ export class CallArgumentListView extends AstView {
 export type ExpressionView =
   | LiteralExpressionView
   | NameExpressionView
+  | ParenthesizedExpressionView
   | MemberAccessExpressionView
+  | IndexExpressionView
   | CallExpressionView
   | TypeApplicationExpressionView
   | AttemptExpressionView
@@ -463,8 +498,12 @@ export function expressionViewFrom(node: RedNode | undefined): ExpressionView | 
       return LiteralExpressionView.from(node);
     case SyntaxKind.NameExpression:
       return NameExpressionView.from(node);
+    case SyntaxKind.ParenthesizedExpression:
+      return ParenthesizedExpressionView.from(node);
     case SyntaxKind.MemberAccessExpression:
       return MemberAccessExpressionView.from(node);
+    case SyntaxKind.IndexExpression:
+      return IndexExpressionView.from(node);
     case SyntaxKind.CallExpression:
       return CallExpressionView.from(node);
     case SyntaxKind.TypeApplicationExpression:

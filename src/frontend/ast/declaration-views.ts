@@ -11,6 +11,7 @@ import {
 } from "./syntax-query";
 import { DottedModuleNameView } from "./name-views";
 import { TypeParameterView } from "./type-views";
+import { ParameterView } from "./function-views";
 import { FieldDeclarationView } from "./field-views";
 import { FunctionDeclarationView, type FunctionModifier } from "./function-views";
 import { ImageDeclarationView } from "./image-views";
@@ -160,6 +161,19 @@ export class EnumCaseView extends AstView implements NamedDeclarationView {
 
   nameSpan(): SourceSpan | undefined {
     return presentTokenSpan(this.nameToken());
+  }
+
+  payloadFields(): ParameterView[] {
+    const parameterList = childNode(this.node, SyntaxKind.ParameterList);
+    if (parameterList === undefined) return [];
+    return parameterList
+      .children()
+      .filter(
+        (child): child is RedNode =>
+          child instanceof RedNode && child.kind === SyntaxKind.Parameter,
+      )
+      .map((node) => ParameterView.from(node)!)
+      .filter((view): view is ParameterView => view !== undefined);
   }
 }
 

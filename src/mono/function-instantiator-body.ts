@@ -1,15 +1,16 @@
 import type { TypedHirProgram } from "../hir/hir";
-import {
-  type HirExpressionId,
-  type HirLocalId,
-  type HirRequirementId,
-  type HirStatementId,
-} from "../hir/ids";
 import type { FunctionId, ImageId, TypeId } from "../semantic/ids";
 import { walkMonoBlock } from "./body-walker";
 import { monoDiagnostic, type MonoDiagnostic } from "./diagnostics";
 import { createConcretizationContext, type MonoFunctionRemap } from "./function-instantiator-shell";
 import { cloneBlock } from "./function-statement-cloner";
+import {
+  createMonoTransformContext,
+  immutableRemapFrom,
+  mutableRemapFrom,
+  monoTransformRemap,
+  type MutableMonoFunctionRemap,
+} from "./mono-transform-context";
 import { instantiatedHirIdKey, type MonoInstanceId } from "./ids";
 import {
   type MonoBlock,
@@ -18,9 +19,7 @@ import {
   type MonoExpression,
   type MonoExpressionId,
   type MonoFunctionInstance,
-  type MonoInstantiatedProofId,
   type MonoLocalId,
-  type MonoProofExpressionId,
   type MonoStatement,
   type MonoStatementId,
 } from "./mono-hir";
@@ -94,23 +93,28 @@ function instantiateMonoFunctionBodyInternal(
 
   const outgoingEdges: MonoOutgoingEdge[] = [];
   const diagnostics: MonoDiagnostic[] = [];
-  const context = createConcretizationContext({
+  const resourceKinds = createConcretizationContext({
     program: input.program,
     substitution: input.substitution,
     canonicalInstanceKey: String(input.instance.instanceId),
     source: input.source,
   });
-  const mutableRemap = mutableRemapFrom(input.remap);
+  const transformContext = createMonoTransformContext({
+    remap: input.remap,
+    resourceKinds,
+    outgoingEdges,
+    diagnostics,
+  });
 
   const cloned = cloneBlock({
     source: sourceFunction.body,
     instance: input.instance,
     substitution: input.substitution,
-    remap: mutableRemap,
+    remap: transformContext.remap,
     program: input.program,
-    context,
-    outgoingEdges,
-    diagnostics,
+    context: transformContext.resourceKinds,
+    outgoingEdges: transformContext.outgoingEdges,
+    diagnostics: transformContext.diagnostics,
   });
   if (cloned.kind === "error") {
     if (diagnostics.length === 0) {
@@ -128,49 +132,20 @@ function instantiateMonoFunctionBodyInternal(
     }
     return { kind: "error", diagnostics };
   }
-  if (diagnostics.length > 0) {
-    return { kind: "error", diagnostics };
+  if (transformContext.diagnostics.length > 0) {
+    return { kind: "error", diagnostics: transformContext.diagnostics };
   }
   const bodyIndex = rebuildMonoBodyIndex(collectBodyIndexEntries(cloned.block));
   return {
     kind: "ok",
     body: cloned.block,
     bodyIndex,
-    remap: immutableRemapFrom(mutableRemap),
-    outgoingEdges,
+    remap: monoTransformRemap(transformContext),
+    outgoingEdges: transformContext.outgoingEdges,
   };
 }
 
-export type MutableMonoFunctionRemap = ReturnType<typeof mutableRemapFrom>;
-
-export function mutableRemapFrom(remap: MonoFunctionRemap): {
-  readonly instanceId: MonoInstanceId;
-  readonly localRemap: Map<HirLocalId, MonoLocalId>;
-  readonly expressionRemap: Map<HirExpressionId, MonoExpressionId>;
-  readonly statementRemap: Map<HirStatementId, MonoStatementId>;
-  readonly requirementIdRemap: Map<HirRequirementId, MonoInstantiatedProofId<HirRequirementId>>;
-  readonly proofExpressionIdRemap: Map<number, MonoProofExpressionId>;
-} {
-  return {
-    instanceId: remap.instanceId,
-    localRemap: new Map(remap.localRemap),
-    expressionRemap: new Map(remap.expressionRemap),
-    statementRemap: new Map(remap.statementRemap),
-    requirementIdRemap: new Map(remap.requirementIdRemap),
-    proofExpressionIdRemap: new Map(remap.proofExpressionIdRemap),
-  };
-}
-
-function immutableRemapFrom(remap: ReturnType<typeof mutableRemapFrom>): MonoFunctionRemap {
-  return {
-    instanceId: remap.instanceId,
-    localRemap: new Map(remap.localRemap),
-    expressionRemap: new Map(remap.expressionRemap),
-    statementRemap: new Map(remap.statementRemap),
-    requirementIdRemap: new Map(remap.requirementIdRemap),
-    proofExpressionIdRemap: new Map(remap.proofExpressionIdRemap),
-  };
-}
+export { immutableRemapFrom, mutableRemapFrom, type MutableMonoFunctionRemap };
 
 export function collectBodyIndexEntries(block: MonoBlock): {
   readonly statements: readonly MonoStatement[];

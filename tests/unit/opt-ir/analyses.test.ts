@@ -218,6 +218,19 @@ describe("OptIR escape and alias analyses", () => {
     expect(escape.reasonFor(fixture.regions.unknownCall.regionId)).toBe("unknownCall");
     expect(escape.reasonFor(fixture.regions.externalFlow.regionId)).toBe("externalFlow");
     expect(escape.hasEscaped(fixture.regions.localOnly.regionId)).toBe(false);
+    expect(escape.doesNotEscape(fixture.regions.localOnly.regionId)).toBe(true);
+    expect(escape.missingEvidenceKinds()).toEqual([]);
+
+    const incomplete = computeOptIrEscapeAnalysis({ regions: fixture.input.regions });
+    expect(incomplete.hasEscaped(fixture.regions.localOnly.regionId)).toBe(false);
+    expect(incomplete.doesNotEscape(fixture.regions.localOnly.regionId)).toBe(false);
+    expect(incomplete.missingEvidenceKinds()).toEqual([
+      "addressTakenLocals",
+      "callbackCaptures",
+      "exportedRoots",
+      "unknownCallRegions",
+      "externalFlowRegions",
+    ]);
   });
 
   test("alias analysis combines region alias classes with fact-query answers", () => {

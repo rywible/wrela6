@@ -61,9 +61,9 @@ describe("HIR diagnostic codes", () => {
     expect(() => hirDiagnosticCode("HIR_UNKNOWN_CODE")).toThrow();
   });
 
-  test("HIR_DIAGNOSTIC_FIRST_EMITTER covers every code with a task label", () => {
+  test("HIR_DIAGNOSTIC_FIRST_EMITTER covers every code with a task or WCR label", () => {
     for (const code of HIR_DIAGNOSTIC_CODES) {
-      expect(HIR_DIAGNOSTIC_FIRST_EMITTER[code]).toMatch(/^Task \d+$/);
+      expect(HIR_DIAGNOSTIC_FIRST_EMITTER[code]).toMatch(/^(Task \d+|WCR-\d+)$/);
     }
   });
 });

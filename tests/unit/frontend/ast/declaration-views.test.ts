@@ -32,6 +32,27 @@ describe("source declaration views", () => {
     ]);
   });
 
+  test("enum case view exposes payload fields", () => {
+    const root = parseSourceRoot("enum Result:\n    ok(value: U8)\n    err\n");
+    const view = SourceFileView.fromRoot(root)!;
+    const enumView = view.declarations()[0]! as EnumDeclarationView;
+    const okCase = enumView.enumCases()[0]!;
+
+    expect(okCase.nameText()).toBe("ok");
+    expect(okCase.payloadFields().map((field) => field.nameText())).toEqual(["value"]);
+    expect(okCase.payloadFields()[0]?.type()?.qualifiedNameText()).toBe("U8");
+    expect(enumView.enumCases()[1]?.payloadFields()).toEqual([]);
+  });
+
+  test("enum declaration view exposes type parameters", () => {
+    const root = parseSourceRoot("enum Result[Ok, Err]:\n    ok(value: Ok)\n    err(error: Err)\n");
+    const view = SourceFileView.fromRoot(root)!;
+    const enumView = view.declarations()[0]! as EnumDeclarationView;
+
+    expect(enumView.typeParameters().map((param) => param.nameText())).toEqual(["Ok", "Err"]);
+    expect(enumView.enumCases().map((item) => item.nameText())).toEqual(["ok", "err"]);
+  });
+
   test("ClassDeclarationView modifiers returns private when present", () => {
     const root = parseSourceRoot("private class Box:\n    field: U8\n");
     const view = SourceFileView.fromRoot(root)!;

@@ -476,6 +476,44 @@ describe("validateProofSemanticsJudgmentResult", () => {
     expect(result.diagnostics[0]?.stableDetail).toContain("outside-dependency-set");
   });
 
+  test("stateJoin rejects unrelated validation and attempt closures", () => {
+    const request = stateJoinRequestForTask8Test();
+    const companion = semanticsCompanionForTask8Test({
+      providedJudgments: ["stateJoin"],
+      result: {
+        kind: "stateJoin",
+        requestKind: "stateJoin",
+        requestKey: "request:state-join:1",
+        companionFingerprint: defaultFingerprint,
+        subjectKey: semanticsJudgmentSubjectKey(request),
+        dependencyKeys: [],
+        certificateId: proofSemanticsCertificateId(41),
+        patch: emptyPatch("stateJoin", [
+          {
+            kind: "validation",
+            action: "close",
+            validation: { validationKey: "validation:unrelated", status: "closed" },
+          },
+          {
+            kind: "attempt",
+            action: "close",
+            attempt: { attemptKey: "attempt:unrelated", status: "closed" },
+          },
+        ]),
+      },
+    });
+
+    const result = validateProofSemanticsJudgmentResult({
+      companion,
+      request,
+      dependencyKeys: new Set([]),
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") return;
+    expect(result.diagnostics[0]?.stableDetail).toContain("not-owned");
+  });
+
   test("loopConvergence rejects private-state remapping outside loop-carried set", () => {
     const request: ProofSemanticsJudgmentRequest = {
       kind: "loopConvergence",
@@ -523,6 +561,51 @@ describe("validateProofSemanticsJudgmentResult", () => {
     expect(result.kind).toBe("error");
     if (result.kind !== "error") return;
     expect(result.diagnostics[0]?.stableDetail).toContain("not-loop-carried");
+  });
+
+  test("loopConvergence rejects unrelated validation closures", () => {
+    const request: ProofSemanticsJudgmentRequest = {
+      kind: "loopConvergence",
+      input: {
+        requestKey: "request:loop:1",
+        functionInstanceId: monoInstanceId("fn:loop"),
+        headerBlockId: proofMirBlockId(5),
+        backedgeIds: [proofMirControlEdgeId(1)],
+        incomingStateDigests: [proofCheckStateDigest("state:loop")],
+        variantKeys: ["variant:a"],
+        loopCarriedPrivateStateKeys: ["place:allowed"],
+      } satisfies ProofLoopConvergenceJudgmentInput,
+    };
+    const companion = semanticsCompanionForTask8Test({
+      providedJudgments: ["loopConvergence"],
+      result: {
+        kind: "loopConvergence",
+        requestKind: "loopConvergence",
+        requestKey: "request:loop:1",
+        companionFingerprint: defaultFingerprint,
+        subjectKey: semanticsJudgmentSubjectKey(request),
+        dependencyKeys: [],
+        certificateId: proofSemanticsCertificateId(42),
+        replayWitnessKey: "witness:1",
+        patch: emptyPatch("loopConvergence", [
+          {
+            kind: "validation",
+            action: "close",
+            validation: { validationKey: "validation:unrelated", status: "closed" },
+          },
+        ]),
+      },
+    });
+
+    const result = validateProofSemanticsJudgmentResult({
+      companion,
+      request,
+      dependencyKeys: new Set([]),
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") return;
+    expect(result.diagnostics[0]?.stableDetail).toContain("not-loop-owned");
   });
 
   test("crossCoreOwnership rejects transfer of unrelated source place", () => {
@@ -609,6 +692,44 @@ describe("validateProofSemanticsJudgmentResult", () => {
     expect(result.kind).toBe("error");
     if (result.kind !== "error") return;
     expect(result.diagnostics[0]?.stableDetail).toContain("not-named-member");
+  });
+
+  test("streamLoop rejects opening sessions and closing non-current sessions", () => {
+    const request: ProofSemanticsJudgmentRequest = {
+      kind: "streamLoop",
+      input: {
+        requestKey: "request:stream:1",
+        streamSessionKey: "session:rx",
+        yieldedMemberKey: "member:expected",
+        memberLocalFactKeys: [],
+      },
+    };
+    const companion = semanticsCompanionForTask8Test({
+      providedJudgments: ["streamLoop"],
+      result: {
+        kind: "streamLoop",
+        requestKind: "streamLoop",
+        requestKey: "request:stream:1",
+        companionFingerprint: defaultFingerprint,
+        subjectKey: "member:expected",
+        dependencyKeys: [],
+        certificateId: proofSemanticsCertificateId(43),
+        patch: emptyPatch("streamLoop", [
+          { kind: "session", action: "open", session: { sessionKey: "session:rx" } },
+          { kind: "session", action: "close", session: { sessionKey: "session:other" } },
+        ]),
+      },
+    });
+
+    const result = validateProofSemanticsJudgmentResult({
+      companion,
+      request,
+      dependencyKeys: new Set([]),
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") return;
+    expect(result.diagnostics[0]?.stableDetail).toContain("session-action:open:not-allowed");
   });
 
   test("extensionTransfer rejects entries outside declared extension schema", () => {

@@ -69,6 +69,8 @@ export function materializeLinkedUnwindRecords(
 
   for (const module of input.graph.modules) {
     for (const objectRecord of module.objectModule.unwindRecords) {
+      if (isOmittableSourceLeafRecord(module, objectRecord)) continue;
+
       const unwindStableKey = String(objectRecord.stableKey);
       const functionObjectKey = functionStableKeyFromUnwindRecord(unwindStableKey);
       if (functionObjectKey === undefined) {
@@ -203,6 +205,16 @@ export function materializeLinkedUnwindRecords(
     }),
     verification: UNWIND_VERIFICATION,
   });
+}
+
+function isOmittableSourceLeafRecord(
+  module: NormalizedObjectModule,
+  objectRecord: { readonly frameShape: string },
+): boolean {
+  return (
+    module.syntheticProviderKey !== AARCH64_UNWIND_PROVIDER_KEY &&
+    objectRecord.frameShape === "frameless-leaf"
+  );
 }
 
 function syntheticUnwindFunctionSymbolKeys(input: {

@@ -25,6 +25,12 @@ describe("OptIR certified loop vectorization", () => {
       "vectorLoad",
       "vectorLoad",
     ]);
+    expect(new Set(result.vectorOperations.map((operation) => operation.operationId)).size).toBe(
+      result.vectorOperations.length,
+    );
+    expect(new Set(result.vectorOperations.flatMap((operation) => operation.resultIds)).size).toBe(
+      result.vectorOperations.flatMap((operation) => operation.resultIds).length,
+    );
     const load = result.vectorOperations[0];
     if (load?.kind !== "vectorLoad") {
       throw new Error("Expected legal loop memory-pack vectorization to emit a vector load.");

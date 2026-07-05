@@ -2,6 +2,7 @@ import type { OptIrFactSet } from "../../../opt-ir/facts/fact-index";
 import type { OptIrOperationId } from "../../../opt-ir/ids";
 import type { OptIrOperation } from "../../../opt-ir/operations";
 import type { OptIrProgram } from "../../../opt-ir/program";
+import type { OptIrRegion } from "../../../opt-ir/regions";
 import { emptyAArch64ProvenanceMap } from "../machine-ir/provenance";
 import type { AArch64PreservedFactSet } from "../machine-ir/fact-set";
 import type { AArch64TargetSurface } from "../target-surface/target-surface";
@@ -11,6 +12,7 @@ import type { AArch64LoweringState } from "./pipeline-stages";
 export interface CreateAArch64LoweringStateInput {
   readonly program: OptIrProgram;
   readonly operations?: ReadonlyMap<OptIrOperationId, OptIrOperation> | readonly OptIrOperation[];
+  readonly optimizationRegions?: readonly OptIrRegion[];
   readonly facts: OptIrFactSet;
   readonly target: AArch64TargetSurface;
   readonly options: AArch64LoweringOptions;
@@ -24,6 +26,7 @@ export function createAArch64LoweringState(
   return Object.freeze({
     program: input.program,
     operations: normalizedOperations.operations,
+    optimizationRegions: Object.freeze([...(input.optimizationRegions ?? [])]),
     operationInputDuplicateIds: normalizedOperations.duplicateOperationIds,
     facts: input.facts,
     target: input.target,

@@ -25,6 +25,7 @@ import {
   uefiCompilePackageInputFixture,
   uefiTargetSurfaceFixture,
 } from "../../../support/target/uefi-aarch64/uefi-aarch64-fixtures";
+import { unsafePackagePipelineAdapter } from "./package-pipeline-support";
 
 describe("UEFI package pipeline OptIR static CHAR16 artifacts", () => {
   test("production OptIR adapter calls real OptIR and preserves certified static CHAR16 metadata", () => {
@@ -126,6 +127,7 @@ describe("UEFI package pipeline OptIR static CHAR16 artifacts", () => {
       unsafePackagePipelineAdapter<PackageOptimizedOptIrAdapter>({
         program: optIrFixture.program,
         operations: Object.freeze([...optIrFixture.operations]),
+        optimizationRegions: Object.freeze([...optIrFixture.optimizationRegions]),
         unoptimizedOperations: Object.freeze([...optIrFixture.operations]),
         facts: emptyOptIrFactSet(),
         staticChar16Strings: Object.freeze([]),
@@ -260,10 +262,6 @@ function packagePipelineDependenciesWithOptIr(
     }),
     buildOptimizedOptIr: () => ({ kind: "ok" as const, value: optIr, diagnostics: [] }),
   });
-}
-
-function unsafePackagePipelineAdapter<Adapter>(value: unknown): Adapter {
-  return Object.freeze(value as object) as Adapter;
 }
 
 function isUtf16StaticIntrinsicOperation(operation: OptIrOperation): boolean {

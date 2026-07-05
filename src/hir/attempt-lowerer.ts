@@ -1,5 +1,4 @@
 import type { CheckedAttemptContractSurface } from "../semantic/surface/proof-contracts";
-import { functionId } from "../semantic/ids";
 import { errorKind } from "../semantic/surface/resource-kind";
 import type { CheckedResourceKind } from "../semantic/surface/resource-kind";
 import { checkedTypesEqual, errorCheckedType } from "../semantic/surface/type-model";
@@ -8,7 +7,7 @@ import type { AttemptExpressionView } from "../frontend/ast/expression-views";
 import type { HirExpression, HirAttempt } from "./hir";
 import type { HirLoweringContext } from "./lowering-context";
 import { ownedAttemptId } from "./ids";
-import { hirDiagnostic } from "./lowering-context";
+import { hirDiagnostic, hirOwnerKey, requireHirFunctionOwner } from "./lowering-context";
 import { resourceKindForCheckedType } from "./type-resource-kind";
 
 function expressionCall(input: HirExpression) {
@@ -34,7 +33,7 @@ function declaredInputPlaces(input: {
           code: "HIR_ATTEMPT_INPUT_NOT_PLACE",
           message: "Attempt contract input does not map to a resource place.",
           originId: input.fallibleExpression.sourceOrigin,
-          ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+          ownerKey: hirOwnerKey(input.context),
           originKey: `origin:${input.fallibleExpression.sourceOrigin}`,
           stableDetail: "attempt-input",
         }),
@@ -55,10 +54,6 @@ export function lowerAttemptExpression(input: {
   readonly context: HirLoweringContext;
   readonly contracts?: readonly CheckedAttemptContractSurface[];
 }): HirExpression {
-  const owner = {
-    kind: "function" as const,
-    functionId: input.context.ownerFunctionId ?? functionId(0),
-  };
   const contract = input.contracts?.[0];
   if (contract === undefined) {
     input.context.diagnostics.report(
@@ -66,7 +61,7 @@ export function lowerAttemptExpression(input: {
         code: "HIR_UNLINKED_ATTEMPT_CONTRACT",
         message: "Attempt expression is not linked to a checked attempt contract.",
         originId: input.fallibleExpression.sourceOrigin,
-        ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+        ownerKey: hirOwnerKey(input.context),
         originKey: `origin:${input.fallibleExpression.sourceOrigin}`,
         stableDetail: "attempt-contract",
       }),
@@ -74,6 +69,22 @@ export function lowerAttemptExpression(input: {
     const expression: HirExpression = {
       expressionId: input.context.bodyIndex.nextExpressionId(),
       kind: { kind: "error", reason: "attempt-contract-missing" },
+      type: errorCheckedType(),
+      resourceKind: errorKind(),
+      sourceOrigin: input.fallibleExpression.sourceOrigin,
+    };
+    input.context.bodyIndex.addExpression(expression);
+    return expression;
+  }
+  const owner = requireHirFunctionOwner({
+    context: input.context,
+    sourceOrigin: input.fallibleExpression.sourceOrigin,
+    stableDetail: "attempt-owner",
+  });
+  if (owner === undefined) {
+    const expression: HirExpression = {
+      expressionId: input.context.bodyIndex.nextExpressionId(),
+      kind: { kind: "error", reason: "attempt-owner-missing" },
       type: errorCheckedType(),
       resourceKind: errorKind(),
       sourceOrigin: input.fallibleExpression.sourceOrigin,

@@ -134,6 +134,48 @@ describe("parseEnumDeclaration", () => {
     expect(context.draftDiagnostics()).toHaveLength(0);
   });
 
+  test("parses generic enum type parameters before cases", () => {
+    const tokens = [
+      makeToken(TokenKind.Enum, "enum", 0, 4, " "),
+      makeToken(TokenKind.Identifier, "Result", 5, 11),
+      makeToken(TokenKind.LeftBracket, "[", 11, 12),
+      makeToken(TokenKind.Identifier, "Ok", 12, 14),
+      makeToken(TokenKind.Comma, ",", 14, 15, " "),
+      makeToken(TokenKind.Identifier, "Err", 16, 19),
+      makeToken(TokenKind.RightBracket, "]", 19, 20),
+      makeToken(TokenKind.Colon, ":", 20, 21),
+      makeToken(TokenKind.Newline, "\n", 21, 22),
+      makeToken(TokenKind.Indent, "    ", 22, 26),
+      makeToken(TokenKind.Identifier, "ok", 26, 28),
+      makeToken(TokenKind.LeftParen, "(", 28, 29),
+      makeToken(TokenKind.Identifier, "value", 29, 34),
+      makeToken(TokenKind.Colon, ":", 34, 35, " "),
+      makeToken(TokenKind.Identifier, "Ok", 36, 38),
+      makeToken(TokenKind.RightParen, ")", 38, 39),
+      makeToken(TokenKind.Newline, "\n", 39, 40),
+      makeToken(TokenKind.Identifier, "err", 44, 47, undefined, "    "),
+      makeToken(TokenKind.LeftParen, "(", 47, 48),
+      makeToken(TokenKind.Identifier, "error", 48, 53),
+      makeToken(TokenKind.Colon, ":", 53, 54, " "),
+      makeToken(TokenKind.Identifier, "Err", 55, 58),
+      makeToken(TokenKind.RightParen, ")", 58, 59),
+      makeToken(TokenKind.Newline, "\n", 59, 60),
+      makeToken(TokenKind.Dedent, "", 60, 60),
+      makeToken(TokenKind.Eof, "", 60, 60),
+    ];
+    const context = makeContext(tokens);
+    const node = parseEnumDeclaration(context);
+
+    expect(node.kind).toBe(SyntaxKind.EnumDeclaration);
+    expect(node.children).toHaveLength(5);
+    expect(node.children[2]!.kind).toBe(SyntaxKind.TypeParameterList);
+    expect(node.children[3]!.kind).toBe(SyntaxKind.ColonToken);
+    expect(node.reconstruct()).toBe(
+      "enum Result[Ok, Err]:\n    ok(value: Ok)\n    err(error: Err)\n",
+    );
+    expect(context.draftDiagnostics()).toHaveLength(0);
+  });
+
   test("preserves blank lines inside enum body", () => {
     const tokens = [
       makeToken(TokenKind.Enum, "enum", 0, 4, " "),
@@ -249,6 +291,31 @@ describe("parseEnumCase", () => {
     expect((node!.children[0] as GreenToken).lexeme).toBe("bar");
     expect(node!.children[1]!.kind).toBe(SyntaxKind.NewlineToken);
     expect(node!.reconstruct()).toBe("bar\n");
+    expect(context.draftDiagnostics()).toHaveLength(0);
+  });
+
+  test("parses payload fields after an enum case name", () => {
+    const tokens = [
+      makeToken(TokenKind.Identifier, "ok", 0, 2),
+      makeToken(TokenKind.LeftParen, "(", 2, 3),
+      makeToken(TokenKind.Identifier, "value", 3, 8),
+      makeToken(TokenKind.Colon, ":", 8, 9),
+      makeToken(TokenKind.Identifier, "T", 10, 11, undefined, " "),
+      makeToken(TokenKind.RightParen, ")", 11, 12),
+      makeToken(TokenKind.Newline, "\n", 12, 13),
+      makeToken(TokenKind.Eof, "", 13, 13),
+    ];
+    const context = makeContext(tokens);
+    const node = parseEnumCase(context);
+
+    expect(node).toBeDefined();
+    expect(node!.kind).toBe(SyntaxKind.EnumCase);
+    expect(node!.children.map((child) => child.kind)).toEqual([
+      SyntaxKind.IdentifierToken,
+      SyntaxKind.ParameterList,
+      SyntaxKind.NewlineToken,
+    ]);
+    expect(node!.reconstruct()).toBe("ok(value: T)\n");
     expect(context.draftDiagnostics()).toHaveLength(0);
   });
 

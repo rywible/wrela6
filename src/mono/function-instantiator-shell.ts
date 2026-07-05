@@ -55,6 +55,7 @@ import {
   type MonoSubstitution,
 } from "./substitution";
 import { monoTypeAncestry, recursiveFieldKindProvider } from "./type-instantiator";
+import { firstHirOriginId } from "./required-origin";
 export interface InstantiateMonoFunctionShellInput {
   readonly program: TypedHirProgram;
   readonly key: {
@@ -674,6 +675,6 @@ export function createNormalizationContext(program: TypedHirProgram): MonoTypeNo
   return {
     targetTypeKinds: program.monoClosure.targetTypeKinds,
     constructorKindRules: program.monoClosure.constructorKindRules,
-    sourceOrigin: program.origins.originRecords()[0]?.originId ?? (0 as never),
+    sourceOrigin: firstHirOriginId(program),
   };
 }

@@ -13,7 +13,7 @@ import {
   type AArch64OpcodeOperandSchema,
 } from "./opcode-catalog";
 import { type AArch64InstructionOperand, type AArch64InstructionOperandRole } from "./operands";
-import { aarch64ResourceStableKey } from "./resources";
+import { aarch64ResourceStableKey, type AArch64MachineResource } from "./resources";
 import type { AArch64ProvenanceOrigin } from "./provenance";
 import { defaultAArch64ScheduleMetadata, type AArch64ScheduleMetadata } from "./schedule";
 import type { AArch64MemoryOrderingMetadata } from "./memory-order";
@@ -419,7 +419,7 @@ function validateImplicitResources(
   operands: readonly AArch64InstructionOperand[],
   expectedResources: readonly {
     readonly role: Extract<AArch64InstructionOperandRole, "implicitDef" | "implicitUse">;
-    readonly resource: { readonly kind: string };
+    readonly resource: AArch64MachineResource;
   }[],
 ): void {
   const present = new Set(
@@ -428,7 +428,7 @@ function validateImplicitResources(
       .map((operand) => `${operand.role}:${aarch64ResourceStableKey(operand.operand.resource)}`),
   );
   for (const expected of expectedResources) {
-    const key = `${expected.role}:${aarch64ResourceStableKey(expected.resource as never)}`;
+    const key = `${expected.role}:${aarch64ResourceStableKey(expected.resource)}`;
     if (!present.has(key)) {
       throw new RangeError(`Instruction is missing implicit resource ${key}.`);
     }

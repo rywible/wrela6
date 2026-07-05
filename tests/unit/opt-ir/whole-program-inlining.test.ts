@@ -18,6 +18,10 @@ import {
   optIrExpansionFuel,
 } from "../../../src/opt-ir/policy/expansion-budget";
 import {
+  createOptIrFreshIdAllocator,
+  type OptIrFreshIdAllocator,
+} from "../../../src/opt-ir/id-allocation";
+import {
   optIrFunctionTable,
   optIrProgram,
   optIrRegionTable,
@@ -33,11 +37,14 @@ import {
   type OptIrOperation,
 } from "../../../src/opt-ir/operations";
 import {
-  runWholeProgramInliningForTest,
+  runWholeProgramInliningForTest as runWholeProgramInliningRawForTest,
   type OptIrWholeProgramInliningWorkItem,
+  type RunWholeProgramInliningInput,
   type RunWholeProgramInliningResult,
 } from "../../../src/opt-ir/passes/whole-program-inlining";
 import { emptyOptIrFactSet } from "../../../src/opt-ir/facts/fact-index";
+import { OptIrDiagnosticSink } from "../../../src/opt-ir/diagnostics";
+import { runWholeProgramInliningStep } from "../../../src/opt-ir/passes/pipeline-steps";
 import { verifyPipelineState } from "../../../src/opt-ir/passes/pipeline-state";
 import { optIrConstantTable } from "../../../src/opt-ir/program";
 import { optIrSignedIntegerType } from "../../../src/opt-ir/types";
@@ -107,6 +114,123 @@ describe("budgeted whole-program inlining", () => {
       workItem("specialization", 1, "inline:caller=1:callee=2:site=10"),
     ]);
     expect(result.remainingImageBudget.amount).toBe(9);
+  });
+
+  test("uses the supplied canonical allocator when cloning inline bodies", () => {
+    const call = sourceCall(10, "small.callee", [1], [20]);
+    const add = addOperation(30, 40, 100, 2);
+    const program = programForTest([
+      functionWithOperations({ functionId: 1, instance: "caller", operations: [call.operationId] }),
+      functionWithOperations({
+        functionId: 2,
+        instance: "small.callee",
+        parameters: [optIrValueId(100)],
+        operations: [add.operationId],
+        terminatorValues: [optIrValueId(40)],
+      }),
+    ]);
+
+    const result = runWholeProgramInliningForTest({
+      program,
+      operations: [call, add],
+      budget: budgetForTest(10),
+      freshIds: fixedFreshIds({
+        blockIds: [501, 502],
+        edgeIds: [601, 602],
+        operationIds: [701, 702, 703],
+        valueIds: [801],
+      }),
+    });
+
+    expect(result.operations).toContainEqual(
+      expect.objectContaining({
+        operationId: optIrOperationId(701),
+        resultIds: [optIrValueId(801)],
+      }),
+    );
+    const callerFunction = result.program.functions.get(optIrFunctionId(1));
+    expect(callerFunction?.blocks.map((block) => block.blockId)).toEqual([
+      optIrBlockId(1),
+      optIrBlockId(502),
+      optIrBlockId(501),
+    ]);
+    expect(callerFunction?.edges.entries().map((edge) => edge.edgeId)).toEqual([
+      optIrEdgeId(601),
+      optIrEdgeId(602),
+    ]);
+  });
+
+  test("production whole-program inlining step uses the pass context allocator", () => {
+    const call = sourceCall(10, "small.callee", [1], [20]);
+    const add = addOperation(30, 40, 100, 2);
+    const program = programForTest([
+      functionWithOperations({ functionId: 1, instance: "caller", operations: [call.operationId] }),
+      functionWithOperations({
+        functionId: 2,
+        instance: "small.callee",
+        parameters: [optIrValueId(100)],
+        operations: [add.operationId],
+        terminatorValues: [optIrValueId(40)],
+      }),
+    ]);
+
+    const result = runWholeProgramInliningStep(
+      {
+        program,
+        operations: [call, add],
+        optimizationRegions: [],
+        facts: emptyOptIrFactSet(),
+        diagnostics: [],
+        decisionLog: undefined,
+        verificationCheckpoints: [],
+      },
+      {
+        passName: "whole-program-inlining",
+        verifierMode: "strict",
+        diagnostics: new OptIrDiagnosticSink(),
+        freshIds: fixedFreshIds({
+          blockIds: [511, 512],
+          edgeIds: [611, 612],
+          operationIds: [711, 712, 713],
+          valueIds: [811],
+        }),
+      },
+    );
+
+    expect(result.operations).toContainEqual(
+      expect.objectContaining({
+        operationId: optIrOperationId(711),
+        resultIds: [optIrValueId(811)],
+      }),
+    );
+  });
+
+  test("denies return binding when callee return arity does not match call results", () => {
+    const call = sourceCall(10, "bad.return.arity", [1], [20, 21]);
+    const add = addOperation(30, 40, 100, 2);
+    const program = programForTest([
+      functionWithOperations({ functionId: 1, instance: "caller", operations: [call.operationId] }),
+      functionWithOperations({
+        functionId: 2,
+        instance: "bad.return.arity",
+        parameters: [optIrValueId(100)],
+        operations: [add.operationId],
+        terminatorValues: [optIrValueId(40)],
+      }),
+    ]);
+
+    const result = runWholeProgramInliningForTest({
+      program,
+      operations: [call, add],
+      budget: budgetForTest(10),
+    });
+
+    expect(result.program).toBe(program);
+    expect(result.operations).toEqual([call, add]);
+    expect(result.decisionLog.entries()[0]).toMatchObject({
+      policyResult: "denied",
+      stableReason: "inline:denied:rewrite-legality",
+    });
   });
 
   test("keeps ABI roots, recursive SCC calls, escaped callable identity, and hard effect boundaries", () => {
@@ -455,6 +579,19 @@ function workItem(
   return { kind, functionId: optIrFunctionId(functionIdValue), reason };
 }
 
+function runWholeProgramInliningForTest(
+  input: Omit<RunWholeProgramInliningInput, "freshIds"> & {
+    readonly freshIds?: OptIrFreshIdAllocator;
+  },
+): RunWholeProgramInliningResult {
+  return runWholeProgramInliningRawForTest({
+    ...input,
+    freshIds:
+      input.freshIds ??
+      createOptIrFreshIdAllocator({ program: input.program, operations: input.operations }),
+  });
+}
+
 function verifyResult(result: RunWholeProgramInliningResult): readonly string[] {
   const verified = verifyPipelineState(
     {
@@ -578,5 +715,39 @@ function signatureForTest(identifier: number): MonoFunctionSignature {
       isPrivate: false,
     },
     sourceSpan: SourceSpan.from(0, 0),
+  };
+}
+
+function fixedFreshIds(input: {
+  readonly functionIds?: readonly number[];
+  readonly blockIds?: readonly number[];
+  readonly edgeIds?: readonly number[];
+  readonly operationIds?: readonly number[];
+  readonly valueIds?: readonly number[];
+  readonly regionIds?: readonly number[];
+}): OptIrFreshIdAllocator {
+  return {
+    functionId: nextId(input.functionIds ?? [], optIrFunctionId, "function"),
+    blockId: nextId(input.blockIds ?? [], optIrBlockId, "block"),
+    edgeId: nextId(input.edgeIds ?? [], optIrEdgeId, "edge"),
+    operationId: nextId(input.operationIds ?? [], optIrOperationId, "operation"),
+    valueId: nextId(input.valueIds ?? [], optIrValueId, "value"),
+    regionId: nextId(input.regionIds ?? [], optIrRegionId, "region"),
+  };
+}
+
+function nextId<Identifier>(
+  values: readonly number[],
+  convert: (value: number) => Identifier,
+  label: string,
+): () => Identifier {
+  let index = 0;
+  return () => {
+    const value = values[index];
+    if (value === undefined) {
+      throw new Error(`fixed allocator exhausted:${label}:${index}`);
+    }
+    index += 1;
+    return convert(value);
   };
 }

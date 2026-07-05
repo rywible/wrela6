@@ -33,11 +33,7 @@ import {
   optIrVectorStoreOperation,
   type OptIrOperation,
 } from "../../../../../src/opt-ir/operations";
-import {
-  optIrFunctionTable,
-  optIrRegionTable,
-  type OptIrProgram,
-} from "../../../../../src/opt-ir/program";
+import { optIrFunctionTable, optIrRegionTable } from "../../../../../src/opt-ir/program";
 import type { OptIrRegion } from "../../../../../src/opt-ir/regions";
 import { optIrUnsignedIntegerType, type OptIrType } from "../../../../../src/opt-ir/types";
 import { optIrBlockParameter } from "../../../../../src/opt-ir/values";
@@ -142,6 +138,7 @@ export function optimizedOptIrProgramWithOneFunctionForAArch64Test() {
   return {
     program,
     operations,
+    optimizationRegions: Object.freeze([]),
     operationIds: operations.map((operation) => Number(operation.operationId)),
   };
 }
@@ -275,6 +272,7 @@ export function optimizedOptIrProgramWithEntryParameterForAArch64Test() {
   return {
     program: optIrProgramForTest({ functions: optIrFunctionTable([sourceFunction]) }),
     operations: [constant, sum],
+    optimizationRegions: Object.freeze([]),
   };
 }
 
@@ -314,6 +312,7 @@ export function optimizedOptIrProgramWithNineEntryParametersForAArch64Test() {
   return {
     program: optIrProgramForTest({ functions: optIrFunctionTable([sourceFunction]) }),
     operations: [],
+    optimizationRegions: Object.freeze([]),
   };
 }
 
@@ -552,6 +551,7 @@ export function optimizedOptIrProgramWithVectorStoreForAArch64Test(
       functions: optIrFunctionTable([sourceFunction]),
     }),
     operations: [store],
+    optimizationRegions: Object.freeze([]),
     operationIds: [Number(store.operationId)],
   };
 }
@@ -1076,8 +1076,9 @@ function programWithSingleBlockOperations(
     ),
   });
   return {
-    program: programWithOptimizationRegions(program, optimizationRegions),
+    program,
     operations,
+    optimizationRegions: Object.freeze([...optimizationRegions]),
   };
 }
 
@@ -1093,18 +1094,6 @@ function memoryRegionIdsForOperations(
     }
   }
   return [...regionIds].sort((left, right) => Number(left) - Number(right));
-}
-
-function programWithOptimizationRegions(
-  program: OptIrProgram,
-  optimizationRegions: readonly OptIrRegion[],
-): OptIrProgram & { readonly optimizationRegions?: readonly OptIrRegion[] } {
-  return optimizationRegions.length === 0
-    ? program
-    : {
-        ...program,
-        optimizationRegions: Object.freeze([...optimizationRegions]),
-      };
 }
 
 function optIrOptimizationRegionForAArch64Test(input: {

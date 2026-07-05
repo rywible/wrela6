@@ -51,7 +51,13 @@ export interface SourceItemRecord {
 
 export type ItemRecord = SourceItemRecord;
 
-export type FieldRole = "field" | "imageDevice" | "validatedParam" | "layoutField" | "derivedField";
+export type FieldRole =
+  | "field"
+  | "enumPayload"
+  | "imageDevice"
+  | "validatedParam"
+  | "layoutField"
+  | "derivedField";
 
 export type ValidatedBufferSection = "params" | "layout" | "derive";
 

@@ -40,6 +40,7 @@ import type {
   TypeRecord,
   ValidatedBufferSection,
 } from "./item-records";
+import { collectEnumCases } from "./source-enum-case-collector";
 import type { SourceCollectionResult, SourceDeclarationWorkItem } from "./source-module-collector";
 
 export interface SourceMemberCollectionContext {
@@ -337,25 +338,7 @@ function collectEnumDeclaration(
   source: HasTypeParameters & HasMemberFunctions & HasEnumCases,
 ): void {
   collectItemTypeParameters(context, item, source.typeParameters());
-
-  for (const enumCase of source.enumCases()) {
-    const caseName = enumCase.nameText();
-    const caseNameSpan = enumCase.nameSpan();
-    if (caseName === undefined || caseNameSpan === undefined) continue;
-
-    addItem(context, {
-      id: itemId(context.items.length),
-      kind: "enumCase",
-      moduleId: item.moduleId,
-      parentItemId: item.id,
-      name: caseName,
-      modifiers: [],
-      nameSpan: caseNameSpan,
-      span: enumCase.span,
-      declaration: enumCase,
-    });
-  }
-
+  collectEnumCases(context, item, source);
   collectMemberFunctions(context, item, source.memberFunctions());
 }
 

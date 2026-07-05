@@ -63,7 +63,9 @@ test("W1-10b still infers contracts for canonical wrela_std.core contract types"
     [
       "wrela_std/core.wr",
       [
-        "class Result[Ok, Err]:",
+        "enum Result[Ok, Err]:",
+        "    ok(value: Ok)",
+        "    err(error: Err)",
         "class Validation[Ok, Err, Source]:",
         "class Attempt[Ok, Err, Input]:",
         "class RawBuffer:",

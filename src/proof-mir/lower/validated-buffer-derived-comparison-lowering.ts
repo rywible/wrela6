@@ -31,24 +31,29 @@ import type { RecordedProofMirStatement } from "./validated-buffer-read-statemen
 
 type DerivedComparisonCandidate = {
   readonly memberExpression: MonoExpression;
-  readonly literalExpression: MonoExpression;
+  readonly valueExpression: MonoExpression;
 };
 
-function integerLiteralValue(expression: MonoExpression): bigint | undefined {
-  return expression.kind.kind === "literal" && expression.kind.literal.kind === "integer"
-    ? expression.kind.literal.value
-    : undefined;
+function scalarComparisonValue(expression: MonoExpression): bigint | undefined {
+  switch (expression.kind.kind) {
+    case "literal":
+      return expression.kind.literal.kind === "integer" ? expression.kind.literal.value : undefined;
+    case "enumConstructor":
+      return BigInt(expression.kind.constructor.caseOrdinal);
+    default:
+      return undefined;
+  }
 }
 
 function comparisonCandidate(expression: MonoExpression): DerivedComparisonCandidate | undefined {
   if (expression.kind.kind !== "comparison") return undefined;
   const left = expression.kind.left;
   const right = expression.kind.right;
-  if (left.kind.kind === "member" && integerLiteralValue(right) !== undefined) {
-    return { memberExpression: left, literalExpression: right };
+  if (left.kind.kind === "member" && scalarComparisonValue(right) !== undefined) {
+    return { memberExpression: left, valueExpression: right };
   }
-  if (right.kind.kind === "member" && integerLiteralValue(left) !== undefined) {
-    return { memberExpression: right, literalExpression: left };
+  if (right.kind.kind === "member" && scalarComparisonValue(left) !== undefined) {
+    return { memberExpression: right, valueExpression: left };
   }
   return undefined;
 }
@@ -149,7 +154,7 @@ export function lowerDerivedFieldComparison(input: {
   const derivedField = findDerivedField(actualLayoutBuffer, readKind.fieldId);
   const sourceFieldId =
     derivedField === undefined ? undefined : sourceLayoutFieldId(derivedField.source);
-  const comparedValue = integerLiteralValue(candidate.literalExpression);
+  const comparedValue = scalarComparisonValue(candidate.valueExpression);
   const matchingCase = derivedField?.cases.find(
     (entry) =>
       entry.condition.kind === "equals" &&

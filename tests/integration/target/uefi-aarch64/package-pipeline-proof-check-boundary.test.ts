@@ -15,6 +15,7 @@ import {
   uefiCompilePackageInputFixture,
   uefiTargetSurfaceFixture,
 } from "../../../support/target/uefi-aarch64/uefi-aarch64-fixtures";
+import { unsafePackagePipelineAdapter } from "./package-pipeline-support";
 
 describe("UEFI package pipeline proof-check boundary", () => {
   test("proof-check pipeline boundary does not build OptIR", () => {
@@ -88,7 +89,3 @@ describe("UEFI package pipeline proof-check boundary", () => {
     expect("optIr" in result.value).toBe(false);
   });
 });
-
-function unsafePackagePipelineAdapter<Adapter>(value: unknown): Adapter {
-  return Object.freeze(value as object) as Adapter;
-}

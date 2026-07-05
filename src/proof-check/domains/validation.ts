@@ -884,7 +884,7 @@ export function checkValidationExitClosure(
   return okValidationTransfer();
 }
 
-export function applyValidationPatchesForTest(
+export function applyValidationPatches(
   state: ProofCheckState,
   patches: readonly ProofCheckStatePatchEntry[],
 ): ProofCheckState {
@@ -977,7 +977,7 @@ export function validationTransferChain(
     if (result.armStates !== undefined) {
       armStates = result.armStates;
     }
-    currentState = applyValidationPatchesForTest(currentState, result.patches);
+    currentState = applyValidationPatches(currentState, result.patches);
   }
 
   return okValidationTransfer(allPatches, {

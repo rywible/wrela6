@@ -140,6 +140,7 @@ export const HIR_EXPRESSION_KINDS = [
   "name",
   "member",
   "object",
+  "enumConstructor",
   "call",
   "attempt",
   "validationCreation",
@@ -199,6 +200,21 @@ export interface HirObjectField {
   readonly sourceOrigin: HirOriginId;
 }
 
+export interface HirEnumPayloadFieldBinding {
+  readonly fieldId: FieldId;
+  readonly name: string;
+  readonly value: HirExpression;
+  readonly sourceOrigin: HirOriginId;
+}
+
+export interface HirEnumConstructorExpression {
+  readonly enumTypeId: TypeId;
+  readonly caseItemId: ItemId;
+  readonly caseName: string;
+  readonly caseOrdinal: number;
+  readonly payloadFields: readonly HirEnumPayloadFieldBinding[];
+}
+
 export type HirExpressionKind =
   | { readonly kind: "literal"; readonly literal: HirLiteralValue }
   | {
@@ -219,6 +235,7 @@ export type HirExpressionKind =
       readonly typeId?: TypeId;
       readonly fields: readonly HirObjectField[];
     }
+  | { readonly kind: "enumConstructor"; readonly constructor: HirEnumConstructorExpression }
   | { readonly kind: "call"; readonly call: HirCallExpression }
   | { readonly kind: "attempt"; readonly attempt: HirAttempt }
   | { readonly kind: "validationCreation"; readonly validation: HirValidation }
@@ -395,6 +412,7 @@ export type HirForIteration =
   | { readonly kind: "error" };
 
 export type HirRequirementOwner =
+  | { readonly kind: "program" }
   | { readonly kind: "function"; readonly functionId: FunctionId }
   | { readonly kind: "type"; readonly typeId: TypeId };
 
@@ -729,6 +747,7 @@ export interface HirEnumCaseRecord {
   readonly caseItemId: ItemId;
   readonly name: string;
   readonly ordinal: number;
+  readonly payloadFieldIds: readonly FieldId[];
   readonly sourceOrigin: HirOriginId;
 }
 

@@ -146,6 +146,16 @@ function attributesKey(operation: OptIrOperation): string {
     case "aggregateExtract":
     case "aggregateInsert":
       return `field:${operation.fieldPath.join(".")}`;
+    case "enumTagStore":
+    case "enumPayloadStore":
+    case "enumTagLoad":
+    case "enumPayloadLoad":
+      return [
+        `enum:${operation.enumCase.enumTypeKey}`,
+        `case:${operation.enumCase.caseName}`,
+        `tag:${operation.enumCase.tagValue}`,
+        `field:${operation.enumCase.payloadFieldName ?? "tag"}`,
+      ].join("|");
     case "memoryLoad":
     case "memoryStore":
     case "vectorLoad":

@@ -36,7 +36,7 @@ import {
 } from "../semantic/surface/proof-contracts";
 import type { HirBlock, HirMatchArm, HirStatement, HirStatementKind } from "./hir";
 import type { HirLoweringContext } from "./lowering-context";
-import { currentHirModuleId, hirDiagnostic } from "./lowering-context";
+import { currentHirModuleId, hirDiagnostic, hirOwnerKey } from "./lowering-context";
 import type { HirOriginId, HirStatementId } from "./ids";
 import { lowerExpression } from "./expression-lowerer";
 import { lowerTakeStatement, classifyForIteration } from "./take-lowerer";
@@ -155,9 +155,9 @@ function constructorPayloadType(input: {
   readonly scrutinee: import("./hir").HirExpression;
 }): CheckedType | undefined {
   if (input.scrutinee.type.kind !== "applied") return undefined;
-  const tag = constructorTag(input.pattern);
-  if (tag === "Ok") return input.scrutinee.type.arguments[0];
-  if (tag === "Err") return input.scrutinee.type.arguments[1];
+  const tag = constructorTag(input.pattern)?.toLowerCase();
+  if (tag === "ok") return input.scrutinee.type.arguments[0];
+  if (tag === "err") return input.scrutinee.type.arguments[1];
   return undefined;
 }
 
@@ -172,7 +172,7 @@ function reportUnsupportedPattern(input: {
       code: "HIR_UNSUPPORTED_PATTERN",
       message: "Pattern form is not supported by typed HIR local binding lowering.",
       originId: origin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${origin}`,
       stableDetail: patternText(input.pattern),
     }),
@@ -267,7 +267,7 @@ function reportBoolCondition(input: {
       code: "HIR_CONDITION_NOT_BOOL",
       message: "Condition expression must be bool.",
       originId: origin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${origin}`,
       stableDetail: "condition",
     }),
@@ -285,7 +285,7 @@ function reportMissingCondition(input: {
       code: "HIR_UNSUPPORTED_EXPRESSION",
       message: "Condition statement is missing an expression.",
       originId: origin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${origin}`,
       stableDetail: input.stableDetail,
     }),
@@ -391,7 +391,7 @@ function reportStatementTypeMismatch(input: {
       code: input.code,
       message: "Statement expression type does not match the checked function signature.",
       originId: origin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${origin}`,
       stableDetail: input.stableDetail,
     }),
@@ -497,7 +497,7 @@ export function lowerStatement(input: LowerStatementInput): HirStatement {
             code: "HIR_NON_PLACE_ASSIGNMENT_TARGET",
             message: "Assignment target is not a writable HIR resource place.",
             originId: origin,
-            ownerKey: `function:${context.ownerFunctionId ?? 0}`,
+            ownerKey: hirOwnerKey(context),
             originKey: `origin:${origin}`,
             stableDetail: "assignment-target",
           }),

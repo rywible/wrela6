@@ -172,19 +172,35 @@ export function privateGenerationForTest(
 export function privatePredicateFactForTest(
   predicateKey: string,
   generationKey: string,
+  options: {
+    readonly placeKey?: string;
+    readonly argumentKeys?: readonly string[];
+  } = {},
 ): CheckedActiveFact {
+  const argumentKeys = options.argumentKeys ?? [];
+  const factKey =
+    argumentKeys.length === 0 ? predicateKey : `${predicateKey}(${argumentKeys.join(",")})`;
   return {
-    factKey: predicateKey,
-    termKey: `${predicateKey}@${generationKey}`,
+    factKey,
+    termKey: `${factKey}@${generationKey}`,
+    predicateKey,
+    ...(options.placeKey !== undefined ? { placeKey: options.placeKey } : {}),
+    ...(argumentKeys.length > 0 ? { argumentKeys } : {}),
   };
 }
 
 export function privatePredicateRequirementForTest(
   predicateKey: string,
   generation: "current" | string,
+  options: {
+    readonly placeKey?: string;
+    readonly argumentKeys?: readonly string[];
+  } = {},
 ): ProofCheckPrivatePredicateRequirement {
   return {
     predicateKey,
+    ...(options.placeKey !== undefined ? { placeKey: options.placeKey } : {}),
+    ...(options.argumentKeys !== undefined ? { argumentKeys: options.argumentKeys } : {}),
     generation,
   };
 }

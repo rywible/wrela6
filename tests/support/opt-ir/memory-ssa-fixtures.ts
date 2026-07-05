@@ -5,6 +5,7 @@ import { buildOptIrRegionsForTest } from "../../../src/opt-ir/lower/region-build
 import {
   optIrBlockId,
   optIrCallId,
+  optIrEdgeId,
   optIrFactId,
   optIrFunctionId,
   optIrOperationId,
@@ -20,7 +21,8 @@ import {
   optIrRuntimeCallOperation,
 } from "../../../src/opt-ir/operations";
 import { optIrUnsignedIntegerType, optIrUnitType } from "../../../src/opt-ir/types";
-import { optIrBlockForTest, optIrFunctionForTest } from "./cfg-fakes";
+import { optIrCfgEdgeTable } from "../../../src/opt-ir/cfg";
+import { edgeForTest, optIrBlockForTest, optIrFunctionForTest } from "./cfg-fakes";
 import { optIrFunctionTable, optIrProgram } from "../../../src/opt-ir/program";
 import type { OptIrMemorySsaBuildInput } from "../../../src/opt-ir/analyses/memory-ssa";
 
@@ -104,6 +106,159 @@ export function outOfOrderOperationIdStoresFixtureForTest(): OptIrMemorySsaBuild
   );
   return {
     ...inputFor([firstInBlock, secondInBlock], regions.entries()),
+    namedRegions: { stack },
+  };
+}
+
+export function cfgOrderedStoreLoadFixtureForTest(): OptIrMemorySsaBuildInput & {
+  readonly namedRegions: { readonly stack: OptIrRegion };
+} {
+  const regions = buildOptIrRegionsForTest({ stackLocals: [{ key: "slot" }] });
+  const stack = requiredRegion(regions.lookup("stackLocal", "slot")?.region);
+  const storeOperation = requiredOperation(
+    optIrMemoryStoreOperation({
+      operationId: optIrOperationId(1),
+      storeValue: optIrValueId(10),
+      region: stack.regionId,
+      byteOffset: 0n,
+      byteWidth: 1,
+      alignment: 1,
+      valueType: byteType,
+      endian: "native",
+      volatility: stack.volatility,
+      boundsAuthority: { kind: "targetContract", authorityKey: "stack.slot" },
+      originId,
+    }),
+  );
+  const loadOperation = requiredOperation(
+    optIrMemoryLoadOperation({
+      operationId: optIrOperationId(2),
+      resultId: optIrValueId(20),
+      region: stack.regionId,
+      byteOffset: 0n,
+      byteWidth: 1,
+      alignment: 1,
+      valueType: byteType,
+      endian: "native",
+      volatility: stack.volatility,
+      boundsAuthority: { kind: "targetContract", authorityKey: "stack.slot" },
+      originId,
+    }),
+  );
+  const edgeId = optIrEdgeId(1);
+  const entryBlock = optIrBlockForTest({
+    blockId: optIrBlockId(10),
+    parameters: [],
+    operations: [storeOperation.operationId],
+    terminator: { kind: "jump", operationId: optIrOperationId(90), edge: edgeId, originId },
+    originId,
+  });
+  const successorBlock = optIrBlockForTest({
+    blockId: optIrBlockId(1),
+    parameters: [],
+    operations: [loadOperation.operationId],
+    terminator: { kind: "return", operationId: optIrOperationId(91), values: [], originId },
+    originId,
+  });
+  return {
+    ...inputForBlocks({
+      blocks: [entryBlock, successorBlock],
+      edges: [edgeForTest({ edgeId, from: entryBlock.blockId, toBlock: successorBlock.blockId })],
+      entryBlock: entryBlock.blockId,
+      operations: [storeOperation, loadOperation],
+      regions: regions.entries(),
+    }),
+    namedRegions: { stack },
+  };
+}
+
+export function joinWithPartialStoreFixtureForTest(): OptIrMemorySsaBuildInput & {
+  readonly namedRegions: { readonly stack: OptIrRegion };
+} {
+  const regions = buildOptIrRegionsForTest({ stackLocals: [{ key: "slot" }] });
+  const stack = requiredRegion(regions.lookup("stackLocal", "slot")?.region);
+  const storeOperation = requiredOperation(
+    optIrMemoryStoreOperation({
+      operationId: optIrOperationId(1),
+      storeValue: optIrValueId(10),
+      region: stack.regionId,
+      byteOffset: 0n,
+      byteWidth: 1,
+      alignment: 1,
+      valueType: byteType,
+      endian: "native",
+      volatility: stack.volatility,
+      boundsAuthority: { kind: "targetContract", authorityKey: "stack.slot" },
+      originId,
+    }),
+  );
+  const loadOperation = requiredOperation(
+    optIrMemoryLoadOperation({
+      operationId: optIrOperationId(2),
+      resultId: optIrValueId(20),
+      region: stack.regionId,
+      byteOffset: 0n,
+      byteWidth: 1,
+      alignment: 1,
+      valueType: byteType,
+      endian: "native",
+      volatility: stack.volatility,
+      boundsAuthority: { kind: "targetContract", authorityKey: "stack.slot" },
+      originId,
+    }),
+  );
+  const trueEdge = optIrEdgeId(1);
+  const falseEdge = optIrEdgeId(2);
+  const thenJoinEdge = optIrEdgeId(3);
+  const elseJoinEdge = optIrEdgeId(4);
+  const entryBlock = optIrBlockForTest({
+    blockId: optIrBlockId(10),
+    parameters: [],
+    operations: [],
+    terminator: {
+      kind: "branch",
+      operationId: optIrOperationId(90),
+      condition: optIrValueId(99),
+      trueEdge,
+      falseEdge,
+      originId,
+    },
+    originId,
+  });
+  const thenBlock = optIrBlockForTest({
+    blockId: optIrBlockId(20),
+    parameters: [],
+    operations: [storeOperation.operationId],
+    terminator: { kind: "jump", operationId: optIrOperationId(91), edge: thenJoinEdge, originId },
+    originId,
+  });
+  const elseBlock = optIrBlockForTest({
+    blockId: optIrBlockId(30),
+    parameters: [],
+    operations: [],
+    terminator: { kind: "jump", operationId: optIrOperationId(92), edge: elseJoinEdge, originId },
+    originId,
+  });
+  const joinBlock = optIrBlockForTest({
+    blockId: optIrBlockId(40),
+    parameters: [],
+    operations: [loadOperation.operationId],
+    terminator: { kind: "return", operationId: optIrOperationId(93), values: [], originId },
+    originId,
+  });
+  return {
+    ...inputForBlocks({
+      blocks: [entryBlock, thenBlock, elseBlock, joinBlock],
+      edges: [
+        edgeForTest({ edgeId: trueEdge, from: entryBlock.blockId, toBlock: thenBlock.blockId }),
+        edgeForTest({ edgeId: falseEdge, from: entryBlock.blockId, toBlock: elseBlock.blockId }),
+        edgeForTest({ edgeId: thenJoinEdge, from: thenBlock.blockId, toBlock: joinBlock.blockId }),
+        edgeForTest({ edgeId: elseJoinEdge, from: elseBlock.blockId, toBlock: joinBlock.blockId }),
+      ],
+      entryBlock: entryBlock.blockId,
+      operations: [storeOperation, loadOperation],
+      regions: regions.entries(),
+    }),
     namedRegions: { stack },
   };
 }
@@ -267,6 +422,44 @@ function inputFor(
       operations.find((operation) => operation.operationId === operationId),
     loweredCallHeaderForId: (callId) =>
       loweredCallHeaders.find((header) => header.callId === callId),
+  };
+}
+
+function inputForBlocks(input: {
+  readonly blocks: readonly ReturnType<typeof optIrBlockForTest>[];
+  readonly edges: readonly ReturnType<typeof edgeForTest>[];
+  readonly entryBlock: ReturnType<typeof optIrBlockId>;
+  readonly operations: readonly OptIrOperation[];
+  readonly regions: readonly OptIrRegion[];
+}): OptIrMemorySsaBuildInput {
+  const func = optIrFunctionForTest({
+    functionId: optIrFunctionId(1),
+    monoInstanceId: monoInstanceId("memory::cfg-fixture"),
+    blocks: input.blocks,
+    edges: optIrCfgEdgeTable(input.edges),
+    entryBlock: input.entryBlock,
+    originId,
+  });
+  return {
+    program: optIrProgram({
+      programId: optIrProgramId(1),
+      targetId: targetId("memory-ssa-test"),
+      functions: optIrFunctionTable([func]),
+      regions: {
+        get: (regionId) =>
+          input.regions.find((region) => region.regionId === regionId) === undefined
+            ? undefined
+            : { regionId, originId },
+        has: (regionId) => input.regions.some((region) => region.regionId === regionId),
+        entries: () => input.regions.map((region) => ({ regionId: region.regionId, originId })),
+      },
+      constants: { get: () => undefined, has: () => false, entries: () => [] },
+      callGraph: { calls: [] },
+      provenance: { originIds: [originId] },
+    }),
+    regions: input.regions,
+    operationForId: (operationId) =>
+      input.operations.find((operation) => operation.operationId === operationId),
   };
 }
 

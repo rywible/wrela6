@@ -1,0 +1,9 @@
+{
+  "sourceSection": "Unique Edge Roots And Edge Paths",
+  "stage": "parse",
+  "diagnostics": [
+    {
+      "code": "LEX_MALFORMED_INTEGER"
+    }
+  ]
+}

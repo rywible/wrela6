@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
+import { optIrIntegerConstant } from "../../../src/opt-ir/constants";
+import {
+  optIrConstantId,
+  optIrOperationId,
+  optIrOriginId,
+  optIrValueId,
+} from "../../../src/opt-ir/ids";
+import { buildConstructionOperationTable } from "../../../src/opt-ir/lower/construction-pipeline";
+import { optIrConstantOperation } from "../../../src/opt-ir/operations";
 import { constructOptIr } from "../../../src/opt-ir/public-api";
+import { optIrUnsignedIntegerType } from "../../../src/opt-ir/types";
 import {
   constructOptIrInputWithMissingAuthorityForTest,
   constructOptIrInputWithUnsupportedOperationForTest,
@@ -80,4 +90,32 @@ describe("OptIR construction orchestration", () => {
       "construction-cleanup",
     ]);
   });
+
+  test("construction operation tables reject duplicate operation IDs before verifier input", () => {
+    const result = buildConstructionOperationTable([
+      constantOperation(1, 10, 1n),
+      constantOperation(1, 11, 2n),
+    ]);
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") {
+      throw new Error("Expected duplicate operation IDs to fail.");
+    }
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual([
+      "operation-table:duplicate-operation-id:1",
+    ]);
+  });
 });
+
+function constantOperation(operationId: number, resultId: number, value: bigint) {
+  return optIrConstantOperation({
+    operationId: optIrOperationId(operationId),
+    resultId: optIrValueId(resultId),
+    constant: optIrIntegerConstant({
+      constantId: optIrConstantId(operationId),
+      type: optIrUnsignedIntegerType(8),
+      normalizedValue: value,
+    }),
+    originId: optIrOriginId(1),
+  });
+}

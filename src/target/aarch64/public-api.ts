@@ -2,6 +2,7 @@ import type { OptIrFactSet } from "../../opt-ir/facts/fact-index";
 import type { OptIrConstantId, OptIrOperationId } from "../../opt-ir/ids";
 import type { OptIrOperation } from "../../opt-ir/operations";
 import type { OptIrProgram } from "../../opt-ir/program";
+import type { OptIrRegion } from "../../opt-ir/regions";
 import type { AArch64LoweringDiagnostic } from "./machine-ir/diagnostics";
 import type { AArch64MachineProgram } from "./machine-ir/machine-program";
 import type { AArch64ProvenanceMap } from "./machine-ir/provenance";
@@ -25,6 +26,7 @@ export type {
 export interface LowerOptIrToAArch64Input {
   readonly program: OptIrProgram;
   readonly operations?: ReadonlyMap<OptIrOperationId, OptIrOperation> | readonly OptIrOperation[];
+  readonly optimizationRegions?: readonly OptIrRegion[];
   readonly facts: OptIrFactSet;
   readonly target: AArch64TargetSurface;
   readonly options?: AArch64LoweringOptions;

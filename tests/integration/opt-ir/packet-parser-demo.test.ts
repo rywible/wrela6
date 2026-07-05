@@ -21,9 +21,7 @@ describe("OptIR packet parser demonstration", () => {
     }
 
     expect(hasNoProofOrValidationWrappersForTest(result.operations)).toBe(true);
-    expect(result.program.operations?.map((operation) => operation.operationId)).toEqual(
-      result.operations.map((operation) => operation.operationId),
-    );
+    expect("operations" in result.program).toBe(false);
     const blockOperationIds = new Set(
       result.program.functions
         .entries()

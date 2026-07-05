@@ -14,7 +14,7 @@ import type {
   DraftProofMirStatementKind,
 } from "../draft/draft-statement";
 import { type ProofMirPlaceId, type ProofMirValueId } from "../ids";
-import type { ProofMirDraftOperand, ProofMirDraftPlaceOperand } from "./lowering-operands";
+import { type ProofMirDraftOperand, type ProofMirDraftPlaceOperand } from "./lowering-operands";
 import {
   type ProofMirCallLowerer,
   type ProofMirExpressionLoweringInput,
@@ -23,7 +23,6 @@ import {
   type ProofMirValidatedBufferReadLowerer,
 } from "./lowering-context";
 import { syncLoweredPlaceToFunctionDraft } from "./lowering-place-sync";
-import { shouldLowerMemberAsValidatedBufferRead } from "../domains/validated-buffer-read-detection";
 import {
   lowerObjectAsPlace as lowerObjectExpressionAsPlace,
   lowerObjectAsValue as lowerObjectExpressionAsValue,
@@ -32,6 +31,8 @@ import {
   isShortCircuitLogicalExpression,
   lowerShortCircuitLogical,
 } from "./short-circuit-logical-lowerer";
+import { lowerProofMirEnumConstructorAsValue } from "./enum-constructor-lowerer";
+import { lowerProofMirMemberAsValue } from "./member-value-lowerer";
 
 export type { ProofMirLoweringResult };
 
@@ -421,48 +422,12 @@ function createExpressionLowererImpl(implInput: {
     loweringInput: ProofMirExpressionLoweringInput,
     expression: MonoExpression,
   ): ProofMirLoweringResult<ProofMirDraftOperand> {
-    const memberPlace = expression.kind.kind === "member" ? expression.kind.memberPlace : undefined;
-    if (
-      validatedBufferRead !== undefined &&
-      memberPlace !== undefined &&
-      shouldLowerMemberAsValidatedBufferRead({
-        program: loweringInput.context.program,
-        layout: loweringInput.context.layout,
-        memberPlace,
-      })
-    ) {
-      const validatedRead = validatedBufferRead.lowerValidatedBufferRead({
-        context: loweringInput.context,
-        expression,
-        blockKey: loweringInput.blockKey,
-      });
-      if (validatedRead.kind === "ok") {
-        return validatedRead;
-      }
-      return validatedRead;
-    }
-
-    const placeResult = lowerMemberAsPlace(loweringInput, expression);
-    if (placeResult.kind !== "ok") {
-      return placeResult;
-    }
-    if (memberPlace === undefined) {
-      return loweringError([
-        invalidValueResourceKindDiagnostic({
-          functionInstanceId: loweringInput.context.functionInstanceId,
-          stableDetail: "member:missing-place",
-          sourceOrigin: expression.sourceOrigin,
-        }),
-      ]);
-    }
-    const placeKey = loweringInput.context.effects.placeFromMono({
-      monoPlace: memberPlace,
-      originKey: originForExpression(loweringInput.context, expression),
-    });
-    return emitLoad({
+    return lowerProofMirMemberAsValue({
       loweringInput,
       expression,
-      placeKey,
+      validatedBufferRead,
+      lowerMemberAsPlace,
+      emitLoad,
     });
   }
 
@@ -732,6 +697,18 @@ function createExpressionLowererImpl(implInput: {
     });
   }
 
+  function lowerEnumConstructorAsValue(
+    loweringInput: ProofMirExpressionLoweringInput,
+    expression: MonoExpression,
+  ): ProofMirLoweringResult<ProofMirDraftOperand> {
+    return lowerProofMirEnumConstructorAsValue({
+      loweringInput,
+      expression,
+      lowerExpressionValue,
+      recordStatement,
+    });
+  }
+
   function lowerExpressionValue(input: {
     readonly loweringInput: ProofMirExpressionLoweringInput;
     readonly expression: MonoExpression;
@@ -760,6 +737,8 @@ function createExpressionLowererImpl(implInput: {
         return lowerMemberAsValue(loweringInput, expression);
       case "object":
         return lowerObjectAsValue(loweringInput, expression);
+      case "enumConstructor":
+        return lowerEnumConstructorAsValue(loweringInput, expression);
       case "unary":
         return lowerUnary(loweringInput, expression);
       case "binary":

@@ -1,5 +1,10 @@
 import type { MonoInstanceId } from "../../mono/ids";
-import type { MonoAttempt, MonoCheckedType, MonoExpression } from "../../mono/mono-hir";
+import type {
+  MonoAttempt,
+  MonoCheckedType,
+  MonoExpression,
+  MonoExpressionId,
+} from "../../mono/mono-hir";
 import { proofMetadataIdKey } from "../../mono/proof-metadata-tables";
 import { coreTypeId } from "../../semantic/ids";
 import type { ConcreteResourceKind } from "../../semantic/surface/resource-kind";
@@ -151,25 +156,27 @@ function placeKeyForAttemptOperand(input: {
 function draftAttemptOperandFromLowering(input: {
   readonly context: ProofMirLoweringContext;
   readonly operand: ProofMirDraftOperand;
+  readonly expressionId: MonoExpressionId;
   readonly originKey: ProofMirCanonicalKey;
 }): DraftProofMirAttemptOperand | undefined {
   const placeKey = placeKeyForAttemptOperand(input);
   if (placeKey === undefined) {
     return undefined;
   }
-  return { kind: "observe", placeKey };
+  return { kind: "observe", expressionId: input.expressionId, placeKey };
 }
 
 function draftAttemptAlternativeFromLowering(input: {
   readonly context: ProofMirLoweringContext;
   readonly operand: ProofMirDraftOperand;
+  readonly expressionId: MonoExpressionId;
   readonly originKey: ProofMirCanonicalKey;
 }): DraftProofMirAttemptAlternative | undefined {
   const placeKey = placeKeyForAttemptOperand(input);
   if (placeKey === undefined) {
     return undefined;
   }
-  return { kind: "value", placeKey };
+  return { kind: "value", expressionId: input.expressionId, placeKey };
 }
 
 function allocatePendingResultPlace(input: {
@@ -243,6 +250,7 @@ function lowerAttemptStart(input: {
   const fallible = draftAttemptOperandFromLowering({
     context: input.context,
     operand: loweredFallible.value,
+    expressionId: attempt.fallibleExpression.expressionId,
     originKey: fallibleOriginKey,
   });
   if (fallible === undefined) {
@@ -271,6 +279,7 @@ function lowerAttemptStart(input: {
     alternative = draftAttemptAlternativeFromLowering({
       context: input.context,
       operand: alternativeOperand,
+      expressionId: attempt.alternativeExpression.expressionId,
       originKey: alternativeOriginKey,
     });
     if (alternative === undefined) {

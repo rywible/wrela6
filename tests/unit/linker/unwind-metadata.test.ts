@@ -79,6 +79,26 @@ describe("materializeLinkedUnwindRecords", () => {
     ]);
   });
 
+  test("omits non-synthetic frameless leaf records from linked unwind metadata", () => {
+    const input = linkedUnwindInputFromGraph(
+      normalizedGraphForTest({
+        objectModules: [
+          moduleWithUnwindRecords({
+            unwindRecords: [
+              { stableKey: "unwind:main", sectionKey: ".text", frameShape: "frameless-leaf" },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    const result = materializeLinkedUnwindRecords(input);
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error("expected linked unwind metadata");
+    expect(result.value.unwindRecords).toEqual([]);
+  });
+
   test("rejects ambiguous synthetic unwind external linkage names", () => {
     const graph = ambiguousSyntheticUnwindGraphForTest();
     const layout = layoutImageSections({ target: targetSurfaceForTest(), graph });

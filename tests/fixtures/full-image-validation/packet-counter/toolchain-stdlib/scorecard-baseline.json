@@ -3,12 +3,12 @@
   "schemaVersion": 1,
   "caseKey": "packet-counter/toolchain-stdlib",
   "metrics": {
-    "optIrOperationsPre": 53,
-    "optIrOperationsPost": 55,
-    "objectSectionBytes": 988,
-    "executableTextBytes": 1896,
+    "optIrOperationsPre": 60,
+    "optIrOperationsPost": 41,
+    "objectSectionBytes": 728,
+    "executableTextBytes": 1636,
     "finalImageBytes": 4608,
-    "staticInstructionEstimate": 474,
-    "staticCycleEstimate": 626
+    "staticInstructionEstimate": 409,
+    "staticCycleEstimate": 535
   }
 }

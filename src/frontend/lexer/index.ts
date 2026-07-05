@@ -1,10 +1,7 @@
 export { CollectingDiagnosticSink } from "./diagnostics";
 export { KeywordTable } from "./keyword-table";
-export { ImportDiscovery } from "./import-discovery";
 export { Lexer } from "./lexer";
 export type { LexResult } from "./lexer";
-export { ModuleGraphLexer } from "./module-graph-lexer";
-export type { LexedModule, ModuleGraphLexResult } from "./module-graph-lexer";
 export { ModulePath } from "./module-path";
 export { DottedModuleResolver } from "./module-resolver";
 export { BunFileRepository } from "./bun-file-repository";

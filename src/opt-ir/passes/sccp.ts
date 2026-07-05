@@ -32,8 +32,13 @@ export interface SccpResult {
   readonly worklistOrder: readonly string[];
 }
 
+type SccpValueState =
+  | { readonly kind: "unknown" }
+  | { readonly kind: "constant"; readonly constant: OptIrConstant }
+  | { readonly kind: "overdefined" };
+
 export function runSccp(input: SccpInput): SccpResult {
-  const constants = new Map<OptIrValueId, OptIrConstant>();
+  const states = new Map<OptIrValueId, SccpValueState>();
   const worklistOrder: string[] = [];
   const removedEdgeIds: OptIrEdgeId[] = [];
   const facts: SccpImpossibilityFact[] = [];
@@ -55,12 +60,12 @@ export function runSccp(input: SccpInput): SccpResult {
         if (!reachableBlocks.has(block.blockId)) {
           continue;
         }
-        const beforeSize = constants.size + reachableBlocks.size + reachableEdges.size;
+        const beforeState = stateFingerprint(states, reachableBlocks, reachableEdges);
         processBlock(
           functionInput,
           block,
           input.operations,
-          constants,
+          states,
           reachableEdges,
           reachableBlocks,
           worklistOrder,
@@ -68,7 +73,7 @@ export function runSccp(input: SccpInput): SccpResult {
           facts,
           factEdgeIds,
         );
-        if (constants.size + reachableBlocks.size + reachableEdges.size !== beforeSize) {
+        if (stateFingerprint(states, reachableBlocks, reachableEdges) !== beforeState) {
           changed = true;
         }
       }
@@ -82,6 +87,7 @@ export function runSccp(input: SccpInput): SccpResult {
     rewrittenFunctions.push(rewriteFunction(functionInput, reachableBlocks, reachableEdges));
   }
 
+  const constants = constantsFromStates(states);
   const operations = rewriteOperations(input.operations, constants);
   return Object.freeze({
     program: optIrProgram({
@@ -100,7 +106,7 @@ function processBlock(
   functionInput: OptIrFunction,
   block: OptIrFunction["blocks"][number],
   operations: ReadonlyMap<OptIrOperationId, OptIrOperation>,
-  constants: Map<OptIrValueId, OptIrConstant>,
+  states: Map<OptIrValueId, SccpValueState>,
   reachableEdges: Set<OptIrEdgeId>,
   reachableBlocks: Set<OptIrBlockId>,
   worklistOrder: string[],
@@ -113,6 +119,9 @@ function processBlock(
     (left, right) => left.valueId - right.valueId,
   )) {
     pushWorkItem(worklistOrder, logged, `value:${parameter.valueId}`);
+    if (block.blockId === functionInput.entryBlock) {
+      setOverdefined(states, parameter.valueId);
+    }
   }
   for (const operationId of [...block.operations].sort((left, right) => left - right)) {
     const operation = operations.get(operationId);
@@ -120,7 +129,7 @@ function processBlock(
       continue;
     }
     pushWorkItem(worklistOrder, logged, `operation:${operation.operationId}`);
-    propagateOperation(operation, constants);
+    propagateOperation(operation, states);
     for (const valueId of [...operation.resultIds].sort((left, right) => left - right)) {
       pushWorkItem(worklistOrder, logged, `value:${valueId}`);
     }
@@ -128,7 +137,7 @@ function processBlock(
   propagateTerminator(
     functionInput,
     block.terminator,
-    constants,
+    states,
     reachableEdges,
     reachableBlocks,
     worklistOrder,
@@ -140,32 +149,40 @@ function processBlock(
 
 function propagateOperation(
   operation: OptIrOperation,
-  constants: Map<OptIrValueId, OptIrConstant>,
+  states: Map<OptIrValueId, SccpValueState>,
 ): void {
   if (operation.kind === "constant") {
-    setConstant(constants, operation.resultIds[0], operation.constant);
+    setConstant(states, operation.resultIds[0], operation.constant);
     return;
   }
   if (operation.kind !== "integerBinary" || operation.operator !== "add") {
+    markResultsOverdefined(operation, states);
     return;
   }
-  const left = constants.get(operation.left);
-  const right = constants.get(operation.right);
   const resultId = operation.resultIds[0];
-  if (left === undefined || right === undefined || resultId === undefined) {
+  if (resultId === undefined) {
     return;
   }
-  setConstant(constants, resultId, {
-    ...left,
-    normalizedValue: left.normalizedValue + right.normalizedValue,
-    type: operation.resultTypes[0] ?? left.type,
+  const leftState = states.get(operation.left);
+  const rightState = states.get(operation.right);
+  if (leftState?.kind === "overdefined" || rightState?.kind === "overdefined") {
+    setOverdefined(states, resultId);
+    return;
+  }
+  if (leftState?.kind !== "constant" || rightState?.kind !== "constant") {
+    return;
+  }
+  setConstant(states, resultId, {
+    ...leftState.constant,
+    normalizedValue: leftState.constant.normalizedValue + rightState.constant.normalizedValue,
+    type: operation.resultTypes[0] ?? leftState.constant.type,
   });
 }
 
 function propagateTerminator(
   functionInput: OptIrFunction,
   terminator: OptIrTerminator | undefined,
-  constants: Map<OptIrValueId, OptIrConstant>,
+  states: Map<OptIrValueId, SccpValueState>,
   reachableEdges: Set<OptIrEdgeId>,
   reachableBlocks: Set<OptIrBlockId>,
   worklistOrder: string[],
@@ -177,7 +194,7 @@ function propagateTerminator(
     return;
   }
   const allEdges = optIrTerminatorSuccessorEdges(terminator);
-  const selected = selectedSuccessorEdges(terminator, constants);
+  const selected = selectedSuccessorEdges(terminator, states);
   const selectedSet = new Set(selected);
   for (const edgeId of selected) {
     const edge = functionInput.edges.get(edgeId);
@@ -189,7 +206,7 @@ function propagateTerminator(
     if (edge.toBlock !== undefined) {
       reachableBlocks.add(edge.toBlock);
     }
-    propagateEdgeArguments(functionInput, edge, constants);
+    propagateEdgeArguments(functionInput, edge, states);
   }
   for (const edgeId of allEdges) {
     if (!selectedSet.has(edgeId) && !factEdgeIds.has(edgeId)) {
@@ -212,18 +229,18 @@ function pushWorkItem(worklistOrder: string[], logged: Set<string>, item: string
 
 function selectedSuccessorEdges(
   terminator: OptIrTerminator,
-  constants: ReadonlyMap<OptIrValueId, OptIrConstant>,
+  states: ReadonlyMap<OptIrValueId, SccpValueState>,
 ): readonly OptIrEdgeId[] {
   switch (terminator.kind) {
     case "branch": {
-      const condition = constants.get(terminator.condition)?.normalizedValue;
+      const condition = constantFromState(states.get(terminator.condition))?.normalizedValue;
       if (condition === undefined) {
         return [terminator.trueEdge, terminator.falseEdge];
       }
       return [condition === 0n ? terminator.falseEdge : terminator.trueEdge];
     }
     case "switch": {
-      const scrutinee = constants.get(terminator.scrutinee)?.normalizedValue;
+      const scrutinee = constantFromState(states.get(terminator.scrutinee))?.normalizedValue;
       if (scrutinee === undefined) {
         return optIrTerminatorSuccessorEdges(terminator);
       }
@@ -243,7 +260,7 @@ function selectedSuccessorEdges(
 function propagateEdgeArguments(
   functionInput: OptIrFunction,
   edge: OptIrEdge,
-  constants: Map<OptIrValueId, OptIrConstant>,
+  states: Map<OptIrValueId, SccpValueState>,
 ): void {
   const target = functionInput.blocks.find((block) => block.blockId === edge.toBlock);
   if (target === undefined) {
@@ -251,9 +268,17 @@ function propagateEdgeArguments(
   }
   target.parameters.forEach((parameter, index) => {
     const argument = edge.arguments[index];
-    const constant = argument === undefined ? undefined : constants.get(argument);
-    if (constant !== undefined) {
-      setConstant(constants, parameter.valueId, constant);
+    if (argument === undefined) {
+      setOverdefined(states, parameter.valueId);
+      return;
+    }
+    const state = states.get(argument);
+    if (state?.kind === "constant") {
+      setConstant(states, parameter.valueId, state.constant);
+      return;
+    }
+    if (state?.kind === "overdefined") {
+      setOverdefined(states, parameter.valueId);
     }
   });
 }
@@ -288,10 +313,14 @@ function rewriteTerminator(
     reachableEdges.has(edgeId),
   );
   if (selected.length === 1 && (terminator.kind === "branch" || terminator.kind === "switch")) {
+    const edge = selected[0];
+    if (edge === undefined) {
+      return terminator;
+    }
     return {
       kind: "jump",
       operationId: terminator.operationId,
-      edge: selected[0] ?? (0 as never),
+      edge,
       originId: terminator.originId,
     };
   }
@@ -307,13 +336,18 @@ function rewriteOperations(
     (left, right) => left[0] - right[0],
   )) {
     if (operation.kind === "integerBinary" && operation.operator === "add") {
-      const constant = constants.get(operation.resultIds[0] ?? (0 as never));
+      const resultId = operation.resultIds[0];
+      if (resultId === undefined) {
+        rewritten.set(operationId, operation);
+        continue;
+      }
+      const constant = constants.get(resultId);
       if (constant !== undefined) {
         rewritten.set(
           operationId,
           optIrIntegerBinaryOperation({
             operationId: operation.operationId,
-            resultId: operation.resultIds[0] ?? (0 as never),
+            resultId,
             left: operation.left,
             right: operation.right,
             operator: operation.operator,
@@ -330,20 +364,72 @@ function rewriteOperations(
 }
 
 function setConstant(
-  constants: Map<OptIrValueId, OptIrConstant>,
+  states: Map<OptIrValueId, SccpValueState>,
   valueId: OptIrValueId | undefined,
   constant: OptIrConstant,
 ): void {
   if (valueId === undefined) {
     return;
   }
-  const existing = constants.get(valueId);
-  if (
-    existing === undefined ||
-    optIrConstantStableKey(existing) === optIrConstantStableKey(constant)
-  ) {
-    constants.set(valueId, constant);
+  const existing = states.get(valueId);
+  if (existing?.kind === "overdefined") {
+    return;
   }
+  if (existing?.kind === "constant") {
+    if (optIrConstantStableKey(existing.constant) !== optIrConstantStableKey(constant)) {
+      states.set(valueId, { kind: "overdefined" });
+    }
+    return;
+  }
+  states.set(valueId, { kind: "constant", constant });
+}
+
+function setOverdefined(states: Map<OptIrValueId, SccpValueState>, valueId: OptIrValueId): void {
+  states.set(valueId, { kind: "overdefined" });
+}
+
+function markResultsOverdefined(
+  operation: OptIrOperation,
+  states: Map<OptIrValueId, SccpValueState>,
+): void {
+  for (const resultId of operation.resultIds) {
+    setOverdefined(states, resultId);
+  }
+}
+
+function constantFromState(state: SccpValueState | undefined): OptIrConstant | undefined {
+  return state?.kind === "constant" ? state.constant : undefined;
+}
+
+function constantsFromStates(
+  states: ReadonlyMap<OptIrValueId, SccpValueState>,
+): ReadonlyMap<OptIrValueId, OptIrConstant> {
+  const constants = new Map<OptIrValueId, OptIrConstant>();
+  for (const [valueId, state] of states) {
+    if (state.kind === "constant") {
+      constants.set(valueId, state.constant);
+    }
+  }
+  return constants;
+}
+
+function stateFingerprint(
+  states: ReadonlyMap<OptIrValueId, SccpValueState>,
+  reachableBlocks: ReadonlySet<OptIrBlockId>,
+  reachableEdges: ReadonlySet<OptIrEdgeId>,
+): string {
+  const values = [...states.entries()]
+    .sort((left, right) => left[0] - right[0])
+    .map(([valueId, state]) =>
+      state.kind === "constant"
+        ? `${valueId}:constant:${optIrConstantStableKey(state.constant)}`
+        : `${valueId}:${state.kind}`,
+    );
+  return [
+    values.join(","),
+    [...reachableBlocks].sort((left, right) => left - right).join(","),
+    [...reachableEdges].sort((left, right) => left - right).join(","),
+  ].join("|");
 }
 
 function lineageForTerminator(terminator: OptIrTerminator): readonly OptIrCheckedDependency[] {

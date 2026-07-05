@@ -13,7 +13,8 @@ export type OptIrPassScheduleConsistencyIssueCode =
   | "PRECONDITION_PRODUCER_NOT_SCHEDULED"
   | "STALE_ANALYSIS_CONSUMED"
   | "FIXPOINT_PASS_NOT_IDEMPOTENT"
-  | "FIXPOINT_PASS_UNBOUNDED";
+  | "FIXPOINT_PASS_UNBOUNDED"
+  | "FIXPOINT_ID_REUSED_NON_CONSECUTIVELY";
 
 export type OptIrPassScheduleConsistencyIssue =
   | {
@@ -41,6 +42,13 @@ export type OptIrPassScheduleConsistencyIssue =
       readonly passId: OptimizationPassId;
       readonly order: number;
       readonly fixpointId: string;
+    }
+  | {
+      readonly code: "FIXPOINT_ID_REUSED_NON_CONSECUTIVELY";
+      readonly passId: OptimizationPassId;
+      readonly order: number;
+      readonly fixpointId: string;
+      readonly previousOrder: number;
     };
 
 export type OptIrPassScheduleConsistencyResult =
@@ -96,6 +104,7 @@ export function validateOptIrPassSchedule(
     OptIrAnalysisId,
     { readonly passId: OptimizationPassId; readonly order: number }
   >();
+  const lastFixpointOrderById = new Map<string, number>();
 
   for (const [order, entry] of schedule.entries()) {
     const scheduling = entry.contract.scheduling;
@@ -131,6 +140,17 @@ export function validateOptIrPassSchedule(
 
     if (entry.fixpoint !== undefined) {
       const fixpointId = String(entry.fixpoint.fixpointId);
+      const lastFixpointOrder = lastFixpointOrderById.get(fixpointId);
+      if (lastFixpointOrder !== undefined && lastFixpointOrder !== order - 1) {
+        issues.push({
+          code: "FIXPOINT_ID_REUSED_NON_CONSECUTIVELY",
+          passId: entry.contract.passId,
+          order,
+          fixpointId,
+          previousOrder: lastFixpointOrder,
+        });
+      }
+      lastFixpointOrderById.set(fixpointId, order);
       if (!scheduling.idempotent) {
         issues.push({
           code: "FIXPOINT_PASS_NOT_IDEMPOTENT",

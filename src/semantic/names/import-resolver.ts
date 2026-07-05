@@ -169,6 +169,11 @@ export function resolveImports(input: ResolveImportsInput): ImportResolutionResu
               candidates,
             }),
           );
+          for (const item of matchingItems) {
+            if (!item.modifiers.includes("private") || moduleId === targetModuleId) {
+              importCandidates.push(candidateFromItem(item, index));
+            }
+          }
           continue;
         }
 
@@ -218,11 +223,10 @@ export function resolveImports(input: ResolveImportsInput): ImportResolutionResu
       const seen = new Set<string>();
       for (const scope of moduleScopes) {
         for (const candidate of scope.candidates) {
-          const key = `${candidate.namespace}:${candidate.name}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            combinedCandidates.push(candidate);
-          }
+          const key = candidateKey(candidate);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          combinedCandidates.push(candidate);
         }
       }
       importedScopes.push({ moduleId, candidates: combinedCandidates });
@@ -236,6 +240,10 @@ export function resolveImports(input: ResolveImportsInput): ImportResolutionResu
     importedScopes,
     diagnostics,
   };
+}
+
+function candidateKey(candidate: ScopeCandidate): string {
+  return `${candidate.namespace}:${candidate.name}:${JSON.stringify(candidate.reference)}`;
 }
 
 function candidateFromItem(item: ItemRecord, index: ItemIndex): ScopeCandidate {

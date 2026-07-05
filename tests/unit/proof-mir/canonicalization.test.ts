@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { hirOriginId } from "../../../src/hir/ids";
 import type { LayoutFactProgram } from "../../../src/layout/layout-program";
 import { monoInstanceId } from "../../../src/mono/ids";
-import type { MonoProofMetadata } from "../../../src/mono/mono-hir";
+import type { MonoFunctionInstance, MonoProofMetadata } from "../../../src/mono/mono-hir";
 import { proofMirCanonicalKey } from "../../../src/proof-mir/canonicalization/canonical-keys";
 import {
   compareProofMirCanonicalKeys,
@@ -30,7 +31,8 @@ import {
 import { proofMirBlockId } from "../../../src/proof-mir/ids";
 import type { ProofMirProgram } from "../../../src/proof-mir/model/program";
 import type { ProofMirRuntimeCatalog } from "../../../src/runtime/runtime-catalog-types";
-import { targetId } from "../../../src/semantic/ids";
+import { functionId, itemId, targetId } from "../../../src/semantic/ids";
+import { SourceSpan } from "../../../src/shared/source-span";
 
 describe("proofMirCanonicalKey", () => {
   test("brands canonical key strings", () => {
@@ -156,6 +158,20 @@ describe("proofMirDeterministicTable", () => {
   });
 });
 
+describe("freezeDraftProgram", () => {
+  test("fails closed when a function draft has no monomorphized function instance", () => {
+    const result = freezeDraftProgram(
+      draftProgramFixture({ order: ["a", "b", "c"], includeFunctionInstance: false }),
+    );
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") return;
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+      "missing-function-instance:fn:main",
+    );
+  });
+});
+
 describe("freezeFunctionDraft", () => {
   test("freezes role-prefixed scopes to their semantic scope kinds", () => {
     const functionInstanceId = monoInstanceId("fn:scopes");
@@ -219,6 +235,7 @@ describe("freezeFunctionDraft", () => {
     const diagnostics: ProofMirDiagnostic[] = [];
     const frozen = freezeFunctionDraft({
       functionDraft,
+      functionInstance: functionInstanceForTest(functionInstanceId),
       proofMetadata: {} as MonoProofMetadata,
       diagnostics,
     });
@@ -376,6 +393,7 @@ describe("freezeFunctionDraft", () => {
     const diagnostics: ProofMirDiagnostic[] = [];
     const frozen = freezeFunctionDraft({
       functionDraft: { ...functionDraft, graphSnapshot },
+      functionInstance: functionInstanceForTest(functionInstanceId),
       proofMetadata: {} as MonoProofMetadata,
       diagnostics,
     });
@@ -399,7 +417,10 @@ describe("freezeFunctionDraft", () => {
   });
 });
 
-function draftProgramFixture(input: { readonly order: readonly ("a" | "b" | "c")[] }) {
+function draftProgramFixture(input: {
+  readonly order: readonly ("a" | "b" | "c")[];
+  readonly includeFunctionInstance?: boolean;
+}) {
   const functionInstanceId = monoInstanceId("fn:main");
   const programDraft = createEmptyDraftProofMirProgramDraft();
   const functionDraft = createEmptyDraftProofMirFunctionDraft(functionInstanceId);
@@ -579,7 +600,10 @@ function draftProgramFixture(input: { readonly order: readonly ("a" | "b" | "c")
   return {
     programDraft,
     functions: [functionDraft] as readonly DraftProofMirFunctionDraft[],
-    functionInstances: new Map(),
+    functionInstances:
+      input.includeFunctionInstance === false
+        ? new Map()
+        : new Map([[functionInstanceId, functionInstanceForTest(functionInstanceId)]]),
     layout: {} as LayoutFactProgram,
     proofMetadata: {} as MonoProofMetadata,
     runtimeCatalog: {
@@ -615,6 +639,40 @@ function acceptOrThrow(result: { readonly kind: "ok" } | { readonly kind: "error
   if (result.kind === "error") {
     throw new Error("draft fixture accept failed");
   }
+}
+
+function functionInstanceForTest(
+  instanceId: ReturnType<typeof monoInstanceId>,
+): MonoFunctionInstance {
+  const sourceFunctionId = functionId(1);
+  const sourceItemId = itemId(1);
+  return {
+    instanceId,
+    sourceFunctionId,
+    sourceItemId,
+    ownerTypeArguments: [],
+    functionTypeArguments: [],
+    signature: {
+      functionId: sourceFunctionId,
+      itemId: sourceItemId,
+      parameters: [],
+      returnType: { kind: "never" } as never,
+      returnKind: "Copy",
+      modifiers: {
+        isPlatform: false,
+        isTerminal: false,
+        isPredicate: false,
+        isConstructor: false,
+        isPrivate: false,
+      },
+      sourceSpan: SourceSpan.from(0, 0),
+    },
+    bodyStatus: "bodylessRecovery",
+    locals: { entries: () => [], get: () => undefined },
+    declaredRequirements: [],
+    sourceOrigin: "canonicalization-test.wr:1",
+    hirSourceOrigin: hirOriginId(1),
+  };
 }
 
 function frozenProgramStableSummaryForTest(program: ProofMirProgram): string {

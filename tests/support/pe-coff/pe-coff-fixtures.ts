@@ -94,7 +94,13 @@ export function linkedImageLayoutForPeCoffTest(
   const includeDataSection = input.includeDataSection ?? true;
   const sections = input.sections ?? [
     linkedSectionForPeCoffTest(".text", 0x1000, 0x20, 0x60000020, [0xc0, 0x03, 0x5f, 0xd6]),
-    linkedSectionForPeCoffTest(".pdata", 0x2000, 0x0c, 0x40000040, [0, 0, 0, 0]),
+    linkedSectionForPeCoffTest(
+      ".pdata",
+      0x2000,
+      0x08,
+      0x40000040,
+      [0x00, 0x10, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00],
+    ),
     linkedSectionForPeCoffTest(".xdata", 0x3000, 0x08, 0x40000040, [0, 0, 0, 0]),
     ...(includeDataSection
       ? [linkedSectionForPeCoffTest(".data", 0x4000, 0x10, 0xc0000040, [0, 0, 0, 0])]
@@ -128,7 +134,7 @@ export function linkedImageLayoutForPeCoffTest(
         directoryKind: "exception",
         sectionKey: ".pdata",
         rva: 0x2000,
-        sizeBytes: 0x0c,
+        sizeBytes: 0x08,
       },
     ],
     provenance: [],
@@ -155,9 +161,9 @@ export function plannedImageForWriterTest(
       linkedSectionForPeCoffTest(
         ".pdata",
         0x2000,
-        0x0c,
+        0x08,
         0x40000040,
-        [0x00, 0x10, 0x00, 0x00, 0x20, 0x10, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00],
+        [0x00, 0x10, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00],
       ),
       linkedSectionForPeCoffTest(".xdata", 0x3000, 0x08, 0x40000040, [0x01, 0x02, 0x03, 0x04]),
       linkedSectionForPeCoffTest(".data", 0x4000, 0x10, 0xc0000040, [0xaa, 0xbb, 0xcc, 0xdd]),

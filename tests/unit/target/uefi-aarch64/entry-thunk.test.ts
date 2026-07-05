@@ -3,6 +3,8 @@ import { describe, expect, test } from "bun:test";
 import {
   canonicalUefiAArch64EntryProfile,
   createUefiAArch64EntryThunkObjectFactory,
+  decodeEntryThunkXdataBytes,
+  entryThunkUnwindMetadata,
   planUefiAArch64EntryThunk,
 } from "../../../../src/target/uefi-aarch64";
 import type { AArch64BackendTargetSurface } from "../../../../src/target/aarch64/backend/api/backend-target-surface";
@@ -150,6 +152,120 @@ describe("UEFI AArch64 entry thunk", () => {
     expect(plan.value.relocations.map((relocation) => relocation.offsetBytes)).toEqual(
       factoryResult.relocations?.map((relocation) => relocation.offsetBytes),
     );
+  });
+
+  test("encodes spec-shaped entry unwind pdata and xdata records", () => {
+    const backendTarget = authenticatedBackendTargetSurfaceForTest();
+    const factory = createUefiAArch64EntryThunkObjectFactory({
+      entryProfile: canonicalUefiAArch64EntryProfile(),
+      backendTarget,
+    });
+    const entryObject = factory.createEntryObject({ wrelaBootLinkageName: "wrela.image.boot" });
+    expect(entryObject.kind).toBe("ok");
+    if (entryObject.kind !== "ok") throw new Error("expected entry object");
+
+    const unwindObjects = factory.createUnwindObjects({
+      unwindRecords: [
+        {
+          sourceModuleKey: "module:entry",
+          stableKey: "unwind:symbol:__wrela_uefi_entry",
+          frameShape: "frame-record",
+          functionStableKey: "symbol:__wrela_uefi_entry",
+          functionLinkageName: "__wrela_uefi_entry",
+          functionLengthBytes: entryObject.codeBytes.length,
+        },
+        {
+          sourceModuleKey: "module:boot",
+          stableKey: "unwind:symbol:wrela.image.boot",
+          frameShape: "frameless-leaf",
+          functionStableKey: "symbol:wrela.image.boot",
+          functionLinkageName: "wrela.image.boot",
+          functionLengthBytes: 8,
+        },
+      ],
+    });
+
+    expect(unwindObjects.kind).toBe("ok");
+    if (unwindObjects.kind !== "ok") throw new Error("expected unwind objects");
+    expect(unwindObjects.objects).toHaveLength(1);
+    const unwindObject = unwindObjects.objects[0]!;
+    expect(Array.from(unwindObject.pdataBytes)).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(unwindObject.pdataRelocation).toMatchObject({
+      family: "addr32nb",
+      offsetBytes: 0,
+      widthBytes: 4,
+    });
+    expect(unwindObject.xdataRelocation).toMatchObject({
+      family: "addr32nb",
+      offsetBytes: 4,
+      widthBytes: 4,
+    });
+    expect(unwindObject.xdataSymbolStableKey).toBe("symbol:xdata:0");
+    expect(Array.from(unwindObject.xdataBytes)).toEqual([
+      1, 16, 3, 1, 13, 3, 3, 4, 129, 4, 225, 6, 228, 228, 0, 0,
+    ]);
+    expect(decodeEntryThunkXdataBytes(unwindObject.xdataBytes)).toEqual(entryThunkUnwindMetadata());
+  });
+
+  test("encodes backend serializable stack frames with frame-size metadata", () => {
+    const backendTarget = authenticatedBackendTargetSurfaceForTest();
+    const factory = createUefiAArch64EntryThunkObjectFactory({
+      entryProfile: canonicalUefiAArch64EntryProfile(),
+      backendTarget,
+    });
+
+    const unwindObjects = factory.createUnwindObjects({
+      unwindRecords: [
+        {
+          sourceModuleKey: "module:boot",
+          stableKey: "unwind:symbol:wrela.image.boot",
+          frameShape: "serializable-unwind",
+          functionStableKey: "symbol:wrela.image.boot",
+          functionLinkageName: "wrela.image.boot",
+          functionLengthBytes: 48,
+          frameSizeBytes: 32,
+          savedRegisters: ["x30"],
+        },
+      ],
+    });
+
+    expect(unwindObjects.kind).toBe("ok");
+    if (unwindObjects.kind !== "ok") throw new Error("expected unwind objects");
+    expect(unwindObjects.objects).toHaveLength(1);
+    expect(decodeEntryThunkXdataBytes(unwindObjects.objects[0]!.xdataBytes)).toMatchObject({
+      functionLengthBytes: 48,
+      prologueLengthBytes: 8,
+      epilogueStartOffsetBytes: 36,
+      epilogueLengthBytes: 12,
+      stackAllocationBytes: 32,
+    });
+  });
+
+  test("rejects non-leaf unwind records that have unsupported frame shapes", () => {
+    const backendTarget = authenticatedBackendTargetSurfaceForTest();
+    const factory = createUefiAArch64EntryThunkObjectFactory({
+      entryProfile: canonicalUefiAArch64EntryProfile(),
+      backendTarget,
+    });
+
+    const unwindObjects = factory.createUnwindObjects({
+      unwindRecords: [
+        {
+          sourceModuleKey: "module:boot",
+          stableKey: "unwind:symbol:wrela.image.boot",
+          frameShape: "unreachable-body",
+          functionStableKey: "symbol:wrela.image.boot",
+          functionLinkageName: "wrela.image.boot",
+          functionLengthBytes: 32,
+        },
+      ],
+    });
+
+    expect(unwindObjects.kind).toBe("error");
+    if (unwindObjects.kind !== "error") throw new Error("expected unwind error");
+    expect(unwindObjects.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual([
+      "unwind:frame-shape-unsupported:unwind:symbol:wrela.image.boot:unreachable-body",
+    ]);
   });
 
   test("entry object factory encodes with the injected backend target catalogs", () => {

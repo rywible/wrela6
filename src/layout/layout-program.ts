@@ -182,6 +182,18 @@ export interface LayoutEnumCaseFact {
   readonly name: string;
   readonly ordinal: number;
   readonly discriminant: bigint;
+  readonly payloadOffsetBytes?: bigint;
+  readonly payloadFields?: readonly LayoutEnumPayloadFieldFact[];
+  readonly sourceOrigin: string;
+}
+
+export interface LayoutEnumPayloadFieldFact {
+  readonly fieldId: FieldId;
+  readonly name: string;
+  readonly type: LayoutTypeKey;
+  readonly offsetBytes: bigint;
+  readonly sizeBytes: bigint;
+  readonly alignmentBytes: bigint;
   readonly sourceOrigin: string;
 }
 

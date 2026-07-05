@@ -176,11 +176,11 @@ describe("computeEnumLayout", () => {
     );
   });
 
-  test("payload-bearing enum is rejected", () => {
+  test("payload-bearing enum records tag and per-case payload offsets", () => {
     const owner = sourceLayoutTypeKey("PayloadEnum");
     const typeInstance = monoTypeInstanceForEnumTest({
       owner,
-      cases: [enumCaseRecord(owner.instanceId, "A", 0, 1)],
+      cases: [enumCaseRecord(owner.instanceId, "A", 0, 1, [1 as never])],
       fields: [
         {
           fieldId: 1 as never,
@@ -199,10 +199,86 @@ describe("computeEnumLayout", () => {
       owner,
     });
 
-    expect(result.kind).toBe("error");
-    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
-      layoutDiagnosticCode("LAYOUT_UNSUPPORTED_ENUM_PAYLOAD"),
-    );
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.value.enumFact.tagOffsetBytes).toBe(0n);
+    expect(result.value.enumFact.cases[0]?.payloadOffsetBytes).toBe(1n);
+    expect(result.value.enumFact.cases[0]?.payloadFields).toEqual([
+      {
+        fieldId: 1 as never,
+        name: "payload",
+        type: { kind: "core", coreTypeId: coreTypeId("u8") },
+        offsetBytes: 1n,
+        sizeBytes: 1n,
+        alignmentBytes: 1n,
+        sourceOrigin: "test:0:0",
+      },
+    ]);
+    expect(result.value.fieldFacts).toEqual([
+      {
+        owner,
+        fieldId: 1 as never,
+        fieldName: "payload",
+        fieldType: { kind: "core", coreTypeId: coreTypeId("u8") },
+        offsetBytes: 1n,
+        sizeBytes: 1n,
+        alignmentBytes: 1n,
+        index: 0,
+        paddingBeforeBytes: 0n,
+        sourceOrigin: "test:0:0",
+      },
+    ]);
+    expect(result.value.typeFact.sizeBytes).toBe(2n);
+    expect(result.value.typeFact.alignmentBytes).toBe(1n);
+  });
+
+  test("payload-bearing enum lays out per-case union payloads instead of all fields per case", () => {
+    const owner = sourceLayoutTypeKey("Result");
+    const typeInstance = monoTypeInstanceForEnumTest({
+      owner,
+      cases: [
+        enumCaseRecord(owner.instanceId, "Ok", 0, 1, [1 as never]),
+        enumCaseRecord(owner.instanceId, "Err", 1, 2, [2 as never]),
+      ],
+      fields: [
+        {
+          fieldId: 1 as never,
+          ownerTypeInstanceId: owner.instanceId,
+          name: "value",
+          type: monoCoreType("u8"),
+          resourceKind: "Copy",
+          sourceOrigin: "test:0:0",
+        },
+        {
+          fieldId: 2 as never,
+          ownerTypeInstanceId: owner.instanceId,
+          name: "error",
+          type: monoCoreType("u32"),
+          resourceKind: "Copy",
+          sourceOrigin: "test:0:0",
+        },
+      ],
+    });
+
+    const result = computeEnumLayout({
+      ...enumLayoutFixture({ cases: ["Ok", "Err"] }),
+      typeInstance,
+      owner,
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const okCase = result.value.enumFact.cases[0];
+    const errCase = result.value.enumFact.cases[1];
+    expect(okCase?.payloadFields?.map((field) => field.name)).toEqual(["value"]);
+    expect(errCase?.payloadFields?.map((field) => field.name)).toEqual(["error"]);
+    expect(errCase?.payloadFields?.[0]?.offsetBytes).toBe(4n);
+    expect(result.value.fieldFacts.map((field) => [field.fieldName, field.offsetBytes])).toEqual([
+      ["value", 1n],
+      ["error", 4n],
+    ]);
+    expect(result.value.typeFact.sizeBytes).toBe(8n);
+    expect(result.value.typeFact.alignmentBytes).toBe(4n);
   });
 
   test("enum discriminants and tag type match independent finite-range oracle", () => {
@@ -236,12 +312,14 @@ function enumCaseRecord(
   name: string,
   ordinal: number,
   caseItemIdValue: number,
+  payloadFieldIds: MonoEnumCaseRecord["payloadFieldIds"] = [],
 ): MonoEnumCaseRecord {
   return {
     enumTypeInstanceId,
     caseItemId: itemId(caseItemIdValue),
     name,
     ordinal,
+    payloadFieldIds,
     sourceOrigin: "test:0:0",
   };
 }

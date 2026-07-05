@@ -358,6 +358,23 @@ function rewriteClonedOperation(
         aggregate: substituteValue(valueIdMap, operation.aggregate),
         field: substituteValue(valueIdMap, operation.field),
       });
+    case "enumTagStore":
+      return Object.freeze({
+        ...base,
+        tagValue: substituteValue(valueIdMap, operation.tagValue),
+      });
+    case "enumPayloadStore":
+      return Object.freeze({
+        ...base,
+        enumValue: substituteValue(valueIdMap, operation.enumValue),
+        payloadValue: substituteValue(valueIdMap, operation.payloadValue),
+      });
+    case "enumTagLoad":
+    case "enumPayloadLoad":
+      return Object.freeze({
+        ...base,
+        enumValue: substituteValue(valueIdMap, operation.enumValue),
+      });
     case "layoutOffset":
     case "layoutByteRange":
       return Object.freeze({

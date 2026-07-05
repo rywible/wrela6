@@ -9,6 +9,8 @@ import {
   checkSemanticSurface,
   type CheckSemanticSurfaceResult,
 } from "../../../src/semantic/surface";
+import { functionId, itemId, moduleId } from "../../../src/semantic/ids";
+import type { FunctionId } from "../../../src/semantic/ids";
 import type { ImageRootSelection } from "../../../src/semantic/surface/image-root-selection";
 import type { SemanticTargetSurface } from "../../../src/semantic/surface/platform-surface";
 import { lowerTypedHir, type LowerTypedHirResult } from "../../../src/hir/typed-hir-builder";
@@ -55,7 +57,7 @@ export function lowerTypedHirForTest(
   });
 }
 
-export function createHirUnitContext(
+export function createProgramHirUnitContext(
   sourceText: string,
   options?: {
     readonly platformNames?: readonly string[];
@@ -87,6 +89,21 @@ export function createHirUnitContext(
     image: surface.image,
     enabledTargetFeatures: options?.enabledTargetFeatures,
   });
+}
+
+export function createHirUnitContext(
+  sourceText: string,
+  options?: Parameters<typeof createProgramHirUnitContext>[1] & {
+    readonly ownerFunctionId?: FunctionId;
+  },
+): HirLoweringContext {
+  const ownerFunctionId = options?.ownerFunctionId ?? functionId(0);
+  return {
+    ...createProgramHirUnitContext(sourceText, options),
+    ownerFunctionId,
+    ownerItemId: itemId(ownerFunctionId as number),
+    ownerModuleId: moduleId(0),
+  };
 }
 
 function visitRedNodes(

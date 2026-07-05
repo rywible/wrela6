@@ -38,14 +38,16 @@ export function rewriteLoopVectorizationCandidates(
 ): RewriteLoopVectorizationResult {
   const vectorOperations: OptIrOperation[] = [];
   const rewriteRecords: OptIrLoopVectorRewriteRecord[] = [];
+  let nextOperationId = 0;
+  let nextValueId = 0;
 
   for (const candidate of candidates) {
     const shape = classifyLoopVectorizationShape(candidate);
     if (shape.kind !== "vectorizable") {
       continue;
     }
-    let nextOperationId = candidate.nextOperationId;
-    let nextValueId = candidate.nextValueId;
+    nextOperationId = Math.max(nextOperationId, candidate.nextOperationId);
+    nextValueId = Math.max(nextValueId, candidate.nextValueId);
     const vectorOperationIds: OptIrOperationId[] = [];
 
     for (const access of candidate.memoryAccesses) {

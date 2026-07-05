@@ -62,6 +62,15 @@ import {
   validatedBufferValueStorageOwnerKey,
 } from "./layout-owners";
 
+function enumPayloadFieldCount(typeInstance: {
+  readonly enumCases: readonly { readonly payloadFieldIds: readonly unknown[] }[];
+}): number {
+  return typeInstance.enumCases.reduce(
+    (total, caseRecord) => total + caseRecord.payloadFieldIds.length,
+    0,
+  );
+}
+
 function createLayoutFactBuilderContext(
   input: ComputeRepresentationLayoutFactsInput,
 ): LayoutFactBuilderState & {
@@ -145,21 +154,33 @@ function createLayoutFactBuilderContext(
         compareCodeUnitStrings(String(left.instanceId), String(right.instanceId)),
       );
 
-      for (const typeInstance of sortedTypes) {
-        if (typeInstance.sourceKind !== "enum") {
-          continue;
-        }
+      const sortedEnumTypes = sortedTypes
+        .filter((typeInstance) => typeInstance.sourceKind === "enum")
+        .sort((left, right) => {
+          const payloadOrder = enumPayloadFieldCount(left) - enumPayloadFieldCount(right);
+          return payloadOrder === 0
+            ? compareCodeUnitStrings(String(left.instanceId), String(right.instanceId))
+            : payloadOrder;
+        });
+      for (const typeInstance of sortedEnumTypes) {
         const enumResult = computeEnumLayout({
           typeInstance,
           target: input.target,
           cases: typeInstance.enumCases.map((caseRecord) => caseRecord.name),
           candidateTagTypes: input.target.enumPolicy.candidateTagTypes,
           discriminantStart: input.target.enumPolicy.discriminantStart,
+          typeResolver: state.resolver,
+          typeFacts: state.types,
+          precomputedTypeFacts,
+          targetFacts: state.targetFacts,
+          nestedSourceTypes,
+          sourceTypeKeys,
         });
         recordBuilderResult(context, enumResult, String(input.target.targetId));
         if (enumResult.kind === "ok") {
           enumFacts.push(enumResult.value.enumFact);
           sourceTypeFacts.push(enumResult.value.typeFact);
+          fieldFacts.push(...enumResult.value.fieldFacts);
           precomputedTypeFacts.set(
             sourceTypeCacheKey(enumResult.value.typeFact.key),
             enumResult.value.typeFact,

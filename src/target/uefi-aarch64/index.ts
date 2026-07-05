@@ -55,8 +55,16 @@ export type {
   UefiAArch64EntryThunkInstructionPlan,
   UefiAArch64EntryThunkPlan,
   UefiAArch64EntryThunkRelocationPlan,
-  UefiAArch64EntryThunkUnwindPlan,
 } from "./entry-thunk";
+export {
+  decodeEntryThunkXdataBytes,
+  encodeEntryThunkXdataBytes,
+  entryThunkUnwindMetadata,
+} from "./entry-thunk-unwind";
+export type {
+  UefiAArch64EntryThunkUnwindMetadata,
+  UefiAArch64EntryThunkUnwindPlan,
+} from "./entry-thunk-unwind";
 export { canonicalUefiAArch64ExitBootServicesPolicy } from "./exit-boot-services";
 export type {
   UefiAArch64ExitBootServicesPolicy,

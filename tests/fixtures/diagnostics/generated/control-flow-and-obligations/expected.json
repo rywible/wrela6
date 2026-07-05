@@ -1,0 +1,9 @@
+{
+  "sourceSection": "Control Flow And Obligations",
+  "stage": "parse",
+  "diagnostics": [
+    {
+      "code": "LEX_MALFORMED_INTEGER"
+    }
+  ]
+}

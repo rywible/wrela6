@@ -20,6 +20,7 @@ export interface AArch64RelocationValueInput {
   readonly symbolRva: bigint;
   readonly patchRva: bigint;
   readonly addend: bigint;
+  readonly widthBytes?: number;
   readonly preferredImageBase: bigint;
   readonly containingSectionRva?: bigint;
   readonly accessScaleBytes?: number;
@@ -119,8 +120,12 @@ function unscaledRelocationValue(input: AArch64RelocationValueInput): LinkerResu
     case "branch26":
     case "branch19":
     case "branch14":
-    case "rel32":
       return linkerOk({ value: targetRva - input.patchRva, verification: OK_VERIFICATION });
+    case "rel32":
+      return linkerOk({
+        value: targetRva - (input.patchRva + BigInt(input.widthBytes ?? 4)),
+        verification: OK_VERIFICATION,
+      });
     case "pagebase-rel21":
       if (targetRva < 0n || input.patchRva < 0n) {
         return relocationError(`relocation:negative-page-address:${input.relocationKey}`);

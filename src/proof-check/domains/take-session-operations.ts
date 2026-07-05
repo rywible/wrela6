@@ -625,13 +625,13 @@ export function takeSessionTransferChain(
     }
     allPatches.push(...result.patches);
     allPacketEntries.push(...result.packetEntries);
-    currentState = applyTakeSessionPatchesForTest(currentState, result.patches);
+    currentState = applyTakeSessionPatches(currentState, result.patches);
   }
 
   return { kind: "ok", patches: allPatches, packetEntries: allPacketEntries };
 }
 
-export function applyTakeSessionPatchesForTest(
+export function applyTakeSessionPatches(
   state: ProofCheckState,
   patches: readonly ProofCheckStatePatchEntry[],
 ): ProofCheckState {

@@ -1,4 +1,5 @@
 import { optIrCfgEdgeTable, type OptIrBlock, type OptIrEdge } from "../cfg";
+import type { OptIrDiagnostic } from "../diagnostics";
 import {
   createOptIrSubjectRemapTable,
   type OptIrFactSubject,
@@ -13,6 +14,7 @@ import {
   rewriteOperation,
   rewriteTerminatorValues,
 } from "./cfg-simplification-rewrite";
+import { pipelineInfoDiagnostic } from "./pipeline-diagnostics";
 
 export interface CfgSimplificationInput {
   readonly function: OptIrFunction;
@@ -28,6 +30,7 @@ export interface CfgSimplificationResult {
   readonly removedBlockIds: readonly OptIrBlockId[];
   readonly removedEdgeIds: readonly OptIrEdgeId[];
   readonly subjectRemap: OptIrSubjectRemapTable;
+  readonly diagnostics: readonly OptIrDiagnostic[];
 }
 interface SimplificationState {
   readonly function: OptIrFunction;
@@ -37,7 +40,7 @@ interface SimplificationState {
 }
 
 export function runCfgSimplification(input: CfgSimplificationInput): CfgSimplificationResult {
-  const fuel = Math.max(0, Math.floor(input.fuel ?? 8));
+  const fuel = Math.max(0, Math.floor(input.fuel ?? defaultFuel(input.function)));
   let state: SimplificationState = {
     function: input.function,
     valueRemaps: [],
@@ -45,6 +48,7 @@ export function runCfgSimplification(input: CfgSimplificationInput): CfgSimplifi
     droppedSubjects: [],
   };
 
+  let exhaustedFuel = false;
   for (let round = 0; round < fuel; round += 1) {
     const next = simplifyOnce(state, input);
     if (sameFunctionShape(next.function, state.function)) {
@@ -52,6 +56,8 @@ export function runCfgSimplification(input: CfgSimplificationInput): CfgSimplifi
       break;
     }
     state = next;
+    exhaustedFuel =
+      round + 1 === fuel && !sameFunctionShape(simplifyOnce(state, input).function, state.function);
   }
 
   const valueSubstitutions = canonicalValueMap(state.valueRemaps);
@@ -90,7 +96,20 @@ export function runCfgSimplification(input: CfgSimplificationInput): CfgSimplifi
       edges: state.edgeRemaps,
       droppedSubjects: state.droppedSubjects,
     }),
+    diagnostics: exhaustedFuel
+      ? [
+          pipelineInfoDiagnostic(
+            `function:${Number(input.function.functionId)}`,
+            "cfg-simplification",
+            `cfg-simplification:fuel-exhausted:${fuel}:blocks:${input.function.blocks.length}:edges:${input.function.edges.entries().length}`,
+          ),
+        ]
+      : [],
   };
+}
+
+function defaultFuel(functionInput: OptIrFunction): number {
+  return Math.max(8, functionInput.blocks.length + functionInput.edges.entries().length);
 }
 
 function simplifyOnce(

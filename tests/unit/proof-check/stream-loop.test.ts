@@ -265,6 +265,102 @@ describe("checkStreamLoopTransfer", () => {
     expect(result.diagnostics[0]?.stableDetail).toContain("outstanding members");
   });
 
+  test("stream loop closes the current session after the final member closes", () => {
+    const state = proofCheckStateForTest({
+      sessions: [streamSessionForTest("session:rx")],
+      obligations: [streamMemberObligationForTest("member:yielded", "session:rx")],
+    });
+
+    const companion = streamLoopCompanionWithJudge((request) => {
+      if (request.kind !== "streamLoop") {
+        return undefined;
+      }
+      return {
+        kind: "streamLoop",
+        requestKind: "streamLoop",
+        requestKey: request.input.requestKey,
+        companionFingerprint: defaultFingerprint,
+        subjectKey: request.input.yieldedMemberKey,
+        dependencyKeys: [],
+        certificateId: proofSemanticsCertificateId(14),
+        patch: streamLoopOkPatch({
+          yieldedMemberKey: "member:yielded",
+          streamSessionKey: "session:rx",
+          memberLocalFactKeys: [],
+          entries: [
+            {
+              kind: "obligation",
+              action: "close",
+              obligation: {
+                obligationKey: "member:yielded",
+                status: "closed",
+                sessionKey: "session:rx",
+                memberKey: "member:yielded",
+              },
+            },
+            { kind: "session", action: "close", session: streamSessionForTest("session:rx") },
+          ],
+        }),
+      };
+    });
+
+    const result = checkStreamLoopTransfer({
+      state,
+      streamSessionKey: "session:rx",
+      yieldedMemberKey: "member:yielded",
+      companion,
+      transitionId: proofCheckTransitionId(1),
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.state.obligations.get("member:yielded")?.status).toBe("closed");
+    expect(result.state.sessions.has("session:rx")).toBe(false);
+  });
+
+  test("stream loop diagnostics name session action and context", () => {
+    const state = proofCheckStateForTest({
+      sessions: [streamSessionForTest("session:rx"), streamSessionForTest("session:other")],
+      obligations: [streamMemberObligationForTest("member:yielded", "session:rx")],
+    });
+
+    const companion = streamLoopCompanionWithJudge((request) => {
+      if (request.kind !== "streamLoop") {
+        return undefined;
+      }
+      return {
+        kind: "streamLoop",
+        requestKind: "streamLoop",
+        requestKey: request.input.requestKey,
+        companionFingerprint: defaultFingerprint,
+        subjectKey: request.input.yieldedMemberKey,
+        dependencyKeys: [],
+        certificateId: proofSemanticsCertificateId(15),
+        patch: streamLoopOkPatch({
+          yieldedMemberKey: "member:yielded",
+          streamSessionKey: "session:rx",
+          memberLocalFactKeys: [],
+          entries: [
+            { kind: "session", action: "close", session: streamSessionForTest("session:other") },
+          ],
+        }),
+      };
+    });
+
+    const result = checkStreamLoopTransfer({
+      state,
+      streamSessionKey: "session:rx",
+      yieldedMemberKey: "member:yielded",
+      companion,
+      transitionId: proofCheckTransitionId(1),
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") return;
+    expect(result.diagnostics[0]?.stableDetail).toContain("session:other");
+    expect(result.diagnostics[0]?.stableDetail).toContain("session:rx");
+  });
+
   test("missing companion judgment is rejected after member validation", () => {
     const result = checkStreamLoopTransfer(streamLoopInputForTest());
 

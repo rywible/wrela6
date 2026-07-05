@@ -1,0 +1,9 @@
+{
+  "sourceSection": "TX Initialization Rules",
+  "stage": "parse",
+  "diagnostics": [
+    {
+      "code": "LEX_MALFORMED_INTEGER"
+    }
+  ]
+}

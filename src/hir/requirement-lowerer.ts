@@ -20,7 +20,7 @@ import type {
   HirRequirementOwner,
 } from "./hir";
 import type { HirLoweringContext } from "./lowering-context";
-import { currentHirModuleId, hirDiagnostic } from "./lowering-context";
+import { currentHirModuleId, hirDiagnostic, hirOwnerKey } from "./lowering-context";
 import { hirProofExpressionId, ownedHirRequirementId } from "./ids";
 import type { HirOriginId } from "./ids";
 import { parseWrIntegerLiteral } from "../shared/integer-literal";
@@ -76,7 +76,29 @@ function reportRequirementDiagnostic(input: {
       code: input.code,
       message: "Requirement expression cannot be lowered into a checked HIR proof expression.",
       originId: input.sourceOrigin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
+      originKey: `origin:${input.sourceOrigin}`,
+      stableDetail: input.stableDetail,
+    }),
+  );
+}
+
+function reportMalformedRequirement(input: {
+  readonly context: HirLoweringContext;
+  readonly sourceOrigin: HirOriginId;
+  readonly code:
+    | "HIR_MISSING_LITERAL_TEXT"
+    | "HIR_INVALID_INTEGER_LITERAL"
+    | "HIR_MISSING_NAME_TEXT";
+  readonly stableDetail: string;
+  readonly message: string;
+}): void {
+  input.context.diagnostics.report(
+    hirDiagnostic({
+      code: input.code,
+      message: input.message,
+      originId: input.sourceOrigin,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${input.sourceOrigin}`,
       stableDetail: input.stableDetail,
     }),
@@ -129,12 +151,12 @@ function buildProofExpression(input: {
   readonly references: readonly CheckedRequirementReference[];
   readonly view: ExpressionView;
   readonly sourceOrigin: HirOriginId;
+  readonly context: HirLoweringContext;
   readonly consumed: Set<string>;
   readonly nextExpressionId: () => ReturnType<typeof hirProofExpressionId>;
 }): HirProofExpression | undefined {
   if (input.view instanceof LiteralExpressionView) {
     const token = input.view.literalToken();
-    const text = input.view.literalText() ?? "";
     if (token?.kind === SyntaxKind.TrueKeyword || token?.kind === SyntaxKind.FalseKeyword) {
       return {
         proofExpressionId: input.nextExpressionId(),
@@ -143,17 +165,56 @@ function buildProofExpression(input: {
         sourceOrigin: input.sourceOrigin,
       };
     }
+    const text = input.view.literalText();
+    if (text === undefined) {
+      reportMalformedRequirement({
+        context: input.context,
+        sourceOrigin: input.sourceOrigin,
+        code: "HIR_MISSING_LITERAL_TEXT",
+        message: "Requirement literal is missing source text.",
+        stableDetail: token?.kind === SyntaxKind.StringLiteralToken ? "string" : "integer",
+      });
+      return undefined;
+    }
+    if (token?.kind === SyntaxKind.StringLiteralToken) {
+      return {
+        proofExpressionId: input.nextExpressionId(),
+        kind: "literal",
+        value: text,
+        sourceOrigin: input.sourceOrigin,
+      };
+    }
+    const value = parseWrIntegerLiteral(text);
+    if (value === undefined) {
+      reportMalformedRequirement({
+        context: input.context,
+        sourceOrigin: input.sourceOrigin,
+        code: "HIR_INVALID_INTEGER_LITERAL",
+        message: "Requirement integer literal text is not valid.",
+        stableDetail: text,
+      });
+      return undefined;
+    }
     return {
       proofExpressionId: input.nextExpressionId(),
       kind: "literal",
-      value:
-        token?.kind === SyntaxKind.StringLiteralToken ? text : (parseWrIntegerLiteral(text) ?? 0n),
+      value,
       sourceOrigin: input.sourceOrigin,
     };
   }
 
   if (input.view instanceof NameExpressionView) {
-    const name = input.view.nameText() ?? "";
+    const name = input.view.nameText();
+    if (name === undefined) {
+      reportMalformedRequirement({
+        context: input.context,
+        sourceOrigin: input.sourceOrigin,
+        code: "HIR_MISSING_NAME_TEXT",
+        message: "Requirement name is missing source text.",
+        stableDetail: "name",
+      });
+      return undefined;
+    }
     const span = presentTokenSpan(input.view.nameToken()) ?? input.view.node.span;
     const reference = referenceForSpan({
       surface: input.surface,
@@ -186,9 +247,20 @@ function buildProofExpression(input: {
     });
     if (reference === undefined || reference.reference.kind !== "field") return undefined;
     input.consumed.add(referenceKey(reference));
+    const name = input.view.memberName();
+    if (name === undefined) {
+      reportMalformedRequirement({
+        context: input.context,
+        sourceOrigin: input.sourceOrigin,
+        code: "HIR_MISSING_NAME_TEXT",
+        message: "Requirement member name is missing source text.",
+        stableDetail: "member",
+      });
+      return undefined;
+    }
     return proofExpressionFromReference({
       reference,
-      name: input.view.memberName() ?? "",
+      name,
       sourceOrigin: input.sourceOrigin,
       proofExpressionId: input.nextExpressionId(),
     });
@@ -240,10 +312,12 @@ function buildProofExpression(input: {
     const left = buildProofExpression({ ...input, view: leftView });
     const right = buildProofExpression({ ...input, view: rightView });
     if (left === undefined || right === undefined) return undefined;
+    const operator = input.view.operatorToken()?.green.lexeme;
+    if (operator === undefined) return undefined;
     return {
       proofExpressionId: input.nextExpressionId(),
       kind: "binary",
-      operator: input.view.operatorToken()?.green.lexeme ?? "",
+      operator,
       left,
       right,
       sourceOrigin: input.sourceOrigin,
@@ -286,6 +360,7 @@ function checkedRequirementExpression(input: {
     references: input.references,
     view,
     sourceOrigin: input.sourceOrigin,
+    context: input.context,
     consumed,
     nextExpressionId: () => hirProofExpressionId(nextOrdinal++),
   });

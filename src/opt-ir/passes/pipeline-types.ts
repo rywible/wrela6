@@ -7,6 +7,7 @@ import type { OptIrTargetSurface } from "../target-surface";
 import type { OptIrDecisionLog } from "../policy/decision-log";
 import type { OptIrOptimizationPolicy } from "../policy/optimization-profile";
 import type { ProofAuthorityFingerprint } from "../../shared/proof-authority-types";
+import type { CompilerStageMetadata } from "../../pipeline";
 
 export interface OptimizedOptIrProvenanceSnapshot {
   readonly originIds: readonly OptIrProgram["provenance"]["originIds"][number][];
@@ -15,12 +16,11 @@ export interface OptimizedOptIrProvenanceSnapshot {
 
 export type OptimizedOptIrProgram = Omit<OptIrProgram, "provenance"> & {
   readonly provenance: OptimizedOptIrProvenanceSnapshot;
-  readonly operations?: readonly OptIrOperation[];
-  readonly optimizationRegions?: readonly OptIrRegion[];
 };
 
 export type OptIrVerifierCheckpointKind =
   | "after-construction"
+  | "after-pass"
   | "after-mandatory-inlining"
   | "after-scope-expansion-mutation"
   | "after-scope-expansion-cluster"
@@ -38,10 +38,9 @@ export interface OptIrVerifierCheckpoint {
 }
 
 export interface OptimizeOptIrInput {
-  readonly program: OptIrProgram & {
-    readonly operations?: readonly OptIrOperation[];
-    readonly optimizationRegions?: readonly OptIrRegion[];
-  };
+  readonly program: OptIrProgram;
+  readonly operations: readonly OptIrOperation[];
+  readonly optimizationRegions: readonly OptIrRegion[];
   readonly facts: OptIrFactSet;
   readonly target: OptIrTargetSurface;
   readonly policy: OptIrOptimizationPolicy;
@@ -52,11 +51,13 @@ export type OptimizeOptIrResult =
       readonly kind: "ok";
       readonly program: OptimizedOptIrProgram;
       readonly operations: readonly OptIrOperation[];
+      readonly optimizationRegions: readonly OptIrRegion[];
       readonly facts: OptIrFactSet;
       readonly provenance: OptimizedOptIrProvenanceSnapshot;
       readonly decisionLog: OptIrDecisionLog;
       readonly diagnostics: readonly OptIrDiagnostic[];
       readonly verificationCheckpoints: readonly OptIrVerifierCheckpoint[];
+      readonly metadata: CompilerStageMetadata;
     }
   | { readonly kind: "error"; readonly diagnostics: readonly OptIrDiagnostic[] };
 
@@ -68,6 +69,7 @@ export interface PipelineState {
   readonly diagnostics: readonly OptIrDiagnostic[];
   readonly decisionLog: OptIrDecisionLog | undefined;
   readonly verificationCheckpoints: readonly OptIrVerifierCheckpoint[];
+  readonly metadata?: CompilerStageMetadata;
 }
 
 export type PipelineStepResult =

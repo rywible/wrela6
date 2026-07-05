@@ -27,6 +27,7 @@ export const MONO_EXPRESSION_CLONE_COVERAGE: Readonly<
   name: true,
   member: true,
   object: true,
+  enumConstructor: true,
   call: true,
   attempt: true,
   validationCreation: true,

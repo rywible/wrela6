@@ -3,6 +3,7 @@ import { SyntaxKind } from "../../../../src/frontend";
 import { childNode, descendants } from "../../../../src/frontend/ast/syntax-query";
 import {
   CallExpressionView,
+  IndexExpressionView,
   NameExpressionView,
   ObjectLiteralExpressionView,
   LiteralExpressionView,
@@ -67,6 +68,16 @@ describe("expression views", () => {
     const view = expressionViewFrom(binaryNode);
 
     expect(view).toBeInstanceOf(BinaryExpressionView);
+  });
+
+  test("index expression exposes receiver and index", () => {
+    const root = parseSourceRoot("fn main():\n    items[i + 1]\n");
+    const indexNode = descendants(root, SyntaxKind.IndexExpression)[0]!;
+    const view = IndexExpressionView.from(indexNode)!;
+
+    expect(NameExpressionView.from(view.receiver()!.node)!.nameText()).toBe("items");
+    expect(view.index()!.kind).toBe(SyntaxKind.BinaryExpression);
+    expect(expressionViewFrom(indexNode)).toBeInstanceOf(IndexExpressionView);
   });
 
   test("expressionViewFrom returns undefined for non-expression kinds", () => {

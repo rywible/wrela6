@@ -46,6 +46,8 @@ export function buildOptimizedOptIr(
   const optimizer = dependencies.optimizer ?? optimizeOptIr;
   const optimization = optimizer({
     program: construction.program,
+    operations: construction.operations,
+    optimizationRegions: construction.optimizationRegions,
     facts: construction.facts,
     target: input.target,
     policy: input.policy,

@@ -91,6 +91,62 @@ function privateStatePlaceKeyFromPredicate(predicateKey: string): string {
   return predicateKey.slice(0, separatorIndex);
 }
 
+function privatePredicatePlaceKey(requirement: ProofCheckPrivatePredicateRequirement): string {
+  return requirement.placeKey ?? privateStatePlaceKeyFromPredicate(requirement.predicateKey);
+}
+
+function factPrivatePredicateKey(fact: CheckedActiveFact): string {
+  return fact.predicateKey ?? fact.factKey.split("(")[0] ?? fact.factKey;
+}
+
+function factPrivatePredicatePlaceKey(fact: CheckedActiveFact): string {
+  return fact.placeKey ?? privateStatePlaceKeyFromPredicate(factPrivatePredicateKey(fact));
+}
+
+function normalizedArgumentKeys(argumentKeys: readonly string[] | undefined): readonly string[] {
+  return Object.freeze([...(argumentKeys ?? [])]);
+}
+
+function privatePredicateIdentityKey(input: {
+  readonly predicateKey: string;
+  readonly placeKey: string;
+  readonly argumentKeys?: readonly string[];
+}): string {
+  const argumentKeys = normalizedArgumentKeys(input.argumentKeys);
+  const predicateKey =
+    input.predicateKey === input.placeKey || input.predicateKey.startsWith(`${input.placeKey}.`)
+      ? input.predicateKey
+      : `${input.placeKey}.${input.predicateKey}`;
+  if (argumentKeys.length === 0) return predicateKey;
+  return `${predicateKey}(${argumentKeys.join(",")})`;
+}
+
+function requirementIdentityKey(requirement: ProofCheckPrivatePredicateRequirement): string {
+  return privatePredicateIdentityKey({
+    predicateKey: requirement.predicateKey,
+    placeKey: privatePredicatePlaceKey(requirement),
+    argumentKeys: requirement.argumentKeys,
+  });
+}
+
+function factIdentityKey(fact: CheckedActiveFact): string {
+  return privatePredicateIdentityKey({
+    predicateKey: factPrivatePredicateKey(fact),
+    placeKey: factPrivatePredicatePlaceKey(fact),
+    argumentKeys: fact.argumentKeys,
+  });
+}
+
+function argumentKeysEqual(
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
+): boolean {
+  const leftKeys = normalizedArgumentKeys(left);
+  const rightKeys = normalizedArgumentKeys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((value, index) => value === rightKeys[index]);
+}
+
 export function privatePredicateFactGeneration(termKey: string): string | undefined {
   const separatorIndex = termKey.lastIndexOf("@");
   if (separatorIndex === -1) {
@@ -114,16 +170,34 @@ function resolveRequiredGeneration(
   return generation;
 }
 
-function findPrivatePredicateFact(
-  state: ProofCheckState,
-  predicateKey: string,
-): CheckedActiveFact | undefined {
-  const direct = state.facts.get(predicateKey);
-  if (direct !== undefined) {
+function factMatchesPrivatePredicateRequirement(
+  fact: CheckedActiveFact,
+  requirement: ProofCheckPrivatePredicateRequirement,
+): boolean {
+  return (
+    factPrivatePredicateKey(fact) === requirement.predicateKey &&
+    factPrivatePredicatePlaceKey(fact) === privatePredicatePlaceKey(requirement) &&
+    argumentKeysEqual(fact.argumentKeys, requirement.argumentKeys)
+  );
+}
+
+function findPrivatePredicateFact(input: {
+  readonly state: ProofCheckState;
+  readonly requirement: ProofCheckPrivatePredicateRequirement;
+}): CheckedActiveFact | undefined {
+  const direct = input.state.facts.get(requirementIdentityKey(input.requirement));
+  if (direct !== undefined && factMatchesPrivatePredicateRequirement(direct, input.requirement)) {
     return direct;
   }
-  for (const fact of state.facts.values()) {
-    if (fact.factKey === predicateKey) {
+  const legacyDirect = input.state.facts.get(input.requirement.predicateKey);
+  if (
+    legacyDirect !== undefined &&
+    factMatchesPrivatePredicateRequirement(legacyDirect, input.requirement)
+  ) {
+    return legacyDirect;
+  }
+  for (const fact of input.state.facts.values()) {
+    if (factMatchesPrivatePredicateRequirement(fact, input.requirement)) {
       return fact;
     }
   }
@@ -133,9 +207,9 @@ function findPrivatePredicateFact(
 function privatePredicateFactMatchesPlace(fact: CheckedActiveFact, placeKey: string): boolean {
   const generation = privatePredicateFactGeneration(fact.termKey);
   if (generation === undefined) {
-    return privateStatePlaceKeyFromPredicate(fact.factKey) === placeKey;
+    return factPrivatePredicatePlaceKey(fact) === placeKey;
   }
-  return privateStatePlaceKeyFromPredicate(fact.factKey) === placeKey;
+  return factPrivatePredicatePlaceKey(fact) === placeKey;
 }
 
 function isPrivatePredicateFactActive(input: {
@@ -164,10 +238,12 @@ function stalePrivatePredicateDiagnostic(input: {
   readonly advanceTransitionKey?: string;
 }): ProofCheckDiagnostic {
   const transitionKey = input.advanceTransitionKey ?? "unknown";
+  const requirementIdentity = requirementIdentityKey(input.requirement);
   const stableDetail = [
     "stale-private-predicate",
-    input.requirement.predicateKey,
+    requirementIdentity,
     `fact:${input.fact.factKey}`,
+    `fact-identity:${factIdentityKey(input.fact)}`,
     `fact-generation:${privatePredicateFactGeneration(input.fact.termKey) ?? "none"}`,
     `required-generation:${input.requiredGeneration}`,
     `current-generation:${input.currentGeneration}`,
@@ -192,7 +268,7 @@ function missingPrivatePredicateDiagnostic(input: {
   readonly requirement: ProofCheckPrivatePredicateRequirement;
   readonly ownerKey: string;
 }): ProofCheckDiagnostic {
-  const stableDetail = `missing-private-predicate:${input.requirement.predicateKey}`;
+  const stableDetail = `missing-private-predicate:${requirementIdentityKey(input.requirement)}`;
   return proofCheckDiagnostic({
     severity: "error",
     code: "PROOF_CHECK_UNSATISFIED_REQUIREMENT",
@@ -317,7 +393,7 @@ export function provePrivatePredicateRequirement(
   input: ProvePrivatePredicateRequirementInput,
 ): PrivatePredicateRequirementResult {
   const ownerKey = defaultOwnerKey(input.ownerKey);
-  const placeKey = privateStatePlaceKeyFromPredicate(input.requirement.predicateKey);
+  const placeKey = privatePredicatePlaceKey(input.requirement);
   const requiredGeneration = resolveRequiredGeneration(
     input.state,
     placeKey,
@@ -336,7 +412,10 @@ export function provePrivatePredicateRequirement(
     };
   }
 
-  const fact = findPrivatePredicateFact(input.state, input.requirement.predicateKey);
+  const fact = findPrivatePredicateFact({
+    state: input.state,
+    requirement: input.requirement,
+  });
   if (fact === undefined) {
     return {
       kind: "missing",
@@ -410,8 +489,8 @@ export function provePrivatePredicateRequirement(
     kind: "ok",
     certificate: allocateCoreCertificate({
       rule: "coreEntailment",
-      subjectKey: `${input.requirement.predicateKey}@${requiredGeneration}`,
-      dependencyKeys: [fact.factKey],
+      subjectKey: `${requirementIdentityKey(input.requirement)}@${requiredGeneration}`,
+      dependencyKeys: [fact.termKey],
     }),
   };
 }

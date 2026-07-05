@@ -1,14 +1,14 @@
 import {
   CollectingDiagnosticSink,
+  DottedModuleResolver,
+  type FileReadResult,
   KeywordTable,
   Lexer,
   ModulePath,
   SourceText,
-  moduleImportRequestsFromParsedTopLevelDeclarations,
-  parseModuleGraph as parseFrontendModuleGraph,
-  type LexedModule,
+  loadFrontendModuleGraphSync,
+  type SyncFileRepository,
 } from "../../frontend";
-import { Parser } from "../../frontend/parser/parser";
 import { lowerTypedHir as lowerSourceTypedHir, type LowerTypedHirInput } from "../../hir";
 import type { ComputeRepresentationLayoutFactsInput } from "../../layout";
 import { computeRepresentationLayoutFacts as computeSourceRepresentationLayoutFacts } from "../../layout";
@@ -35,7 +35,6 @@ import { CoreTypeCatalog, resolveNames } from "../../semantic/names";
 import { checkSemanticSurface } from "../../semantic/surface";
 import type { CheckedType } from "../../semantic/surface";
 import { type TypeId } from "../../semantic/ids";
-import type { UefiAArch64TargetDiagnostic } from "./diagnostics";
 import { moduleNameToUefiPackageModulePathKey } from "./package-input";
 import {
   uefiAArch64CompilerIntrinsicNameCatalog,
@@ -269,45 +268,22 @@ export function parseModuleGraph(
     keywords: KeywordTable.default(),
     diagnostics,
   });
-  const parser = new Parser();
-  const modules: LexedModule[] = [...input.packageInput.sourceFiles]
-    .sort((left, right) => compareCodeUnitStrings(left.sourceKey, right.sourceKey))
-    .map((sourceFile) => {
-      const source = SourceText.from(sourceFile.sourceKey, sourceFile.text);
-      const lexResult = lexer.lex(source);
-      const parseResult = parser.parse({ source, tokens: lexResult.tokens });
-      const path = ModulePath.from(moduleNameToUefiPackageModulePathKey(sourceFile.moduleName));
-      return {
-        path,
-        source,
-        tokens: lexResult.tokens,
-        imports: moduleImportRequestsFromParsedTopLevelDeclarations({
-          importer: path,
-          source,
-          tree: parseResult.tree,
-        }),
-        parseResult,
-      };
-    });
-  const parsedGraph = parseFrontendModuleGraph({
-    graph: {
-      entry: ModulePath.from(
-        moduleNameToUefiPackageModulePathKey(input.packageInput.entryModuleName),
-      ),
-      modules,
-    },
-    lexerDiagnostics: diagnostics.diagnostics,
-  });
-  const targetDiagnostics = [
-    ...parsedGraph.diagnostics.map((diagnostic) =>
-      packagePipelineDiagnostic(
-        "frontend",
-        frontendDiagnosticStableDetail(diagnostic),
-        sourcePayloadFromDiagnostic(diagnostic),
-      ),
+  const parsedGraph = loadFrontendModuleGraphSync({
+    entry: ModulePath.from(
+      moduleNameToUefiPackageModulePathKey(input.packageInput.entryModuleName),
     ),
-    ...missingImportDiagnostics(modules),
-  ];
+    lexer,
+    files: new PackageSourceFileRepository(input.packageInput.sourceFiles),
+    resolver: new DottedModuleResolver(),
+    diagnostics,
+  });
+  const targetDiagnostics = parsedGraph.diagnostics.map((diagnostic) =>
+    packagePipelineDiagnostic(
+      "frontend",
+      frontendDiagnosticStableDetail(diagnostic),
+      sourcePayloadFromDiagnostic(diagnostic),
+    ),
+  );
   if (targetDiagnostics.length > 0) {
     return { kind: "error", diagnostics: targetDiagnostics };
   }
@@ -318,22 +294,23 @@ export function parseModuleGraph(
   };
 }
 
-function missingImportDiagnostics(
-  modules: readonly LexedModule[],
-): readonly UefiAArch64TargetDiagnostic[] {
-  const moduleKeys = new Set(modules.map((module) => module.path.key));
-  return modules.flatMap((module) =>
-    module.imports
-      .filter(
-        (request) => !moduleKeys.has(moduleNameToUefiPackageModulePathKey(request.moduleName)),
-      )
-      .map((request) =>
-        packagePipelineDiagnostic(
-          "frontend",
-          `frontend-missing-import:${module.path.key}->${request.moduleName}`,
-        ),
-      ),
-  );
+class PackageSourceFileRepository implements SyncFileRepository {
+  private readonly sourceByModulePath = new Map<string, SourceText>();
+
+  constructor(sourceFiles: PackageModuleGraphParseInput["packageInput"]["sourceFiles"]) {
+    for (const sourceFile of [...sourceFiles].sort((left, right) =>
+      compareCodeUnitStrings(left.sourceKey, right.sourceKey),
+    )) {
+      const pathKey = moduleNameToUefiPackageModulePathKey(sourceFile.moduleName);
+      this.sourceByModulePath.set(pathKey, SourceText.from(sourceFile.sourceKey, sourceFile.text));
+    }
+  }
+
+  read(path: ModulePath): FileReadResult {
+    const source = this.sourceByModulePath.get(path.key);
+    if (source === undefined) return { kind: "missing", path };
+    return { kind: "found", path, source };
+  }
 }
 
 function frontendDiagnosticStableDetail(diagnostic: Diagnostic): string {
@@ -725,13 +702,15 @@ export function buildOptimizedOptIr(
   }
   const optIrWithStaticChar16 = materializeStaticChar16ConstantPoolReferences({
     program: constructOptIrResult.program,
-    operations: constructOptIrResult.program.operations ?? [],
+    operations: constructOptIrResult.operations,
   });
   if (optIrWithStaticChar16.kind === "error") {
     return { kind: "error", diagnostics: optIrWithStaticChar16.diagnostics };
   }
   const optimized = optimizeSourceOptIr({
     program: optIrWithStaticChar16.program,
+    operations: optIrWithStaticChar16.operations,
+    optimizationRegions: constructOptIrResult.optimizationRegions,
     facts: constructOptIrResult.facts,
     target: buildOptimizedOptIrInput.target,
     policy: buildOptimizedOptIrInput.policy,
@@ -765,6 +744,7 @@ export function buildOptimizedOptIr(
     value: Object.freeze({
       program: buildOptimizedOptIrResult.program,
       operations: Object.freeze([...buildOptimizedOptIrResult.operations]),
+      optimizationRegions: Object.freeze([...buildOptimizedOptIrResult.optimizationRegions]),
       unoptimizedOperations: Object.freeze([...optIrWithStaticChar16.operations]),
       facts: buildOptimizedOptIrResult.facts,
       staticChar16Strings: Object.freeze([...optimizedStaticChar16Metadata.staticChar16Strings]),

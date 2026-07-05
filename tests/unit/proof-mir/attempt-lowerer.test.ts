@@ -165,6 +165,7 @@ describe("ProofMirAttemptLowerer", () => {
     expect(attemptKind?.attempt.fallible).toEqual(
       expect.objectContaining({
         kind: "observe",
+        expressionId: fallibleExpression.expressionId,
         placeKey: expect.any(String),
       }),
     );
@@ -206,6 +207,7 @@ describe("ProofMirAttemptLowerer", () => {
     expect(attemptKind?.attempt.alternative).toEqual(
       expect.objectContaining({
         kind: "value",
+        expressionId: alternativeExpression.expressionId,
         placeKey: expect.any(String),
       }),
     );

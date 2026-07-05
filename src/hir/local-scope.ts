@@ -33,6 +33,8 @@ export interface AddLocalResult {
 
 function ownerKey(owner: HirRequirementOwner): string {
   switch (owner.kind) {
+    case "program":
+      return "program";
     case "function":
       return `function:${owner.functionId}`;
     case "type":

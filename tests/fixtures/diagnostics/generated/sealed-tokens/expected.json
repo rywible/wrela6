@@ -1,0 +1,9 @@
+{
+  "sourceSection": "Sealed Tokens",
+  "stage": "parse",
+  "diagnostics": [
+    {
+      "code": "LEX_MALFORMED_INTEGER"
+    }
+  ]
+}

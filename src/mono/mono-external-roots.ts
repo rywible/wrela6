@@ -4,6 +4,7 @@ import { monoDiagnostic, type MonoDiagnostic } from "./diagnostics";
 import type { MonoInstanceId } from "./ids";
 import { canonicalFunctionInstanceId, normalizeMonoCheckedType } from "./instantiation-key";
 import type { MonoCheckedType, MonoExternalRoot, MonoFunctionInstance } from "./mono-hir";
+import { firstHirOriginId } from "./required-origin";
 
 type NormalizeRootArgumentsResult =
   | { readonly kind: "ok"; readonly arguments: readonly MonoCheckedType[] }
@@ -19,7 +20,7 @@ export function normalizeRootArguments(input: {
     const result = normalizeMonoCheckedType(argument, {
       targetTypeKinds: input.program.monoClosure.targetTypeKinds,
       constructorKindRules: input.program.monoClosure.constructorKindRules,
-      sourceOrigin: input.program.origins.originRecords()[0]?.originId ?? (0 as never),
+      sourceOrigin: firstHirOriginId(input.program),
     });
     if (result.kind === "error") {
       diagnostics.push(...result.diagnostics);

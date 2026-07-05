@@ -73,8 +73,7 @@ export function loadFixtureOptIrObservationInputForTest(
   }
 
   const unoptimizedProgram = pipeline.value.optimizedOptIr.constructOptIrResult.program;
-  const unoptimizedOperations =
-    unoptimizedProgram.operations ?? pipeline.value.optimizedOptIr.unoptimizedOperations;
+  const unoptimizedOperations = pipeline.value.optimizedOptIr.constructOptIrResult.operations;
   const optimizedProgram = pipeline.value.optIr.program;
   const optimizedOperations = pipeline.value.optIr.operations;
   const optimizedFunctionsById = new Map(

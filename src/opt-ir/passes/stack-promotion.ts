@@ -15,6 +15,7 @@ export interface OptIrStackPromotionInput {
   readonly regions: readonly OptIrRegion[];
   readonly lifetimeFacts: readonly OptIrStackLifetimeFact[];
   readonly escapedRegionIds: readonly OptIrRegionId[];
+  readonly nonEscapingRegionIds?: readonly OptIrRegionId[];
 }
 
 export interface OptIrStackPromotionResult {
@@ -36,6 +37,7 @@ export function runStackPromotionForTest(
 
 export function runStackPromotion(input: OptIrStackPromotionInput): OptIrStackPromotionResult {
   const escaped = new Set(input.escapedRegionIds);
+  const nonEscaping = new Set(input.nonEscapingRegionIds ?? []);
   const lifetimeByRegion = new Map(input.lifetimeFacts.map((fact) => [fact.regionId, fact.valid]));
   const promotedRegionIds: OptIrRegionId[] = [];
   const rejectedRegions: OptIrStackPromotionResult["rejectedRegions"][number][] = [];
@@ -44,7 +46,7 @@ export function runStackPromotion(input: OptIrStackPromotionInput): OptIrStackPr
   for (const region of [...input.regions].sort(
     (left, right) => Number(left.regionId) - Number(right.regionId),
   )) {
-    const reason = stackPromotionRejectReason(region, escaped, lifetimeByRegion);
+    const reason = stackPromotionRejectReason(region, escaped, nonEscaping, lifetimeByRegion);
     if (reason !== undefined) {
       rejectedRegions.push({ regionId: region.regionId, reason });
       continue;
@@ -71,9 +73,13 @@ export function runStackPromotion(input: OptIrStackPromotionInput): OptIrStackPr
 function stackPromotionRejectReason(
   region: OptIrRegion,
   escaped: ReadonlySet<OptIrRegionId>,
+  nonEscaping: ReadonlySet<OptIrRegionId>,
   lifetimeByRegion: ReadonlyMap<OptIrRegionId, boolean>,
 ): OptIrStackPromotionRejectReason | undefined {
   if (escaped.has(region.regionId)) {
+    return "escaped";
+  }
+  if (!nonEscaping.has(region.regionId)) {
     return "escaped";
   }
   if (lifetimeByRegion.get(region.regionId) !== true || region.lifetime !== "activation") {

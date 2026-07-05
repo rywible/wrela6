@@ -132,6 +132,7 @@ describe("AArch64 object assembly helpers", () => {
         securityHelperCalls: [],
         frameShape: "serializable-unwind",
         frameSizeBytes: 16,
+        savedRegisters: [],
         wipeSlotKeys: ["spill-slot:vreg:7"],
       },
     ]);

@@ -20,7 +20,7 @@ import type {
   ProofMirProgram,
   ProofMirBuildTargetContext,
 } from "../../../src/proof-mir";
-import * as wrela from "../../../src";
+import * as proofMir from "../../../src/proof-mir";
 
 type PublicProofMirModelSmoke = {
   readonly buildProofMirInput?: BuildProofMirInput;
@@ -49,27 +49,21 @@ test("proof-mir public API exports builder and model types", () => {
   expect(acceptPublicProofMirModel({})).toEqual({});
 });
 
-test("proof-mir public API is exported from src/proof-mir and src root namespace", () => {
+test("proof-mir public API is exported from src/proof-mir", () => {
   expect(typeof buildProofMir).toBe("function");
-  expect(typeof wrela.proofMir.buildProofMir).toBe("function");
+  expect(typeof proofMir.buildProofMir).toBe("function");
   expect(typeof proofMirDiagnostic).toBe("function");
-  expect(typeof wrela.proofMir.proofMirDiagnostic).toBe("function");
+  expect(typeof proofMir.proofMirDiagnostic).toBe("function");
   expect(typeof proofMirDiagnosticCode).toBe("function");
-  expect(typeof wrela.proofMir.proofMirDiagnosticCode).toBe("function");
+  expect(typeof proofMir.proofMirDiagnosticCode).toBe("function");
   expect(typeof sortProofMirDiagnostics).toBe("function");
-  expect(typeof wrela.proofMir.sortProofMirDiagnostics).toBe("function");
-  expect("freezeDraftProgram" in wrela.proofMir).toBe(false);
-});
-
-test("public barrel exports Proof MIR builder", async () => {
-  const api = await import("../../../src");
-
-  expect(api.proofMir.buildProofMir).toBeFunction();
+  expect(typeof proofMir.sortProofMirDiagnostics).toBe("function");
+  expect("freezeDraftProgram" in proofMir).toBe(false);
 });
 
 test("proof-mir public API does not expose lowering implementation modules", () => {
-  expect("createProofMirExpressionLowerer" in wrela.proofMir).toBe(false);
-  expect("lowerProofMirFunction" in wrela.proofMir).toBe(false);
-  expect("createProofMirLoweringRegistry" in wrela.proofMir).toBe(false);
-  expect("validateProofMirGraph" in wrela.proofMir).toBe(false);
+  expect("createProofMirExpressionLowerer" in proofMir).toBe(false);
+  expect("lowerProofMirFunction" in proofMir).toBe(false);
+  expect("createProofMirLoweringRegistry" in proofMir).toBe(false);
+  expect("validateProofMirGraph" in proofMir).toBe(false);
 });

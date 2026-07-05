@@ -53,11 +53,14 @@ function ownerSegment(
   ownerItemId: ItemId | undefined,
   ownerFunctionId: FunctionId | undefined,
 ): string {
-  return `item:${ownerItemId ?? ""}|function:${ownerFunctionId ?? ""}`;
+  const itemSegment = ownerItemId === undefined ? "missing" : String(ownerItemId);
+  const functionSegment = ownerFunctionId === undefined ? "missing" : String(ownerFunctionId);
+  return `item:${itemSegment}|function:${functionSegment}`;
 }
 
 function sourceSegment(source: { readonly name?: string } | undefined): string {
-  return `source:${source?.name ?? ""}`;
+  if (source?.name === undefined) return "source:missing";
+  return `source:${source.name}`;
 }
 
 export class HirOriginAllocatorImpl implements HirOriginAllocatorAndTable {

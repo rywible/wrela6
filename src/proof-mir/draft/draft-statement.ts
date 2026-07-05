@@ -8,6 +8,7 @@ import type {
 } from "../../hir/ids";
 import type { MonoInstanceId } from "../../mono/ids";
 import type {
+  MonoExpressionId,
   MonoInstantiatedProofId,
   MonoLiteralValue,
   MonoLocalId,
@@ -136,11 +137,13 @@ export interface DraftProofMirValidationStart {
 
 export type DraftProofMirAttemptOperand = {
   readonly kind: "observe" | "consume";
+  readonly expressionId: MonoExpressionId;
   readonly placeKey: ProofMirCanonicalKey;
 };
 
 export type DraftProofMirAttemptAlternative = {
   readonly kind: "value";
+  readonly expressionId: MonoExpressionId;
   readonly placeKey: ProofMirCanonicalKey;
 };
 

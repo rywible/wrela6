@@ -1,5 +1,6 @@
 import { type OptIrProductionPassScheduleEntry } from "../policy/pass-order-policy";
 import { appendPipelineDecision, stateChanged, verifyPipelineState } from "./pipeline-state";
+import type { OptIrPassContext } from "./pass-execution";
 import {
   runCleanupCluster,
   runCfgSimplificationStep,
@@ -9,8 +10,6 @@ import {
   runGvnStep,
   runLoopVectorizationStep,
   runMandatoryInliningCluster,
-  runMemoryOptimizationStep,
-  runMemorySsaAnalysisStep,
   runScalarReplacementStep,
   runScalarSimplificationStep,
   runSccpStep,
@@ -24,19 +23,32 @@ import {
   runWrelaCluster,
 } from "./pipeline-steps";
 import {
+  runDeadStoreEliminationStep,
+  runLoadStoreForwardingStep,
+  runMemorySsaAnalysisStep,
+} from "./pipeline-memory-steps";
+import {
   isPipelineError,
   type OptimizeOptIrInput,
   type PipelineState,
   type PipelineStepResult,
 } from "./pipeline-types";
+import { pipelineErrorDiagnostic } from "./pipeline-diagnostics";
 
 export function runPipelineEntry(
   state: PipelineState,
   input: OptimizeOptIrInput,
   entry: OptIrProductionPassScheduleEntry,
+  options: {
+    readonly decisionAlreadyAppended?: boolean;
+    readonly context?: OptIrPassContext;
+  } = {},
 ): PipelineStepResult {
   const passId = String(entry.passId);
-  let next = appendPipelineDecision(state, entry, "accepted", "pipeline:ran", "none");
+  let next =
+    options.decisionAlreadyAppended === true
+      ? state
+      : appendPipelineDecision(state, entry, "accepted", "pipeline:ran", "none");
 
   switch (passId) {
     case "construction-cleanup":
@@ -56,7 +68,19 @@ export function runPipelineEntry(
       }
       break;
     case "whole-program-inlining":
-      next = runWholeProgramInliningStep(next);
+      if (options.context === undefined) {
+        return {
+          kind: "error",
+          diagnostics: [
+            pipelineErrorDiagnostic(
+              "opt-ir-optimization",
+              "whole-program-inlining",
+              "pass-context-missing:whole-program-inlining",
+            ),
+          ],
+        };
+      }
+      next = runWholeProgramInliningStep(next, options.context);
       break;
     case "whole-program-specialization":
       next = input.policy.enableWholeProgramSpecialization
@@ -91,10 +115,10 @@ export function runPipelineEntry(
       break;
     }
     case "load-store-forwarding":
-      next = runMemoryOptimizationStep(next, "load-store-forwarding");
+      next = runLoadStoreForwardingStep(next);
       break;
     case "dead-store-elimination":
-      next = runMemoryOptimizationStep(next, "dead-store-elimination");
+      next = runDeadStoreEliminationStep(next);
       break;
     case "scalar-replacement":
       next = runScalarReplacementStep(next);
@@ -103,7 +127,15 @@ export function runPipelineEntry(
       next = runStackPromotionStep(next);
       break;
     case "licm":
-      next = runLicmStep(next);
+      if (options.context === undefined) {
+        return {
+          kind: "error",
+          diagnostics: [
+            pipelineErrorDiagnostic("opt-ir-optimization", "licm", "pass-context-missing:licm"),
+          ],
+        };
+      }
+      next = runLicmStep(next, options.context);
       break;
     case "wrela-fact-rounds":
       next = runWrelaCluster(next, input.target);

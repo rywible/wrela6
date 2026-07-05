@@ -82,12 +82,35 @@ function lowerIntegerLiteral(
     });
     return { kind: "error" };
   }
-  const text = view.literalText() ?? "0";
+  const text = view.literalText();
+  if (text === undefined) {
+    reportUnsupportedLayoutExpression({
+      context: input.context,
+      sourceOrigin,
+      ownerKey: input.ownerKey,
+      stableDetail: "missing-integer-literal-text",
+      spanStart: token !== undefined ? presentTokenSpan(token)?.start : undefined,
+      spanEnd: token !== undefined ? presentTokenSpan(token)?.end : undefined,
+    });
+    return { kind: "error" };
+  }
+  const value = parseWrIntegerLiteral(text);
+  if (value === undefined) {
+    reportUnsupportedLayoutExpression({
+      context: input.context,
+      sourceOrigin,
+      ownerKey: input.ownerKey,
+      stableDetail: `invalid-integer:${text}`,
+      spanStart: token !== undefined ? presentTokenSpan(token)?.start : undefined,
+      spanEnd: token !== undefined ? presentTokenSpan(token)?.end : undefined,
+    });
+    return { kind: "error" };
+  }
   return {
     kind: "ok",
     expression: {
       kind: "integerLiteral",
-      value: parseWrIntegerLiteral(text) ?? 0n,
+      value,
       sourceOrigin,
     },
   };

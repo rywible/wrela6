@@ -44,6 +44,7 @@ import {
   type MonoSubstitution,
 } from "./substitution";
 import { monoTypeAncestry, recursiveFieldKindProvider } from "./type-instantiator";
+import { firstHirOriginId } from "./required-origin";
 
 export type ProofOwnerInstance =
   | MonoFunctionInstance
@@ -57,6 +58,7 @@ export function lookupInstancesForOwner(input: {
   readonly imageInstanceId: MonoInstanceId;
   readonly canonicalInstanceKeys: ReadonlyMap<HirProofOwner, string>;
 }): readonly ProofOwnerInstance[] {
+  if (input.owner.kind === "program") return [];
   if (input.owner.kind === "image") {
     if (!hasCanonicalInstanceKeyForOwner(input.canonicalInstanceKeys, input.owner)) return [];
     return [{ instanceId: input.imageInstanceId } as MonoFunctionInstance];
@@ -120,6 +122,9 @@ export function monoProofOwnerFor(
   owner: HirProofOwner,
 ): MonoProofOwner {
   if (owner.kind === "image") return { kind: "image", instanceId };
+  if (owner.kind === "program") {
+    throw new Error("Program-scoped HIR proof owner cannot be monomorphized.");
+  }
   return { kind: owner.kind, instanceId };
 }
 
@@ -193,7 +198,7 @@ function substitutionForInstance(
 function emptySubstitution(input: InstantiateMonoProofMetadataInput): MonoSubstitution {
   return {
     map: new Map(),
-    sourceOrigin: input.program.origins.originRecords()[0]?.originId ?? (0 as never),
+    sourceOrigin: firstHirOriginId(input.program),
   };
 }
 
@@ -345,7 +350,7 @@ function monoNormalizationContextForInput(
   return {
     targetTypeKinds: input.program.monoClosure.targetTypeKinds,
     constructorKindRules: input.program.monoClosure.constructorKindRules,
-    sourceOrigin: input.program.origins.originRecords()[0]?.originId ?? (0 as never),
+    sourceOrigin: firstHirOriginId(input.program),
   };
 }
 
@@ -467,6 +472,9 @@ function requirementOwnerFor(
   instanceId: MonoInstanceId,
   owner: import("../hir/hir").HirRequirementOwner,
 ): MonoProofOwner {
+  if (owner.kind === "program") {
+    throw new Error("Program-scoped HIR requirement owner cannot be monomorphized.");
+  }
   if (owner.kind === "function") return { kind: "function", instanceId };
   return { kind: "type", instanceId };
 }
@@ -475,6 +483,9 @@ function requirementMonoOwnerFor(
   instanceId: MonoInstanceId,
   owner: import("../hir/hir").HirRequirementOwner,
 ): MonoRequirementOwner {
+  if (owner.kind === "program") {
+    throw new Error("Program-scoped HIR requirement owner cannot be monomorphized.");
+  }
   if (owner.kind === "type") return { kind: "type", typeInstanceId: instanceId };
   return { kind: "function", functionInstanceId: instanceId };
 }

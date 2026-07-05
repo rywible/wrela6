@@ -20,6 +20,7 @@ export function parseFunctionDeclaration(context: ParserContext): GreenNode {
 
   if (context.currentSyntaxKind() === SyntaxKind.ColonToken) {
     const block = parseBlock(context, {
+      requireIndentedBlock: true,
       itemParser: parseFunctionBodyItem,
       recoveryKinds: blockItemRecoveryKinds,
     });
@@ -61,6 +62,7 @@ export function parseRequiresSection(context: ParserContext): GreenNode {
     itemParser: parseRequirement,
     recoveryKinds: blockItemRecoveryKinds,
     optionalColon: true,
+    requireIndentedBlock: true,
   });
   children.push(block);
 

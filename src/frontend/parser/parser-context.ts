@@ -173,6 +173,8 @@ function ownerKeyForParseDiagnostic(code: ParseDiagnosticCode): string {
       return "parser:declaration";
     case "PARSE_EXPECTED_EXPRESSION":
       return "parser:expression";
+    case "PARSE_EXPECTED_INDENTED_BLOCK":
+      return "parser:indented-block";
     case "PARSE_EXPECTED_TOKEN":
       return "parser:token";
     case "PARSE_NESTING_LIMIT_EXCEEDED":

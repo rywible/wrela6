@@ -290,6 +290,38 @@ describe("OptIR production schedule policy", () => {
     });
   });
 
+  test("schedule verifier rejects reused fixpoint ids outside one consecutive group", () => {
+    const result = validateOptIrPassSchedule([
+      passEntry("first", {
+        requires: ["canonical-opt-ir"],
+        produces: ["first-clean"],
+        fixpointId: "cleanup-fixpoint",
+      }),
+      passEntry("middle", {
+        requires: ["first-clean"],
+        produces: ["middle-clean"],
+      }),
+      passEntry("second", {
+        requires: ["middle-clean"],
+        produces: ["second-clean"],
+        fixpointId: "cleanup-fixpoint",
+      }),
+    ]);
+
+    expect(result).toEqual({
+      kind: "error",
+      issues: [
+        {
+          code: "FIXPOINT_ID_REUSED_NON_CONSECUTIVELY",
+          fixpointId: "cleanup-fixpoint",
+          order: 2,
+          passId: optimizationPassId("second"),
+          previousOrder: 0,
+        },
+      ],
+    });
+  });
+
   test("schedule verifier reads scheduling data from the single pass contract", () => {
     const entry = passEntry("consumer", {
       requires: ["canonical-opt-ir"],

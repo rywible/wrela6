@@ -8,6 +8,32 @@ These examples are not syntax tests for polish. They are invariant tests: each
 program should fail because it attempts to forge, alias, leak, reuse, misroute,
 or publish a capability that the language model says must be tracked.
 
+<!-- invalid-diagnostic-fixtures
+[
+  {"section":"Sealed Tokens","slug":"sealed-tokens","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Unique Edge Roots And Edge Paths","slug":"unique-edge-roots-and-edge-paths","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Receiver And Move Rules","slug":"receiver-and-move-rules","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Stream And Session Rules","slug":"stream-and-session-rules","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Validation Rules","slug":"validation-rules","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Validated Buffer Layout Rules","slug":"validated-buffer-layout-rules","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Terminal Function Rules","slug":"terminal-function-rules","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Platform Requires Rules","slug":"platform-requires-rules","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"TX Initialization Rules","slug":"tx-initialization-rules","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"RX Edge Internals","slug":"rx-edge-internals","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Control Flow And Obligations","slug":"control-flow-and-obligations","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Attempt And Boot Rules","slug":"attempt-and-boot-rules","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Dataclass And Value Rules","slug":"dataclass-and-value-rules","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Affine Wrapper Rules","slug":"affine-wrapper-rules","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Static Memory And Bounded Data","slug":"static-memory-and-bounded-data","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Multicore Ownership Transfer","slug":"multicore-ownership-transfer","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Edge/Core Separation","slug":"edge-core-separation","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Exhaustiveness And Names","slug":"exhaustiveness-and-names","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Cross-Edge Misrouting","slug":"cross-edge-misrouting","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Forbidden Runtime Escape Hatches","slug":"forbidden-runtime-escape-hatches","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"},
+  {"section":"Nice-Looking But Still Invalid","slug":"nice-looking-but-still-invalid","stage":"parse","code":"LEX_MALFORMED_INTEGER","source":"fn boot() -> u32:\n    return 0x"}
+]
+-->
+
 ## Sealed Tokens
 
 ### Invalid: core code cannot construct a readable buffer

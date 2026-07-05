@@ -82,30 +82,32 @@ function isNeverReturn(signature: CheckedFunctionSignature): boolean {
   );
 }
 
-function firstPrivateStateInput(signature: CheckedFunctionSignature):
-  | {
-      readonly parameterId: ParameterId;
-      readonly mode: "observe" | "consume";
-      readonly isReceiver: boolean;
-    }
-  | undefined {
+function privateStateInputs(signature: CheckedFunctionSignature): readonly {
+  readonly parameterId: ParameterId;
+  readonly mode: "observe" | "consume";
+  readonly isReceiver: boolean;
+}[] {
+  const inputs: {
+    readonly parameterId: ParameterId;
+    readonly mode: "observe" | "consume";
+    readonly isReceiver: boolean;
+  }[] = [];
   if (signature.receiver !== undefined && isPrivateStateKind(signature.receiver.resourceKind)) {
-    return {
+    inputs.push({
       parameterId: signature.receiver.parameterId,
       mode: signature.receiver.mode,
       isReceiver: true,
-    };
+    });
   }
-  const parameter = signature.parameters.find((candidate) =>
-    isPrivateStateKind(candidate.resourceKind),
-  );
-  return parameter !== undefined
-    ? {
-        parameterId: parameter.parameterId,
-        mode: parameter.mode,
-        isReceiver: false,
-      }
-    : undefined;
+  for (const parameter of signature.parameters) {
+    if (!isPrivateStateKind(parameter.resourceKind)) continue;
+    inputs.push({
+      parameterId: parameter.parameterId,
+      mode: parameter.mode,
+      isReceiver: false,
+    });
+  }
+  return Object.freeze(inputs);
 }
 
 export function privateTransitionsFromSignatures(input: {
@@ -113,21 +115,21 @@ export function privateTransitionsFromSignatures(input: {
 }): CheckedPrivateTransitionSurface[] {
   const transitions: CheckedPrivateTransitionSurface[] = [];
   for (const signature of input.signatures.entries()) {
-    const privateInput = firstPrivateStateInput(signature);
-    if (privateInput === undefined) continue;
-    const kind: CheckedPrivateTransitionSurface["kind"] = signature.modifiers.isPredicate
-      ? "predicate"
-      : isNeverReturn(signature)
-        ? "close"
-        : privateInput.mode === "consume" || isPrivateStateKind(signature.returnKind)
-          ? "advance"
-          : "unknown";
-    transitions.push({
-      functionId: signature.functionId,
-      kind,
-      receiverParameterId: privateInput.parameterId,
-      span: signature.sourceSpan,
-    });
+    for (const privateInput of privateStateInputs(signature)) {
+      const kind: CheckedPrivateTransitionSurface["kind"] = signature.modifiers.isPredicate
+        ? "predicate"
+        : isNeverReturn(signature)
+          ? "close"
+          : privateInput.mode === "consume" || isPrivateStateKind(signature.returnKind)
+            ? "advance"
+            : "unknown";
+      transitions.push({
+        functionId: signature.functionId,
+        kind,
+        receiverParameterId: privateInput.parameterId,
+        span: signature.sourceSpan,
+      });
+    }
   }
   return transitions;
 }

@@ -2,7 +2,7 @@ import { computeOptIrDominance } from "../analyses/dominance";
 import { computeOptIrLoopTree, type OptIrLoopRecord } from "../analyses/loop-tree";
 import { optIrCfgEdgeTable, type OptIrBlock, type OptIrEdge } from "../cfg";
 import { type OptIrBlockId, type OptIrOperationId, type OptIrValueId } from "../ids";
-import { createOptIrFreshIdAllocator, type OptIrFreshIdAllocator } from "../fresh-ids";
+import type { OptIrFreshIdAllocator } from "../id-allocation";
 import type { OptIrOperation } from "../operations";
 import { optIrFunctionTable, type OptIrFunction, type OptIrProgram } from "../program";
 import { operationCanMoveToPreheader } from "./licm-speculation";
@@ -11,9 +11,9 @@ import type { OptIrMemoryRewriteRecord } from "./memory-optimization";
 export interface OptIrLicmInput {
   readonly program: OptIrProgram;
   readonly operations: readonly OptIrOperation[];
-  readonly loopOperationIds: readonly OptIrOperationId[];
   readonly effectBoundaryOperationIds: readonly OptIrOperationId[];
   readonly regionSafeOperationIds?: readonly OptIrOperationId[];
+  readonly freshIds: OptIrFreshIdAllocator;
 }
 
 export interface OptIrLicmResult {
@@ -36,7 +36,7 @@ export function runLicm(input: OptIrLicmInput): OptIrLicmResult {
   const hoisted = hoistOperationsInProgram({
     program: input.program,
     operations,
-    loopOperationIds: input.loopOperationIds,
+    freshIds: input.freshIds,
     effectBoundaryOperationIds: boundaries,
     regionSafeOperationIds: regionSafe,
   });
@@ -57,11 +57,11 @@ export function runLicm(input: OptIrLicmInput): OptIrLicmResult {
 }
 
 function resultProducerByValue(
-  loopOperationIds: readonly OptIrOperationId[],
+  operationIds: readonly OptIrOperationId[],
   operations: ReadonlyMap<OptIrOperationId, OptIrOperation>,
 ): ReadonlyMap<number, OptIrOperationId> {
   const producerByValue = new Map<number, OptIrOperationId>();
-  for (const operationId of loopOperationIds) {
+  for (const operationId of operationIds) {
     const operation = operations.get(operationId);
     if (operation === undefined) {
       continue;
@@ -76,7 +76,7 @@ function resultProducerByValue(
 function hoistOperationsInProgram(input: {
   readonly program: OptIrProgram;
   readonly operations: ReadonlyMap<OptIrOperationId, OptIrOperation>;
-  readonly loopOperationIds: readonly OptIrOperationId[];
+  readonly freshIds: OptIrFreshIdAllocator;
   readonly effectBoundaryOperationIds: ReadonlySet<OptIrOperationId>;
   readonly regionSafeOperationIds: ReadonlySet<OptIrOperationId>;
 }): {
@@ -86,17 +86,11 @@ function hoistOperationsInProgram(input: {
 } {
   const movedOperationIds = new Set<OptIrOperationId>();
   const blockedOperationIds = new Set<OptIrOperationId>();
-  const requestedLoopOperationIds = new Set(input.loopOperationIds);
-  const freshIds = createOptIrFreshIdAllocator({
-    program: input.program,
-    operations: [...input.operations.values()],
-  });
   const functions = input.program.functions.entries().map((function_) => {
     const result = hoistOperationsInFunction({
       function_,
       operations: input.operations,
-      freshIds,
-      requestedLoopOperationIds,
+      freshIds: input.freshIds,
       effectBoundaryOperationIds: input.effectBoundaryOperationIds,
       regionSafeOperationIds: input.regionSafeOperationIds,
     });
@@ -115,7 +109,6 @@ function hoistOperationsInFunction(input: {
   readonly function_: OptIrFunction;
   readonly operations: ReadonlyMap<OptIrOperationId, OptIrOperation>;
   readonly freshIds: OptIrFreshIdAllocator;
-  readonly requestedLoopOperationIds: ReadonlySet<OptIrOperationId>;
   readonly effectBoundaryOperationIds: ReadonlySet<OptIrOperationId>;
   readonly regionSafeOperationIds: ReadonlySet<OptIrOperationId>;
 }): {
@@ -134,11 +127,7 @@ function hoistOperationsInFunction(input: {
   for (const loop of loops) {
     const prepared = ensureLoopPreheader(currentFunction, loop, input.freshIds);
     if (prepared === undefined) {
-      for (const operationId of loopOperationIdsInProgramOrder(
-        currentFunction,
-        loop,
-        input.requestedLoopOperationIds,
-      )) {
+      for (const operationId of operationsInLoopProgramOrder(currentFunction, loop)) {
         blockedOperationIds.add(operationId);
       }
       continue;
@@ -149,7 +138,6 @@ function hoistOperationsInFunction(input: {
       operations: input.operations,
       loop,
       preheaderBlockId: prepared.preheaderBlockId,
-      requestedLoopOperationIds: input.requestedLoopOperationIds,
       effectBoundaryOperationIds: input.effectBoundaryOperationIds,
       regionSafeOperationIds: input.regionSafeOperationIds,
     });
@@ -276,7 +264,6 @@ function selectLoopInvariantOperations(input: {
   readonly operations: ReadonlyMap<OptIrOperationId, OptIrOperation>;
   readonly loop: OptIrLoopRecord;
   readonly preheaderBlockId: OptIrBlockId;
-  readonly requestedLoopOperationIds: ReadonlySet<OptIrOperationId>;
   readonly effectBoundaryOperationIds: ReadonlySet<OptIrOperationId>;
   readonly regionSafeOperationIds: ReadonlySet<OptIrOperationId>;
 }): {
@@ -284,12 +271,8 @@ function selectLoopInvariantOperations(input: {
   readonly blockedOperationIds: readonly OptIrOperationId[];
 } {
   const loopBlockIds = new Set(input.loop.blocks);
-  const loopOperationIds = loopOperationIdsInProgramOrder(
-    input.function_,
-    input.loop,
-    input.requestedLoopOperationIds,
-  );
-  const loopResultProducers = resultProducerByValue(loopOperationIds, input.operations);
+  const operationIdsInLoop = operationsInLoopProgramOrder(input.function_, input.loop);
+  const loopResultProducers = resultProducerByValue(operationIdsInLoop, input.operations);
   const definitionBlockByValue = valueDefinitionBlocks(input.function_, input.operations);
   const dominance = computeOptIrDominance(input.function_);
   const hoistable = new Set<OptIrOperationId>();
@@ -298,7 +281,7 @@ function selectLoopInvariantOperations(input: {
   let changed = true;
   while (changed) {
     changed = false;
-    for (const operationId of loopOperationIds) {
+    for (const operationId of operationIdsInLoop) {
       if (hoistable.has(operationId) || blocked.has(operationId)) {
         continue;
       }
@@ -325,7 +308,7 @@ function selectLoopInvariantOperations(input: {
     }
   }
 
-  for (const operationId of loopOperationIds) {
+  for (const operationId of operationIdsInLoop) {
     if (!hoistable.has(operationId)) {
       blocked.add(operationId);
     }
@@ -333,10 +316,46 @@ function selectLoopInvariantOperations(input: {
 
   return {
     hoistableOperationIds: Object.freeze(
-      loopOperationIds.filter((operationId) => hoistable.has(operationId)),
+      orderHoistedOperationsByDependencies({
+        operationIds: operationIdsInLoop.filter((operationId) => hoistable.has(operationId)),
+        operations: input.operations,
+      }),
     ),
     blockedOperationIds: Object.freeze([...blocked].sort(compareOperationIds)),
   };
+}
+
+function orderHoistedOperationsByDependencies(input: {
+  readonly operationIds: readonly OptIrOperationId[];
+  readonly operations: ReadonlyMap<OptIrOperationId, OptIrOperation>;
+}): readonly OptIrOperationId[] {
+  const selected = new Set(input.operationIds);
+  const producerByValue = resultProducerByValue(input.operationIds, input.operations);
+  const visiting = new Set<OptIrOperationId>();
+  const visited = new Set<OptIrOperationId>();
+  const ordered: OptIrOperationId[] = [];
+
+  const visit = (operationId: OptIrOperationId): void => {
+    if (visited.has(operationId) || visiting.has(operationId)) {
+      return;
+    }
+    visiting.add(operationId);
+    const operation = input.operations.get(operationId);
+    for (const operandId of operation?.operandIds ?? []) {
+      const producer = producerByValue.get(Number(operandId));
+      if (producer !== undefined && selected.has(producer)) {
+        visit(producer);
+      }
+    }
+    visiting.delete(operationId);
+    visited.add(operationId);
+    ordered.push(operationId);
+  };
+
+  for (const operationId of input.operationIds) {
+    visit(operationId);
+  }
+  return Object.freeze(ordered);
 }
 
 function operandsAreAvailableInPreheader(input: {
@@ -418,19 +437,14 @@ function moveOperationsToPreheader(input: {
   };
 }
 
-function loopOperationIdsInProgramOrder(
+function operationsInLoopProgramOrder(
   function_: OptIrFunction,
   loop: OptIrLoopRecord,
-  requestedLoopOperationIds: ReadonlySet<OptIrOperationId>,
 ): readonly OptIrOperationId[] {
   const loopBlockIds = new Set(loop.blocks);
   return function_.blocks
     .filter((block) => loopBlockIds.has(block.blockId))
-    .flatMap((block) => block.operations)
-    .filter(
-      (operationId) =>
-        requestedLoopOperationIds.size === 0 || requestedLoopOperationIds.has(operationId),
-    );
+    .flatMap((block) => block.operations);
 }
 
 function valueDefinitionBlocks(

@@ -69,9 +69,10 @@ export function packetParserDemoInputForTest(): BuildOptimizedOptIrInput {
 
 export function packetParserDemoOptimizerForTest(): BuildOptimizedOptIrDependencies["optimizer"] {
   return (input): OptimizeOptIrResult => {
+    const packetParserDemo = programWithPacketParserDemoOperations(input);
     return optimizeOptIr({
       ...input,
-      program: programWithPacketParserDemoOperations(input.program),
+      ...packetParserDemo,
     });
   };
 }
@@ -221,14 +222,15 @@ function packetParserDemoOperationsForTest(): readonly OptIrOperation[] {
 }
 
 function programWithPacketParserDemoOperations(
-  program: OptimizeOptIrInput["program"],
-): OptimizeOptIrInput["program"] {
+  input: OptimizeOptIrInput,
+): Pick<OptimizeOptIrInput, "program" | "operations" | "optimizationRegions"> {
+  const program = input.program;
   const operations = packetParserDemoOperationsForTest();
   const functions = program.functions.entries();
   const [firstFunction] = functions;
   const [firstBlock] = firstFunction?.blocks ?? [];
   if (firstFunction === undefined || firstBlock === undefined) {
-    return { ...program, operations };
+    return { program, operations, optimizationRegions: input.optimizationRegions };
   }
 
   const rewrittenBlock = {
@@ -254,15 +256,17 @@ function programWithPacketParserDemoOperations(
   );
   const packetRegion = packetRegionForTest();
   return {
-    ...program,
+    program: {
+      ...program,
+      functions: optIrFunctionTable(rewrittenFunctions),
+      regions: optIrRegionTable([
+        ...program.regions.entries().filter((region) => region.regionId !== PACKET_REGION),
+        { regionId: PACKET_REGION, originId: ORIGIN },
+      ]),
+    },
     operations,
-    functions: optIrFunctionTable(rewrittenFunctions),
-    regions: optIrRegionTable([
-      ...program.regions.entries().filter((region) => region.regionId !== PACKET_REGION),
-      { regionId: PACKET_REGION, originId: ORIGIN },
-    ]),
     optimizationRegions: [
-      ...(program.optimizationRegions ?? []).filter((region) => region.regionId !== PACKET_REGION),
+      ...input.optimizationRegions.filter((region) => region.regionId !== PACKET_REGION),
       packetRegion,
     ],
   };

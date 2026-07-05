@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import * as packageRoot from "../../../src";
 import * as semantic from "../../../src/semantic";
 import {
   buildItemIndex,
@@ -33,10 +32,4 @@ test("semantic namespace exports semantic surface API", () => {
   expect(typeof semanticTargetSurface).toBe("function");
   expect(typeof semantic.sortSemanticSurfaceDiagnostics).toBe("function");
   expect(semantic.CheckedProgramBuilder).toBeDefined();
-});
-
-test("top-level package exports semantic namespace", () => {
-  expect(packageRoot.semantic.buildItemIndex).toBeDefined();
-  expect(packageRoot.semantic.resolveNames).toBeDefined();
-  expect(typeof packageRoot.semantic.checkSemanticSurface).toBe("function");
 });

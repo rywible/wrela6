@@ -19,6 +19,7 @@ export function lowerOptIrToAArch64Program(
   let state = createAArch64LoweringState({
     program: input.program,
     operations: input.operations,
+    optimizationRegions: input.optimizationRegions,
     facts: input.facts,
     target: input.target,
     options: input.options ?? {},

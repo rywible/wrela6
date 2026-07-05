@@ -252,6 +252,7 @@ function packageOptIrFixture(
     optIr: Object.freeze({
       program: fixture.program,
       operations: Object.freeze([...fixture.operations]),
+      optimizationRegions: Object.freeze([...fixture.optimizationRegions]),
       unoptimizedOperations: Object.freeze([...fixture.operations]),
       facts: emptyOptIrFactSet(),
       staticChar16Strings: staticMetadata.staticChar16Strings,
@@ -298,7 +299,7 @@ function validationFixturePacketSourceOptIrFixture() {
     functions: optIrFunctionTable([sourceFunction]),
     regions: optIrRegionTable([]),
   });
-  return { program, operations: [call] };
+  return { program, operations: [call], optimizationRegions: Object.freeze([]) };
 }
 
 function staticChar16StringForTest() {
@@ -353,7 +354,7 @@ function consoleOutputOptIrFixture() {
     functions: optIrFunctionTable([sourceFunction]),
     regions: optIrRegionTable([]),
   });
-  return { program, operations: [pointer, call] };
+  return { program, operations: [pointer, call], optimizationRegions: Object.freeze([]) };
 }
 
 function consoleOutputConstAddrOptIrFixture(
@@ -417,5 +418,5 @@ function consoleOutputConstAddrOptIrFixture(
     regions: optIrRegionTable([]),
     constants: optIrConstantTable([dataConstant]),
   });
-  return { program, operations: [pointer, call] };
+  return { program, operations: [pointer, call], optimizationRegions: Object.freeze([]) };
 }

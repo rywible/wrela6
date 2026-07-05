@@ -2,6 +2,7 @@ import {
   aarch64MachineInstructionId,
   aarch64RelocationReferenceId,
   aarch64SymbolId,
+  aarch64VirtualRegisterId,
 } from "../machine-ir/ids";
 import {
   aarch64MachineInstruction,
@@ -38,7 +39,7 @@ export function materializeAArch64Constant(input: {
   const widthBits = input.widthBits ?? 64;
   const machineType = aarch64IntMachineType(widthBits);
   const register = aarch64VirtualRegister({
-    vreg: 0 as never,
+    vreg: aarch64VirtualRegisterId(0),
     registerClass: widthBits === 32 ? "gpr32" : "gpr64",
     type: machineType,
     origin: { kind: "synthetic", stableKey: "constant.materialization" },

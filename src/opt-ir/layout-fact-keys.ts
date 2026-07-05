@@ -3,7 +3,7 @@ import { layoutFactKey, type LayoutFactKey } from "../proof-check/model/fact-pac
 
 interface LayoutTableLike<Entry> {
   readonly entries?: () => readonly Entry[];
-  readonly keyString?: (key: never) => string;
+  readonly keyString?: (key: unknown) => string;
 }
 
 type RecordLike = Readonly<Record<string, unknown>>;
@@ -77,7 +77,7 @@ function addTableKey(keys: Set<string>, table: unknown, key: unknown): void {
     return;
   }
   try {
-    addKey(keys, tableLike.keyString(key as never));
+    addKey(keys, tableLike.keyString(key));
   } catch {
     return;
   }

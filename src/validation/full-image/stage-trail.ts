@@ -59,7 +59,7 @@ export function verifyFullImageValidationStageTrail(
         diagnostics.push(
           stageTrailDiagnostic(`stage-trail:required-stage-out-of-order:${run.runKey}`),
         );
-        const actualIndex = FULL_IMAGE_VALIDATION_REQUIRED_STAGE_KEYS.indexOf(run.runKey as never);
+        const actualIndex = requiredStageIndex(run.runKey);
         nextRequiredIndex = actualIndex >= 0 ? actualIndex + 1 : nextRequiredIndex;
       } else {
         nextRequiredIndex += 1;
@@ -106,6 +106,15 @@ export function verifyFullImageValidationStageTrail(
   }
 
   return Object.freeze({ kind: "ok" as const, stageRuns });
+}
+
+function requiredStageIndex(runKey: string): number {
+  for (let index = 0; index < FULL_IMAGE_VALIDATION_REQUIRED_STAGE_KEYS.length; index += 1) {
+    if (FULL_IMAGE_VALIDATION_REQUIRED_STAGE_KEYS[index] === runKey) {
+      return index;
+    }
+  }
+  return -1;
 }
 
 function freezeStageRuns(

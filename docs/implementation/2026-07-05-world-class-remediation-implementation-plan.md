@@ -73,6 +73,72 @@ This plan revision accepts the execution feedback attached to the plan review an
 - Existing `src/opt-ir/passes/pass-contract.ts` is the fact-preservation, rewrite-legality, scheduling, and invariant-schema contract. New pass execution plumbing belongs in `src/opt-ir/passes/pass-execution.ts`; do not overwrite or rename the existing contract module.
 - The OptIR pass manager must preserve the current production schedule's consecutive `fixpointId` semantics from `src/opt-ir/policy/pass-order-policy.ts`.
 
+## Implementation Notes From Execution
+
+The 2026-07-05 implementation stayed within the plan's intent but found several required integration details that were not explicit in the original task text:
+
+- Payload-bearing generic enum declarations required end-to-end type-resolution support before real `Option[Value]` and `Result[Ok, Err]` could replace marker wrappers.
+- UEFI source-entry handling needed real `Result` resource-kind joining: `Ok` and `BootError` payloads are now lowered through the same tagged-result path instead of status-specific shortcuts.
+- OptIR source ABI lowering needed tag-only enum/status constructors to lower to typed constants and single-field error carriers to alias the payload field.
+- Proof-MIR derived-field comparisons needed enum-constructor operands to compare the case ordinal, not the aggregate constructor shape.
+- The maintainability audit was kept green by extracting new implementation surface into focused helper modules: HIR call/expression helpers, proof companion patch validation/builders, PE byte readers, parser bracket disambiguation, semantic enum-case collection, and Proof-MIR expression helpers.
+- The generated diagnostics corpus remains deterministic fixture generation from the invalid language spec; broader valid-program differential generation remains intentionally out of scope per the separate-plans section.
+- Independent review found that WCR-25 and WCR-26 needed actual release evidence, not alias checks: `verify:reproducible` now builds full-image fixtures twice in isolated output directories, compares artifact bytes and target metadata, and writes `dist/release/reproducibility-manifest.json`; `verify:stdlib` compiles documented stdlib module cases with real checked stdlib sources.
+- Independent review also found that WCR-13 needed the lexical import scanner deleted, not merely bypassed. `ImportDiscovery`, `ModuleGraphLexer`, and their lexical scanner tests were removed; module graph discovery now flows through parser-owned import declarations.
+- WCR-52 required structural enum operations in OptIR. Tagged unions now lower through explicit `enumTagStore`, `enumPayloadStore`, `enumTagLoad`, and `enumPayloadLoad` operations, and the verifier rejects payload loads unless they are reached through a compatible tag-discriminating switch edge.
+- Diagnostics fixture drift is now part of `verify:extended` through `bun run generate:diagnostics -- --check`, so generated invalid-language fixtures cannot silently fall behind the spec.
+- Ordinary match lowering needed to bind lowercase stdlib `Result` constructors as well as qualified/uppercase spellings; lowercase `ok(...)` and `err(...)` cases now bind payload locals through the same constructor-payload path.
+- Final independent review found additional integration gaps after the first full pass:
+  - SCCP now marks entry/runtime values and unknown incoming edge arguments overdefined, so joins cannot retain stale constants when one predecessor carries a runtime value.
+  - Strict release skip accounting no longer treats echoed `--allow-missing-*` command text as a skipped phase; only actual skipped status markers classify a successful phase as skipped.
+  - Tagged enum layout now models payload storage as a per-case union, keeps source-typed payload layouts available to stdlib `Result`/`Option`, and still publishes flat layout field facts for Proof-MIR compatibility.
+  - Proof-MIR enum construct lowering now fails closed for dynamic tags instead of inventing case-zero payload metadata.
+  - HIR enum constructor lowering now reports missing payload field records through a reachable fail-closed branch.
+  - HIR enum-constructor fail-closed paths now register returned error expressions in the body index, preventing expression ID reuse after malformed enum metadata.
+  - OptIR pass pipeline change detection now uses reference fast paths and cached stable fingerprints instead of serializing the whole program repeatedly.
+  - The enum layout implementation was decomposed into focused payload/diagnostic helper modules to keep layout runtime files below maintainability caps.
+  - UEFI AArch64 `.pdata` records now use image-relative `addr32nb` relocations, and PE parsing validates 8-byte AArch64 exception-directory records instead of accepting range-only data.
+  - OptIR enum payload-load verification now computes transitive tag-case dominance with a forward must-analysis rather than requiring the immediate predecessor to be the switch block.
+- A later independent audit of the completed OptIR work found three additional production correctness gaps and one WCR-47 clarification:
+  - WCR-04 was incomplete for vectorization candidates: duplicate `operationId` entries could be silently collapsed by `operationMap`, and vector discovery/materialization could reuse candidate-local IDs. `operationMap` now rejects duplicates, vector discovery reserves IDs through the canonical fresh allocator, and loop/vector materialization allocates against existing scalar and vector operations.
+  - WCR-06 was incomplete for cross-block memory order: Memory SSA and memory optimization now traverse CFG-reachable blocks, require dominance for forwarding, and expose deterministic unknown-merge states at joins where only some predecessors define a memory range.
+  - WCR-19's audit was too narrow: all production `as never` sentinel casts under `src` were removed, attempt operand expression IDs now flow from lowering into canonicalization, and `tests/audit/wcr18-wcr19-sentinel-audit.test.ts` scans all runtime source for impossible never-cast sentinels.
+  - WCR-47's original wording overstated the remaining production work: the top-level pipeline already flowed through `runOptIrPassPipeline`; the remaining `runPipelineStepToFixpoint` call is an internal fact-gated egraph convergence helper. `tests/unit/architecture/dependency-boundaries.test.ts` now locks down the pass manager as the only production pass-context constructor and public OptIR scheduling path.
+- A final independent audit found two late closure gaps that were corrected before final verification:
+  - WCR-03 still had a function-length mismatch because the entry thunk's logical context reload expands to two physical loads. The thunk unwind length is now derived from linked source symbols and decodes to the real 64-byte body. Source functions classified as `frameless-leaf` are omitted from linked unwind metadata, matching ARM64 exception handling rules instead of emitting false entry-frame xdata for an 8-byte boot leaf.
+  - Running the stdlib verifier after that fix exposed real `serializable-unwind` boot functions. Backend unwind records now preserve frame size and saved-register facts, and the UEFI unwind encoder emits frame-size-backed xdata for those non-leaf source functions instead of rejecting them or reusing the entry thunk shape.
+  - WCR-09 still exposed a caller-selectable `loopOperationIds` input. LICM now derives loop operations exclusively from the computed loop tree, and the production pipeline no longer imports or constructs a separate LICM loop-candidate list.
+- The final UEFI unwind follow-up extracted `src/target/aarch64/backend/object/object-unwind-record.ts` so the additional typed unwind metadata did not grow the grandfathered `object-module.ts` giant file.
+- The final fresh-context signoff review found four more closure gaps, all corrected before rerunning verification:
+  - WCR-37's production stack-promotion step was still deriving positive non-escape evidence from missing escape facts. Escape analysis now records omitted evidence categories as unknown, `doesNotEscape` is true only with complete evidence, and the production pipeline no longer promotes stack regions from silence.
+  - WCR-23's ARM64 PE parser still accepted non-AArch64 exception-directory shapes. Non-empty exception directories are now validated as 8-byte AArch64 `.pdata` records only, and parser fixtures use valid `.pdata` -> `.xdata` records.
+  - WCR-16's module-cycle diagnostic reported only the back edge. The iterative module loader now carries the active path and emits stable cycle paths for direct and multi-module cycles while preserving diamond import de-duplication.
+  - WCR-04/WCR-46 still allowed whole-program inlining to fall back to a pass-local allocator. Whole-program inlining and LICM now require the pass-manager context allocator, and tests inject allocators only at test boundaries.
+- A subsequent fresh-context signoff review found four final hardening gaps, all corrected before rerunning verification:
+  - WCR-23's AArch64 exception-directory parser still skipped all-zero `.pdata` rows. Non-empty exception directories now reject empty entries with deterministic offsets.
+  - WCR-04's construction verifier handoff still built a `Map` that could collapse duplicate operation IDs before structural verification. Construction now builds a duplicate-checking operation table and returns a fail-closed `OPT_IR_INPUT_CONTRACT_INVALID` diagnostic.
+  - WCR-16 import-cycle diagnostics were still warnings, allowing the frontend stage to continue. Import cycles are now error diagnostics, and the typed frontend stage rejects real cyclic module graphs before semantic execution.
+  - WCR-24 release skip classification was text-fragile. It now recognizes line-level skip status markers and known skip stable-details, while incidental prose containing "skipped" remains a passing phase when the command exits 0.
+- The final fresh-context package/identity/release/pass audit found five more integration gaps, all corrected before rerunning verification:
+  - The UEFI package frontend still parsed source files directly and bypassed the parser-backed module loader's active-path cycle gate. Package parsing now uses a synchronous parser-backed loader over package source files, and direct and multi-module package import cycles fail at the target boundary with `LEX_IMPORT_CYCLE` source payloads.
+  - WCR-20 still collapsed private predicate call identity and only recorded the first private-state transition for multi-input contracts. HIR predicate facts now preserve call argument expressions, semantic private-state surfaces emit one transition per private input, call lowering records all matching private transitions, and proof-check private predicate requirements compare predicate, place, arguments, and generation.
+  - WCR-18/WCR-19 owner handling still hid wrapped `ownerFunctionId ?? functionId(0)` sentinels in attempt, validation, fact, call-proof, and take lowering. These paths now use `requireHirFunctionOwner`, report `HIR_MISSING_OWNER_FUNCTION`, and skip metadata; program-level HIR local/place owners use an explicit `program` owner instead of function zero.
+  - WCR-25 reproducibility evidence did not hash source inputs or validation reports. The manifest now includes sorted source input digests and per-build validation report digests, and `verify:reproducible` compares those digests across isolated build passes.
+  - WCR-43 pass execution still allowed a decorative `OptIrPassResult.program: unknown` and fixpoint convergence ignored explicit changed flags. Pass results now carry `OptIrProgram`, and the pass manager honors explicit `{ result, changed }` pass outcomes when deciding fixpoint convergence.
+- The final fresh-context closure review found three additional low-blast-radius gaps, all corrected before rerunning verification:
+  - WCR-37's production stack-promotion step had complete escape-analysis APIs but still omitted production evidence sets. The pipeline now passes explicit address-taken, callback, exported-root, unknown-call, and external-flow evidence, promotes plain activation stack locals, and preserves ordered-effect/external escape boundaries.
+  - WCR-07 SCCP could still mark an operation result permanently overdefined when producer constants appeared later in block order but had higher operation IDs. SCCP now keeps foldable operations and edge arguments unknown until their sources become constant or overdefined.
+  - WCR-26/WCR-29 stdlib verification duplicated the documented module list outside the compatibility document. `verify:stdlib` now parses the supported public module list from `docs/stdlib/compatibility.md`, and the integration compatibility test consumes that verifier source of truth.
+  - The subsystem maintainability gate caught the new stack-promotion escape policy growing `pipeline-steps.ts` past the OptIR line cap. The production evidence policy was extracted to `src/opt-ir/passes/stack-promotion-escape.ts` before final verification.
+- The next fresh-context signoff review found three more contract-enforcement gaps, all corrected before rerunning verification:
+  - WCR-43's pass-manager contract recorded `requiresVerifierAfterRun` but did not execute the structural verifier per scheduled pass. `runOptIrPassPipeline` now honors that contract, records `after-pass` checkpoints, and fails closed before later optimizers see invalid pass output.
+  - WCR-29's stdlib verifier still enforced documented modules more strongly than documented public names. `verify:stdlib` now includes a public-surface case that parses documented exports and enum cases from `docs/stdlib/compatibility.md` and compares them with the stdlib source declarations before running compile smoke cases.
+  - Proof-MIR canonicalization still had a maintenance-visible zero-ID fallback when a function draft was missing its monomorphized function instance. `freezeFunctionDraft` now reports `PROOF_MIR_INVALID_CANONICAL_ID_ASSIGNMENT` and returns an error instead of synthesizing `functionId(0)` / `itemId(0)` metadata.
+- The resulting full-suite rerun exposed stale iterator Proof-MIR integration fixtures that were still relying on partial `MonoFunctionInstance` objects and the old zero-ID fallback. The iterator harness now builds complete function instances with stable source IDs and full signatures, and the iterator Proof-MIR snapshots were refreshed to lock in the real identities.
+- Local strict release probes confirmed the strict release gate is intentionally not satisfied in this dirty implementation environment: `verify:qemu` requires `WRELA_QEMU_AARCH64`, `verify:lean` requires `lake`, and `verify:reproducible` rejects the dirty worktree. The reproducible build was therefore demonstrated with the documented developer flag `--allow-dirty`; a clean `verify:release` pass remains a release-machine gate once required tools and a clean tree are available.
+
+Closure evidence for all WCR tasks is tracked in `docs/reviews/2026-07-05-remediation-status.md`.
+
 ## Architecture Program Rules
 
 Architecture tasks in this plan must become canonical, not decorative. A new abstraction is acceptable only when the same numbered program defines:
@@ -370,7 +436,8 @@ Correct ARM64 PE REL32 relocation basis -Codex Automated
 - Modify: `src/target/uefi-aarch64/entry-thunk.ts`
 - Modify or add: `src/target/uefi-aarch64/unwind-info.ts`
 - Test: `tests/unit/target/uefi-aarch64/entry-thunk.test.ts`
-- Test: `tests/integration/target/uefi-aarch64/package-pipeline-unwind.test.ts`
+- Test: `tests/unit/linker/unwind-metadata.test.ts`
+- Test: `tests/integration/target/uefi-aarch64/compile-uefi-aarch64-image.test.ts`
 
 **Description:**
 
@@ -425,7 +492,8 @@ export function encodeArm64ThunkUnwindInfo(shape: Arm64ThunkUnwindShape): Uint8A
 
 ```bash
 bun test tests/unit/target/uefi-aarch64/entry-thunk.test.ts
-bun test tests/integration/target/uefi-aarch64/package-pipeline-unwind.test.ts
+bun test tests/unit/linker/unwind-metadata.test.ts
+bun test tests/integration/target/uefi-aarch64/compile-uefi-aarch64-image.test.ts
 bun run agent:check
 ```
 
@@ -4423,6 +4491,35 @@ Document world-class remediation closure -Codex Automated
 ```
 
 ---
+
+## Post-Implementation Review Addendum
+
+An independent fresh-context signoff review found three implementation gaps after the main task set
+was completed. The remediation loop treated them as plan findings and fixed them before final
+handoff:
+
+- Stack promotion escape evidence was still fail-open in production because
+  `productionStackPromotionEscapeAnalysisInput` fabricated empty `addressTakenLocals` and
+  `callbackCaptures` evidence. Production now omits evidence categories it cannot derive, so
+  `computeOptIrEscapeAnalysis` keeps `doesNotEscape` false until complete evidence exists.
+- OptIR construction and optimization still carried `operations` and `optimizationRegions` as
+  program sidecars. Construction and optimization results now expose both artifacts as top-level
+  typed fields, optimization input requires them explicitly, UEFI/AArch64 lowering threads
+  optimization regions through dedicated artifact/state fields, and tests assert that programs do
+  not grow these sidecars.
+- The canonical pass execution contract was decorative because `pass-manager.ts` owned a separate
+  local pass result shape. `pass-execution.ts` now owns the generic canonical pass result/run result
+  contract, production pass definitions expose `name`, `passId`, `contract`, and canonical `run`,
+  and the pass manager consumes that contract directly.
+
+Additional focused verification added for these findings:
+
+```bash
+bun test ./tests/unit/opt-ir/pass-execution.test.ts ./tests/unit/opt-ir/pass-manager.test.ts ./tests/unit/opt-ir/pipeline.test.ts
+bun test ./tests/unit/opt-ir/memory-optimization.test.ts ./tests/unit/opt-ir/egraph-region-discovery.test.ts ./tests/unit/opt-ir/egraph-materialization.test.ts
+bun test ./tests/integration/opt-ir/checked-mir-to-opt-ir.test.ts ./tests/integration/opt-ir/packet-parser-demo.test.ts ./tests/unit/opt-ir/public-api.test.ts
+bun run typecheck
+```
 
 ## Cross-Task Quality Gates
 

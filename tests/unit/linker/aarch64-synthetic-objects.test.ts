@@ -124,11 +124,11 @@ describe("AArch64 synthetic object providers", () => {
     ]);
     expect(objectModule.relocations.map((relocation) => String(relocation.sectionKey))).toEqual([
       ".pdata",
-      ".xdata",
+      ".pdata",
     ]);
     expect(objectModule.relocations.map((relocation) => relocation.target)).toEqual([
       { kind: "linkage-name", linkageName: "Func.main" },
-      { kind: "linkage-name", linkageName: "Func.main" },
+      { kind: "symbol-stable-key", stableKey: "symbol:xdata:test" },
     ]);
     expect(verifyAArch64ObjectModule({ objectModule }).kind).toBe("ok");
   });
@@ -159,9 +159,10 @@ function entryObjectFactoryForTest(
       objects: [
         {
           objectKey: "unwind",
-          pdataBytes: branchToLinkageNameBytes,
+          pdataBytes: Uint8Array.from([...branchToLinkageNameBytes, ...branchToLinkageNameBytes]),
           xdataBytes: branchToLinkageNameBytes,
           functionLinkageName: "Func.main",
+          xdataSymbolStableKey: "symbol:xdata:test",
           frameShape: "frameless-leaf",
           pdataRelocation: {
             stableKey: "reloc:pdata:function",
@@ -175,7 +176,7 @@ function entryObjectFactoryForTest(
           },
           xdataRelocation: {
             stableKey: "reloc:xdata:function",
-            offsetBytes: 0,
+            offsetBytes: 4,
             widthBytes: 4,
             family: "branch26",
             instructionPatch: {

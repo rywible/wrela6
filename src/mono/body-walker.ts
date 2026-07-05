@@ -134,6 +134,11 @@ export function walkMonoExpression(expression: MonoExpression, visitor: MonoBody
         walkMonoExpression(field.value, visitor);
       }
       return;
+    case "enumConstructor":
+      for (const field of expression.kind.constructor.payloadFields) {
+        walkMonoExpression(field.value, visitor);
+      }
+      return;
     case "call":
       walkMonoCallExpression(expression.kind.call, visitor);
       return;

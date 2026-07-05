@@ -26,6 +26,7 @@ import {
   uefiCompilePackageInputFixture,
   uefiTargetSurfaceFixture,
 } from "../../../support/target/uefi-aarch64/uefi-aarch64-fixtures";
+import { unsafePackagePipelineAdapter } from "./package-pipeline-support";
 
 describe("UEFI package pipeline through OptIR", () => {
   test("runs explicit source stages for a smoke package", () => {
@@ -62,6 +63,7 @@ describe("UEFI package pipeline through OptIR", () => {
     const optIr = unsafePackagePipelineAdapter<PackageOptimizedOptIrAdapter>({
       program: optIrFixture.program,
       operations: Object.freeze([...optIrFixture.operations]),
+      optimizationRegions: Object.freeze([...optIrFixture.optimizationRegions]),
       unoptimizedOperations: Object.freeze([...optIrFixture.operations]),
       facts: emptyOptIrFactSet(),
       staticChar16Strings: Object.freeze([staticString]),
@@ -207,6 +209,7 @@ describe("UEFI package pipeline through OptIR", () => {
         value: unsafePackagePipelineAdapter<PackageOptimizedOptIrAdapter>({
           program: optIrFixture.program,
           operations: Object.freeze([...optIrFixture.operations]),
+          optimizationRegions: Object.freeze([...optIrFixture.optimizationRegions]),
           unoptimizedOperations: Object.freeze([...optIrFixture.operations]),
           facts: emptyOptIrFactSet(),
           staticChar16Strings: Object.freeze([]),
@@ -677,8 +680,4 @@ function targetSurfaceWithUefiImageProfileForTest(): UefiAArch64TargetDriverSurf
   expect(targetResult.kind).toBe("ok");
   if (targetResult.kind !== "ok") throw new Error("expected authenticated UEFI target");
   return targetResult.value;
-}
-
-function unsafePackagePipelineAdapter<Adapter>(value: unknown): Adapter {
-  return Object.freeze(value as object) as Adapter;
 }

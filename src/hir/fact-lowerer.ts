@@ -1,5 +1,5 @@
 import { checkedTypesEqual, coreCheckedType } from "../semantic/surface/type-model";
-import { coreTypeId, functionId } from "../semantic/ids";
+import { coreTypeId } from "../semantic/ids";
 import type {
   CheckedMatchRefinementSurface,
   CheckedPlatformEnsuredFactSurface,
@@ -16,13 +16,23 @@ import type {
 import type { HirLoweringContext } from "./lowering-context";
 import { hirOriginId, ownedFactOriginId, ownedPrivateStateTransitionId } from "./ids";
 import type { HirExpressionId, HirOriginId } from "./ids";
-import { hirDiagnostic } from "./lowering-context";
+import { hirDiagnostic, hirOwnerKey, requireHirFunctionOwner } from "./lowering-context";
 
-function nextFactId(context: HirLoweringContext) {
-  return ownedFactOriginId(
-    { kind: "function", functionId: context.ownerFunctionId ?? functionId(0) },
-    context.proofMetadata.count("factOrigin"),
-  );
+function nextFactId(input: {
+  readonly context: HirLoweringContext;
+  readonly sourceOrigin: HirOriginId;
+  readonly stableDetail: string;
+}) {
+  const owner = requireHirFunctionOwner(input);
+  if (owner === undefined) return undefined;
+  return ownedFactOriginId(owner, input.context.proofMetadata.count("factOrigin"));
+}
+
+function predicateArgumentsForCall(call: HirCallExpression): readonly HirExpression[] {
+  const expressions: HirExpression[] = [];
+  if (call.receiver !== undefined) expressions.push(call.receiver);
+  for (const argument of call.arguments) expressions.push(argument.expression);
+  return Object.freeze(expressions);
 }
 
 export function recordEnsureFact(input: {
@@ -32,8 +42,14 @@ export function recordEnsureFact(input: {
 }): HirFactOrigin | undefined {
   if (!checkedTypesEqual(input.expression.type, coreCheckedType(coreTypeId("bool"))))
     return undefined;
+  const factOriginId = nextFactId({
+    context: input.context,
+    sourceOrigin: input.candidate.sourceOrigin,
+    stableDetail: "ensure-fact-owner",
+  });
+  if (factOriginId === undefined) return undefined;
   const fact: HirFactOrigin = {
-    factOriginId: nextFactId(input.context),
+    factOriginId,
     fact: { kind: "ensure", expressionId: input.expression.expressionId },
     sourceOrigin: input.candidate.sourceOrigin,
   };
@@ -46,15 +62,24 @@ export function recordPredicateFact(input: {
   readonly predicateFunctionId: import("../semantic/ids").FunctionId;
   readonly statePlace?: HirResourcePlace;
   readonly context: HirLoweringContext;
-}): HirFactOrigin {
+}): HirFactOrigin | undefined {
+  const sourceOrigin = input.call.sourceOrigin ?? hirOriginId(0);
+  const factOriginId = nextFactId({
+    context: input.context,
+    sourceOrigin,
+    stableDetail: "predicate-fact-owner",
+  });
+  if (factOriginId === undefined) return undefined;
+  const argumentExpressions = predicateArgumentsForCall(input.call);
   const fact: HirFactOrigin = {
-    factOriginId: nextFactId(input.context),
+    factOriginId,
     fact: {
       kind: "predicateCall",
       predicateFunctionId: input.predicateFunctionId,
+      ...(argumentExpressions.length > 0 ? { arguments: argumentExpressions } : {}),
       statePlace: input.statePlace,
     },
-    sourceOrigin: input.call.sourceOrigin ?? hirOriginId(0),
+    sourceOrigin,
   };
   input.context.proofMetadata.addFactOrigin(fact);
   return fact;
@@ -65,9 +90,16 @@ export function recordPlatformEnsureFacts(input: {
   readonly ensuredFacts: readonly CheckedPlatformEnsuredFactSurface[];
   readonly context: HirLoweringContext;
 }): readonly HirFactOrigin[] {
-  return input.ensuredFacts.map((ensuredFact) => {
+  const origins: HirFactOrigin[] = [];
+  for (const ensuredFact of input.ensuredFacts) {
+    const factOriginId = nextFactId({
+      context: input.context,
+      sourceOrigin: input.edge.sourceOrigin,
+      stableDetail: "platform-ensure-fact-owner",
+    });
+    if (factOriginId === undefined) continue;
     const fact: HirFactOrigin = {
-      factOriginId: nextFactId(input.context),
+      factOriginId,
       fact: {
         kind: "platformEnsure",
         edgeId: input.edge.edgeId,
@@ -76,8 +108,9 @@ export function recordPlatformEnsureFacts(input: {
       sourceOrigin: input.edge.sourceOrigin,
     };
     input.context.proofMetadata.addFactOrigin(fact);
-    return fact;
-  });
+    origins.push(fact);
+  }
+  return origins;
 }
 
 export function recordMatchRefinement(input: {
@@ -92,15 +125,21 @@ export function recordMatchRefinement(input: {
         code: "HIR_MATCH_REFINEMENT_UNSUPPORTED",
         message: "Match refinement could not be linked to checked semantic refinement data.",
         originId: input.sourceOrigin,
-        ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+        ownerKey: hirOwnerKey(input.context),
         originKey: `origin:${input.sourceOrigin}`,
         stableDetail: "match-refinement",
       }),
     );
     return undefined;
   }
+  const factOriginId = nextFactId({
+    context: input.context,
+    sourceOrigin: input.sourceOrigin,
+    stableDetail: "match-refinement-fact-owner",
+  });
+  if (factOriginId === undefined) return undefined;
   const fact: HirFactOrigin = {
-    factOriginId: nextFactId(input.context),
+    factOriginId,
     fact: {
       kind: "matchRefinement",
       scrutineeExpressionId: input.scrutineeExpressionId,
@@ -137,20 +176,27 @@ export function recordPrivateTransition(input: {
   readonly context: HirLoweringContext;
 }): import("./hir").HirPrivateStateTransition | undefined {
   if (input.surface.kind === "predicate") return undefined;
+  const sourceOrigin = input.call.sourceOrigin ?? hirOriginId(0);
+  const owner = requireHirFunctionOwner({
+    context: input.context,
+    sourceOrigin,
+    stableDetail: "private-transition-owner",
+  });
+  if (owner === undefined) return undefined;
   const place = transitionPlaceForCall({ call: input.call, surface: input.surface });
   const key = placeKey(place);
   const transitionOrdinalForPlace =
     input.context.proofMetadata.countPrivateStateTransitionsForPlace(key);
   const transition = {
     transitionId: ownedPrivateStateTransitionId(
-      { kind: "function", functionId: input.context.ownerFunctionId ?? functionId(0) },
+      owner,
       input.context.proofMetadata.count("privateStateTransition"),
     ),
     functionId: input.surface.functionId,
     kind: input.surface.kind,
     ...(place !== undefined ? { place } : {}),
     transitionOrdinalForPlace,
-    sourceOrigin: input.call.sourceOrigin ?? hirOriginId(0),
+    sourceOrigin,
   };
   input.context.proofMetadata.addPrivateStateTransition(transition);
   return transition;

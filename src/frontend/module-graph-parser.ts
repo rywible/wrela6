@@ -1,5 +1,4 @@
 import { combineDiagnostics } from "./parser/parser-diagnostics";
-import type { ModuleGraphLexResult } from "./lexer/module-graph-lexer";
 import type { ModulePath } from "./lexer/module-path";
 import type { SourceText } from "./lexer/source-text";
 import type { TokenStream } from "./lexer/token-stream";
@@ -25,8 +24,20 @@ export interface ParsedModuleGraph {
   diagnostics: readonly Diagnostic[];
 }
 
+export interface ModuleGraphParseModuleInput {
+  path: ModulePath;
+  source: SourceText;
+  tokens: TokenStream;
+  imports: readonly ModuleImportRequest[];
+}
+
+export interface ModuleGraphParseGraphInput {
+  entry: ModulePath;
+  modules: readonly ModuleGraphParseModuleInput[];
+}
+
 export interface ModuleGraphParseInput {
-  graph: ModuleGraphLexResult;
+  graph: ModuleGraphParseGraphInput;
   lexerDiagnostics?: readonly LexDiagnostic[];
 }
 

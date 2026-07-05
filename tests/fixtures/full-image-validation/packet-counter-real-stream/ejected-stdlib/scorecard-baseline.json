@@ -3,12 +3,12 @@
   "schemaVersion": 1,
   "caseKey": "packet-counter-real-stream/ejected-stdlib",
   "metrics": {
-    "optIrOperationsPre": 53,
-    "optIrOperationsPost": 55,
-    "objectSectionBytes": 988,
-    "executableTextBytes": 1896,
+    "optIrOperationsPre": 62,
+    "optIrOperationsPost": 40,
+    "objectSectionBytes": 720,
+    "executableTextBytes": 1628,
     "finalImageBytes": 4608,
-    "staticInstructionEstimate": 474,
-    "staticCycleEstimate": 626
+    "staticInstructionEstimate": 407,
+    "staticCycleEstimate": 533
   }
 }

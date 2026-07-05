@@ -5,7 +5,7 @@ import { proofCheckDiagnosticCode } from "../../../src/proof-check/diagnostics";
 import { checkStreamLoopTransfer } from "../../../src/proof-check/domains/stream-loop";
 import { checkYieldResumeTransfer } from "../../../src/proof-check/domains/yield-resume";
 import {
-  applyTakeSessionPatchesForTest,
+  applyTakeSessionPatches,
   checkCrossedScopeExit,
   checkValidatedTakePlaceOperation,
   closeTakeSession,
@@ -151,7 +151,7 @@ describe("take session closure integration", () => {
     expect(opened.kind).toBe("ok");
     if (opened.kind !== "ok") return;
 
-    let state = applyTakeSessionPatchesForTest(initialState, opened.patches);
+    let state = applyTakeSessionPatches(initialState, opened.patches);
     const yielded = yieldStreamMember({
       state,
       sessionKey: "session:batch",
@@ -160,7 +160,7 @@ describe("take session closure integration", () => {
     });
     expect(yielded.kind).toBe("ok");
     if (yielded.kind !== "ok") return;
-    state = applyTakeSessionPatchesForTest(state, yielded.patches);
+    state = applyTakeSessionPatches(state, yielded.patches);
 
     const discharged = dischargeTakeMember({
       state,
@@ -169,7 +169,7 @@ describe("take session closure integration", () => {
     });
     expect(discharged.kind).toBe("ok");
     if (discharged.kind !== "ok") return;
-    state = applyTakeSessionPatchesForTest(state, discharged.patches);
+    state = applyTakeSessionPatches(state, discharged.patches);
 
     const closed = closeTakeSession({
       state,
@@ -219,7 +219,7 @@ describe("take session closure integration", () => {
     expect(chain.kind).toBe("ok");
     if (chain.kind !== "ok") return;
 
-    const nextState = applyTakeSessionPatchesForTest(initialState, chain.patches);
+    const nextState = applyTakeSessionPatches(initialState, chain.patches);
     const exitCheck = checkCrossedScopeExit({
       state: nextState,
       exitKind: "return",
@@ -242,7 +242,7 @@ describe("take session closure integration", () => {
     expect(opened.kind).toBe("ok");
     if (opened.kind !== "ok") return;
 
-    const state = applyTakeSessionPatchesForTest(initialState, opened.patches);
+    const state = applyTakeSessionPatches(initialState, opened.patches);
     const exitCheck = checkCrossedScopeExit({
       state,
       exitKind: "return",
@@ -334,7 +334,7 @@ describe("take session closure integration", () => {
     expect(opened.kind).toBe("ok");
     if (opened.kind !== "ok") return;
 
-    let state = applyTakeSessionPatchesForTest(initialState, opened.patches);
+    let state = applyTakeSessionPatches(initialState, opened.patches);
     const yielded = yieldStreamMember({
       state,
       sessionKey: "session:batch",
@@ -343,7 +343,7 @@ describe("take session closure integration", () => {
     });
     expect(yielded.kind).toBe("ok");
     if (yielded.kind !== "ok") return;
-    state = applyTakeSessionPatchesForTest(state, yielded.patches);
+    state = applyTakeSessionPatches(state, yielded.patches);
 
     const memberLocalFactKeys = ["fact:member:buffer"];
     state = proofCheckStateForTest({

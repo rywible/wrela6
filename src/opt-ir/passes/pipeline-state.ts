@@ -1,4 +1,5 @@
 import { targetId } from "../../semantic/ids";
+import type { OptIrDiagnostic } from "../diagnostics";
 import {
   optIrFactId,
   type OptIrBlockId,
@@ -14,7 +15,6 @@ import {
   type OptIrFunction,
   type OptIrProgram,
 } from "../program";
-import type { OptIrRegion } from "../regions";
 import { verifyOptIrProgram } from "../verify/structural-verifier";
 import {
   appendOptIrDecisionLogEntry,
@@ -41,7 +41,14 @@ import type {
 export function operationMap(
   operations: readonly OptIrOperation[],
 ): ReadonlyMap<OptIrOperationId, OptIrOperation> {
-  return new Map(operations.map((operation) => [operation.operationId, operation]));
+  const byId = new Map<OptIrOperationId, OptIrOperation>();
+  for (const operation of operations) {
+    if (byId.has(operation.operationId)) {
+      throw new Error(`duplicate OptIR operation id:${Number(operation.operationId)}`);
+    }
+    byId.set(operation.operationId, operation);
+  }
+  return byId;
 }
 
 export function sortedOperations(operations: readonly OptIrOperation[]): readonly OptIrOperation[] {
@@ -101,6 +108,7 @@ export function runPerFunctionPass<
   Result extends {
     readonly function: OptIrFunction;
     readonly operations: readonly OptIrOperation[];
+    readonly diagnostics?: readonly OptIrDiagnostic[];
   },
 >(
   state: PipelineState,
@@ -111,6 +119,7 @@ export function runPerFunctionPass<
     ...state,
     program: mapped.program,
     operations: mapped.operations,
+    diagnostics: [...state.diagnostics, ...mapped.diagnostics],
   };
 }
 
@@ -118,6 +127,7 @@ export function mapPerFunctionPassOnOperations<
   Result extends {
     readonly function: OptIrFunction;
     readonly operations: readonly OptIrOperation[];
+    readonly diagnostics?: readonly OptIrDiagnostic[];
   },
 >(
   program: OptIrProgram,
@@ -126,18 +136,25 @@ export function mapPerFunctionPassOnOperations<
     func: OptIrFunction,
     operationById: ReadonlyMap<OptIrOperationId, OptIrOperation>,
   ) => Result,
-): { readonly program: OptIrProgram; readonly operations: readonly OptIrOperation[] } {
+): {
+  readonly program: OptIrProgram;
+  readonly operations: readonly OptIrOperation[];
+  readonly diagnostics: readonly OptIrDiagnostic[];
+} {
   const operationById = operationMap(operations);
   const functions: OptIrFunction[] = [];
   const nextOperations: OptIrOperation[] = [];
+  const diagnostics: OptIrDiagnostic[] = [];
   for (const function_ of program.functions.entries()) {
     const result = pass(function_, operationById);
     functions.push(result.function);
     nextOperations.push(...result.operations);
+    diagnostics.push(...(result.diagnostics ?? []));
   }
   return {
     program: optIrProgram({ ...program, functions: optIrFunctionTable(functions) }),
     operations: sortedOperations(nextOperations),
+    diagnostics,
   };
 }
 
@@ -195,17 +212,11 @@ export function mergeDecisionLogs(
 export function withOptimizedProvenance(
   program: OptIrProgram,
   decisionLog: OptIrDecisionLog,
-  operations: readonly OptIrOperation[],
-  regions: readonly OptIrRegion[],
 ): OptimizedOptIrProgram {
   const snapshot = snapshotProvenance(program.provenance.originIds, decisionLog);
   return {
     ...program,
     provenance: snapshot,
-    operations: sortedOperations(operations),
-    optimizationRegions: Object.freeze(
-      [...regions].sort((left, right) => left.regionId - right.regionId),
-    ),
   };
 }
 
@@ -291,11 +302,33 @@ export function isSourceCall(operation: OptIrOperation): operation is OptIrOpera
   );
 }
 
+const stateFingerprintCache = new WeakMap<object, string>();
+
+function cachedStableJson(value: object, materialize: () => unknown): string {
+  const cached = stateFingerprintCache.get(value);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const fingerprint = stableJson(materialize());
+  stateFingerprintCache.set(value, fingerprint);
+  return fingerprint;
+}
+
 export function stateChanged(left: PipelineState, right: PipelineState): boolean {
+  if (
+    left.program === right.program &&
+    left.operations === right.operations &&
+    left.optimizationRegions === right.optimizationRegions
+  ) {
+    return false;
+  }
   return (
-    stableJson(stableProgram(left.program)) !== stableJson(stableProgram(right.program)) ||
-    stableJson(left.operations) !== stableJson(right.operations) ||
-    stableJson(left.optimizationRegions) !== stableJson(right.optimizationRegions)
+    cachedStableJson(left.program, () => stableProgram(left.program)) !==
+      cachedStableJson(right.program, () => stableProgram(right.program)) ||
+    cachedStableJson(left.operations, () => left.operations) !==
+      cachedStableJson(right.operations, () => right.operations) ||
+    cachedStableJson(left.optimizationRegions, () => left.optimizationRegions) !==
+      cachedStableJson(right.optimizationRegions, () => right.optimizationRegions)
   );
 }
 
@@ -329,12 +362,6 @@ export function liveValueIds(program: OptIrProgram) {
     }
   }
   return Object.freeze(valueIds);
-}
-
-export function optimizationRegionsForProgram(
-  program: OptIrProgram & { readonly optimizationRegions?: readonly OptIrRegion[] },
-): readonly OptIrRegion[] {
-  return program.optimizationRegions ?? [];
 }
 
 export function nextFactIdCounter(facts: OptIrFactSet): () => OptIrFactId {

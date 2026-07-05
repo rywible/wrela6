@@ -18,6 +18,7 @@ export function parseIfStatement(context: ParserContext): GreenNode {
 
   const block = parseBlock(context, {
     optionalColon: true,
+    requireIndentedBlock: true,
     itemParser: tryParseStatement,
     recoveryKinds: blockItemRecoveryKinds,
   });
@@ -41,6 +42,7 @@ export function parseElseClause(context: ParserContext): GreenNode {
     children.push(context.consume());
     const block = parseBlock(context, {
       optionalColon: true,
+      requireIndentedBlock: true,
       itemParser: tryParseStatement,
       recoveryKinds: blockItemRecoveryKinds,
     });
@@ -71,6 +73,7 @@ export function parseWhileStatement(context: ParserContext): GreenNode {
 
   const block = parseBlock(context, {
     optionalColon: true,
+    requireIndentedBlock: true,
     itemParser: tryParseStatement,
     recoveryKinds: blockItemRecoveryKinds,
   });
@@ -92,6 +95,7 @@ export function parseForStatement(context: ParserContext): GreenNode {
 
   const block = parseBlock(context, {
     optionalColon: true,
+    requireIndentedBlock: true,
     itemParser: tryParseStatement,
     recoveryKinds: blockItemRecoveryKinds,
   });
@@ -117,6 +121,7 @@ export function parseTakeStatement(context: ParserContext): GreenNode {
 
   const block = parseBlock(context, {
     optionalColon: true,
+    requireIndentedBlock: true,
     itemParser: tryParseStatement,
     recoveryKinds: blockItemRecoveryKinds,
   });

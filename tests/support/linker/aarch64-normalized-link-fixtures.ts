@@ -276,6 +276,7 @@ export function unwindInDataSectionFixture(): NormalizedGraphForTestInput {
               stableKey: "unwind:main",
               sectionKey: data.stableKey,
               frameShape: "fixture-data-section",
+              savedRegisters: [],
             },
           ],
         }),

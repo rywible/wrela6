@@ -1,39 +1,35 @@
 import { describe, expect, test } from "bun:test";
 
-import { optIrCfgEdgeTable, type OptIrBlock, type OptIrEdge } from "../../../src/opt-ir/cfg";
-import { monoInstanceId } from "../../../src/mono/ids";
-import type { MonoCheckedType, MonoFunctionSignature } from "../../../src/mono/mono-hir";
+import type { OptIrBlock, OptIrEdge } from "../../../src/opt-ir/cfg";
 import {
   optIrBlockId,
-  optIrCallId,
   optIrEdgeId,
-  optIrFunctionId,
   optIrOperationId,
   optIrOriginId,
-  optIrRegionId,
   optIrValueId,
-  type OptIrOperationId,
 } from "../../../src/opt-ir/ids";
-import {
-  optIrIntegerBinaryOperation,
-  optIrConstantOperation,
-  optIrMemoryLoadOperation,
-  optIrPlatformCallOperation,
-  type OptIrOperation,
-} from "../../../src/opt-ir/operations";
+import { optIrCallId } from "../../../src/opt-ir/ids";
+import { optIrPlatformCallOperation } from "../../../src/opt-ir/operations";
 import type { OptIrFunction } from "../../../src/opt-ir/program";
-import { optIrSignedIntegerType } from "../../../src/opt-ir/types";
 import { runDeadCodeElimination } from "../../../src/opt-ir/passes/dce";
 import { runCopyPropagation } from "../../../src/opt-ir/passes/copy-propagation";
 import { runCfgSimplification } from "../../../src/opt-ir/passes/cfg-simplification";
 import { optIrBlockParameter } from "../../../src/opt-ir/values";
-import { coreTypeId, functionId, itemId } from "../../../src/semantic/ids";
-import { coreCheckedType } from "../../../src/semantic/surface/type-model";
-import { SourceSpan } from "../../../src/shared/source-span";
-import { optIrConstantId } from "../../../src/opt-ir/ids";
-import { optIrIntegerConstant } from "../../../src/opt-ir/constants";
-
-const integer32 = optIrSignedIntegerType(32);
+import {
+  addOperation,
+  blockOperations,
+  blockWithReturn,
+  booleanConstantOperation,
+  edgeBetween,
+  edgeIntoBlock,
+  edgeToBlockArgument,
+  functionWithBlocks,
+  functionWithOperations,
+  integer32,
+  loadOperation,
+  operationTable,
+  requireOperation,
+} from "../../support/opt-ir/cleanup-fixtures";
 
 describe("OptIR cleanup dce", () => {
   test("dce removes recursively unused pure operations while preserving survivor order", () => {
@@ -133,6 +129,55 @@ describe("OptIR cleanup dce", () => {
     });
 
     expect(blockOperations(result.function)).toEqual([edgeArgumentProducer.operationId]);
+    expect(result.removedOperationIds).toEqual([unused.operationId]);
+  });
+
+  test("dce uses CFG liveness instead of block list order", () => {
+    const producer = addOperation(1, 10, 1, 2);
+    const unused = addOperation(2, 11, 3, 4);
+    const parameter = optIrBlockParameter({
+      valueId: optIrValueId(20),
+      type: integer32,
+      incomingRole: "phi",
+      originId: optIrOriginId(1),
+    });
+    const consumer = addOperation(3, 30, 20, 5);
+    const functionInput = functionWithBlocks({
+      blocks: [
+        {
+          blockId: optIrBlockId(2),
+          parameters: [parameter],
+          operations: [consumer.operationId],
+          terminator: {
+            kind: "return",
+            operationId: optIrOperationId(50),
+            values: [consumer.resultIds[0]!],
+            originId: optIrOriginId(1),
+          },
+          originId: optIrOriginId(1),
+        },
+        {
+          blockId: optIrBlockId(1),
+          parameters: [],
+          operations: [producer.operationId, unused.operationId],
+          terminator: {
+            kind: "jump",
+            operationId: optIrOperationId(51),
+            edge: optIrEdgeId(1),
+            originId: optIrOriginId(1),
+          },
+          originId: optIrOriginId(1),
+        },
+      ],
+      edges: [edgeBetween(optIrEdgeId(1), optIrBlockId(1), optIrBlockId(2), [optIrValueId(10)])],
+    });
+
+    const result = runDeadCodeElimination({
+      function: { ...functionInput, entryBlock: optIrBlockId(1) },
+      operations: operationTable([producer, unused, consumer]),
+    });
+
+    expect(blockOperations(result.function)).toEqual([consumer.operationId, producer.operationId]);
     expect(result.removedOperationIds).toEqual([unused.operationId]);
   });
 });
@@ -708,205 +753,53 @@ describe("OptIR cleanup cfg simplification", () => {
     expect(result.subjectRemap.entries).toEqual([]);
     expect(result.subjectRemap.droppedSubjectKeys).toEqual([]);
   });
+
+  test("cfg simplification uses graph-size fuel for chains longer than eight steps", () => {
+    const operation = addOperation(1, 30, 20, 21);
+    const blocks: OptIrBlock[] = [];
+    const edges: OptIrEdge[] = [];
+    for (let index = 1; index <= 11; index += 1) {
+      const blockId = optIrBlockId(index);
+      const nextBlockId = optIrBlockId(index + 1);
+      blocks.push({
+        blockId,
+        parameters: [],
+        operations: index === 11 ? [operation.operationId] : [],
+        terminator:
+          index === 11
+            ? {
+                kind: "return",
+                operationId: optIrOperationId(100 + index),
+                values: [],
+                originId: optIrOriginId(1),
+              }
+            : {
+                kind: "jump",
+                operationId: optIrOperationId(100 + index),
+                edge: optIrEdgeId(index),
+                originId: optIrOriginId(1),
+              },
+        originId: optIrOriginId(1),
+      });
+      if (index < 11) {
+        edges.push(edgeBetween(optIrEdgeId(index), blockId, nextBlockId, []));
+      }
+    }
+
+    const result = runCfgSimplification({
+      function: functionWithBlocks({ blocks, edges }),
+      operations: operationTable([operation]),
+    });
+    expect(result.function.blocks.map((block) => block.blockId)).toEqual([optIrBlockId(1)]);
+    expect(result.diagnostics).toEqual([]);
+
+    const exhausted = runCfgSimplification({
+      function: functionWithBlocks({ blocks, edges }),
+      operations: operationTable([operation]),
+      fuel: 2,
+    });
+    expect(exhausted.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual([
+      "cfg-simplification:fuel-exhausted:2:blocks:11:edges:10",
+    ]);
+  });
 });
-
-function addOperation(
-  operationId: number,
-  resultId: number,
-  left: number,
-  right: number,
-): OptIrOperation {
-  return optIrIntegerBinaryOperation({
-    operationId: optIrOperationId(operationId),
-    resultId: optIrValueId(resultId),
-    left: optIrValueId(left),
-    right: optIrValueId(right),
-    operator: "add",
-    resultType: integer32,
-    originId: optIrOriginId(1),
-  });
-}
-
-function loadOperation(input: {
-  readonly operationId: number;
-  readonly resultId: number;
-  readonly volatility: "nonVolatile" | "volatile";
-}): OptIrOperation {
-  const result = optIrMemoryLoadOperation({
-    operationId: optIrOperationId(input.operationId),
-    resultId: optIrValueId(input.resultId),
-    region: optIrRegionId(1),
-    byteOffset: 0n,
-    byteWidth: 4,
-    alignment: 4,
-    valueType: integer32,
-    endian: "little",
-    volatility: input.volatility,
-    boundsAuthority: { kind: "targetContract", authorityKey: "test-region" },
-    originId: optIrOriginId(1),
-  });
-  if (result.kind !== "ok") {
-    throw new Error("Expected load fixture to construct.");
-  }
-  return result.operation;
-}
-
-function booleanConstantOperation(
-  operationId: number,
-  resultId: number,
-  normalizedValue: bigint,
-): OptIrOperation {
-  return optIrConstantOperation({
-    operationId: optIrOperationId(operationId),
-    resultId: optIrValueId(resultId),
-    constant: optIrIntegerConstant({
-      constantId: optIrConstantId(operationId),
-      type: integer32,
-      normalizedValue,
-      dataModel: { pointerWidth: 64, endian: "little" },
-    }),
-    originId: optIrOriginId(1),
-  });
-}
-
-function functionWithOperations(
-  operationIds: readonly OptIrOperationId[],
-  edges: readonly OptIrEdge[] = [],
-): OptIrFunction {
-  const block: OptIrBlock = {
-    blockId: optIrBlockId(1),
-    parameters: [],
-    operations: operationIds,
-    originId: optIrOriginId(1),
-  };
-  return {
-    functionId: optIrFunctionId(1),
-    monoInstanceId: monoInstanceId("test.instance"),
-    signature: signatureForTest(),
-    blocks: [block],
-    edges: optIrCfgEdgeTable(edges),
-    entryBlock: block.blockId,
-    originId: optIrOriginId(1),
-  };
-}
-
-function functionWithBlocks(input: {
-  readonly blocks: readonly OptIrBlock[];
-  readonly edges?: readonly OptIrEdge[];
-}): OptIrFunction {
-  return {
-    functionId: optIrFunctionId(1),
-    monoInstanceId: monoInstanceId("test.instance"),
-    signature: signatureForTest(),
-    blocks: input.blocks,
-    edges: optIrCfgEdgeTable(input.edges ?? []),
-    entryBlock: input.blocks[0]?.blockId ?? optIrBlockId(1),
-    originId: optIrOriginId(1),
-  };
-}
-
-function edgeToBlockArgument(argumentId: ReturnType<typeof optIrValueId>): OptIrEdge {
-  return {
-    edgeId: optIrEdgeId(1),
-    from: optIrBlockId(1),
-    toBlock: optIrBlockId(2),
-    ordinal: 0,
-    kind: "normal",
-    arguments: [argumentId],
-    originId: optIrOriginId(1),
-  };
-}
-
-function edgeIntoBlock(
-  edgeId: ReturnType<typeof optIrEdgeId>,
-  toBlock: ReturnType<typeof optIrBlockId>,
-  argumentIds: readonly ReturnType<typeof optIrValueId>[],
-): OptIrEdge {
-  return {
-    edgeId,
-    from: optIrBlockId(1),
-    toBlock,
-    ordinal: Number(edgeId),
-    kind: "normal",
-    arguments: argumentIds,
-    originId: optIrOriginId(1),
-  };
-}
-
-function edgeBetween(
-  edgeId: ReturnType<typeof optIrEdgeId>,
-  from: ReturnType<typeof optIrBlockId>,
-  toBlock: ReturnType<typeof optIrBlockId>,
-  argumentIds: readonly ReturnType<typeof optIrValueId>[],
-): OptIrEdge {
-  return {
-    edgeId,
-    from,
-    toBlock,
-    ordinal: Number(edgeId),
-    kind: "normal",
-    arguments: argumentIds,
-    originId: optIrOriginId(1),
-  };
-}
-
-function blockWithReturn(
-  blockId: ReturnType<typeof optIrBlockId>,
-  operationIds: readonly OptIrOperationId[],
-): OptIrBlock {
-  return {
-    blockId,
-    parameters: [],
-    operations: operationIds,
-    terminator: {
-      kind: "return",
-      operationId: optIrOperationId(Number(blockId) + 100),
-      values: [],
-      originId: optIrOriginId(1),
-    },
-    originId: optIrOriginId(1),
-  };
-}
-
-function signatureForTest(): MonoFunctionSignature {
-  return {
-    functionId: functionId(1),
-    itemId: itemId(1),
-    parameters: [],
-    returnType: monoCheckedTypeForTest("Never"),
-    returnKind: "Never",
-    modifiers: {
-      isPlatform: false,
-      isTerminal: false,
-      isPredicate: false,
-      isConstructor: false,
-      isPrivate: false,
-    },
-    sourceSpan: SourceSpan.from(0, 0),
-  };
-}
-
-function monoCheckedTypeForTest(name: string): MonoCheckedType {
-  return coreCheckedType(coreTypeId(name)) as MonoCheckedType;
-}
-
-function operationTable(
-  operations: readonly OptIrOperation[],
-): ReadonlyMap<OptIrOperationId, OptIrOperation> {
-  return new Map(operations.map((operation) => [operation.operationId, operation]));
-}
-
-function requireOperation(
-  operations: readonly OptIrOperation[],
-  operationId: OptIrOperationId,
-): OptIrOperation {
-  const operation = operations.find((candidate) => candidate.operationId === operationId);
-  if (operation === undefined) {
-    throw new Error(`Expected operation ${operationId}.`);
-  }
-  return operation;
-}
-
-function blockOperations(functionOutput: OptIrFunction): readonly OptIrOperationId[] {
-  return functionOutput.blocks.flatMap((block) => block.operations);
-}

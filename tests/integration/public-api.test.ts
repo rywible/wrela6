@@ -4,7 +4,6 @@ import {
   DottedModuleResolver,
   KeywordTable,
   Lexer,
-  ModuleGraphLexer,
   ModulePath,
   SourceText,
   SourceSpan,
@@ -14,7 +13,12 @@ import {
   Trivia,
   TriviaKind,
 } from "../../src/frontend/lexer";
-import * as wrela from "../../src";
+import { compileUefiAArch64Image, loadFrontendModuleGraph } from "../../src";
+import { lowerTypedHir } from "../../src/hir";
+import * as linker from "../../src/linker";
+import * as peCoff from "../../src/pe-coff";
+import * as proofMir from "../../src/proof-mir";
+import * as uefiAarch64 from "../../src/target/uefi-aarch64";
 
 describe("lexer public api", () => {
   test("lexes through the public barrel", () => {
@@ -31,7 +35,6 @@ describe("lexer public api", () => {
     expect(DottedModuleResolver).toBeDefined();
     expect(KeywordTable).toBeDefined();
     expect(Lexer).toBeDefined();
-    expect(ModuleGraphLexer).toBeDefined();
     expect(ModulePath).toBeDefined();
     expect(SourceText).toBeDefined();
     expect(SourceSpan).toBeDefined();
@@ -40,41 +43,34 @@ describe("lexer public api", () => {
     expect(TokenStream).toBeDefined();
     expect(Trivia).toBeDefined();
     expect(TriviaKind).toBeDefined();
-    expect(wrela.hir).toBeDefined();
-    expect(typeof wrela.hir.lowerTypedHir).toBe("function");
-    expect(wrela.linker).toBeDefined();
-    expect(typeof wrela.linkAArch64Image).toBe("function");
-    expect(typeof wrela.linker.linkAArch64Image).toBe("function");
-    expect(typeof wrela.linker.authenticateAArch64LinkerTargetSurface).toBe("function");
-    expect(wrela.peCoff).toBeDefined();
-    expect(typeof wrela.writeAArch64PeCoffEfiImage).toBe("function");
-    expect(typeof wrela.authenticateAArch64PeCoffEfiWriterTargetSurface).toBe("function");
-    expect(typeof wrela.peCoff.writeAArch64PeCoffEfiImage).toBe("function");
-    expect(typeof wrela.peCoff.createPeCoffEfiFileSink).toBe("function");
-    expect(wrela.target.uefiAarch64).toBeDefined();
-    expect(typeof wrela.target.uefiAarch64.uefiAArch64TargetDiagnostic).toBe("function");
-    expect(typeof wrela.compileUefiAArch64Image).toBe("function");
-    expect(typeof wrela.target.uefiAarch64.compileUefiAArch64Image).toBe("function");
+    expect(typeof loadFrontendModuleGraph).toBe("function");
+    expect(typeof lowerTypedHir).toBe("function");
+    expect(typeof linker.linkAArch64Image).toBe("function");
+    expect(typeof linker.authenticateAArch64LinkerTargetSurface).toBe("function");
+    expect(typeof peCoff.writeAArch64PeCoffEfiImage).toBe("function");
+    expect(typeof peCoff.createPeCoffEfiFileSink).toBe("function");
+    expect(typeof uefiAarch64.uefiAArch64TargetDiagnostic).toBe("function");
+    expect(typeof compileUefiAArch64Image).toBe("function");
+    expect(typeof uefiAarch64.compileUefiAArch64Image).toBe("function");
   });
 });
 
 describe("linker public api", () => {
-  test("exports the AArch64 linker from root and linker barrels", () => {
-    expect(typeof wrela.linkAArch64Image).toBe("function");
-    expect(typeof wrela.linker.createAArch64LinkedImageLayout).toBe("function");
-    expect(typeof wrela.linker.createAArch64UefiEntrySyntheticObjectProvider).toBe("function");
-    expect(typeof wrela.linker.createAArch64UnwindSyntheticObjectProvider).toBe("function");
-    expect(typeof wrela.linker.authenticateAArch64LinkerTargetSurface).toBe("function");
+  test("exports the AArch64 linker from the linker barrel", () => {
+    expect(typeof linker.linkAArch64Image).toBe("function");
+    expect(typeof linker.createAArch64LinkedImageLayout).toBe("function");
+    expect(typeof linker.createAArch64UefiEntrySyntheticObjectProvider).toBe("function");
+    expect(typeof linker.createAArch64UnwindSyntheticObjectProvider).toBe("function");
+    expect(typeof linker.authenticateAArch64LinkerTargetSurface).toBe("function");
   });
 });
 
 describe("proof-mir public api", () => {
-  test("exports proof-mir namespace with builder and diagnostics", () => {
-    expect(wrela.proofMir).toBeDefined();
-    expect(typeof wrela.proofMir.buildProofMir).toBe("function");
-    expect(typeof wrela.proofMir.proofMirDiagnostic).toBe("function");
-    expect(typeof wrela.proofMir.proofMirDiagnosticCode).toBe("function");
-    expect(typeof wrela.proofMir.sortProofMirDiagnostics).toBe("function");
-    expect(typeof wrela.proofMir.proofMirBlockId).toBe("function");
+  test("exports proof-mir subpath with builder and diagnostics", () => {
+    expect(typeof proofMir.buildProofMir).toBe("function");
+    expect(typeof proofMir.proofMirDiagnostic).toBe("function");
+    expect(typeof proofMir.proofMirDiagnosticCode).toBe("function");
+    expect(typeof proofMir.sortProofMirDiagnostics).toBe("function");
+    expect(typeof proofMir.proofMirBlockId).toBe("function");
   });
 });

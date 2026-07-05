@@ -76,7 +76,9 @@ test("real checker emits attempt contracts from source Result methods with proof
     [
       "wrela_std/core.wr",
       [
-        "class Result[Ok, Err]:",
+        "enum Result[Ok, Err]:",
+        "    ok(value: Ok)",
+        "    err(error: Err)",
         "private class Firmware:",
         "    fn discover(self) -> Result[bool, u32]",
       ].join("\n"),
@@ -99,7 +101,9 @@ test("real checker leaves copy-only Result functions out of capability attempt c
     [
       "main.wr",
       [
-        "class Result[Ok, Err]:",
+        "enum Result[Ok, Err]:",
+        "    ok(value: Ok)",
+        "    err(error: Err)",
         "fn parse_copy(value: u32) -> Result[bool, u32]",
         "uefi image Boot:",
         "    fn main() -> Never",

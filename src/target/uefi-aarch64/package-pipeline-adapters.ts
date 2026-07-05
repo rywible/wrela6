@@ -13,6 +13,7 @@ import type {
 import type { OptIrFactSet } from "../../opt-ir/facts/fact-index";
 import type { OptIrOperation } from "../../opt-ir/operations";
 import type { OptIrProgram } from "../../opt-ir/program";
+import type { OptIrRegion } from "../../opt-ir/regions";
 import type { CheckProofAndResourcesInput, CheckProofAndResourcesResult } from "../../proof-check";
 import type { BuildProofMirInput, BuildProofMirResult } from "../../proof-mir/proof-mir-builder";
 import type { PlatformPrimitiveId, TypeId } from "../../semantic/ids";
@@ -137,6 +138,7 @@ export interface UefiAArch64StaticChar16IntrinsicMetadata {
 export interface UefiAArch64OptimizedOptIrArtifact {
   readonly program: OptIrProgram;
   readonly operations: readonly OptIrOperation[];
+  readonly optimizationRegions: readonly OptIrRegion[];
   readonly unoptimizedOperations: readonly OptIrOperation[];
   readonly facts: OptIrFactSet;
   readonly staticChar16Strings: readonly UefiAArch64StaticChar16String[];
@@ -147,6 +149,7 @@ export interface UefiAArch64OptimizedOptIrArtifact {
 export interface PackageOptimizedOptIrAdapter {
   readonly program: OptIrProgram;
   readonly operations: readonly OptIrOperation[];
+  readonly optimizationRegions: readonly OptIrRegion[];
   readonly unoptimizedOperations: readonly OptIrOperation[];
   readonly facts: OptIrFactSet;
   readonly staticChar16Strings: readonly UefiAArch64StaticChar16String[];

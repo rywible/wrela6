@@ -3,12 +3,12 @@
   "schemaVersion": 1,
   "caseKey": "two-branch-control-flow/direct-platform",
   "metrics": {
-    "optIrOperationsPre": 6,
+    "optIrOperationsPre": 8,
     "optIrOperationsPost": 2,
-    "objectSectionBytes": 80,
-    "executableTextBytes": 988,
+    "objectSectionBytes": 76,
+    "executableTextBytes": 984,
     "finalImageBytes": 3584,
-    "staticInstructionEstimate": 247,
-    "staticCycleEstimate": 275
+    "staticInstructionEstimate": 246,
+    "staticCycleEstimate": 272
   }
 }

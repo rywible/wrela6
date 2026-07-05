@@ -148,7 +148,7 @@ describe("release surface", () => {
     const verifyReleaseSource = readFileSync("scripts/verify-release.ts", "utf8");
 
     expect(verifyReleaseSource).toContain(
-      '{ name: "lean", command: ["bun", "run", "verify:lean"] }',
+      '{ name: "lean", command: ["bun", "run", "verify:lean"], strictRequired: true }',
     );
     expect(verifyReleaseSource).not.toContain("WRELA_RELEASE_REQUIRE_LEAN");
     expect(verifyReleaseSource).not.toContain("--allow-missing-lean");

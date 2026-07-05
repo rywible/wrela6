@@ -116,6 +116,31 @@ describe("resolveImports", () => {
     expect(result.diagnostics[0]!.code).toBe("NAME_AMBIGUOUS_IMPORT");
   });
 
+  test("preserves ambiguous imported candidates for later name resolution", () => {
+    const graph = parseModuleGraphForTest([
+      ["app/main.wr", "use Value from lib\nfn main()\n"],
+      ["lib.wr", "class Value:\nfn Value()\n"],
+    ]);
+    const itemIndexResult = buildItemIndex({ graph });
+    const result = resolveImports({
+      graph,
+      index: itemIndexResult.index,
+      moduleNamespace: buildModuleNamespace(itemIndexResult.index),
+      referenceKeys: new ReferenceKeyBuilder(),
+    });
+
+    const mainScope = result.importedScopes.find((scope) => scope.moduleId === moduleId(0));
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      "NAME_AMBIGUOUS_IMPORT",
+    ]);
+    expect(mainScope?.candidates.map((candidate) => candidate.name)).toEqual(["Value", "Value"]);
+    expect(mainScope?.candidates.map((candidate) => candidate.namespace).sort()).toEqual([
+      "type",
+      "value",
+    ]);
+  });
+
   test("skips unresolved module import and does not process its names", () => {
     const graph = parseModuleGraphForTest([
       ["app/main.wr", "use X from missing\nuse Writer from std.io\nfn main(writer: Writer)\n"],

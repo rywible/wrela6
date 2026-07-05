@@ -59,6 +59,23 @@ export function rewriteOptIrOperationValues(
         aggregate: rewriter.valueFor(operation.aggregate),
         field: rewriter.valueFor(operation.field),
       });
+    case "enumTagStore":
+      return Object.freeze({
+        ...base,
+        tagValue: rewriter.valueFor(operation.tagValue),
+      });
+    case "enumPayloadStore":
+      return Object.freeze({
+        ...base,
+        enumValue: rewriter.valueFor(operation.enumValue),
+        payloadValue: rewriter.valueFor(operation.payloadValue),
+      });
+    case "enumTagLoad":
+    case "enumPayloadLoad":
+      return Object.freeze({
+        ...base,
+        enumValue: rewriter.valueFor(operation.enumValue),
+      });
     case "layoutOffset":
     case "layoutByteRange":
       return Object.freeze({

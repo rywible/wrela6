@@ -8,6 +8,7 @@ import { nodeFromMark } from "./node-claim";
 
 export interface BlockOptions {
   optionalColon?: boolean;
+  requireIndentedBlock?: boolean;
   itemParser: (context: ParserContext) => GreenElement | undefined;
   recoveryKinds: ReadonlySet<SyntaxKind>;
 }
@@ -35,7 +36,8 @@ export function parseBlock(context: ParserContext, options: BlockOptions): Green
       children.push(context.consume());
     }
 
-    if (context.currentSyntaxKind() === SyntaxKind.IndentToken) {
+    const hasIndentedBlock = context.currentSyntaxKind() === SyntaxKind.IndentToken;
+    if (hasIndentedBlock) {
       children.push(context.consume());
 
       const stmtList = parseStatementList(context, options.itemParser, options.recoveryKinds);
@@ -46,6 +48,10 @@ export function parseBlock(context: ParserContext, options: BlockOptions): Green
       } else {
         context.reportAtCurrent("PARSE_UNTERMINATED_BLOCK", "Unterminated block.");
       }
+    }
+
+    if (!hasIndentedBlock && options.requireIndentedBlock === true) {
+      context.reportAtCurrent("PARSE_EXPECTED_INDENTED_BLOCK", "Expected an indented block.");
     }
 
     return nodeFromMark({ factory, context, mark, kind: SyntaxKind.Block, children });

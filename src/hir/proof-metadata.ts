@@ -37,6 +37,8 @@ import { compareCodeUnitStrings } from "./deterministic-sort";
 
 function ownerSortKey(owner: HirOwnedId<unknown>["owner"]): string {
   switch (owner.kind) {
+    case "program":
+      return "program";
     case "function":
       return `function:${String(owner.functionId).padStart(12, "0")}`;
     case "image":

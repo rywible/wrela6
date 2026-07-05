@@ -28,6 +28,7 @@ export function stableOptimizedOptIrResultKey(result: OptimizeOptIrResult): stri
     kind: result.kind,
     program: stableProgram(result.program),
     operations: result.operations,
+    optimizationRegions: result.optimizationRegions,
     facts: result.facts,
     provenance: result.provenance,
     decisionLog: result.decisionLog.entries(),

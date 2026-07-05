@@ -35,6 +35,7 @@ import {
   isCallOperation,
   semanticAtomicContract,
   unsupportedAggregateLowering,
+  unsupportedEnumLowering,
   validateThreeRegisterOpcodeClasses,
   type SemanticOptIrOperation,
 } from "./materialization-contracts";
@@ -257,6 +258,11 @@ class OperationMaterializer extends AArch64CallOperationMaterializer {
           operation,
           `insert:${fieldPathStableKey(operation.fieldPath)}`,
         );
+      case "enumTagStore":
+      case "enumPayloadStore":
+      case "enumTagLoad":
+      case "enumPayloadLoad":
+        return unsupportedEnumLowering(operation);
       case "layoutOffset":
       case "layoutByteRange":
         return this.materializeLayoutByteRangeAddress(operation);

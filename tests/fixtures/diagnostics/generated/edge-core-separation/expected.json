@@ -1,0 +1,9 @@
+{
+  "sourceSection": "Edge/Core Separation",
+  "stage": "parse",
+  "diagnostics": [
+    {
+      "code": "LEX_MALFORMED_INTEGER"
+    }
+  ]
+}

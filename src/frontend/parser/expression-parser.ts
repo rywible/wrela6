@@ -1,5 +1,4 @@
 import { SyntaxKind } from "../syntax/syntax-kind";
-import { TokenKind } from "../lexer/token-kind";
 import type { ParserContext } from "./parser-context";
 import type { GreenElement, GreenNode } from "../syntax/green-node";
 import { canStartExpression, isNameTokenSyntaxKind, parseDelimitedList } from "./parser-utils";
@@ -7,6 +6,7 @@ import { syntaxKindFromTokenKind } from "../syntax/syntax-kind-map";
 import { expressionStopKinds } from "./parser-recovery";
 import { parseTypeReference } from "./type-parser";
 import { nodeFromMark } from "./node-claim";
+import { shouldParseIndexExpression } from "./expression-bracket-disambiguation";
 
 export interface ExpressionContext {
   minimumBindingPower: number;
@@ -232,6 +232,9 @@ export function parsePrimaryExpression(context: ParserContext): GreenNode {
     case SyntaxKind.LeftBraceToken:
       return parseObjectLiteralExpression(context);
 
+    case SyntaxKind.LeftParenToken:
+      return parseParenthesizedExpression(context);
+
     default:
       if (isNameTokenSyntaxKind(context.currentSyntaxKind())) {
         return factory.node(SyntaxKind.NameExpression, [context.consume()]);
@@ -266,39 +269,8 @@ export function parsePostfixExpression(context: ParserContext, left: GreenNode):
       }
 
       case SyntaxKind.LeftBracketToken: {
-        // Disambiguate: [ followed by integer literal is an unsupported index expression
-        const lookahead = context.peek(1);
-        if (lookahead && lookahead.kind === TokenKind.IntegerLiteral) {
-          const mark = context.mark();
-          const errorMark = { ...mark, offset: mark.offset - left.width };
-          const unsupportedStart = context.peek().span.start;
-          let unsupportedEnd = context.peek().span.end;
-          const errorChildren: GreenElement[] = [left, context.consume()];
-          while (
-            !context.isAtEnd &&
-            context.currentSyntaxKind() !== SyntaxKind.RightBracketToken &&
-            context.currentSyntaxKind() !== SyntaxKind.NewlineToken
-          ) {
-            unsupportedEnd = context.peek().span.end;
-            errorChildren.push(context.consume());
-          }
-          if (context.currentSyntaxKind() === SyntaxKind.RightBracketToken) {
-            unsupportedEnd = context.peek().span.end;
-            errorChildren.push(context.consume());
-          }
-          context.reportSpan(
-            "PARSE_UNSUPPORTED_INDEX_EXPRESSION",
-            "Index expressions are not supported.",
-            unsupportedStart,
-            unsupportedEnd,
-          );
-          left = nodeFromMark({
-            factory,
-            context,
-            mark: errorMark,
-            kind: SyntaxKind.ErrorNode,
-            children: errorChildren,
-          });
+        if (shouldParseIndexExpression(context, left)) {
+          left = parseIndexExpression(context, left);
         } else {
           const typeArgs = parseTypeArgumentListInExpression(context);
           left = factory.node(SyntaxKind.TypeApplicationExpression, [left, typeArgs]);
@@ -324,6 +296,62 @@ export function parsePostfixExpression(context: ParserContext, left: GreenNode):
         return left;
     }
   }
+}
+
+function parseParenthesizedExpression(context: ParserContext): GreenNode {
+  const factory = context.factory;
+  const mark = context.mark();
+  const children: GreenElement[] = [];
+
+  children.push(context.expect(SyntaxKind.LeftParenToken));
+  children.push(
+    parseExpressionWithContext(context, {
+      ...DEFAULT_EXPRESSION_CONTEXT,
+      stopKinds: new Set([
+        SyntaxKind.RightParenToken,
+        SyntaxKind.NewlineToken,
+        SyntaxKind.DedentToken,
+        SyntaxKind.EndOfFileToken,
+      ]),
+    }),
+  );
+  children.push(context.expect(SyntaxKind.RightParenToken));
+
+  return nodeFromMark({
+    factory,
+    context,
+    mark,
+    kind: SyntaxKind.ParenthesizedExpression,
+    children,
+  });
+}
+
+function parseIndexExpression(context: ParserContext, receiver: GreenNode): GreenNode {
+  const factory = context.factory;
+  const mark = { ...context.mark(), offset: context.offset - receiver.width };
+  const children: GreenElement[] = [receiver];
+
+  children.push(context.expect(SyntaxKind.LeftBracketToken));
+  children.push(
+    parseExpressionWithContext(context, {
+      ...DEFAULT_EXPRESSION_CONTEXT,
+      stopKinds: new Set([
+        SyntaxKind.RightBracketToken,
+        SyntaxKind.NewlineToken,
+        SyntaxKind.DedentToken,
+        SyntaxKind.EndOfFileToken,
+      ]),
+    }),
+  );
+  children.push(context.expect(SyntaxKind.RightBracketToken));
+
+  return nodeFromMark({
+    factory,
+    context,
+    mark,
+    kind: SyntaxKind.IndexExpression,
+    children,
+  });
 }
 
 function parseObjectLiteralExpression(context: ParserContext): GreenNode {

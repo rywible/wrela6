@@ -19,6 +19,7 @@ import {
   optIrSourceCallOperation,
   type OptIrOperation,
 } from "../../../src/opt-ir/operations";
+import { createOptIrFreshIdAllocator } from "../../../src/opt-ir/id-allocation";
 import {
   runWholeProgramInliningForTest,
   type RunWholeProgramInliningResult,
@@ -104,6 +105,7 @@ function inline(
       perImageGrowth: optIrCodeSizeBudget("normalizedOperation", 10),
       fixpointFuel: optIrExpansionFuel("scopeExpansionIteration", 10),
     },
+    freshIds: createOptIrFreshIdAllocator({ program, operations }),
   });
 }
 

@@ -279,6 +279,38 @@ test("enum source type instantiates enumCases in source order", () => {
   }
 });
 
+test("enum source type preserves payload field ids on enum cases", () => {
+  const program = lowerTypedHirForTest([
+    ["main.wr", "enum Result:\n    Ok(value: u8)\n    Err(error: u16)\n"],
+  ]).program;
+  const enumType = program.types.entries().find((record) => record.sourceKind === "enum");
+  if (enumType === undefined) throw new Error("expected enum type");
+
+  const result = instantiateMonoType({
+    program,
+    key: monoTypeKeyForTest({
+      typeId: enumType.typeId,
+      typeArguments: [],
+    }),
+    source: { kind: "image", imageId: imageId(1) },
+    ancestry: emptyMonoAncestryForTest(),
+  });
+
+  expect(result.kind).toBe("ok");
+  if (result.kind === "ok") {
+    const fieldsById = new Map(result.instance.fields.map((field) => [field.fieldId, field.name]));
+    expect(
+      result.instance.enumCases.map((caseRecord) => ({
+        name: caseRecord.name,
+        payloadFields: caseRecord.payloadFieldIds.map((fieldId) => fieldsById.get(fieldId)),
+      })),
+    ).toEqual([
+      { name: "Ok", payloadFields: ["value"] },
+      { name: "Err", payloadFields: ["error"] },
+    ]);
+  }
+});
+
 test("validated buffer layout fields with usize wire markers instantiate successfully", () => {
   const program = lowerTypedHirForTest([
     [

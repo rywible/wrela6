@@ -49,6 +49,10 @@ describe("OptIR operation schema ids", () => {
       "aggregateConstruct",
       "aggregateExtract",
       "aggregateInsert",
+      "enumTagStore",
+      "enumPayloadStore",
+      "enumTagLoad",
+      "enumPayloadLoad",
       "layoutOffset",
       "layoutByteRange",
       "layoutEndianDecode",
@@ -94,6 +98,7 @@ describe("OptIR operation schema ids", () => {
       "call-signature-results",
       "vector-lane-result",
       "proof-erased-no-result",
+      "enum-access-type",
     ]);
 
     expect(OPT_IR_EFFECT_RULE_IDS.map((ruleId) => ruleId as string)).toEqual([

@@ -1,6 +1,6 @@
 import type { OptIrDiagnostic } from "../diagnostics";
 import { type OptIrBlockId, type OptIrOperationId, type OptIrValueId } from "../ids";
-import { createOptIrIdAllocator } from "./pipeline-candidates";
+import { createOptIrFreshIdAllocator } from "../id-allocation";
 import { optIrVectorShuffleOperation, type OptIrOperation } from "../operations";
 import type { OptIrProgram } from "../program";
 import type { RunLoopVectorizationResult } from "./loop-vectorization";
@@ -171,7 +171,10 @@ function materializeVectorReplacementPacks(input: {
   const operationById = new Map(
     input.operations.map((operation) => [operation.operationId, operation]),
   );
-  const idAllocator = createOptIrIdAllocator(input.operations, input.vectorOperations);
+  const idAllocator = createOptIrFreshIdAllocator({
+    program: input.program,
+    operations: [...input.operations, ...input.vectorOperations],
+  });
 
   const addedOperations: OptIrOperation[] = [];
   const blockRewrites: OptIrBlockOperationRewrite[] = [];
@@ -189,8 +192,8 @@ function materializeVectorReplacementPacks(input: {
       vectorOperation: pack.vectorOperation,
       scalarOperationIds: pack.scalarOperationIds,
       operationById,
-      nextOperationId: idAllocator.nextOperationId,
-      nextValueId: idAllocator.nextValueId,
+      nextOperationId: idAllocator.operationId,
+      nextValueId: idAllocator.valueId,
     });
     addedOperations.push(...shuffleForwards.operations);
     insertedOperationIds.push(

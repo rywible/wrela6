@@ -1,6 +1,7 @@
 import { stableNumericSeed } from "../stable-numeric-seed";
 import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
 import type { LayoutTermUnit, LayoutTypeKey } from "../../layout/layout-program";
+import { fieldId } from "../../semantic/ids";
 import {
   proofCheckDiagnostic,
   sortProofCheckDiagnostics,
@@ -41,7 +42,6 @@ export interface LayoutEntailmentCertificate {
   readonly normalizedTermKey: string;
   readonly dependencyKeys: readonly string[];
 }
-
 export type LayoutEntailmentResult =
   | { readonly kind: "ok"; readonly certificate: LayoutEntailmentCertificate }
   | { readonly kind: "missing"; readonly diagnostics: readonly ProofCheckDiagnostic[] };
@@ -310,7 +310,7 @@ function sourceLengthOperand(source: ProofCheckPlaceBinder): ProofCheckOperandTe
   return {
     kind: "place",
     place: source,
-    projection: [{ kind: "field", fieldId: 0 as never }],
+    projection: [{ kind: "field", fieldId: fieldId(0) }],
   };
 }
 

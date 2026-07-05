@@ -206,7 +206,7 @@ export function createHirProgramContext(input: LowerTypedHirInput): HirLoweringC
       );
     }
   }
-  const owner = { kind: "function" as const, functionId: 0 as FunctionId };
+  const owner = { kind: "program" as const };
   return {
     ...input,
     origins,
@@ -263,6 +263,42 @@ export function createFunctionHirContext(input: {
 
 export function currentHirModuleId(context: HirLoweringContext): ModuleId {
   return context.ownerModuleId ?? moduleId(0);
+}
+
+export function hirOwnerKey(context: HirLoweringContext): string {
+  if (context.ownerFunctionId !== undefined) return `function:${context.ownerFunctionId}`;
+  if (context.ownerItemId !== undefined) return `item:${context.ownerItemId}`;
+  if (context.ownerModuleId !== undefined) return `module:${context.ownerModuleId}`;
+  return "program";
+}
+
+export function reportMissingOwnerFunction(input: {
+  readonly context: HirLoweringContext;
+  readonly sourceOrigin: HirOriginId;
+  readonly stableDetail: string;
+}): void {
+  input.context.diagnostics.report(
+    hirDiagnostic({
+      code: "HIR_MISSING_OWNER_FUNCTION",
+      message: "HIR lowering requires an owner function for this record.",
+      originId: input.sourceOrigin,
+      ownerKey: hirOwnerKey(input.context),
+      originKey: `origin:${input.sourceOrigin}`,
+      stableDetail: input.stableDetail,
+    }),
+  );
+}
+
+export function requireHirFunctionOwner(input: {
+  readonly context: HirLoweringContext;
+  readonly sourceOrigin: HirOriginId;
+  readonly stableDetail: string;
+}): { readonly kind: "function"; readonly functionId: FunctionId } | undefined {
+  if (input.context.ownerFunctionId !== undefined) {
+    return { kind: "function", functionId: input.context.ownerFunctionId };
+  }
+  reportMissingOwnerFunction(input);
+  return undefined;
 }
 
 export function hirDiagnostic(input: {

@@ -69,6 +69,7 @@ const fixtureRoots = [
   path.join(process.cwd(), "tests", "fixtures", "diagnostics"),
   path.join(process.cwd(), "tests", "system", "diagnostics", "cases"),
 ];
+const fixtureGroupNames = new Set(["generated"]);
 const fixtures = await loadFixtures(fixtureRoots);
 
 describe("diagnostics corpus", () => {
@@ -121,23 +122,33 @@ async function loadFixtures(roots: readonly string[]): Promise<CorpusFixture[]> 
   const fixturesByName = new Map<string, CorpusFixture>();
 
   for (const root of roots) {
-    const entries = await readdir(root, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      if (fixturesByName.has(entry.name)) {
-        throw new Error(`Duplicate diagnostics corpus fixture name: ${entry.name}`);
-      }
-      fixturesByName.set(
-        entry.name,
-        Object.freeze({
-          name: entry.name,
-          directory: path.join(root, entry.name),
-        }),
-      );
-    }
+    await collectFixturesFromDirectory(fixturesByName, root);
   }
 
   return [...fixturesByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+async function collectFixturesFromDirectory(
+  fixturesByName: Map<string, CorpusFixture>,
+  root: string,
+): Promise<void> {
+  const entries = await readdir(root, { withFileTypes: true });
+  const hasExpected = entries.some((entry) => entry.isFile() && entry.name === "expected.json");
+  const hasInput = entries.some((entry) => entry.isFile() && entry.name === "input.wr");
+  if (hasExpected && hasInput) {
+    const name = path.basename(root);
+    if (fixturesByName.has(name)) {
+      throw new Error(`Duplicate diagnostics corpus fixture name: ${name}`);
+    }
+    fixturesByName.set(name, Object.freeze({ name, directory: root }));
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (fixtureGroupNames.has(entry.name)) continue;
+    await collectFixturesFromDirectory(fixturesByName, path.join(root, entry.name));
+  }
 }
 
 async function loadExpectedFixture(fixture: CorpusFixture): Promise<ExpectedFixture> {

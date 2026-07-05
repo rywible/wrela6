@@ -17,23 +17,18 @@ import { SyntaxKind } from "../frontend/syntax/syntax-kind";
 import type { ResolvedReference } from "../semantic/names/reference";
 import { concreteKind, errorKind } from "../semantic/surface/resource-kind";
 import type { CheckedResourceKind } from "../semantic/surface/resource-kind";
-import {
-  checkedTypesEqual,
-  coreCheckedType,
-  errorCheckedType,
-  sourceCheckedType,
-} from "../semantic/surface/type-model";
+import { coreCheckedType, errorCheckedType } from "../semantic/surface/type-model";
 import type { CheckedType } from "../semantic/surface/type-model";
-import { coreTypeId, type FieldId, type ItemId, type TypeId } from "../semantic/ids";
-import type { HirExpression, HirExpressionKind, HirObjectField, HirResourcePlace } from "./hir";
+import { coreTypeId, type FieldId, type ItemId } from "../semantic/ids";
+import type { HirExpression, HirResourcePlace } from "./hir";
 import type { HirLoweringContext } from "./lowering-context";
-import { currentHirModuleId, hirDiagnostic } from "./lowering-context";
+import { currentHirModuleId, hirDiagnostic, hirOwnerKey } from "./lowering-context";
 import type { HirOriginId } from "./ids";
 import { lowerCallExpression } from "./call-lowerer";
 import { lowerAttemptExpression } from "./attempt-lowerer";
-import { checkConstructibility } from "./constructibility";
-import { resourceKindForCheckedType } from "./type-resource-kind";
-import { hirEnumCaseOrdinal } from "./enum-case-model";
+import { addExpression, errorExpression } from "./expression-builder";
+import { lowerEnumCaseMember } from "./enum-case-member-lowerer";
+import { lowerObjectLiteral } from "./object-literal-lowerer";
 import { parseWrIntegerLiteral } from "../shared/integer-literal";
 import {
   isArithmeticOperator,
@@ -67,39 +62,26 @@ function originForExpression(view: ExpressionView, context: HirLoweringContext):
   });
 }
 
-function addExpression(
-  context: HirLoweringContext,
-  input: {
-    readonly kind: HirExpressionKind;
-    readonly type: CheckedType;
-    readonly resourceKind: CheckedResourceKind;
-    readonly sourceOrigin: HirOriginId;
-    readonly place?: HirResourcePlace;
-  },
-): HirExpression {
-  const expression: HirExpression = {
-    expressionId: context.bodyIndex.nextExpressionId(),
-    kind: input.kind,
-    type: input.type,
-    resourceKind: input.resourceKind,
-    sourceOrigin: input.sourceOrigin,
-    ...(input.place !== undefined ? { place: input.place } : {}),
-  };
-  context.bodyIndex.addExpression(expression);
-  return expression;
-}
-
-function errorExpression(
-  context: HirLoweringContext,
-  sourceOrigin: HirOriginId,
-  reason: string,
-): HirExpression {
-  return addExpression(context, {
-    kind: { kind: "error", reason },
-    type: errorCheckedType(),
-    resourceKind: errorKind(),
-    sourceOrigin,
-  });
+function reportMalformedExpression(input: {
+  readonly context: HirLoweringContext;
+  readonly sourceOrigin: HirOriginId;
+  readonly code:
+    | "HIR_MISSING_LITERAL_TEXT"
+    | "HIR_INVALID_INTEGER_LITERAL"
+    | "HIR_MISSING_NAME_TEXT";
+  readonly message: string;
+  readonly stableDetail: string;
+}): void {
+  input.context.diagnostics.report(
+    hirDiagnostic({
+      code: input.code,
+      message: input.message,
+      originId: input.sourceOrigin,
+      ownerKey: hirOwnerKey(input.context),
+      originKey: `origin:${input.sourceOrigin}`,
+      stableDetail: input.stableDetail,
+    }),
+  );
 }
 
 function findReferenceBySpan(
@@ -117,7 +99,6 @@ function findReferenceBySpan(
 function lowerLiteral(input: LowerExpressionInput, view: LiteralExpressionView): HirExpression {
   const origin = originForExpression(view, input.context);
   const token = view.literalToken();
-  const text = view.literalText() ?? "";
   if (token?.kind === SyntaxKind.TrueKeyword || token?.kind === SyntaxKind.FalseKeyword) {
     const expression = addExpression(input.context, {
       kind: {
@@ -137,7 +118,17 @@ function lowerLiteral(input: LowerExpressionInput, view: LiteralExpressionView):
     return expression;
   }
   if (token?.kind === SyntaxKind.StringLiteralToken) {
-    const value = view.cookedStringValue() ?? "";
+    const value = view.cookedStringValue();
+    if (value === undefined) {
+      reportMalformedExpression({
+        context: input.context,
+        sourceOrigin: origin,
+        code: "HIR_MISSING_LITERAL_TEXT",
+        message: "String literal is missing cooked text.",
+        stableDetail: "string",
+      });
+      return errorExpression(input.context, origin, "missing-literal-text");
+    }
     const expression = addExpression(input.context, {
       kind: { kind: "literal", literal: { kind: "string", value } },
       type: coreCheckedType(coreTypeId("string")),
@@ -153,7 +144,28 @@ function lowerLiteral(input: LowerExpressionInput, view: LiteralExpressionView):
     return expression;
   }
 
-  const value = parseWrIntegerLiteral(text) ?? 0n;
+  const text = view.literalText();
+  if (text === undefined) {
+    reportMalformedExpression({
+      context: input.context,
+      sourceOrigin: origin,
+      code: "HIR_MISSING_LITERAL_TEXT",
+      message: "Integer literal is missing source text.",
+      stableDetail: "integer",
+    });
+    return errorExpression(input.context, origin, "missing-literal-text");
+  }
+  const value = parseWrIntegerLiteral(text);
+  if (value === undefined) {
+    reportMalformedExpression({
+      context: input.context,
+      sourceOrigin: origin,
+      code: "HIR_INVALID_INTEGER_LITERAL",
+      message: "Integer literal text is not valid.",
+      stableDetail: text,
+    });
+    return errorExpression(input.context, origin, "invalid-integer-literal");
+  }
   const integerType = isIntegerCheckedType(input.expectedType)
     ? input.expectedType!
     : coreCheckedType(coreTypeId("u64"));
@@ -182,51 +194,19 @@ function lowerLiteral(input: LowerExpressionInput, view: LiteralExpressionView):
   return expression;
 }
 
-function originForObjectField(
-  view: ReturnType<ObjectLiteralExpressionView["fields"]>[number],
-  context: HirLoweringContext,
-): HirOriginId {
-  return context.origins.forSyntax({
-    moduleId: currentHirModuleId(context),
-    node: view.node,
-    ownerItemId: context.ownerItemId,
-    ownerFunctionId: context.ownerFunctionId,
-  });
-}
-
-function reportObjectFieldMismatch(input: {
-  readonly context: HirLoweringContext;
-  readonly sourceOrigin: HirOriginId;
-  readonly stableDetail: string;
-}): void {
-  input.context.diagnostics.report(
-    hirDiagnostic({
-      code: "HIR_OBJECT_FIELD_TYPE_MISMATCH",
-      message: "Object literal field does not match the checked field surface.",
-      originId: input.sourceOrigin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
-      originKey: `origin:${input.sourceOrigin}`,
-      stableDetail: input.stableDetail,
-    }),
-  );
-}
-
-function objectTargetSource(
-  context: HirLoweringContext,
-  type: CheckedType | undefined,
-): { readonly itemId: ItemId; readonly typeId: TypeId } | undefined {
-  if (type?.kind === "source") {
-    return { itemId: type.itemId, typeId: type.typeId };
-  }
-  if (type?.kind !== "applied" || type.constructor.kind !== "source") return undefined;
-  const typeRecord = context.index.type(type.constructor.typeId);
-  if (typeRecord === undefined) return undefined;
-  return { itemId: typeRecord.itemId, typeId: type.constructor.typeId };
-}
-
 function lowerName(input: LowerExpressionInput, view: NameExpressionView): HirExpression {
   const origin = originForExpression(view, input.context);
-  const name = view.nameText() ?? "";
+  const name = view.nameText();
+  if (name === undefined) {
+    reportMalformedExpression({
+      context: input.context,
+      sourceOrigin: origin,
+      code: "HIR_MISSING_NAME_TEXT",
+      message: "Name expression is missing source text.",
+      stableDetail: "name",
+    });
+    return errorExpression(input.context, origin, "missing-name-text");
+  }
   const nameSpan = presentTokenSpan(view.nameToken()) ?? view.node.span;
   const local = input.context.locals.lookup(name);
   if (local !== undefined) {
@@ -268,7 +248,7 @@ function lowerName(input: LowerExpressionInput, view: NameExpressionView): HirEx
         code: "HIR_IMAGE_NAME_NOT_A_VALUE",
         message: "Image names are declarations and cannot be used as values.",
         originId: origin,
-        ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+        ownerKey: hirOwnerKey(input.context),
         originKey: `origin:${origin}`,
         stableDetail: name,
       }),
@@ -303,7 +283,7 @@ function lowerName(input: LowerExpressionInput, view: NameExpressionView): HirEx
       code: "HIR_NAME_REFERENCE_MISSING",
       message: `Missing HIR reference for '${name}'.`,
       originId: origin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${origin}`,
       stableDetail: name,
     }),
@@ -350,50 +330,6 @@ function imageDevicePlace(input: {
   };
 }
 
-function lowerEnumCaseMember(input: {
-  readonly context: HirLoweringContext;
-  readonly completed: ResolvedReference | undefined;
-  readonly origin: HirOriginId;
-  readonly expectedType: CheckedType | undefined;
-}): HirExpression | undefined {
-  if (input.completed?.kind !== "item") return undefined;
-  const ordinalResult = hirEnumCaseOrdinal({
-    index: input.context.index,
-    caseItemId: input.completed.itemId,
-  });
-  if (ordinalResult.kind === "not-enum-case") return undefined;
-  if (ordinalResult.kind === "broken") {
-    input.context.diagnostics.report(
-      hirDiagnostic({
-        code: "HIR_MEMBER_REFERENCE_MISMATCH",
-        message: "Resolved enum case metadata is inconsistent with the item index.",
-        originId: input.origin,
-        ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
-        originKey: `origin:${input.origin}`,
-        stableDetail: ordinalResult.stableDetail,
-      }),
-    );
-    return errorExpression(input.context, input.origin, ordinalResult.stableDetail);
-  }
-  const { ordinal, enumItemId, enumTypeId } = ordinalResult.record;
-  const expression = addExpression(input.context, {
-    kind: {
-      kind: "literal",
-      literal: { kind: "integer", text: String(ordinal), value: BigInt(ordinal) },
-    },
-    type: sourceCheckedType({ itemId: enumItemId, typeId: enumTypeId }),
-    resourceKind: concreteKind("Copy"),
-    sourceOrigin: input.origin,
-  });
-  reportTypeMismatch({
-    context: input.context,
-    sourceOrigin: input.origin,
-    expectedType: input.expectedType,
-    actualType: expression.type,
-  });
-  return expression;
-}
-
 function ownerItemIdForMemberFallback(
   context: HirLoweringContext,
   type: CheckedType,
@@ -415,7 +351,17 @@ function completedFieldForReceiver(input: {
 
 function lowerMember(input: LowerExpressionInput, view: MemberAccessExpressionView): HirExpression {
   const origin = originForExpression(view, input.context);
-  const memberName = view.memberName() ?? "";
+  const memberName = view.memberName();
+  if (memberName === undefined) {
+    reportMalformedExpression({
+      context: input.context,
+      sourceOrigin: origin,
+      code: "HIR_MISSING_NAME_TEXT",
+      message: "Member access expression is missing member name text.",
+      stableDetail: "member",
+    });
+    return errorExpression(input.context, origin, "missing-member-name-text");
+  }
   const memberSpan =
     presentTokenSpan(view.memberToken()) ?? view.memberToken()?.span ?? view.node.span;
   const completed =
@@ -512,112 +458,12 @@ function lowerMember(input: LowerExpressionInput, view: MemberAccessExpressionVi
       code: "HIR_MEMBER_REFERENCE_MISSING",
       message: `Missing HIR member reference for '${memberName}'.`,
       originId: origin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${origin}`,
       stableDetail: memberName,
     }),
   );
   return errorExpression(input.context, origin, `missing-member:${memberName}`);
-}
-
-function lowerObject(
-  input: LowerExpressionInput,
-  view: ObjectLiteralExpressionView,
-): HirExpression {
-  const origin = originForExpression(view, input.context);
-  const targetSource = objectTargetSource(input.context, input.expectedType);
-  if (input.expectedType === undefined || targetSource === undefined) {
-    input.context.diagnostics.report(
-      hirDiagnostic({
-        code: "HIR_OBJECT_LITERAL_TYPE_REQUIRED",
-        message: "Object literal requires an expected source type.",
-        originId: origin,
-        ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
-        originKey: `origin:${origin}`,
-        stableDetail: "object-literal",
-      }),
-    );
-    return errorExpression(input.context, origin, "object-type-required");
-  }
-  const targetType = input.expectedType;
-
-  const resourceKind =
-    input.expectedResourceKind ?? resourceKindForCheckedType(input.context, input.expectedType);
-  const constructibility = checkConstructibility({
-    targetType: input.expectedType,
-    targetKind: resourceKind,
-    constructorFunctionId: undefined,
-    surfaces: input.context.program.proofSurface.constructibilitySurfaces,
-    sourceOrigin: view.node.span,
-    moduleId: currentHirModuleId(input.context),
-  });
-  for (const diagnostic of constructibility.diagnostics) {
-    input.context.diagnostics.report(diagnostic);
-  }
-  if (!constructibility.allowed) return errorExpression(input.context, origin, "forged-object");
-
-  const checkedFieldsByName = new Map(
-    input.context.program.fields
-      .entries()
-      .filter((field) => field.itemId === targetSource.itemId)
-      .map((field) => [field.name, field]),
-  );
-  const seenFieldNames = new Set<string>();
-  const fields: HirObjectField[] = [];
-  for (const fieldView of view.fields()) {
-    const fieldOrigin = originForObjectField(fieldView, input.context);
-    const name = fieldView.nameText() ?? "";
-    if (name.length > 0) {
-      seenFieldNames.add(name);
-    }
-    const checkedField = checkedFieldsByName.get(name);
-    const valueView = fieldView.value();
-    const value =
-      valueView !== undefined
-        ? lowerExpression({
-            view: valueView,
-            context: input.context,
-            expectedType: checkedField?.type,
-            expectedResourceKind: checkedField?.resourceKind,
-          })
-        : errorExpression(input.context, fieldOrigin, `missing-object-field:${name}`);
-    if (checkedField === undefined) {
-      reportObjectFieldMismatch({
-        context: input.context,
-        sourceOrigin: fieldOrigin,
-        stableDetail: `unknown:${name}`,
-      });
-    } else if (value.type.kind !== "error" && !checkedTypesEqual(checkedField.type, value.type)) {
-      reportObjectFieldMismatch({
-        context: input.context,
-        sourceOrigin: fieldOrigin,
-        stableDetail: `type:${name}`,
-      });
-    }
-    fields.push({
-      name,
-      value,
-      sourceOrigin: fieldOrigin,
-      ...(checkedField !== undefined ? { fieldId: checkedField.fieldId } : {}),
-    });
-  }
-  for (const checkedField of checkedFieldsByName.values()) {
-    if (seenFieldNames.has(checkedField.name)) {
-      continue;
-    }
-    reportObjectFieldMismatch({
-      context: input.context,
-      sourceOrigin: origin,
-      stableDetail: `missing:${checkedField.name}`,
-    });
-  }
-
-  return addExpression(input.context, {
-    kind: { kind: "object", typeId: targetSource.typeId, fields },
-    type: targetType,
-    resourceKind,
-    sourceOrigin: origin,
-  });
 }
 
 function lowerUnary(input: LowerExpressionInput, view: UnaryExpressionView): HirExpression {
@@ -627,6 +473,10 @@ function lowerUnary(input: LowerExpressionInput, view: UnaryExpressionView): Hir
     operandView !== undefined
       ? lowerExpression({ view: operandView, context: input.context })
       : errorExpression(input.context, origin, "missing-unary-operand");
+  const operator = view.operatorToken()?.green.lexeme;
+  if (operator === undefined) {
+    return errorExpression(input.context, origin, "missing-unary-operator");
+  }
   if (view.operatorToken()?.kind === SyntaxKind.MinusToken && operand.type.kind !== "error") {
     reportArithmeticRequiresInteger({
       context: input.context,
@@ -636,7 +486,7 @@ function lowerUnary(input: LowerExpressionInput, view: UnaryExpressionView): Hir
     });
   }
   const expression = addExpression(input.context, {
-    kind: { kind: "unary", operator: view.operatorToken()?.green.lexeme ?? "", operand },
+    kind: { kind: "unary", operator, operand },
     type: operand.type,
     resourceKind: operand.resourceKind,
     sourceOrigin: origin,
@@ -739,7 +589,10 @@ function lowerBinaryLike(
     ...(input.expectedType !== undefined ? { expectedType: input.expectedType } : {}),
   });
   const operatorKind = view.operatorToken()?.kind;
-  const operator = view.operatorToken()?.green.lexeme ?? "";
+  const operator = view.operatorToken()?.green.lexeme;
+  if (operator === undefined) {
+    return errorExpression(input.context, origin, "missing-binary-operator");
+  }
   reportBinaryOperandTypeMismatch({
     context: input.context,
     sourceOrigin: origin,
@@ -848,7 +701,9 @@ export function lowerExpression(input: LowerExpressionInput): HirExpression {
   if (input.view instanceof MemberAccessExpressionView) return lowerMember(input, input.view);
   if (input.view instanceof TypeApplicationExpressionView)
     return lowerTypeApplication(input, input.view);
-  if (input.view instanceof ObjectLiteralExpressionView) return lowerObject(input, input.view);
+  if (input.view instanceof ObjectLiteralExpressionView) {
+    return lowerObjectLiteral({ ...input, lowerExpression }, input.view);
+  }
   if (input.view instanceof UnaryExpressionView) return lowerUnary(input, input.view);
   if (
     input.view instanceof BinaryExpressionView ||
@@ -871,7 +726,7 @@ export function lowerExpression(input: LowerExpressionInput): HirExpression {
       code: "HIR_UNSUPPORTED_EXPRESSION",
       message: `Unsupported expression kind '${SyntaxKind[input.view.node.kind]}'.`,
       originId: origin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+      ownerKey: hirOwnerKey(input.context),
       originKey: `origin:${origin}`,
       stableDetail: String(input.view.node.kind),
     }),

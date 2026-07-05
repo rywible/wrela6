@@ -302,6 +302,18 @@ function rewriteOperation(
         aggregate: operandIds[0] ?? operation.aggregate,
         field: operandIds[1] ?? operation.field,
       };
+    case "enumTagStore":
+      return { ...operation, operandIds, tagValue: operandIds[0] ?? operation.tagValue };
+    case "enumPayloadStore":
+      return {
+        ...operation,
+        operandIds,
+        enumValue: operandIds[0] ?? operation.enumValue,
+        payloadValue: operandIds[1] ?? operation.payloadValue,
+      };
+    case "enumTagLoad":
+    case "enumPayloadLoad":
+      return { ...operation, operandIds, enumValue: operandIds[0] ?? operation.enumValue };
     case "layoutOffset":
     case "layoutByteRange":
       return { ...operation, operandIds, base: operandIds[0] ?? operation.base };

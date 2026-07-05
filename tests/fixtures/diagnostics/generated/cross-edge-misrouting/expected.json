@@ -1,0 +1,9 @@
+{
+  "sourceSection": "Cross-Edge Misrouting",
+  "stage": "parse",
+  "diagnostics": [
+    {
+      "code": "LEX_MALFORMED_INTEGER"
+    }
+  ]
+}

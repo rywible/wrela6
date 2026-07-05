@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { proofCheck } from "../../../src";
+import * as proofCheck from "../../../src/proof-check";
 import { proofCheckClosedFixture } from "../../support/proof-check/proof-check-fixtures";
 
 describe("proof-check public namespace", () => {

@@ -1,0 +1,9 @@
+{
+  "sourceSection": "Validated Buffer Layout Rules",
+  "stage": "parse",
+  "diagnostics": [
+    {
+      "code": "LEX_MALFORMED_INTEGER"
+    }
+  ]
+}

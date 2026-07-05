@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import { composeCallProofMetadata } from "../../../src/hir/call-proof-metadata";
-import { createHirUnitContext } from "../../support/hir/typed-hir-fixtures";
+import {
+  createHirUnitContext,
+  createProgramHirUnitContext,
+} from "../../support/hir/typed-hir-fixtures";
 import {
   certifiedPlatformBindingFake,
   successfulCallFake,
@@ -53,4 +56,20 @@ test("terminal call creates terminal obligation", () => {
   expect(
     context.proofMetadata.obligations.entries().map((obligation) => obligation.kind),
   ).toContain("terminalClosure");
+});
+
+test("call proof metadata without a function owner reports and creates no sentinel metadata", () => {
+  const context = createProgramHirUnitContext("fn process():\n    return\n");
+  composeCallProofMetadata({
+    call: successfulCallFake({ calleeFunctionId: functionId(2) }),
+    context,
+    sourceRequirements: [],
+    terminalSurface: terminalSurfaceFake({ functionId: functionId(2) }),
+  });
+
+  expect(context.diagnostics.entries().map((diagnostic) => String(diagnostic.code))).toContain(
+    "HIR_MISSING_OWNER_FUNCTION",
+  );
+  expect(context.proofMetadata.terminalCalls.entries()).toEqual([]);
+  expect(context.proofMetadata.obligations.entries()).toEqual([]);
 });

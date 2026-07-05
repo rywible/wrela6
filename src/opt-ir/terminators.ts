@@ -5,7 +5,14 @@ import {
   sortOptIrDiagnostics,
   type OptIrDiagnostic,
 } from "./diagnostics";
-import type { OptIrEdgeId, OptIrOperationId, OptIrOriginId, OptIrValueId } from "./ids";
+import type {
+  OptIrBlockId,
+  OptIrEdgeId,
+  OptIrFunctionId,
+  OptIrOperationId,
+  OptIrOriginId,
+  OptIrValueId,
+} from "./ids";
 
 export interface OptIrJumpTerminator {
   readonly kind: "jump";
@@ -98,11 +105,18 @@ export function optIrTerminatorSuccessorEdges(terminator: OptIrTerminator): read
 export function verifyOptIrTerminatorEdges(input: {
   readonly edges: OptIrCfgEdgeTable;
   readonly terminator: OptIrTerminator;
+  readonly ownerBlockId?: OptIrBlockId;
+  readonly functionId?: OptIrFunctionId;
 }): OptIrTerminatorEdgeVerificationResult {
   const diagnostics: OptIrDiagnostic[] = [];
   for (const edgeId of optIrTerminatorSuccessorEdges(input.terminator)) {
-    if (!input.edges.has(edgeId)) {
+    const edge = input.edges.get(edgeId);
+    if (edge === undefined) {
       diagnostics.push(missingEdgeDiagnostic(input.terminator, edgeId));
+      continue;
+    }
+    if (input.ownerBlockId !== undefined && edge.from !== input.ownerBlockId) {
+      diagnostics.push(ownerMismatchDiagnostic(input.terminator, edgeId, edge.from, input));
     }
   }
   return { diagnostics: sortOptIrDiagnostics(diagnostics) };
@@ -126,6 +140,39 @@ function missingEdgeDiagnostic(terminator: OptIrTerminator, edgeId: OptIrEdgeId)
       code,
       ownerKey: `terminator:${terminator.operationId}`,
       rootCauseKey: `edge:${edgeId}`,
+      stableDetail,
+    }),
+  };
+}
+
+function ownerMismatchDiagnostic(
+  terminator: OptIrTerminator,
+  edgeId: OptIrEdgeId,
+  actualOwner: OptIrBlockId,
+  context: { readonly ownerBlockId?: OptIrBlockId; readonly functionId?: OptIrFunctionId },
+): OptIrDiagnostic {
+  const code = optIrDiagnosticCode("OPT_IR_INPUT_CONTRACT_INVALID");
+  const stableDetail = `terminator-edge-owner-mismatch:${edgeId}:${actualOwner}`;
+  return {
+    severity: "error",
+    code,
+    messageTemplate: "Terminator references a CFG edge owned by a different block.",
+    arguments: {
+      edgeId,
+      expectedBlockId: Number(context.ownerBlockId),
+      actualBlockId: Number(actualOwner),
+    },
+    ownerKey: `terminator:${terminator.operationId}`,
+    rootCauseKey: `edge:${edgeId}:from:${actualOwner}`,
+    stableDetail,
+    originId: terminator.originId,
+    functionId: context.functionId,
+    orderKey: optIrDiagnosticOrderKey({
+      originKey: String(terminator.originId),
+      functionKey: String(context.functionId ?? "unknown"),
+      code,
+      ownerKey: `terminator:${terminator.operationId}`,
+      rootCauseKey: `edge:${edgeId}:from:${actualOwner}`,
       stableDetail,
     }),
   };

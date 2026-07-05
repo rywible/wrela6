@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { proofCheckDiagnosticCode } from "../../../src/proof-check/diagnostics";
 import {
-  applyTakeSessionPatchesForTest,
+  applyTakeSessionPatches,
   checkCrossedScopeExit,
   checkValidatedTakePlaceOperation,
   closeTakeSession,
@@ -470,7 +470,7 @@ describe("takeSessionTransferChain", () => {
     expect(reduced.state.obligations.get("obligation:batch:closure")?.status).toBe("discharged");
   });
 
-  test("applyTakeSessionPatchesForTest advances state for chained transfers", () => {
+  test("applyTakeSessionPatches advances state for chained transfers", () => {
     const initialState = proofCheckStateForTest({
       places: [ownedPlaceForTest("edge:rx")],
     });
@@ -485,7 +485,7 @@ describe("takeSessionTransferChain", () => {
     expect(openResult.kind).toBe("ok");
     if (openResult.kind !== "ok") return;
 
-    const nextState = applyTakeSessionPatchesForTest(initialState, openResult.patches);
+    const nextState = applyTakeSessionPatches(initialState, openResult.patches);
     const yieldResult = yieldStreamMember({
       state: nextState,
       sessionKey: "session:batch",

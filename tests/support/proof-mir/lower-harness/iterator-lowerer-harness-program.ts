@@ -1,4 +1,4 @@
-import { brandId, obligationId, sessionId } from "../../../../src/hir/ids";
+import { brandId, hirOriginId, obligationId, sessionId } from "../../../../src/hir/ids";
 import type {
   LayoutFactProgram,
   LayoutFunctionAbiFact,
@@ -24,8 +24,9 @@ import type {
 } from "../../../../src/mono/mono-hir";
 import { buildMonoTable, proofMetadataIdKey } from "../../../../src/mono/proof-metadata-tables";
 import { emptyMonoResolvedCallTargetTable } from "../../../../src/mono/resolved-call-targets";
-import { coreTypeId, functionId, targetId } from "../../../../src/semantic/ids";
+import { coreTypeId, functionId, itemId, targetId } from "../../../../src/semantic/ids";
 import type { ConcreteResourceKind } from "../../../../src/semantic/surface/resource-kind";
+import { SourceSpan } from "../../../../src/shared/source-span";
 import { proofMirRuntimeCallId, proofMirRuntimeOperationId } from "../../../../src/proof-mir/ids";
 import { expressionIdFor, scalarType } from "./iterator-lowerer-harness-bindings";
 
@@ -34,8 +35,14 @@ export function functionInstanceForIteratorLowererTest(input: {
   readonly locals: readonly MonoLocal[];
   readonly body: MonoBlock;
 }): MonoFunctionInstance {
+  const sourceFunctionId = functionId(1);
+  const sourceItemId = itemId(1);
   return {
     instanceId: input.functionInstanceId,
+    sourceFunctionId,
+    sourceItemId,
+    ownerTypeArguments: [],
+    functionTypeArguments: [],
     locals: {
       entries: () => input.locals,
       get: (localId: MonoLocalId) => input.locals.find((local) => local.localId === localId),
@@ -47,6 +54,8 @@ export function functionInstanceForIteratorLowererTest(input: {
     },
     bodyStatus: "sourceBody",
     signature: {
+      functionId: sourceFunctionId,
+      itemId: sourceItemId,
       modifiers: {
         isTerminal: false,
         isPlatform: false,
@@ -55,8 +64,18 @@ export function functionInstanceForIteratorLowererTest(input: {
         isPrivate: false,
       },
       parameters: [],
+      returnType: neverTypeForIteratorLowererTest(),
+      returnKind: "Never",
+      sourceSpan: SourceSpan.from(0, 0),
     },
-  } as unknown as MonoFunctionInstance;
+    declaredRequirements: [],
+    sourceOrigin: "source:test",
+    hirSourceOrigin: hirOriginId(0),
+  };
+}
+
+function neverTypeForIteratorLowererTest(): MonoCheckedType {
+  return { kind: "core", coreTypeId: coreTypeId("Never") } as MonoCheckedType;
 }
 
 export function emptyProgramForIteratorLowererTest(input: {

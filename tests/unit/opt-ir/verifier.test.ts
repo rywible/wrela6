@@ -1,7 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import type { MonoFunctionSignature } from "../../../src/mono/mono-hir";
+import { monoInstanceId } from "../../../src/mono/ids";
+import { optIrCfgEdgeTable, type OptIrBlock, type OptIrEdge } from "../../../src/opt-ir/cfg";
 import { optIrDiagnosticCode } from "../../../src/opt-ir/diagnostics";
 import {
+  optIrBlockId,
   optIrConstantId,
+  optIrEdgeId,
+  optIrFunctionId,
+  optIrOperationId,
+  optIrOriginId,
   optIrProgramId,
   optIrRegionId,
   optIrValueId,
@@ -10,8 +18,21 @@ import {
   optIrDataConstantFingerprint,
   type OptIrDataConstant,
 } from "../../../src/opt-ir/constants";
-import type { OptIrOperation } from "../../../src/opt-ir/operations";
-import { optIrConstantTable, optIrProgram, optIrRegionTable } from "../../../src/opt-ir/program";
+import {
+  optIrEnumPayloadLoadOperation,
+  optIrEnumTagLoadOperation,
+  type OptIrEnumCaseDescriptor,
+  type OptIrOperation,
+} from "../../../src/opt-ir/operations";
+import {
+  optIrConstantTable,
+  optIrFunctionTable,
+  optIrProgram,
+  optIrRegionTable,
+} from "../../../src/opt-ir/program";
+import { optIrSwitchTerminator } from "../../../src/opt-ir/terminators";
+import { optIrUnsignedIntegerType } from "../../../src/opt-ir/types";
+import { optIrBlockParameter } from "../../../src/opt-ir/values";
 import {
   cfgEditWithMissingReferencesForTest,
   optIrProgramWithBlockArgumentMismatchForTest,
@@ -152,6 +173,120 @@ describe("OptIR verifier suite", () => {
     );
   });
 
+  test("structural verifier rejects terminator edges owned by another block", () => {
+    const fixture = validVerifierProgramForTest();
+    const originId = fixture.program.provenance.originIds[0]!;
+    const entry: OptIrBlock = {
+      blockId: optIrBlockId(1),
+      parameters: [],
+      operations: [],
+      terminator: {
+        kind: "jump",
+        operationId: optIrOperationId(50),
+        edge: optIrEdgeId(70),
+        originId,
+      },
+      originId,
+    };
+    const exit: OptIrBlock = {
+      blockId: optIrBlockId(2),
+      parameters: [],
+      operations: [],
+      terminator: { kind: "return", operationId: optIrOperationId(51), values: [], originId },
+      originId,
+    };
+    const edge: OptIrEdge = {
+      edgeId: optIrEdgeId(70),
+      from: optIrBlockId(999),
+      toBlock: exit.blockId,
+      ordinal: 0,
+      kind: "normal",
+      arguments: [],
+      originId,
+    };
+
+    const result = verifyOptIrProgramForTest(
+      optIrVerifierInputForTest({
+        program: optIrProgram({
+          ...fixture.program,
+          functions: optIrFunctionTable([
+            {
+              functionId: optIrFunctionId(88),
+              monoInstanceId: monoInstanceId("verifier::terminator-owner"),
+              signature: {} as MonoFunctionSignature,
+              blocks: [entry, exit],
+              edges: optIrCfgEdgeTable([edge]),
+              entryBlock: entry.blockId,
+              originId,
+            },
+          ]),
+        }),
+        operations: fixture.operations,
+      }),
+    );
+
+    expect(result.kind).toBe("error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+      "terminator-edge-owner-mismatch:70:999",
+    );
+  });
+
+  test("structural verifier accepts enum payload loads on matching switch case arms", () => {
+    const fixture = enumPayloadLoadProgramForTest();
+
+    expect(
+      verifyOptIrProgramForTest(
+        optIrVerifierInputForTest({
+          program: fixture.program,
+          operations: fixture.operations,
+        }),
+      ),
+    ).toEqual({ kind: "ok", diagnostics: [] });
+  });
+
+  test("structural verifier accepts enum payload loads transitively dominated by matching switch cases", () => {
+    const fixture = enumPayloadLoadProgramForTest({ payloadBehindIntermediateBlock: true });
+
+    expect(
+      verifyOptIrProgramForTest(
+        optIrVerifierInputForTest({
+          program: fixture.program,
+          operations: fixture.operations,
+        }),
+      ),
+    ).toEqual({ kind: "ok", diagnostics: [] });
+  });
+
+  test("structural verifier rejects enum payload loads outside tag-discriminated arms", () => {
+    const fixture = enumPayloadLoadProgramForTest({ payloadBlockHasIncomingEdge: false });
+    const result = verifyOptIrProgramForTest(
+      optIrVerifierInputForTest({
+        program: fixture.program,
+        operations: fixture.operations,
+      }),
+    );
+
+    expect(result.kind).toBe("error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+      "enum-payload-load-not-dominated:operation:2:enum:Result:case:ok:field:value:nearest-edge:none",
+    );
+  });
+
+  test("structural verifier rejects enum payload loads on mismatched switch cases", () => {
+    const fixture = enumPayloadLoadProgramForTest({ switchCaseLabel: "2" });
+    const result = verifyOptIrProgramForTest(
+      optIrVerifierInputForTest({
+        program: fixture.program,
+        operations: fixture.operations,
+      }),
+    );
+
+    expect(result.kind).toBe("error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+      "enum-payload-load-not-dominated:operation:2:enum:Result:case:ok:field:value:nearest-edge:1",
+    );
+  });
+
   test("constant-pool verifier accepts a valid data constant", () => {
     const result = verifyOptIrProgramForTest(
       optIrVerifierInputForTest({
@@ -248,4 +383,148 @@ function programWithConstantsForTest(constants: readonly OptIrDataConstant[]) {
     ]),
     constants: optIrConstantTable(constants),
   });
+}
+
+function enumPayloadLoadProgramForTest(
+  input: {
+    readonly payloadBlockHasIncomingEdge?: boolean;
+    readonly payloadBehindIntermediateBlock?: boolean;
+    readonly switchCaseLabel?: string;
+  } = {},
+): {
+  readonly program: ReturnType<typeof optIrProgram>;
+  readonly operations: readonly OptIrOperation[];
+} {
+  const originId = optIrOriginId(1);
+  const enumValueId = optIrValueId(1);
+  const tagValueId = optIrValueId(2);
+  const payloadValueId = optIrValueId(3);
+  const enumCase: OptIrEnumCaseDescriptor = {
+    enumTypeKey: "Result",
+    caseName: "ok",
+    caseOrdinal: 1,
+    tagValue: "1",
+    payloadFieldName: "value",
+  };
+  const enumParameter = optIrBlockParameter({
+    valueId: enumValueId,
+    type: optIrUnsignedIntegerType(64),
+    incomingRole: "entry",
+    originId,
+  });
+  const tagLoad = optIrEnumTagLoadOperation({
+    operationId: optIrOperationId(1),
+    enumValue: enumValueId,
+    enumCase,
+    resultId: tagValueId,
+    resultType: optIrUnsignedIntegerType(8),
+    originId,
+  });
+  const payloadLoad = optIrEnumPayloadLoadOperation({
+    operationId: optIrOperationId(2),
+    enumValue: enumValueId,
+    enumCase,
+    resultId: payloadValueId,
+    resultType: optIrUnsignedIntegerType(32),
+    originId,
+  });
+  const okEdge = {
+    edgeId: optIrEdgeId(1),
+    from: optIrBlockId(1),
+    toBlock: optIrBlockId(2),
+    ordinal: 0,
+    kind: "switchCase" as const,
+    switchCase: input.switchCaseLabel ?? "1",
+    arguments: [],
+    originId,
+  };
+  const transitEdge = {
+    edgeId: optIrEdgeId(3),
+    from: optIrBlockId(2),
+    toBlock: optIrBlockId(4),
+    ordinal: 0,
+    kind: "normal" as const,
+    arguments: [],
+    originId,
+  };
+  const defaultEdge = {
+    edgeId: optIrEdgeId(2),
+    from: optIrBlockId(1),
+    toBlock: optIrBlockId(3),
+    ordinal: 1,
+    kind: "normal" as const,
+    arguments: [],
+    originId,
+  };
+  const entryBlock: OptIrBlock = {
+    blockId: optIrBlockId(1),
+    parameters: [enumParameter],
+    operations: [tagLoad.operationId],
+    terminator: optIrSwitchTerminator({
+      operationId: optIrOperationId(10),
+      scrutinee: tagValueId,
+      cases: [{ label: input.switchCaseLabel ?? "1", edge: okEdge.edgeId }],
+      defaultEdge: defaultEdge.edgeId,
+      originId,
+    }),
+    originId,
+  };
+  const guardedTransitBlock: OptIrBlock = {
+    blockId: optIrBlockId(2),
+    parameters: [],
+    operations: [],
+    terminator: input.payloadBehindIntermediateBlock
+      ? { kind: "jump", operationId: optIrOperationId(13), edge: transitEdge.edgeId, originId }
+      : {
+          kind: "return",
+          operationId: optIrOperationId(11),
+          values: [payloadValueId],
+          originId,
+        },
+    originId,
+  };
+  const payloadBlock: OptIrBlock = {
+    blockId: input.payloadBehindIntermediateBlock ? optIrBlockId(4) : optIrBlockId(2),
+    parameters: [],
+    operations: [payloadLoad.operationId],
+    terminator: {
+      kind: "return",
+      operationId: optIrOperationId(11),
+      values: [payloadValueId],
+      originId,
+    },
+    originId,
+  };
+  const defaultBlock: OptIrBlock = {
+    blockId: optIrBlockId(3),
+    parameters: [],
+    operations: [],
+    terminator: { kind: "unreachable", operationId: optIrOperationId(12), originId },
+    originId,
+  };
+  const func = {
+    functionId: optIrFunctionId(90),
+    monoInstanceId: monoInstanceId("verifier::enum-payload"),
+    signature: {} as MonoFunctionSignature,
+    blocks: input.payloadBehindIntermediateBlock
+      ? [entryBlock, guardedTransitBlock, payloadBlock, defaultBlock]
+      : [entryBlock, payloadBlock, defaultBlock],
+    edges: optIrCfgEdgeTable([
+      ...(input.payloadBlockHasIncomingEdge === false ? [] : [okEdge]),
+      ...(input.payloadBehindIntermediateBlock ? [transitEdge] : []),
+      defaultEdge,
+    ]),
+    entryBlock: entryBlock.blockId,
+    originId,
+  };
+  const program = optIrProgram({
+    programId: optIrProgramId(901),
+    targetId: targetIdForTest("test-target"),
+    functions: optIrFunctionTable([func]),
+    regions: optIrRegionTable([{ regionId: optIrRegionId(1), originId }]),
+    constants: optIrConstantTable([]),
+    callGraph: { calls: [] },
+    provenance: { originIds: [originId] },
+  });
+  return { program, operations: [tagLoad, payloadLoad] };
 }

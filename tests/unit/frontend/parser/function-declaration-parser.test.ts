@@ -52,6 +52,26 @@ describe("isFunctionStarter", () => {
 });
 
 describe("parseFunctionDeclaration", () => {
+  test("reports expected indented block when function body is missing", () => {
+    const context = makeContext([
+      makeToken(TokenKind.Fn, "fn", 0, 2),
+      makeToken(TokenKind.Identifier, "main", 2, 6),
+      makeToken(TokenKind.LeftParen, "(", 6, 7),
+      makeToken(TokenKind.RightParen, ")", 7, 8),
+      makeToken(TokenKind.Colon, ":", 8, 9),
+      makeToken(TokenKind.Newline, "\n", 9, 10),
+      makeToken(TokenKind.Identifier, "next", 10, 14),
+      makeToken(TokenKind.Eof, "", 14, 14),
+    ]);
+
+    const node = parseFunctionDeclaration(context);
+
+    expect(node.kind).toBe(SyntaxKind.FunctionDeclaration);
+    expect(context.draftDiagnostics().map((diagnostic) => diagnostic.code)).toContain(
+      "PARSE_EXPECTED_INDENTED_BLOCK",
+    );
+  });
+
   test("parses bodyless function fn foo()", () => {
     const tokens = [
       makeToken(TokenKind.Fn, "fn", 0, 2),
@@ -308,6 +328,23 @@ describe("parseFunctionDeclaration", () => {
 });
 
 describe("parseRequiresSection", () => {
+  test("reports expected indented block when requirements are missing", () => {
+    const context = makeContext([
+      makeToken(TokenKind.Requires, "requires", 0, 8),
+      makeToken(TokenKind.Colon, ":", 8, 9),
+      makeToken(TokenKind.Newline, "\n", 9, 10),
+      makeToken(TokenKind.Identifier, "next", 10, 14),
+      makeToken(TokenKind.Eof, "", 14, 14),
+    ]);
+
+    const node = parseRequiresSection(context);
+
+    expect(node.kind).toBe(SyntaxKind.RequiresSection);
+    expect(context.draftDiagnostics().map((diagnostic) => diagnostic.code)).toContain(
+      "PARSE_EXPECTED_INDENTED_BLOCK",
+    );
+  });
+
   test("parses requires section with one requirement", () => {
     const tokens = [
       makeToken(TokenKind.Requires, "requires", 0, 8),

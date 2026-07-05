@@ -16,6 +16,7 @@ import {
   uefiTargetSurfaceFixture,
 } from "../../../support/target/uefi-aarch64/uefi-aarch64-fixtures";
 import { uefiAArch64PackagePipelineDependenciesForOptimizedFixture } from "../../../support/target/uefi-aarch64/package-pipeline-fixtures";
+import { unsafePackagePipelineAdapter } from "./package-pipeline-support";
 
 describe("UEFI AArch64 real QEMU smoke", () => {
   test("uses a unit-success image entry for the compiled smoke fixture", () => {
@@ -94,7 +95,3 @@ describe("UEFI AArch64 real QEMU smoke", () => {
     expect(smoke.status).toBe("passed");
   }, 60000);
 });
-
-function unsafePackagePipelineAdapter<Adapter>(value: unknown): Adapter {
-  return Object.freeze(value as object) as Adapter;
-}

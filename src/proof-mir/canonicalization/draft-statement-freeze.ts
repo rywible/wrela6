@@ -166,14 +166,13 @@ function freezeDraftAttemptOperand(
   lookups: FreezeDraftStatementLookups,
   operand: DraftProofMirAttemptStart["fallible"],
   origin: ProofMirOriginId,
-  attemptId: DraftProofMirAttemptStart["attemptId"],
 ): ProofMirAttemptOperand | undefined {
   const place = resolvePlaceId(lookups, operand.placeKey);
   if (place === undefined) {
     return undefined;
   }
   return {
-    expressionId: attemptId as never,
+    expressionId: operand.expressionId,
     result: { kind: "place", place },
     origin,
   };
@@ -183,14 +182,13 @@ function freezeDraftAttemptAlternative(
   lookups: FreezeDraftStatementLookups,
   alternative: NonNullable<DraftProofMirAttemptStart["alternative"]>,
   origin: ProofMirOriginId,
-  attemptId: DraftProofMirAttemptStart["attemptId"],
 ): ProofMirAttemptAlternative | undefined {
   const place = resolvePlaceId(lookups, alternative.placeKey);
   if (place === undefined) {
     return undefined;
   }
   return {
-    expressionId: attemptId as never,
+    expressionId: alternative.expressionId,
     result: { kind: "place", place },
     origin,
   };
@@ -204,7 +202,7 @@ function freezeDraftAttemptStart(
   if (origin === undefined) {
     return undefined;
   }
-  const fallible = freezeDraftAttemptOperand(lookups, attempt.fallible, origin, attempt.attemptId);
+  const fallible = freezeDraftAttemptOperand(lookups, attempt.fallible, origin);
   const pendingResultPlace = resolvePlaceId(lookups, attempt.pendingResultPlaceKey);
   if (fallible === undefined || pendingResultPlace === undefined) {
     return undefined;
@@ -220,7 +218,7 @@ function freezeDraftAttemptStart(
   const alternative =
     attempt.alternative === undefined
       ? undefined
-      : freezeDraftAttemptAlternative(lookups, attempt.alternative, origin, attempt.attemptId);
+      : freezeDraftAttemptAlternative(lookups, attempt.alternative, origin);
   if (attempt.alternative !== undefined && alternative === undefined) {
     return undefined;
   }

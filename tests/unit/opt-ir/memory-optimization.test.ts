@@ -5,35 +5,41 @@ import { targetId } from "../../../src/semantic/ids";
 import { emptyOptIrFactSet } from "../../../src/opt-ir/facts/fact-index";
 import { optIrCfgEdgeTable } from "../../../src/opt-ir/cfg";
 import {
-  optIrAliasClassId,
   optIrBlockId,
   optIrEdgeId,
   optIrFunctionId,
   optIrOperationId,
-  optIrOriginId,
   optIrProgramId,
-  optIrRegionId,
   optIrValueId,
 } from "../../../src/opt-ir/ids";
 import {
   optIrIntegerBinaryOperation,
   optIrIntegerCompareOperation,
-  optIrMemoryLoadOperation,
-  optIrMemoryStoreOperation,
   type OptIrOperation,
 } from "../../../src/opt-ir/operations";
 import { optIrFunctionTable, optIrProgram, optIrRegionTable } from "../../../src/opt-ir/program";
-import type { OptIrRegion, OptIrRegionKind } from "../../../src/opt-ir/regions";
-import { optIrUnsignedIntegerType } from "../../../src/opt-ir/types";
-import { runLicmForTest } from "../../../src/opt-ir/passes/licm";
-import { runMemoryOptimizationForTest } from "../../../src/opt-ir/passes/memory-optimization";
-import { runLicmStep } from "../../../src/opt-ir/passes/pipeline-steps";
+import type { OptIrRegionKind } from "../../../src/opt-ir/regions";
+import {
+  runDeadStoreEliminationForTest,
+  runLoadStoreForwardingForTest,
+} from "../../../src/opt-ir/passes/memory-optimization";
+import { runLicmStep, runStackPromotionStep } from "../../../src/opt-ir/passes/pipeline-steps";
 import { runScalarReplacementForTest } from "../../../src/opt-ir/passes/scalar-replacement";
 import { runStackPromotionForTest } from "../../../src/opt-ir/passes/stack-promotion";
-
-const originId = optIrOriginId(1);
-const byteType = optIrUnsignedIntegerType(8);
-const wordType = optIrUnsignedIntegerType(16);
+import {
+  branchJoinFixture,
+  byteType,
+  fixture,
+  licmLoopProgramForTest,
+  load,
+  originId,
+  passContextForTest,
+  regionForTest,
+  runLicmForTest,
+  store,
+  storeThenLowerSuccessorLoadFixture,
+  wordType,
+} from "../../support/opt-ir/memory-optimization-fixtures";
 
 describe("OptIR memory optimization cluster", () => {
   test("forwards loads only across matching memory versions and effect-token chains", () => {
@@ -43,7 +49,7 @@ describe("OptIR memory optimization cluster", () => {
     const clobber = store(3, 11, region);
     const blockedLoad = load(4, 21, region, 1n);
 
-    const result = runMemoryOptimizationForTest(
+    const result = runLoadStoreForwardingForTest(
       fixture([firstStore, forwardedLoad, clobber, blockedLoad], [region]),
     );
 
@@ -61,7 +67,7 @@ describe("OptIR memory optimization cluster", () => {
 
   test("does not forward without compatible memory/effect chains or matching value types", () => {
     const externalRegion = regionForTest("externalUnknown", 1);
-    const untracked = runMemoryOptimizationForTest(
+    const untracked = runLoadStoreForwardingForTest(
       fixture([store(1, 10, externalRegion), load(2, 20, externalRegion)], [externalRegion]),
     );
 
@@ -69,7 +75,7 @@ describe("OptIR memory optimization cluster", () => {
     expect(untracked.rewriteRecords).toEqual([]);
 
     const stackRegion = regionForTest("stackLocal", 2);
-    const mismatchedType = runMemoryOptimizationForTest(
+    const mismatchedType = runLoadStoreForwardingForTest(
       fixture(
         [store(1, 10, stackRegion, byteType), load(2, 20, stackRegion, 0n, wordType)],
         [stackRegion],
@@ -84,13 +90,88 @@ describe("OptIR memory optimization cluster", () => {
     const region = regionForTest("stackLocal", 3);
     const storedType = { kind: "integer" as const, signedness: "unsigned" as const, width: 8 };
     const loadedType = { width: 8, signedness: "unsigned" as const, kind: "integer" as const };
-    const result = runMemoryOptimizationForTest(
+    const result = runLoadStoreForwardingForTest(
       fixture([store(1, 10, region, storedType), load(2, 20, region, 0n, loadedType)], [region]),
     );
 
     expect(result.valueForwards).toEqual([
       { sourceValue: optIrValueId(20), replacementValue: optIrValueId(10) },
     ]);
+  });
+
+  test("does not forward a join load when incoming stores disagree", () => {
+    const region = regionForTest("stackLocal", 4);
+    const condition = optIrValueId(900);
+    const thenStore = store(1, 10, region);
+    const elseStore = store(2, 11, region);
+    const joinLoad = load(3, 20, region);
+    const result = runLoadStoreForwardingForTest(
+      branchJoinFixture({
+        region,
+        condition,
+        thenOperations: [thenStore],
+        elseOperations: [elseStore],
+        joinOperations: [joinLoad],
+      }),
+    );
+
+    expect(result.valueForwards).toEqual([]);
+    expect(result.removedOperationIds).toEqual([]);
+  });
+
+  test("forwards from a dominating store when successor block id is lower", () => {
+    const region = regionForTest("stackLocal", 44);
+    const firstStore = store(1, 10, region);
+    const successorLoad = load(2, 20, region);
+    const result = runLoadStoreForwardingForTest(
+      storeThenLowerSuccessorLoadFixture({
+        region,
+        storeOperation: firstStore,
+        loadOperation: successorLoad,
+      }),
+    );
+
+    expect(result.valueForwards).toEqual([
+      { sourceValue: optIrValueId(20), replacementValue: optIrValueId(10) },
+    ]);
+    expect(result.removedOperationIds).toEqual([]);
+  });
+
+  test("does not forward through a join when only one predecessor stores", () => {
+    const region = regionForTest("stackLocal", 45);
+    const condition = optIrValueId(902);
+    const thenStore = store(1, 10, region);
+    const joinLoad = load(2, 20, region);
+    const result = runLoadStoreForwardingForTest(
+      branchJoinFixture({
+        region,
+        condition,
+        thenOperations: [thenStore],
+        elseOperations: [],
+        joinOperations: [joinLoad],
+      }),
+    );
+
+    expect(result.valueForwards).toEqual([]);
+    expect(result.removedOperationIds).toEqual([]);
+  });
+
+  test("preserves a branch store that is visible on one incoming path", () => {
+    const region = regionForTest("stackLocal", 5);
+    const condition = optIrValueId(901);
+    const thenStore = store(1, 10, region);
+    const joinStore = store(2, 11, region);
+    const result = runDeadStoreEliminationForTest(
+      branchJoinFixture({
+        region,
+        condition,
+        thenOperations: [thenStore],
+        elseOperations: [],
+        joinOperations: [joinStore],
+      }),
+    );
+
+    expect(result.removedOperationIds).toEqual([]);
   });
 
   test("DSE refuses observable stores unless the target contract permits removing them", () => {
@@ -100,20 +181,20 @@ describe("OptIR memory optimization cluster", () => {
       "externalUnknown",
     ] satisfies readonly OptIrRegionKind[]) {
       const region = regionForTest(kind, 10);
-      const result = runMemoryOptimizationForTest(
+      const result = runDeadStoreEliminationForTest(
         fixture([store(1, 10, region), store(2, 11, region)], [region]),
       );
       expect(result.removedOperationIds).toEqual([]);
     }
 
     const volatileRegion = { ...regionForTest("stackLocal", 20), volatility: "volatile" as const };
-    const volatileResult = runMemoryOptimizationForTest(
+    const volatileResult = runDeadStoreEliminationForTest(
       fixture([store(1, 10, volatileRegion), store(2, 11, volatileRegion)], [volatileRegion]),
     );
     expect(volatileResult.removedOperationIds).toEqual([]);
 
     const allowedRegion = regionForTest("firmwareTable", 30);
-    const allowed = runMemoryOptimizationForTest(
+    const allowed = runDeadStoreEliminationForTest(
       fixture([store(1, 10, allowedRegion), store(2, 11, allowedRegion)], [allowedRegion]),
       { targetContract: { permitsObservableStoreRemoval: () => true } },
     );
@@ -247,6 +328,7 @@ describe("OptIR memory optimization cluster", () => {
         { regionId: global.regionId, valid: true },
       ],
       escapedRegionIds: [],
+      nonEscapingRegionIds: [stack.regionId, global.regionId],
     });
 
     expect(result.promotedRegionIds).toEqual([stack.regionId]);
@@ -270,6 +352,7 @@ describe("OptIR memory optimization cluster", () => {
       regions: [stack],
       lifetimeFacts: [{ regionId: stack.regionId, valid: false }],
       escapedRegionIds: [stack.regionId],
+      nonEscapingRegionIds: [],
     });
     expect(escaped.promotedRegionIds).toEqual([]);
     expect(escaped.program.regions.has(stack.regionId)).toBe(true);
@@ -283,10 +366,68 @@ describe("OptIR memory optimization cluster", () => {
       regions: [stack],
       lifetimeFacts: [{ regionId: stack.regionId, valid: true }],
       escapedRegionIds: [],
+      nonEscapingRegionIds: [stack.regionId],
     });
     expect(liveReferenced.promotedRegionIds).toEqual([stack.regionId]);
     expect(liveReferenced.program.regions.has(stack.regionId)).toBe(true);
     expect(liveReferenced.rejectedRegions).toEqual([]);
+  });
+
+  test("stack promotion fails closed without explicit non-escape evidence", () => {
+    const stack = regionForTest("stackLocal", 51);
+    const program = fixture([], [stack]).program;
+
+    const result = runStackPromotionForTest({
+      program,
+      regions: [stack],
+      lifetimeFacts: [{ regionId: stack.regionId, valid: true }],
+      escapedRegionIds: [],
+    });
+
+    expect(result.promotedRegionIds).toEqual([]);
+    expect(result.rejectedRegions).toEqual([{ regionId: stack.regionId, reason: "escaped" }]);
+    expect(result.rewriteRecords).toEqual([]);
+  });
+
+  test("production stack promotion fails closed when escape evidence is incomplete", () => {
+    const stack = regionForTest("stackLocal", 52);
+    const program = fixture([], [stack]).program;
+
+    const result = runStackPromotionStep({
+      program,
+      operations: [],
+      optimizationRegions: [stack],
+      facts: emptyOptIrFactSet(),
+      diagnostics: [],
+      decisionLog: undefined,
+      verificationCheckpoints: [],
+    });
+
+    expect(result.program).toBe(program);
+    expect(result.optimizationRegions).toEqual([stack]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test("production stack promotion preserves ordered-effect escape boundaries", () => {
+    const escapedStack = {
+      ...regionForTest("stackLocal", 53),
+      effects: { mutability: "mutable", ordering: "orderedEffectToken" } as const,
+    };
+    const program = fixture([], [escapedStack]).program;
+
+    const result = runStackPromotionStep({
+      program,
+      operations: [],
+      optimizationRegions: [escapedStack],
+      facts: emptyOptIrFactSet(),
+      diagnostics: [],
+      decisionLog: undefined,
+      verificationCheckpoints: [],
+    });
+
+    expect(result.program).toBe(program);
+    expect(result.optimizationRegions).toEqual([escapedStack]);
+    expect(result.diagnostics).toEqual([]);
   });
 
   test("LICM moves only pure or region-safe operations across effect boundaries", () => {
@@ -400,12 +541,6 @@ describe("OptIR memory optimization cluster", () => {
     const result = runLicmForTest({
       program,
       operations: [loopVariant, pure, safeLoad, storeBoundary],
-      loopOperationIds: [
-        loopVariant.operationId,
-        pure.operationId,
-        safeLoad.operationId,
-        storeBoundary.operationId,
-      ],
       effectBoundaryOperationIds: [storeBoundary.operationId],
       regionSafeOperationIds: [safeLoad.operationId],
     });
@@ -436,15 +571,18 @@ describe("OptIR memory optimization cluster", () => {
     const storeBoundary = store(12, 42, region);
     const program = licmLoopProgramForTest([unsafeLoad, storeBoundary], [region]);
 
-    const result = runLicmStep({
-      program,
-      operations: [unsafeLoad, storeBoundary],
-      optimizationRegions: [region],
-      facts: emptyOptIrFactSet(),
-      diagnostics: [],
-      decisionLog: undefined,
-      verificationCheckpoints: [],
-    });
+    const result = runLicmStep(
+      {
+        program,
+        operations: [unsafeLoad, storeBoundary],
+        optimizationRegions: [region],
+        facts: emptyOptIrFactSet(),
+        diagnostics: [],
+        decisionLog: undefined,
+        verificationCheckpoints: [],
+      },
+      passContextForTest("licm", program, [unsafeLoad, storeBoundary]),
+    );
 
     expect(result.program).toBe(program);
     expect(result.diagnostics).toEqual([]);
@@ -465,7 +603,6 @@ describe("OptIR memory optimization cluster", () => {
     const result = runLicmForTest({
       program,
       operations: [checkedAdd],
-      loopOperationIds: [checkedAdd.operationId],
       effectBoundaryOperationIds: [],
       regionSafeOperationIds: [],
     });
@@ -474,211 +611,63 @@ describe("OptIR memory optimization cluster", () => {
     expect(result.movedOperationIds).toEqual([]);
     expect(result.blockedOperationIds).toEqual([checkedAdd.operationId]);
   });
+
+  test("LICM hoists selected operations in dependency order", () => {
+    const consumer = optIrIntegerCompareOperation({
+      operationId: optIrOperationId(61),
+      resultId: optIrValueId(71),
+      left: optIrValueId(70),
+      right: optIrValueId(11),
+      operator: "equal",
+      originId,
+    });
+    const producer = optIrIntegerCompareOperation({
+      operationId: optIrOperationId(62),
+      resultId: optIrValueId(70),
+      left: optIrValueId(10),
+      right: optIrValueId(11),
+      operator: "equal",
+      originId,
+    });
+    const program = licmLoopProgramForTest([consumer, producer], []);
+
+    const result = runLicmForTest({
+      program,
+      operations: [consumer, producer],
+      effectBoundaryOperationIds: [],
+      regionSafeOperationIds: [],
+    });
+
+    expect(result.movedOperationIds).toEqual([consumer.operationId, producer.operationId]);
+    expect(result.program.functions.entries()[0]?.blocks[0]?.operations).toEqual([
+      producer.operationId,
+      consumer.operationId,
+    ]);
+  });
+
+  test("LICM derives loop operations from the loop tree instead of caller filters", () => {
+    const invariant = optIrIntegerCompareOperation({
+      operationId: optIrOperationId(81),
+      resultId: optIrValueId(91),
+      left: optIrValueId(10),
+      right: optIrValueId(11),
+      operator: "equal",
+      originId,
+    });
+    const program = licmLoopProgramForTest([invariant], []);
+    const legacyCallerInput = {
+      program,
+      operations: [invariant],
+      loopOperationIds: [],
+      effectBoundaryOperationIds: [],
+      regionSafeOperationIds: [],
+    };
+
+    const result = runLicmForTest(legacyCallerInput);
+
+    expect(result.movedOperationIds).toEqual([invariant.operationId]);
+    expect(result.program.functions.entries()[0]?.blocks[0]?.operations).toEqual([
+      invariant.operationId,
+    ]);
+  });
 });
-
-function fixture(operations: readonly OptIrOperation[], regions: readonly OptIrRegion[]) {
-  const block = {
-    blockId: optIrBlockId(1),
-    parameters: [],
-    operations: operations.map((operation) => operation.operationId),
-    terminator: {
-      kind: "return" as const,
-      operationId: optIrOperationId(99),
-      values: [],
-      originId,
-    },
-    originId,
-  };
-  const func = {
-    functionId: optIrFunctionId(1),
-    monoInstanceId: monoInstanceId("memory-optimization::fixture"),
-    signature: {} as MonoFunctionSignature,
-    blocks: [block],
-    edges: optIrCfgEdgeTable([]),
-    entryBlock: block.blockId,
-    originId,
-  };
-  const program = optIrProgram({
-    programId: optIrProgramId(1),
-    targetId: targetId("memory-optimization-test"),
-    functions: optIrFunctionTable([func]),
-    regions: optIrRegionTable(regions.map((region) => ({ regionId: region.regionId, originId }))),
-    constants: { get: () => undefined, has: () => false, entries: () => [] },
-    callGraph: { calls: [] },
-    provenance: { originIds: [originId] },
-  });
-  return {
-    program,
-    regions,
-    operations,
-    operationForId(operationId: OptIrOperation["operationId"]) {
-      return operations.find((operation) => operation.operationId === operationId);
-    },
-  };
-}
-
-function licmLoopProgramForTest(
-  operations: readonly OptIrOperation[],
-  regions: readonly OptIrRegion[],
-) {
-  const entryEdge = optIrEdgeId(101);
-  const backEdge = optIrEdgeId(102);
-  const exitEdge = optIrEdgeId(103);
-  const entryBlock = {
-    blockId: optIrBlockId(10),
-    parameters: [],
-    operations: [],
-    terminator: {
-      kind: "jump" as const,
-      operationId: optIrOperationId(190),
-      edge: entryEdge,
-      originId,
-    },
-    originId,
-  };
-  const loopBlock = {
-    blockId: optIrBlockId(11),
-    parameters: [],
-    operations: operations.map((operation) => operation.operationId),
-    terminator: {
-      kind: "branch" as const,
-      operationId: optIrOperationId(191),
-      condition: optIrValueId(10),
-      trueEdge: backEdge,
-      falseEdge: exitEdge,
-      originId,
-    },
-    originId,
-  };
-  const exitBlock = {
-    blockId: optIrBlockId(12),
-    parameters: [],
-    operations: [],
-    terminator: {
-      kind: "return" as const,
-      operationId: optIrOperationId(192),
-      values: [],
-      originId,
-    },
-    originId,
-  };
-  const func = {
-    functionId: optIrFunctionId(11),
-    monoInstanceId: monoInstanceId("memory-optimization::licm-policy"),
-    signature: {} as MonoFunctionSignature,
-    blocks: [entryBlock, loopBlock, exitBlock],
-    edges: optIrCfgEdgeTable([
-      {
-        edgeId: entryEdge,
-        from: entryBlock.blockId,
-        toBlock: loopBlock.blockId,
-        ordinal: 0,
-        kind: "normal" as const,
-        arguments: [],
-        originId,
-      },
-      {
-        edgeId: backEdge,
-        from: loopBlock.blockId,
-        toBlock: loopBlock.blockId,
-        ordinal: 0,
-        kind: "normal" as const,
-        arguments: [],
-        condition: optIrValueId(10),
-        originId,
-      },
-      {
-        edgeId: exitEdge,
-        from: loopBlock.blockId,
-        toBlock: exitBlock.blockId,
-        ordinal: 1,
-        kind: "normal" as const,
-        arguments: [],
-        condition: optIrValueId(10),
-        originId,
-      },
-    ]),
-    entryBlock: entryBlock.blockId,
-    originId,
-  };
-  return optIrProgram({
-    programId: optIrProgramId(11),
-    targetId: targetId("memory-optimization-test"),
-    functions: optIrFunctionTable([func]),
-    regions: optIrRegionTable(regions.map((region) => ({ regionId: region.regionId, originId }))),
-    constants: { get: () => undefined, has: () => false, entries: () => [] },
-    callGraph: { calls: [] },
-    provenance: { originIds: [originId] },
-  });
-}
-
-function regionForTest(kind: OptIrRegionKind, id: number): OptIrRegion {
-  return {
-    regionId: optIrRegionId(id),
-    kind,
-    owner: { kind: "function", functionId: monoInstanceId("memory-optimization::fixture") },
-    lifetime:
-      kind === "constantData"
-        ? "constant"
-        : kind === "externalUnknown"
-          ? "external"
-          : kind === "globalData"
-            ? "program"
-            : "activation",
-    aliasClass: optIrAliasClassId(id),
-    volatility: "nonVolatile",
-    effects: { mutability: "mutable", ordering: "none" },
-    origin: { originId, source: { file: `region-${kind}-${id}.wr` } },
-  };
-}
-
-function load(
-  operationId: number,
-  resultId: number,
-  region: OptIrRegion,
-  byteOffset = 0n,
-  valueType = byteType,
-): OptIrOperation {
-  const result = optIrMemoryLoadOperation({
-    operationId: optIrOperationId(operationId),
-    resultId: optIrValueId(resultId),
-    region: region.regionId,
-    byteOffset,
-    byteWidth: 1,
-    alignment: 1,
-    valueType,
-    endian: "native",
-    volatility: region.volatility,
-    boundsAuthority: { kind: "targetContract", authorityKey: `region:${region.regionId}` },
-    originId,
-  });
-  if (result.kind !== "ok") {
-    throw new Error("expected load construction to succeed");
-  }
-  return result.operation;
-}
-
-function store(
-  operationId: number,
-  valueId: number,
-  region: OptIrRegion,
-  valueType = byteType,
-): OptIrOperation {
-  const result = optIrMemoryStoreOperation({
-    operationId: optIrOperationId(operationId),
-    storeValue: optIrValueId(valueId),
-    region: region.regionId,
-    byteOffset: 0n,
-    byteWidth: 1,
-    alignment: 1,
-    valueType,
-    endian: "native",
-    volatility: region.volatility,
-    boundsAuthority: { kind: "targetContract", authorityKey: `region:${region.regionId}` },
-    originId,
-  });
-  if (result.kind !== "ok") {
-    throw new Error("expected store construction to succeed");
-  }
-  return result.operation;
-}

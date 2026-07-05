@@ -46,7 +46,8 @@ describe("checked MIR to OptIR construction", () => {
       throw new Error("Expected scalar checked MIR handoff to lower.");
     }
 
-    expect(result.program.operations?.map((operation) => operation.kind)).toEqual([
+    expect("operations" in result.program).toBe(false);
+    expect(result.operations.map((operation) => operation.kind)).toEqual([
       "constant",
       "constant",
       "integerBinary",
@@ -55,11 +56,11 @@ describe("checked MIR to OptIR construction", () => {
     const function_ = result.program.functions.entries()[0];
     const returnBlock = function_?.blocks.find((block) => block.terminator?.kind === "return");
     expect(returnBlock?.operations).toEqual(
-      result.program.operations?.map((operation) => operation.operationId),
+      result.operations.map((operation) => operation.operationId),
     );
     expect(returnBlock?.terminator).toMatchObject({
       kind: "return",
-      values: [result.program.operations?.at(-1)?.resultIds[0]],
+      values: [result.operations.at(-1)?.resultIds[0]],
     });
   });
 
@@ -75,10 +76,10 @@ describe("checked MIR to OptIR construction", () => {
       );
     }
 
-    expect(result.program.operations?.map((operation) => operation.kind)).toContain("sourceCall");
-    expect(
-      result.program.operations?.some((operation) => operation.kind === "aggregateExtract"),
-    ).toBe(false);
+    expect(result.operations.map((operation) => operation.kind)).toContain("sourceCall");
+    expect(result.operations.some((operation) => operation.kind === "aggregateExtract")).toBe(
+      false,
+    );
   });
 
   test("lowers checked MIR attempt matches into runtime status switches", () => {
@@ -96,7 +97,7 @@ describe("checked MIR to OptIR construction", () => {
     const function_ = result.program.functions.entries()[0];
     const entry = function_?.blocks.find((block) =>
       block.operations.some((operationId) =>
-        result.program.operations?.some(
+        result.operations.some(
           (operation) => operation.operationId === operationId && operation.kind === "constant",
         ),
       ),
@@ -112,8 +113,8 @@ describe("checked MIR to OptIR construction", () => {
     }
     expect(entry.terminator.cases).toEqual([{ label: "0", edge: successEdge.edgeId }]);
     expect(entry.terminator.defaultEdge).toBe(errorEdge.edgeId);
-    expect(
-      result.program.operations?.some((operation) => operation.kind === "aggregateExtract"),
-    ).toBe(false);
+    expect(result.operations.some((operation) => operation.kind === "aggregateExtract")).toBe(
+      false,
+    );
   });
 });

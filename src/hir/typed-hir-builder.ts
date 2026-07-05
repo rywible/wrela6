@@ -197,13 +197,6 @@ function ownerTypeIdForFunction(input: {
   return ownerItem?.typeId;
 }
 
-function typeIdForItem(input: {
-  readonly context: HirLoweringContext;
-  readonly itemId: ItemId;
-}): TypeId | undefined {
-  return input.context.index.item(input.itemId)?.typeId;
-}
-
 function fieldIdsForTypeItem(input: {
   readonly context: HirLoweringContext;
   readonly itemId: ItemId;
@@ -212,6 +205,16 @@ function fieldIdsForTypeItem(input: {
     .fieldsForItem(input.itemId)
     .filter((field) => field.role === "field")
     .map((field) => field.id);
+}
+
+function ownerTypeIdForField(input: {
+  readonly context: HirLoweringContext;
+  readonly ownerItemId: ItemId;
+}): TypeId | undefined {
+  const owner = input.context.index.item(input.ownerItemId);
+  if (owner?.typeId !== undefined) return owner.typeId;
+  if (owner?.kind !== "enumCase" || owner.parentItemId === undefined) return undefined;
+  return input.context.index.item(owner.parentItemId)?.typeId;
 }
 
 function originForEnumCase(input: {
@@ -258,6 +261,7 @@ function enumCasesForTypeItem(input: {
       caseItemId: caseRecord.caseItemId,
       name: caseRecord.name,
       ordinal: caseRecord.ordinal,
+      payloadFieldIds: caseRecord.payloadFieldIds,
       sourceOrigin: originForEnumCase({
         context: input.context,
         caseItemId: caseRecord.caseItemId,
@@ -410,14 +414,18 @@ export class TypedHirBuilder {
       if (lowered !== undefined) this.typeRecords.push(lowered);
     }
     for (const field of this.context.index.fields()) {
-      if (field.role !== "field" && field.role !== "validatedParam") {
+      if (
+        field.role !== "field" &&
+        field.role !== "validatedParam" &&
+        field.role !== "enumPayload"
+      ) {
         continue;
       }
       const checkedField = this.context.program.fields.get(field.id);
       if (checkedField === undefined) continue;
-      const ownerTypeId = typeIdForItem({
+      const ownerTypeId = ownerTypeIdForField({
         context: this.context,
-        itemId: field.ownerItemId,
+        ownerItemId: field.ownerItemId,
       });
       if (ownerTypeId === undefined) continue;
       const sourceOrigin = this.context.origins.forSynthetic({

@@ -1,4 +1,4 @@
-// Ordinary stdlib source wrapper; target authority comes from certified platform contracts.
-class Option[Value]:
-    has_value: bool
-    value: Value
+// Ordinary stdlib tagged union for optional values.
+enum Option[Value]:
+    some(value: Value)
+    none

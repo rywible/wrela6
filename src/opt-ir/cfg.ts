@@ -58,7 +58,10 @@ export interface OptIrCfgEdgeTable {
 export function optIrCfgEdgeTable(edges: readonly OptIrEdge[]): OptIrCfgEdgeTable {
   const entries = [...edges].sort((left, right) => left.edgeId - right.edgeId);
   const byId = new Map<OptIrEdgeId, OptIrEdge>();
-  for (const edge of entries) {
+  for (const [index, edge] of edges.entries()) {
+    if (byId.has(edge.edgeId)) {
+      throw new RangeError(`Duplicate OptIR edge id ${String(edge.edgeId)} at edges[${index}].`);
+    }
     byId.set(edge.edgeId, edge);
   }
 

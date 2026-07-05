@@ -62,6 +62,8 @@ describe("OptIR optimizer pipeline", () => {
 
     const result = optimizeOptIr({
       program: constructed.program,
+      operations: constructed.operations,
+      optimizationRegions: constructed.optimizationRegions,
       facts: constructed.facts,
       target: input.target,
       policy: productionOptimizationPolicyForTest(),
@@ -98,6 +100,8 @@ describe("OptIR optimizer pipeline", () => {
 
     const repeated = optimizeOptIr({
       program: constructed.program,
+      operations: constructed.operations,
+      optimizationRegions: constructed.optimizationRegions,
       facts: constructed.facts,
       target: input.target,
       policy: productionOptimizationPolicyForTest(),
@@ -142,11 +146,9 @@ describe("OptIR optimizer pipeline", () => {
     const program = pipelineProgramWithOperations(operations, [region], input.target);
 
     const result = optimizeOptIr({
-      program: {
-        ...program,
-        operations,
-        optimizationRegions: [region],
-      },
+      program,
+      operations,
+      optimizationRegions: [region],
       facts: constructed.facts,
       target: { ...input.target, vector: { ...input.target.vector, enabled: false } },
       policy: productionOptimizationPolicyForTest(),
@@ -159,9 +161,7 @@ describe("OptIR optimizer pipeline", () => {
 
     const operationIds = result.operations.map((operation) => operation.operationId);
     expect(operationIds).not.toContain(firstStore.operationId);
-    expect(result.program.operations?.map((operation) => operation.operationId)).toEqual(
-      operationIds,
-    );
+    expect("operations" in result.program).toBe(false);
 
     const blockOperationIds = result.program.functions.entries()[0]?.blocks[0]?.operations ?? [];
     expect(blockOperationIds).not.toContain(firstStore.operationId);
@@ -196,7 +196,9 @@ describe("OptIR optimizer pipeline", () => {
     ]);
 
     const result = optimizeOptIr({
-      program: { ...program, operations: [constant, wrapperCall, leafCall, leafAdd] },
+      program,
+      operations: [constant, wrapperCall, leafCall, leafAdd],
+      optimizationRegions: [],
       facts: emptyOptIrFactSet(),
       target: { targetId: targetId("pipeline-scope-expansion-test") } as OptIrTargetSurface,
       policy: {

@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "caseKey": "stdlib-core-option-result/toolchain-stdlib",
   "metrics": {
-    "optIrOperationsPre": 1,
+    "optIrOperationsPre": 2,
     "optIrOperationsPost": 1,
     "objectSectionBytes": 12,
     "executableTextBytes": 920,

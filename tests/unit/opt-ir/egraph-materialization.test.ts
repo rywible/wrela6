@@ -71,6 +71,7 @@ describe("OptIR e-graph materialization", () => {
     const result = runOptIrFactGatedEGraphMaterialization({
       program: fixture.program,
       operations: fixture.operations,
+      optimizationRegions: [],
       facts: emptyOptIrFactSet(),
       tracingEnabled: false,
     });

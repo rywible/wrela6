@@ -225,7 +225,27 @@ function validateStreamLoopPatchScope(input: {
         }
         break;
       case "session":
-        if (entry.action === "close" && otherOutstandingMembers.length > 0) {
+        if (entry.action !== "close") {
+          diagnostics.push(
+            invalidStreamLoopTransferDiagnostic({
+              detail: `stream loop cannot ${entry.action} session ${entry.session.sessionKey} in context ${input.streamSessionKey}`,
+              ownerKey: input.ownerKey,
+              rootCauseKey: entry.session.sessionKey,
+            }),
+          );
+          break;
+        }
+        if (entry.session.sessionKey !== input.streamSessionKey) {
+          diagnostics.push(
+            invalidStreamLoopTransferDiagnostic({
+              detail: `stream loop cannot close session ${entry.session.sessionKey} in context ${input.streamSessionKey}`,
+              ownerKey: input.ownerKey,
+              rootCauseKey: entry.session.sessionKey,
+            }),
+          );
+          break;
+        }
+        if (otherOutstandingMembers.length > 0) {
           diagnostics.push(
             invalidStreamLoopTransferDiagnostic({
               detail: `stream loop cannot close session ${input.streamSessionKey} with outstanding members`,

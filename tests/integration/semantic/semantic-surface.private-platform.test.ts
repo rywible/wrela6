@@ -25,3 +25,22 @@ test("real checker emits private-state transitions from checked private-state si
     true,
   );
 });
+
+test("real checker emits one private-state transition for each private input", () => {
+  const result = checkSemanticSurfaceForTest([
+    [
+      "main.wr",
+      [
+        "private class Door:",
+        "fn link(consume left: Door, consume right: Door) -> Door",
+        "uefi image Boot:",
+        "    fn main() -> Never",
+      ].join("\n"),
+    ],
+  ]);
+
+  const transitions = result.program.proofSurface.privateTransitions.entries();
+  expect(result.diagnostics).toEqual([]);
+  expect(transitions.map((transition) => transition.kind)).toEqual(["advance", "advance"]);
+  expect(new Set(transitions.map((transition) => transition.receiverParameterId)).size).toBe(2);
+});

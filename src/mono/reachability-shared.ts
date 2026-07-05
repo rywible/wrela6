@@ -16,6 +16,7 @@ import type {
 } from "./mono-hir";
 import type { MonoTypeAncestry } from "./type-instantiator";
 import { monoTypeAncestry } from "./type-instantiator";
+import { firstHirOriginId } from "./required-origin";
 
 export interface ReachabilityResult {
   readonly program: MonomorphizedHirProgram;
@@ -58,7 +59,7 @@ export function createReachabilityNormalizationContext(
   return {
     targetTypeKinds: program.monoClosure.targetTypeKinds,
     constructorKindRules: program.monoClosure.constructorKindRules,
-    sourceOrigin: program.origins.originRecords()[0]?.originId ?? (0 as never),
+    sourceOrigin: firstHirOriginId(program),
   };
 }
 

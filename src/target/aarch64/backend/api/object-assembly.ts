@@ -236,13 +236,19 @@ export function aarch64UnwindRecordsForProgram(
   machineProgram: AArch64MachineProgram,
   functionArtifacts: readonly AArch64FunctionBackendArtifact[] = [],
 ): readonly AArch64ObjectUnwindRecord[] {
-  const frameShapeByFunction = new Map(
-    functionArtifacts.map((artifact) => [artifact.functionKey, artifact.frameShape]),
+  const frameArtifactByFunction = new Map(
+    functionArtifacts.map((artifact) => [artifact.functionKey, artifact]),
   );
-  const symbols = machineProgram.functions.entries().map((machineFunction) => ({
-    symbol: String(machineFunction.symbol),
-    frameShape: frameShapeByFunction.get(String(machineFunction.symbol)) ?? "frameless-leaf",
-  }));
+  const symbols = machineProgram.functions.entries().map((machineFunction) => {
+    const symbol = String(machineFunction.symbol);
+    const artifact = frameArtifactByFunction.get(symbol);
+    return {
+      symbol,
+      frameShape: artifact?.frameShape ?? "frameless-leaf",
+      frameSizeBytes: artifact?.frameSizeBytes,
+      savedRegisters: artifact?.savedRegisters ?? [],
+    };
+  });
   return Object.freeze(
     symbols
       .sort((left, right) => compareCodeUnitStrings(left.symbol, right.symbol))
@@ -251,6 +257,8 @@ export function aarch64UnwindRecordsForProgram(
           stableKey: `unwind:${record.symbol}`,
           sectionKey: ".text",
           frameShape: record.frameShape,
+          frameSizeBytes: record.frameSizeBytes,
+          savedRegisters: record.savedRegisters,
         }),
       ),
   );

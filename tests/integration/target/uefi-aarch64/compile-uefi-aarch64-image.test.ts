@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { emptyOptIrFactSet } from "../../../../src/opt-ir/facts/fact-index";
+import { parsePeCoffImage } from "../../../../src/pe-coff";
 import {
   compileUefiAArch64Image,
   compileUefiAArch64ImageWithTraceAsync,
   compileUefiAArch64ImageWithTrace,
+  decodeEntryThunkXdataBytes,
   type PackageOptimizedOptIrAdapter,
   type UefiAArch64ImageArtifact,
   type UefiAArch64QemuHostEffects,
@@ -15,6 +17,7 @@ import {
   uefiTargetSurfaceFixture,
 } from "../../../support/target/uefi-aarch64/uefi-aarch64-fixtures";
 import { uefiAArch64PackagePipelineDependenciesForOptimizedFixture } from "../../../support/target/uefi-aarch64/package-pipeline-fixtures";
+import { unsafePackagePipelineAdapter } from "./package-pipeline-support";
 
 describe("compileUefiAArch64Image", () => {
   test("compiles a package through the real binary spine to a deterministic EFI artifact", () => {
@@ -89,6 +92,65 @@ describe("compileUefiAArch64Image", () => {
     expect(traced.trace.binarySpine.stages.map((stage) => String(stage.stageKey))).toEqual(
       binarySpineRunKeys,
     );
+  });
+
+  test("packages entry thunk unwind sections with decodable pdata and xdata", () => {
+    const packageInput = uefiCompilePackageInputFixture("success");
+    expect(packageInput.kind).toBe("ok");
+    if (packageInput.kind !== "ok") return;
+
+    const result = compileUefiAArch64ImageWithTrace({
+      packageInput: packageInput.value,
+      target: uefiTargetSurfaceFixture(),
+      artifactName: "unwind.efi",
+      smoke: { kind: "disabled" },
+      packagePipelineDependencies: uefiAArch64PackagePipelineDependenciesForOptimizedFixture(),
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const parsed = parsePeCoffImage(result.artifact.peCoffArtifact.bytes);
+    expect(parsed.kind).toBe("ok");
+    if (parsed.kind !== "ok") return;
+
+    const pdata = parsed.value.sectionHeaders.find((section) => section.name === ".pdata");
+    const xdata = parsed.value.sectionHeaders.find((section) => section.name === ".xdata");
+    expect(pdata).toBeDefined();
+    expect(xdata).toBeDefined();
+    if (pdata === undefined || xdata === undefined) return;
+    expect(pdata.virtualSizeBytes % 8).toBe(0);
+    expect(pdata.virtualSizeBytes).toBe(8);
+    expect(xdata.virtualSizeBytes).toBe(16);
+    expect(pdata.rva % 4).toBe(0);
+    expect(xdata.rva % 4).toBe(0);
+    expect(parsed.value.dataDirectories[3]).toEqual({
+      rva: pdata.rva,
+      sizeBytes: pdata.virtualSizeBytes,
+    });
+    const beginRva = readU32Le(pdata.bytes, 0);
+    const unwindRva = readU32Le(pdata.bytes, 4);
+    expect(beginRva).toBeGreaterThan(0);
+    expect(beginRva).toBeLessThan(pdata.rva);
+    expect(unwindRva).toBe(xdata.rva);
+    const decodedUnwindRecords = decodedXdataRecords(xdata.bytes);
+    const linkedFunctionLengths = result.trace.binarySpine.linkedLayout.unwindRecords
+      .map((record) => record.functionEndRva - record.functionStartRva)
+      .sort((left, right) => left - right);
+    expect(linkedFunctionLengths).toEqual([64]);
+    expect(
+      decodedUnwindRecords
+        .map((record) => record.functionLengthBytes)
+        .sort((left, right) => left - right),
+    ).toEqual(linkedFunctionLengths);
+    for (const record of decodedUnwindRecords) {
+      expect(record).toMatchObject({
+        version: 1,
+        prologueLengthBytes: 12,
+        epilogueStartOffsetBytes: record.functionLengthBytes - 12,
+        stackAllocationBytes: 48,
+        frameRegister: "x29",
+      });
+    }
   });
 
   test("async trace API runs inline QEMU smoke through injected host effects", async () => {
@@ -265,6 +327,7 @@ describe("compileUefiAArch64Image", () => {
         value: unsafePackagePipelineAdapter<PackageOptimizedOptIrAdapter>({
           program: optIrFixture.program,
           operations: Object.freeze([...optIrFixture.operations]),
+          optimizationRegions: Object.freeze([...optIrFixture.optimizationRegions]),
           unoptimizedOperations: Object.freeze([...optIrFixture.operations]),
           facts: emptyOptIrFactSet(),
           staticChar16Strings: Object.freeze([]),
@@ -424,6 +487,24 @@ describe("compileUefiAArch64Image", () => {
   });
 });
 
+function readU32Le(bytes: Uint8Array, offset: number): number {
+  return (
+    (bytes[offset]! |
+      (bytes[offset + 1]! << 8) |
+      (bytes[offset + 2]! << 16) |
+      (bytes[offset + 3]! << 24)) >>>
+    0
+  );
+}
+
+function decodedXdataRecords(bytes: Uint8Array) {
+  const records = [];
+  for (let offset = 0; offset + 16 <= bytes.length; offset += 16) {
+    records.push(decodeEntryThunkXdataBytes(bytes.slice(offset, offset + 16)));
+  }
+  return records;
+}
+
 const packagePipelineRunKeys = [
   "frontend",
   "semantic",
@@ -444,10 +525,6 @@ const binarySpineRunKeys = [
   "linker",
   "pe-coff-writer",
 ];
-
-function unsafePackagePipelineAdapter<Adapter>(value: unknown): Adapter {
-  return Object.freeze(value as object) as Adapter;
-}
 
 function qemuConfigForTest() {
   return Object.freeze({

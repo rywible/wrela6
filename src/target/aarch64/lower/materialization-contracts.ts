@@ -116,6 +116,32 @@ export function unsupportedAggregateLowering(
   };
 }
 
+export function unsupportedEnumLowering(
+  operation: Extract<
+    OptIrOperation,
+    { readonly kind: "enumTagStore" | "enumPayloadStore" | "enumTagLoad" | "enumPayloadLoad" }
+  >,
+): { readonly kind: "error"; readonly stableDetail: string } {
+  const payloadField = operation.enumCase.payloadFieldName ?? "payload";
+  const caseKey = `${operation.enumCase.enumTypeKey}:${operation.enumCase.caseName}`;
+  switch (operation.kind) {
+    case "enumTagStore":
+      return unsupportedAggregateLowering(operation, "enum-tag-store");
+    case "enumPayloadStore":
+      return unsupportedAggregateLowering(
+        operation,
+        `enum-payload-store:${caseKey}:${payloadField}`,
+      );
+    case "enumTagLoad":
+      return unsupportedAggregateLowering(operation, `enum-tag-load:${caseKey}`);
+    case "enumPayloadLoad":
+      return unsupportedAggregateLowering(
+        operation,
+        `enum-payload-load:${caseKey}:${payloadField}`,
+      );
+  }
+}
+
 export function fieldPathStableKey(fieldPath: readonly string[]): string {
   return fieldPath.length === 0 ? "<root>" : fieldPath.join(".");
 }

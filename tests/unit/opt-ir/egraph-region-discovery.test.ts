@@ -35,6 +35,7 @@ describe("OptIR e-graph region discovery", () => {
     const candidates = discoverOptIrEGraphRegionCandidates({
       program: fixture.program,
       operations: fixture.operations,
+      optimizationRegions: [],
       facts: emptyFactSetForTest(),
     });
 
@@ -58,6 +59,7 @@ describe("OptIR e-graph region discovery", () => {
     const candidates = discoverOptIrEGraphRegionCandidatePool({
       program: fixture.program,
       operations: fixture.operations,
+      optimizationRegions: [],
       facts: emptyFactSetForTest(),
     });
 
@@ -73,6 +75,7 @@ describe("OptIR e-graph region discovery", () => {
     const candidates = discoverOptIrEGraphRegionCandidatePool({
       program: fixture.program,
       operations: fixture.operations,
+      optimizationRegions: [],
       facts: emptyFactSetForTest(),
     });
 
@@ -84,6 +87,7 @@ describe("OptIR e-graph region discovery", () => {
     const candidates = discoverOptIrEGraphRegionCandidates({
       program: fixture.program,
       operations: fixture.operations,
+      optimizationRegions: [],
       facts: emptyFactSetForTest(),
     });
 
@@ -126,6 +130,7 @@ describe("OptIR e-graph region discovery", () => {
     const candidates = discoverOptIrEGraphRegionCandidates({
       program,
       operations,
+      optimizationRegions: [],
       facts: emptyFactSetForTest(),
     });
 

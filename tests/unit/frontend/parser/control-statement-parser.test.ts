@@ -35,6 +35,24 @@ function makeContext(tokens: Token[]): ParserContext {
 }
 
 describe("parseIfStatement", () => {
+  test("reports expected indented block when body is missing", () => {
+    const context = makeContext([
+      makeToken(TokenKind.If, "if", 0, 2),
+      makeToken(TokenKind.Identifier, "ready", 2, 7),
+      makeToken(TokenKind.Colon, ":", 7, 8),
+      makeToken(TokenKind.Newline, "\n", 8, 9),
+      makeToken(TokenKind.Identifier, "next", 9, 13),
+      makeToken(TokenKind.Eof, "", 13, 13),
+    ]);
+
+    const node = parseIfStatement(context);
+
+    expect(node.kind).toBe(SyntaxKind.IfStatement);
+    expect(context.draftDiagnostics().map((diagnostic) => diagnostic.code)).toContain(
+      "PARSE_EXPECTED_INDENTED_BLOCK",
+    );
+  });
+
   test("if statement with condition and block", () => {
     const tokens = [
       makeToken(TokenKind.If, "if", 0, 2),

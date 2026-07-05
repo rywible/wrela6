@@ -162,7 +162,7 @@ describe("PE/COFF file layout planning", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected directories");
     expect(result.value.directories).toHaveLength(PE_DATA_DIRECTORY_COUNT);
-    expect(result.value.directories[3]).toEqual({ rva: 0x2000, sizeBytes: 0x0c });
+    expect(result.value.directories[3]).toEqual({ rva: 0x2000, sizeBytes: 0x08 });
     expect(result.value.directories[5]).toEqual({ rva: 0x3000, sizeBytes: 12 });
     expect(result.value.directories[0]).toEqual({ rva: 0, sizeBytes: 0 });
     expect(result.value.directories[4]).toEqual({ rva: 0, sizeBytes: 0 });

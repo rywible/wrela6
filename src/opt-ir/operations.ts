@@ -18,6 +18,7 @@ import {
 import type { OptIrType } from "./types";
 import type { OptIrScalarOperation } from "./operations/scalar-operations";
 import type { OptIrAggregateOperation } from "./operations/aggregate-operations";
+import type { OptIrEnumOperation } from "./operations/enum-operations";
 import type {
   OptIrEndian,
   OptIrMemoryAccessDescriptor,
@@ -32,6 +33,7 @@ export type {
   OptIrScalarOperation,
 } from "./operations/scalar-operations";
 export type { OptIrAggregateOperation } from "./operations/aggregate-operations";
+export type { OptIrEnumCaseDescriptor, OptIrEnumOperation } from "./operations/enum-operations";
 export type {
   OptIrBoundsAuthority,
   OptIrEndian,
@@ -55,6 +57,12 @@ export {
   optIrAggregateExtractOperation,
   optIrAggregateInsertOperation,
 } from "./operations/aggregate-operations";
+export {
+  optIrEnumPayloadLoadOperation,
+  optIrEnumPayloadStoreOperation,
+  optIrEnumTagLoadOperation,
+  optIrEnumTagStoreOperation,
+} from "./operations/enum-operations";
 export {
   optIrLayoutByteRangeOperation,
   optIrLayoutEndianDecodeOperation,
@@ -83,6 +91,7 @@ export interface OptIrOperationBase<Kind extends OptIrOperationKind> {
 export type OptIrOperation =
   | OptIrScalarOperation
   | OptIrAggregateOperation
+  | OptIrEnumOperation
   | OptIrMemoryOperation
   | (OptIrOperationBase<"sourceCall" | "runtimeCall" | "platformCall" | "intrinsicCall"> & {
       readonly callId: OptIrCallId;

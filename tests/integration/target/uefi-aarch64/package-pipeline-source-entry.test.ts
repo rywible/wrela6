@@ -122,7 +122,7 @@ function sourceFirmwareEntryPackageInputForTest() {
       {
         sourceKey: "src/wrela_std/core/result.wr",
         moduleName: "wrela_std.core.result",
-        text: ["class Result[Ok, Err]:", ""].join("\n"),
+        text: ["enum Result[Ok, Err]:", "    ok(value: Ok)", "    err(error: Err)", ""].join("\n"),
       },
       {
         sourceKey: "src/wrela_std/target/uefi/firmware.wr",

@@ -25,6 +25,7 @@ import {
   type OptIrProgram,
 } from "../../../src/opt-ir/program";
 import { runLicmForTest } from "../../../src/opt-ir/passes/licm";
+import { createOptIrFreshIdAllocator } from "../../../src/opt-ir/id-allocation";
 import { optIrUnsignedIntegerType } from "../../../src/opt-ir/types";
 import { targetId } from "../../../src/semantic/ids";
 
@@ -111,7 +112,7 @@ describe("LICM ID allocation", () => {
     const result = runLicmForTest({
       program,
       operations: [invariant],
-      loopOperationIds: [invariant.operationId],
+      freshIds: createOptIrFreshIdAllocator({ program, operations: [invariant] }),
       effectBoundaryOperationIds: [],
     });
 

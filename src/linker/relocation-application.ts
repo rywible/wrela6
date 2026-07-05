@@ -386,6 +386,7 @@ function applyRelocation(input: {
     symbolRva: BigInt(input.context.targetSymbol.rva),
     patchRva: BigInt(input.context.patchRva),
     addend: relocation.addend,
+    widthBytes: relocation.widthBytes,
     preferredImageBase: input.target.constants.preferredImageBase,
     containingSectionRva: BigInt(input.context.targetSection.rva),
     accessScaleBytes: relocation.instructionPatch?.encodingOwner?.accessScaleBytes,

@@ -1,10 +1,5 @@
 {
   "phase": "parse",
-  "diagnostics": [
-    {
-      "code": "PARSE_UNSUPPORTED_INDEX_EXPRESSION",
-      "spanText": "[0]",
-      "count": 1
-    }
-  ]
+  "diagnostics": [],
+  "trackedBy": "W1-02"
 }

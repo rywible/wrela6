@@ -191,7 +191,7 @@ describe("AArch64 PE/COFF EFI writer", () => {
     expect(plannedImage.headers.optionalHeader.checksum).toBe(0);
     expect(readU32Le(bytes, OPTIONAL_HEADER_OFFSET + 108)).toBe(PE_DATA_DIRECTORY_COUNT);
     expect(readU32Le(bytes, OPTIONAL_HEADER_OFFSET + 112 + 3 * 8)).toBe(0x2000);
-    expect(readU32Le(bytes, OPTIONAL_HEADER_OFFSET + 112 + 3 * 8 + 4)).toBe(0x0c);
+    expect(readU32Le(bytes, OPTIONAL_HEADER_OFFSET + 112 + 3 * 8 + 4)).toBe(0x08);
     expect(SECTION_TABLE_OFFSET).toBe(0x188);
   });
 

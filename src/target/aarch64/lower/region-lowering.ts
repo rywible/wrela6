@@ -252,11 +252,8 @@ function regionLoweringInputForRegion(
   state: AArch64LoweringState,
   regionRecord: { readonly regionId: OptIrRegionId },
 ): Parameters<typeof lowerAArch64Region>[0] {
-  const optimizationRegions = (
-    state.program as { readonly optimizationRegions?: readonly OptIrRegion[] }
-  ).optimizationRegions;
   const optimizationById = new Map(
-    (optimizationRegions ?? []).map((region) => [region.regionId, region] as const),
+    state.optimizationRegions.map((region) => [region.regionId, region] as const),
   );
   const validatedAccessRegions = validatedBufferAccessRegions(state);
   const optimizationRegion = optimizationById.get(regionRecord.regionId);

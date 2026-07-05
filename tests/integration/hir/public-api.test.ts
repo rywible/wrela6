@@ -11,7 +11,6 @@ import type {
   HirTerminalCall,
   HirValidatedBuffer,
 } from "../../../src/hir";
-import * as wrela from "../../../src";
 
 type PublicHirModelSmoke = {
   readonly attempt?: HirAttempt;
@@ -29,7 +28,5 @@ const acceptPublicHirModel = (model: PublicHirModelSmoke): PublicHirModelSmoke =
 
 test("typed HIR public API is exported", () => {
   expect(typeof lowerTypedHir).toBe("function");
-  expect(wrela.hir).toBeDefined();
-  expect(typeof wrela.hir.lowerTypedHir).toBe("function");
   expect(acceptPublicHirModel({})).toEqual({});
 });

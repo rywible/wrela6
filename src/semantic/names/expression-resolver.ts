@@ -592,6 +592,26 @@ function resolveCalleeName(
       kind: "functionName",
     });
     context.references.add(key, scopeResult.reference);
+  } else if (scopeResult.kind === "ambiguous") {
+    const key = context.referenceKeys.next({
+      moduleId: context.moduleId,
+      span,
+      kind: "functionName",
+    });
+    context.diagnostics.push(
+      DiagnosticsModule.ambiguousName({
+        source: context.source,
+        span,
+        order: {
+          moduleId: context.moduleId,
+          span,
+          kind: "functionName",
+          ordinal: key.ordinal,
+        },
+        name,
+        candidates: scopeResult.candidates.map((candidate) => candidate.display),
+      }),
+    );
   } else {
     const key = context.referenceKeys.next({
       moduleId: context.moduleId,

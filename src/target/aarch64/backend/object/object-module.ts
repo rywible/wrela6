@@ -18,8 +18,9 @@ import {
   type AArch64ObjectRelocation,
   type AArch64ObjectRelocationTarget,
 } from "./relocation-records";
+import { aarch64ObjectUnwindRecord, type AArch64ObjectUnwindRecord } from "./object-unwind-record";
 
-export { aarch64ObjectRelocation };
+export { aarch64ObjectRelocation, aarch64ObjectUnwindRecord };
 export type {
   AArch64ObjectRelocation,
   AArch64ObjectLinkerVeneerRequest,
@@ -27,6 +28,7 @@ export type {
   AArch64ObjectInstructionPatch,
   AArch64ObjectRelocationTarget,
 } from "./relocation-records";
+export type { AArch64ObjectUnwindRecord } from "./object-unwind-record";
 
 export { verifierRun };
 import {
@@ -110,12 +112,6 @@ export interface AArch64ObjectVeneer {
   readonly stableKey: AArch64VeneerId;
   readonly sectionKey: AArch64ObjectSectionId;
   readonly targetKey: string;
-}
-
-export interface AArch64ObjectUnwindRecord {
-  readonly stableKey: string;
-  readonly sectionKey: AArch64ObjectSectionId;
-  readonly frameShape: string;
 }
 
 export interface AArch64ByteProvenanceRecord {
@@ -259,6 +255,8 @@ export function aarch64ObjectModule(input: {
         stableKey: entry.stableKey,
         sectionKey: entry.sectionKey,
         frameShape: entry.frameShape,
+        frameSizeBytes: entry.frameSizeBytes,
+        savedRegisters: entry.savedRegisters,
       }),
     ),
     "unwind",
@@ -558,18 +556,6 @@ export function aarch64ObjectVeneer(input: {
   });
 }
 
-export function aarch64ObjectUnwindRecord(input: {
-  readonly stableKey: string;
-  readonly sectionKey: string;
-  readonly frameShape: string;
-}): AArch64ObjectUnwindRecord {
-  return Object.freeze({
-    stableKey: String(input.stableKey),
-    sectionKey: aarch64ObjectSectionId(input.sectionKey),
-    frameShape: input.frameShape,
-  });
-}
-
 export function aarch64ObjectByteProvenance(input: {
   readonly stableKey: string;
   readonly sectionKey: string;
@@ -717,6 +703,8 @@ export function aarch64ObjectModuleDeterministicMetadata(input: {
         stableKey: entry.stableKey,
         sectionKey: entry.sectionKey,
         frameShape: entry.frameShape,
+        frameSizeBytes: entry.frameSizeBytes,
+        savedRegisters: entry.savedRegisters,
       })),
       factSpending: input.factSpending.map((entry) => ({
         stableKey: entry.stableKey,

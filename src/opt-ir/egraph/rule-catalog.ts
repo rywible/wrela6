@@ -1,4 +1,4 @@
-import { optimizationPassId } from "../ids";
+import { optIrRewriteRegionId, optimizationPassId } from "../ids";
 import {
   passInvariantCheckerId,
   passInvariantSchemaId,
@@ -212,7 +212,7 @@ function preservationRule(
     ruleId: `${ruleId}:preserve:${factKind}`,
     factKind,
     subject: { kind: "substitution", table: "egraph-extraction-subject-remap" },
-    scope: { kind: "rewrittenRegion", region: 0 as never },
+    scope: { kind: "rewrittenRegion", region: optIrRewriteRegionId(0) },
     dependencies: { kind: "remapped" },
     cfg: { kind: "unchanged" },
     memory: { kind: "equivalent", rule: ruleId },

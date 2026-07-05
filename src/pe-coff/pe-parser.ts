@@ -11,17 +11,43 @@ import {
   PE_DATA_DIRECTORY_COUNT,
   PE_DATA_DIRECTORY_SIZE_BYTES,
   PE_DOS_HEADER_SIZE_BYTES,
+  PE_FILE_ALIGNMENT_BYTES,
   PE_HEADER_OFFSET_BYTES,
   PE_MACHINE_ARM64,
+  PE_SECTION_ALIGNMENT_BYTES,
   PE_SECTION_HEADER_SIZE_BYTES,
   PE_SIGNATURE_BYTES,
+  PE_SUBSYSTEM_EFI_APPLICATION,
   PE32_PLUS_MAGIC,
   PE32_PLUS_OPTIONAL_HEADER_FIXED_SIZE_BYTES,
   PE32_PLUS_OPTIONAL_HEADER_SIZE_BYTES,
 } from "./headers";
-
+import {
+  bytesEqual,
+  firstNonZeroOffset,
+  readNullPaddedAscii,
+  readU8,
+  readU16Le,
+  readU32Le,
+  readU64Le,
+  type Reader,
+} from "./pe-reader";
+import { validateExceptionDirectory } from "./pe-exception-directory";
+import {
+  containsRvaRange,
+  sectionContainingRva,
+  sectionContainingRvaRange,
+} from "./pe-section-rva";
 const PE_SIGNATURE_SIZE_BYTES = 4;
 const BASE_RELOCATION_DIRECTORY_INDEX = 5;
+const IMAGE_SCN_MEM_EXECUTE = 0x20000000;
+const EXPECTED_SECTION_CHARACTERISTICS: ReadonlyMap<string, number> = new Map([
+  [".text", 0x60000020],
+  [".pdata", 0x40000040],
+  [".xdata", 0x40000040],
+  [".data", 0xc0000040],
+  [".reloc", 0x42000040],
+]);
 
 const PARSER_VERIFICATION: PeCoffWriterVerificationSummary = Object.freeze({
   runs: Object.freeze([
@@ -121,20 +147,6 @@ export interface ParsedPeCoffImage {
   readonly baseRelocationBlocks: readonly ParsedPeBaseRelocationBlock[];
 }
 
-interface Reader {
-  readonly bytes: Uint8Array;
-}
-
-type ParsedSectionName =
-  | {
-      readonly kind: "ok";
-      readonly name: string;
-    }
-  | {
-      readonly kind: "error";
-      readonly stableDetail: string;
-    };
-
 function parseDiagnostic(stableDetail: string): PeCoffWriterDiagnostic {
   return peCoffWriterDiagnostic({
     code: "PE_COFF_PARSE_FAILED",
@@ -220,6 +232,15 @@ function parsePeCoffImageStrict(reader: Reader): PeCoffWriterResult<ParsedPeCoff
   if (optionalHeader.numberOfRvaAndSizes !== PE_DATA_DIRECTORY_COUNT) {
     return parseError(`optional-header:directory-count:${optionalHeader.numberOfRvaAndSizes}`);
   }
+  if (optionalHeader.subsystem !== PE_SUBSYSTEM_EFI_APPLICATION) {
+    return parseError(`optional-header:subsystem:${optionalHeader.subsystem}`);
+  }
+  if (optionalHeader.sectionAlignmentBytes !== PE_SECTION_ALIGNMENT_BYTES) {
+    return parseError(`optional-header:section-alignment:${optionalHeader.sectionAlignmentBytes}`);
+  }
+  if (optionalHeader.fileAlignmentBytes !== PE_FILE_ALIGNMENT_BYTES) {
+    return parseError(`optional-header:file-alignment:${optionalHeader.fileAlignmentBytes}`);
+  }
 
   const dataDirectories = parseDataDirectories(reader, optionalHeaderOffset);
   const sectionTableOffset = optionalHeaderOffset + coffHeader.sizeOfOptionalHeader;
@@ -247,11 +268,15 @@ function parsePeCoffImageStrict(reader: Reader): PeCoffWriterResult<ParsedPeCoff
   const parsedSections = parseSections(reader, sectionTableOffset, coffHeader.numberOfSections);
   if (parsedSections.kind === "error") return parsedSections;
   const sections = parsedSections.value;
+  const imageValidation = validateImageLayout(optionalHeader, dataDirectories, sections);
+  if (imageValidation !== undefined) return parseError(imageValidation);
   for (const section of sections) {
     if (section.rawDataPointerBytes + section.rawDataSizeBytes > reader.bytes.length) {
       return parseError(`section-raw-range:exceeds-file:${section.name}`);
     }
   }
+  const exceptionValidation = validateExceptionDirectory(reader, dataDirectories, sections);
+  if (exceptionValidation !== undefined) return parseError(exceptionValidation);
   const relocationBlocks = parseBaseRelocationBlocks(reader, dataDirectories, sections);
   if (relocationBlocks.kind === "error") return relocationBlocks;
 
@@ -441,60 +466,56 @@ function parseBaseRelocationBlocks(
   return peCoffOk({ value: Object.freeze(blocks), verification: PARSER_VERIFICATION });
 }
 
-function containsRvaRange(section: ParsedPeSectionHeader, rva: number, sizeBytes: number): boolean {
-  return rva >= section.rva && rva + sizeBytes <= section.rva + section.virtualSizeBytes;
-}
-
-function readU8(reader: Reader, offset: number): number {
-  return reader.bytes[offset] ?? 0;
-}
-
-function readU16Le(reader: Reader, offset: number): number {
-  return readU8(reader, offset) | (readU8(reader, offset + 1) << 8);
-}
-
-function readU32Le(reader: Reader, offset: number): number {
-  return (
-    (readU8(reader, offset) |
-      (readU8(reader, offset + 1) << 8) |
-      (readU8(reader, offset + 2) << 16) |
-      (readU8(reader, offset + 3) * 2 ** 24)) >>>
-    0
-  );
-}
-
-function readU64Le(reader: Reader, offset: number): bigint {
-  let result = 0n;
-  for (let index = 0; index < 8; index += 1) {
-    result |= BigInt(readU8(reader, offset + index)) << BigInt(index * 8);
+function validateImageLayout(
+  optionalHeader: ParsedPe32PlusOptionalHeader,
+  dataDirectories: readonly ParsedPeDataDirectory[],
+  sections: readonly ParsedPeSectionHeader[],
+): string | undefined {
+  let previousRva = 0;
+  for (const section of sections) {
+    if (section.rva % PE_SECTION_ALIGNMENT_BYTES !== 0) {
+      return `section-rva:misaligned:${section.name}:${section.rva}`;
+    }
+    if (section.rva <= previousRva) return `section-rva:not-increasing:${section.name}`;
+    previousRva = section.rva;
+    if (section.rawDataPointerBytes % PE_FILE_ALIGNMENT_BYTES !== 0) {
+      return `section-raw-pointer:misaligned:${section.name}:${section.rawDataPointerBytes}`;
+    }
+    if (section.name !== ".reloc" && section.rawDataSizeBytes % PE_FILE_ALIGNMENT_BYTES !== 0) {
+      return `section-raw-size:misaligned:${section.name}:${section.rawDataSizeBytes}`;
+    }
+    const expectedCharacteristics = EXPECTED_SECTION_CHARACTERISTICS.get(section.name);
+    if (
+      expectedCharacteristics !== undefined &&
+      section.characteristics !== expectedCharacteristics
+    ) {
+      if (section.name === ".text" && (section.characteristics & IMAGE_SCN_MEM_EXECUTE) === 0) {
+        return `section-flags:text-not-executable:${section.name}`;
+      }
+      return `section-flags:unexpected:${section.name}:${section.characteristics}`;
+    }
   }
-  return result;
-}
 
-function readNullPaddedAscii(reader: Reader, offset: number, width: number): ParsedSectionName {
-  const characters: string[] = [];
-  let foundPadding = false;
-  for (let index = 0; index < width; index += 1) {
-    const byte = readU8(reader, offset + index);
-    if (byte === 0) {
-      foundPadding = true;
-      continue;
-    }
-    if (foundPadding) {
-      return Object.freeze({
-        kind: "error" as const,
-        stableDetail: `section-name:padding-nonzero:${characters.join("")}:${offset + index}`,
-      });
-    }
-    if (byte > 0x7f) {
-      return Object.freeze({
-        kind: "error" as const,
-        stableDetail: `section-name:non-ascii:${offset + index}:${byte}`,
-      });
-    }
-    characters.push(String.fromCharCode(byte));
+  const entrySection = sectionContainingRva(sections, optionalHeader.addressOfEntryPoint);
+  if (entrySection === undefined) {
+    return `entry-point:section-missing:${optionalHeader.addressOfEntryPoint}`;
   }
-  return Object.freeze({ kind: "ok" as const, name: characters.join("") });
+  if ((entrySection.characteristics & IMAGE_SCN_MEM_EXECUTE) === 0) {
+    return `entry-point:not-executable:${optionalHeader.addressOfEntryPoint}`;
+  }
+
+  for (const [index, directory] of dataDirectories.entries()) {
+    if (directory.rva === 0 && directory.sizeBytes === 0) continue;
+    if (index === BASE_RELOCATION_DIRECTORY_INDEX) continue;
+    if (directory.rva === 0 || directory.sizeBytes === 0) {
+      return `data-directory:incomplete:${index}:${directory.rva}:${directory.sizeBytes}`;
+    }
+    if (sectionContainingRvaRange(sections, directory.rva, directory.sizeBytes) === undefined) {
+      return `data-directory:section-missing:${index}:${directory.rva}`;
+    }
+  }
+
+  return undefined;
 }
 
 function finalRawDataEnd(
@@ -507,23 +528,4 @@ function finalRawDataEnd(
     endOffset = Math.max(endOffset, section.rawDataPointerBytes + section.rawDataSizeBytes);
   }
   return endOffset;
-}
-
-function firstNonZeroOffset(
-  reader: Reader,
-  startOffset: number,
-  endOffset: number,
-): number | undefined {
-  for (let offset = startOffset; offset < endOffset; offset += 1) {
-    if (readU8(reader, offset) !== 0) return offset;
-  }
-  return undefined;
-}
-
-function bytesEqual(
-  bytes: ArrayLike<number>,
-  offset: number,
-  expected: readonly number[],
-): boolean {
-  return expected.every((byte, index) => bytes[offset + index] === byte);
 }

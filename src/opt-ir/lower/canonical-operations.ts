@@ -19,10 +19,12 @@ import {
   type OptIrValueId,
 } from "../ids";
 import {
-  optIrAggregateConstructOperation,
   optIrAggregateExtractOperation,
   optIrAggregateInsertOperation,
   optIrConstantOperation,
+  optIrEnumPayloadStoreOperation,
+  optIrEnumTagLoadOperation,
+  optIrEnumTagStoreOperation,
   optIrLayoutOffsetOperation,
   type OptIrOperation,
 } from "../operations";
@@ -33,7 +35,7 @@ import {
   type OptIrSwitchTerminator,
   type OptIrUnreachableTerminator,
 } from "../terminators";
-import { optIrBooleanType, optIrTypesEqual, type OptIrType } from "../types";
+import { optIrBooleanType, optIrTypeStableKey, optIrTypesEqual, type OptIrType } from "../types";
 
 export type CanonicalOperationInputForTest =
   | CanonicalConstantInput
@@ -96,6 +98,10 @@ export interface CanonicalEnumConstructInput {
   readonly tagType: OptIrType;
   readonly tagValue: bigint | number | string | boolean;
   readonly payloads: readonly OptIrValueId[];
+  readonly enumTypeKey?: string;
+  readonly caseName?: string;
+  readonly caseOrdinal?: number;
+  readonly payloadFieldNames?: readonly string[];
   readonly originId: OptIrOriginId;
 }
 
@@ -104,6 +110,10 @@ export interface CanonicalEnumMatchInput {
   readonly enumValue: OptIrValueId;
   readonly tagOutput: OptIrValueId;
   readonly tagType: OptIrType;
+  readonly enumType?: OptIrType;
+  readonly enumTypeKey?: string;
+  readonly caseName?: string;
+  readonly caseOrdinal?: number;
   readonly cases: readonly { readonly label: string; readonly edge: OptIrEdgeId }[];
   readonly defaultEdge: OptIrEdgeId;
   readonly originId: OptIrOriginId;
@@ -308,29 +318,52 @@ function canonicalLoweringContext(dataModel: OptIrTargetDataModelInterpretation 
           return;
         case "enumConstruct": {
           const tagValue = syntheticValueId();
+          const enumCase = canonicalEnumCaseDescriptor(operation);
           emitConstant({
             output: tagValue,
             type: operation.tagType,
             value: operation.tagValue,
             originId: operation.originId,
           });
+          const tagResult = operation.payloads.length === 0 ? operation.output : syntheticValueId();
           operations.push(
-            optIrAggregateConstructOperation({
+            optIrEnumTagStoreOperation({
               operationId: operationId(),
-              fieldIds: Object.freeze([tagValue, ...operation.payloads]),
-              resultId: operation.output,
+              tagValue,
+              enumCase,
+              resultId: tagResult,
               resultType: operation.enumType,
               originId: operation.originId,
             }),
           );
+          let currentEnumValue = tagResult;
+          for (const [index, payload] of operation.payloads.entries()) {
+            const resultId =
+              index === operation.payloads.length - 1 ? operation.output : syntheticValueId();
+            operations.push(
+              optIrEnumPayloadStoreOperation({
+                operationId: operationId(),
+                enumValue: currentEnumValue,
+                payloadValue: payload,
+                enumCase: {
+                  ...enumCase,
+                  payloadFieldName: operation.payloadFieldNames?.[index] ?? `payload${index}`,
+                },
+                resultId,
+                resultType: operation.enumType,
+                originId: operation.originId,
+              }),
+            );
+            currentEnumValue = resultId;
+          }
           return;
         }
         case "enumMatch":
           operations.push(
-            optIrAggregateExtractOperation({
+            optIrEnumTagLoadOperation({
               operationId: operationId(),
-              aggregate: operation.enumValue,
-              fieldPath: ["tag"],
+              enumValue: operation.enumValue,
+              enumCase: canonicalEnumMatchDescriptor(operation),
               resultId: operation.tagOutput,
               resultType: operation.tagType,
               originId: operation.originId,
@@ -389,6 +422,29 @@ function canonicalLoweringContext(dataModel: OptIrTargetDataModelInterpretation 
       return sortOptIrDiagnostics(diagnostics);
     },
   };
+}
+
+function canonicalEnumCaseDescriptor(operation: CanonicalEnumConstructInput) {
+  const caseOrdinal = operation.caseOrdinal ?? Number(normalizeConstantValue(operation.tagValue));
+  return Object.freeze({
+    enumTypeKey: operation.enumTypeKey ?? optIrTypeStableKey(operation.enumType),
+    caseName: operation.caseName ?? `case${caseOrdinal}`,
+    caseOrdinal,
+    tagValue: String(normalizeConstantValue(operation.tagValue)),
+  });
+}
+
+function canonicalEnumMatchDescriptor(operation: CanonicalEnumMatchInput) {
+  const firstCaseLabel = operation.cases[0]?.label ?? String(operation.caseOrdinal ?? 0);
+  const caseOrdinal = operation.caseOrdinal ?? Number(firstCaseLabel);
+  return Object.freeze({
+    enumTypeKey:
+      operation.enumTypeKey ??
+      (operation.enumType === undefined ? "enum:unknown" : optIrTypeStableKey(operation.enumType)),
+    caseName: operation.caseName ?? `case${Number.isFinite(caseOrdinal) ? caseOrdinal : 0}`,
+    caseOrdinal: Number.isFinite(caseOrdinal) ? caseOrdinal : 0,
+    tagValue: firstCaseLabel,
+  });
 }
 
 function lowerTerminalExit(

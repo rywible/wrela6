@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import * as packageRoot from "../../../src";
+import { loadFrontendModuleGraph } from "../../../src";
 import * as frontend from "../../../src/frontend";
 import {
   CollectingDiagnosticSink,
@@ -26,10 +26,8 @@ test("frontend namespace exports lexer symbols", () => {
   expect(frontend.SourceText).toBeDefined();
 });
 
-test("top-level package exports frontend namespace", () => {
-  expect(packageRoot.frontend.Lexer).toBeDefined();
-  expect(packageRoot.frontend.Parser).toBeDefined();
-  expect(packageRoot.frontend.SyntaxKind).toBeDefined();
+test("top-level package exports frontend loader facade", () => {
+  expect(typeof loadFrontendModuleGraph).toBe("function");
 });
 
 test("direct imports from frontend/lexer work", () => {

@@ -18,3 +18,7 @@ export { SyntaxFactory } from "./syntax-factory";
 
 export { SyntaxTree } from "./syntax-tree";
 export type { ParserDiagnostic } from "./syntax-tree";
+export { childIds, parentId, syntaxNodeId, syntaxTokenId } from "./syntax-identity";
+export type { SyntaxElementId, SyntaxNodeId, SyntaxTokenId } from "./syntax-identity";
+export { buildSyntaxIndex, SyntaxIndex } from "./syntax-index";
+export type { SyntaxAnchor, SyntaxElement } from "./syntax-index";

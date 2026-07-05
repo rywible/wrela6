@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { descendants } from "../../../src/frontend/ast/syntax-query";
+import { LiteralExpressionView } from "../../../src/frontend/ast/expression-views";
 import { RequirementView } from "../../../src/frontend/ast/requirement-views";
 import { SyntaxKind } from "../../../src/frontend";
 import { lowerExpression } from "../../../src/hir/expression-lowerer";
@@ -86,4 +87,39 @@ test("requirement lowering parses integer literals through the canonical parser"
     left: { kind: "literal", value: 31n },
     right: { kind: "literal", value: 31n },
   });
+});
+
+test("requirement lowering invalid integer literals fail closed instead of zero", () => {
+  const context = createHirUnitContext("fn guarded() -> bool:\n    requires:\n        1 == 1\n");
+  const span = firstRequirementExpressionSpan(context);
+
+  const originalLiteralText = LiteralExpressionView.prototype.literalText;
+  LiteralExpressionView.prototype.literalText = () => "0xg";
+  try {
+    const requirement = lowerRequirementSurface({
+      surface: {
+        ownerFunctionId: functionId(0),
+        expression: {
+          kind: "checked",
+          text: "1 == 1",
+          references: [],
+          completedMembers: [],
+        },
+        span,
+      },
+      owner: { kind: "function", functionId: functionId(0) },
+      context,
+    });
+
+    expect(requirement.expression.kind).toBe("error");
+  } finally {
+    LiteralExpressionView.prototype.literalText = originalLiteralText;
+  }
+
+  expect(context.diagnostics.entries()).toContainEqual(
+    expect.objectContaining({
+      code: "HIR_INVALID_INTEGER_LITERAL",
+      stableDetail: "0xg",
+    }),
+  );
 });

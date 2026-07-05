@@ -65,18 +65,50 @@ export function optIrProgram(input: OptIrProgram): OptIrProgram {
 }
 
 export function optIrFunctionTable(functions: readonly OptIrFunction[]) {
-  return optIrTable(functions, (entry) => entry.functionId);
+  return optIrTable(functions, (entry) => entry.functionId, "function", "functions");
 }
 
 export function optIrRegionTable(regions: readonly OptIrRegionRecord[]) {
-  return optIrTable(regions, (entry) => entry.regionId);
+  return optIrTable(regions, (entry) => entry.regionId, "region", "regions");
 }
 
 export function optIrConstantTable(constants: readonly OptIrConstant[]) {
-  return optIrTable(constants, (entry) => entry.constantId);
+  return optIrTableAllowingDuplicateLastWrite(constants, (entry) => entry.constantId);
 }
 
 function optIrTable<LookupId, Entry>(
+  entries: readonly Entry[],
+  idOf: (entry: Entry) => LookupId,
+  idLabel = "entry",
+  tableLabel = "entries",
+): OptIrTable<LookupId, Entry> {
+  const sortedEntries = [...entries].sort(
+    (left, right) => Number(idOf(left)) - Number(idOf(right)),
+  );
+  const byId = new Map<LookupId, Entry>();
+  for (const [index, entry] of entries.entries()) {
+    const id = idOf(entry);
+    if (byId.has(id)) {
+      throw new RangeError(
+        `Duplicate OptIR ${idLabel} id ${String(id)} at ${tableLabel}[${index}].`,
+      );
+    }
+    byId.set(id, entry);
+  }
+  return {
+    get(id) {
+      return byId.get(id);
+    },
+    has(id) {
+      return byId.has(id);
+    },
+    entries() {
+      return sortedEntries.slice();
+    },
+  };
+}
+
+function optIrTableAllowingDuplicateLastWrite<LookupId, Entry>(
   entries: readonly Entry[],
   idOf: (entry: Entry) => LookupId,
 ): OptIrTable<LookupId, Entry> {

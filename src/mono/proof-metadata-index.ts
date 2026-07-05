@@ -148,6 +148,8 @@ function emptyProofRecordsByOwner(): MutableProofRecordsByOwner {
 export function ownersEqual(left: HirProofOwner, right: HirProofOwner): boolean {
   if (left.kind !== right.kind) return false;
   switch (left.kind) {
+    case "program":
+      return right.kind === "program";
     case "function":
       return right.kind === "function" && left.functionId === right.functionId;
     case "image":
@@ -410,6 +412,8 @@ export function instantiateImageOwnedRecord<Record extends object>(
 
 export function ownerKey(owner: HirProofOwner): string {
   switch (owner.kind) {
+    case "program":
+      return "program";
     case "function":
       return `function:${String(owner.functionId).padStart(12, "0")}`;
     case "image":
@@ -424,5 +428,8 @@ export function monoProofOwnerFor(
   owner: HirProofOwner,
 ): MonoProofOwner {
   if (owner.kind === "image") return { kind: "image", instanceId };
+  if (owner.kind === "program") {
+    throw new Error("Program-scoped HIR proof owner cannot be monomorphized.");
+  }
   return { kind: owner.kind, instanceId };
 }

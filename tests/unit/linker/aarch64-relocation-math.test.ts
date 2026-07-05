@@ -136,8 +136,9 @@ describe("AArch64 relocation math", () => {
         family: "rel32",
         relocationKey: "rel32-min",
         symbolRva: 0n,
-        patchRva: 2147483648n,
+        patchRva: 2147483644n,
         addend: 0n,
+        widthBytes: 4,
         preferredImageBase: 0n,
       }),
     ).toMatchObject({ kind: "ok", value: { encodedValue: -2147483648n } });
@@ -145,9 +146,10 @@ describe("AArch64 relocation math", () => {
       encodeAArch64RelocationValue({
         family: "rel32",
         relocationKey: "rel32-max",
-        symbolRva: 2147483647n,
+        symbolRva: 2147483651n,
         patchRva: 0n,
         addend: 0n,
+        widthBytes: 4,
         preferredImageBase: 0n,
       }),
     ).toMatchObject({ kind: "ok", value: { encodedValue: 2147483647n } });
@@ -191,6 +193,45 @@ describe("AArch64 relocation math", () => {
     expect(result.diagnostics[0]?.stableDetail).toBe(
       "relocation:unaligned-branch-distance:call-site:6",
     );
+  });
+
+  test("encodes PE/COFF REL32 from the byte after the relocation field", () => {
+    expect(
+      encodeAArch64RelocationValue({
+        family: "rel32",
+        relocationKey: "rel32-forward-slot-end",
+        symbolRva: 0x1100n,
+        patchRva: 0x1000n,
+        addend: 0n,
+        widthBytes: 4,
+        preferredImageBase: 0n,
+      }),
+    ).toMatchObject({ kind: "ok", value: { encodedValue: 0xfcn, unscaledValue: 0xfcn } });
+    expect(
+      encodeAArch64RelocationValue({
+        family: "rel32",
+        relocationKey: "rel32-self-slot-end",
+        symbolRva: 0x1000n,
+        patchRva: 0x1000n,
+        addend: 0n,
+        widthBytes: 4,
+        preferredImageBase: 0n,
+      }),
+    ).toMatchObject({ kind: "ok", value: { encodedValue: -4n, unscaledValue: -4n } });
+  });
+
+  test("keeps branch relocation distances relative to the instruction address", () => {
+    expect(
+      encodeAArch64RelocationValue({
+        family: "branch26",
+        relocationKey: "branch26-current-semantics",
+        symbolRva: 0x1100n,
+        patchRva: 0x1000n,
+        addend: 0n,
+        widthBytes: 4,
+        preferredImageBase: 0n,
+      }),
+    ).toMatchObject({ kind: "ok", value: { encodedValue: 0x40n, unscaledValue: 0x100n } });
   });
 
   test("encodes pagebase, pageoffset, absolute, rva, relative, and section-relative values", () => {
@@ -257,9 +298,10 @@ describe("AArch64 relocation math", () => {
         symbolRva: 0x1010n,
         patchRva: 0x1000n,
         addend: -4n,
+        widthBytes: 4,
         preferredImageBase: 0x100000n,
       }),
-    ).toMatchObject({ kind: "ok", value: { encodedValue: 12n, unscaledValue: 12n } });
+    ).toMatchObject({ kind: "ok", value: { encodedValue: 8n, unscaledValue: 8n } });
 
     expect(
       encodeAArch64RelocationValue({

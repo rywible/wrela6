@@ -109,6 +109,19 @@ function verifyOperationRuntimeShape(
       expectOperands([operation.aggregate, operation.field], "aggregate-field");
       expectResultCount(1);
       break;
+    case "enumTagStore":
+      expectOperands([operation.tagValue], "tag-value");
+      expectResultCount(1);
+      break;
+    case "enumPayloadStore":
+      expectOperands([operation.enumValue, operation.payloadValue], "enum-payload");
+      expectResultCount(1);
+      break;
+    case "enumTagLoad":
+    case "enumPayloadLoad":
+      expectOperands([operation.enumValue], "enum-value");
+      expectResultCount(1);
+      break;
     case "layoutOffset":
     case "layoutByteRange":
       expectOperands([operation.base], "base");

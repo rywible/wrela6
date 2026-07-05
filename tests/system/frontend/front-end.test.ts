@@ -4,17 +4,17 @@ import {
   DottedModuleResolver,
   KeywordTable,
   Lexer,
-  ModuleGraphLexer,
   ModulePath,
 } from "../../../src/frontend/lexer";
+import { loadFrontendModuleGraph } from "../../../src/frontend/module-loader";
 import { FakeFileRepository, FakeModuleResolver } from "../../support/frontend/lexer-fakes";
-import { parseModuleGraph } from "../../../src/frontend/module-graph-parser";
 
 describe("front-end smoke", () => {
   test("lexes an image entry through public APIs", async () => {
     const diagnostics = new CollectingDiagnosticSink();
     const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
-    const graph = new ModuleGraphLexer({
+    const result = await loadFrontendModuleGraph({
+      entry: ModulePath.from("app/main.wr"),
       lexer,
       files: new FakeFileRepository(
         new Map([
@@ -25,8 +25,6 @@ describe("front-end smoke", () => {
       resolver: new DottedModuleResolver(),
       diagnostics,
     });
-
-    const result = await graph.lexImage({ entry: ModulePath.from("app/main.wr") });
 
     expect(result.modules.map((module) => module.path.key)).toEqual([
       "app/main.wr",
@@ -51,27 +49,16 @@ describe("front-end smoke", () => {
 
     const diagnostics = new CollectingDiagnosticSink();
     const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
-    const graphLexer = new ModuleGraphLexer({
+    const parsedGraph = await loadFrontendModuleGraph({
+      entry: ModulePath.from("main.wr"),
       lexer,
       files: fileRepository,
       resolver: moduleResolver,
       diagnostics,
     });
 
-    const graphResult = await graphLexer.lexImage({
-      entry: ModulePath.from("main.wr"),
-    });
-
-    for (const module of graphResult.modules) {
-      expect(module.tokens.reconstruct()).toBe(module.source.text);
-    }
-
-    const parsedGraph = parseModuleGraph({
-      graph: graphResult,
-      lexerDiagnostics: diagnostics.diagnostics,
-    });
-
     for (const module of parsedGraph.modules) {
+      expect(module.tokens.reconstruct()).toBe(module.source.text);
       expect(module.tree.reconstruct()).toBe(module.source.text);
     }
 
@@ -80,7 +67,6 @@ describe("front-end smoke", () => {
       expect(code.startsWith("LEX_") || code.startsWith("PARSE_")).toBe(true);
     }
 
-    expect(parsedGraph.modules.length).toBe(graphResult.modules.length);
     expect(parsedGraph.entry.key).toBe("main.wr");
   });
 });

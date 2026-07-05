@@ -732,6 +732,49 @@ describe("resolveExpressions", () => {
     ).toBe(false);
   });
 
+  test("emits NAME_AMBIGUOUS_NAME for ambiguous imported value name", () => {
+    const graph = parseModuleGraphForTest([
+      ["app/main.wr", "use Value from lib\nfn test():\n    Value()\n"],
+      ["lib.wr", "fn Value()\nuefi image Value:\n"],
+    ]);
+    const { index } = buildItemIndex({ graph });
+    const moduleNamespace = buildModuleNamespace(index);
+    const memberNamespace = buildMemberNamespace(index);
+    const referenceKeys = new ReferenceKeyBuilder();
+    const importResult = resolveImports({ graph, index, moduleNamespace, referenceKeys });
+    const moduleContexts = buildModuleContexts(index, importResult.importedScopes);
+
+    resolveTypeReferences({
+      graph,
+      index,
+      coreTypes: CoreTypeCatalog.default(),
+      moduleNamespace,
+      memberNamespace,
+      moduleContexts,
+      referenceKeys,
+    });
+
+    const result = resolveExpressions({
+      graph,
+      index,
+      coreTypes: CoreTypeCatalog.default(),
+      moduleNamespace,
+      memberNamespace,
+      moduleContexts,
+      referenceKeys,
+    });
+
+    expect(importResult.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "NAME_AMBIGUOUS_IMPORT",
+    );
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "NAME_AMBIGUOUS_NAME",
+    );
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+      "NAME_UNRESOLVED_NAME",
+    );
+  });
+
   test("resolves expression in let statement initializer", () => {
     const graph = parseModuleGraphForTest([
       ["app/main.wr", "fn helper() -> u32\n\nfn test():\n    let x = helper()\n"],

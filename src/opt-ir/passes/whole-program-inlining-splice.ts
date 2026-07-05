@@ -6,9 +6,9 @@ import {
   type OptIrOperationId,
   type OptIrValueId,
 } from "../ids";
-import { createOptIrFreshIdAllocator, type OptIrFreshIdAllocator } from "../fresh-ids";
+import type { OptIrFreshIdAllocator } from "../id-allocation";
 import type { OptIrOperation } from "../operations";
-import type { OptIrFunction, OptIrProgram } from "../program";
+import type { OptIrFunction } from "../program";
 import type { OptIrTerminator } from "../terminators";
 import { rewriteOptIrOperationValues } from "./operation-value-rewrite";
 import {
@@ -23,24 +23,20 @@ export interface InlineCallSite {
 }
 
 export function buildInlineSplice(input: {
-  readonly program: OptIrProgram;
   readonly caller: OptIrFunction;
   readonly callee: OptIrFunction;
   readonly entryBlock: OptIrBlock;
   readonly callSite: InlineCallSite;
   readonly callOperation: SourceCallOperation;
   readonly calleeOperations: readonly OptIrOperation[];
-  readonly operations: readonly OptIrOperation[];
+  readonly freshIds: OptIrFreshIdAllocator;
 }):
   | {
       readonly functionOutput: OptIrFunction;
       readonly clonedOperations: readonly OptIrOperation[];
     }
   | undefined {
-  const ids = createOptIrFreshIdAllocator({
-    program: input.program,
-    operations: input.operations,
-  });
+  const ids = input.freshIds;
   const mergeBlockId = ids.blockId();
   const callToEntryEdgeId = ids.edgeId();
   const blockSubstitution = new Map<OptIrBlockId, OptIrBlockId>(
