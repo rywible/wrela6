@@ -158,11 +158,19 @@ describe("architecture dependency boundaries", () => {
     expect(source).not.toContain("function loadFrontendModuleGraphSyncWithReader");
   });
 
-  test("temporary HIR traversal framework is not shipped without runtime consumers", () => {
-    expect(existsSync(join(root, "src/hir/traversal.ts"))).toBe(false);
-    expect(existsSync(join(root, "src/hir/transform-context.ts"))).toBe(false);
-    expect(existsSync(join(root, "src/hir/transform.ts"))).toBe(false);
+  test("general HIR transform framework is not reintroduced without production consumers", () => {
+    for (const path of [
+      "src/hir/traversal.ts",
+      "src/hir/transform.ts",
+      "src/hir/transform-context.ts",
+    ]) {
+      expect(existsSync(join(root, path))).toBe(false);
+    }
+
     expect(sourceText("src/hir/checked-type-transform.ts")).toContain("transformCheckedType");
+    expect(sourceText("src/mono/function-expression-cloner.ts")).toContain(
+      "transformContext: MonoTransformContext",
+    );
     expect(sourceText("src/mono/mono-transform-context.ts")).not.toContain("readonly hir");
     expect(sourceText("tests/audit/mono-maintainability-audit.test.ts")).not.toContain(
       "transformHirExpression",

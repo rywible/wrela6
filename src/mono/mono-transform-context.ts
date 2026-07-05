@@ -64,24 +64,6 @@ export function monoTransformRemap(context: MonoTransformContext): MonoFunctionR
   return immutableRemapFrom(context.remap);
 }
 
-export interface LegacyMonoCloneState {
-  readonly remap: MutableMonoFunctionRemap;
-  readonly resourceKinds: MonoResourceKindConcretizationContext;
-  readonly outgoingEdges: MonoOutgoingEdge[];
-  readonly diagnostics: MonoDiagnostic[];
-}
-
-export function monoTransformContextFromLegacyCloneState(
-  input: LegacyMonoCloneState,
-): MonoTransformContext {
-  return {
-    remap: input.remap,
-    resourceKinds: input.resourceKinds,
-    outgoingEdges: input.outgoingEdges,
-    diagnostics: input.diagnostics,
-  };
-}
-
 export function monoTransformLocalId(
   context: MonoTransformContext,
   sourceId: HirLocalId,
