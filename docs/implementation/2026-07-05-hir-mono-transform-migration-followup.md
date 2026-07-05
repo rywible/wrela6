@@ -1079,7 +1079,7 @@ Only after HMT-01 through HMT-06 pass, update the closure status rows that were 
 
 **Implementation Steps:**
 
-- [ ] Update `docs/reviews/2026-07-05-remediation-status.md` rows for WCR-34 and WCR-54 through WCR-57.
+- [x] Update `docs/reviews/2026-07-05-remediation-status.md` rows for WCR-34 and WCR-54 through WCR-57.
 
 Use these status rules:
 
@@ -1091,20 +1091,9 @@ WCR-56: Fixed only if statement, place, take, and validation cloners use MonoTra
 WCR-57: Fixed only if audits fail on unmanaged traversal/remap reintroduction.
 ```
 
-- [ ] Add the final verification commands and outcomes to this plan's "Execution Notes" section.
+- [x] Add the final verification commands and outcomes to this plan's "Execution Notes" section.
 
-Append this section at the end of the file after verification:
-
-```markdown
-## Execution Notes
-
-- `bun test tests/unit/mono/mono-transform-migration-baseline.test.ts` passed during HMT-07 final verification.
-- `bun test tests/audit/mono-maintainability-audit.test.ts tests/unit/architecture/dependency-boundaries.test.ts` passed during HMT-07 final verification.
-- `bun test tests/unit/hir/take-lowerer.test.ts tests/unit/hir/validation-lowerer.test.ts tests/unit/proof-mir/take-lowerer.test.ts tests/unit/proof-mir/validation-lowerer.test.ts` passed during HMT-07 final verification.
-- `bun run agent:check` passed during HMT-07 final verification.
-```
-
-- [ ] Run focused verification.
+- [x] Run focused verification.
 
 Run:
 
@@ -1120,7 +1109,7 @@ bun test tests/integration/proof-check/take-session-closure.test.ts tests/integr
 
 Expected: PASS.
 
-- [ ] Run required full verification.
+- [x] Run required full verification.
 
 Run:
 
@@ -1142,3 +1131,18 @@ Expected: PASS.
 ```text
 Close HIR mono transform migration follow-up -Codex Automated
 ```
+
+## Execution Notes
+
+- HMT-01 used a focused, structured mono summary baseline instead of a full `monoSummary` snapshot so the migration baseline stayed deterministic and reviewable while still covering cloned body identity and remaps.
+- HMT-06 ended stricter than the initial source-text audit plan: the final audit uses TypeScript AST helpers, split into `tests/support/mono/mono-maintainability-audit-helpers.ts`, to reject unmanaged clone traversal, raw remap/context inputs, structural or rebuilt transform contexts, helper laundering, import aliases, string-literal element access, spread or duplicate `transformContext` overwrites, and new `*-cloner.ts` raw-state reintroductions.
+- WCR-54 was closed as `Superseded`, not `Fixed`, because this plan intentionally shipped the production mono transform context rather than a generic production HIR-to-HIR transform adapter.
+- `bun test tests/unit/mono/mono-transform-migration-baseline.test.ts` passed during HMT-07 final verification.
+- `bun test tests/audit/mono-maintainability-audit.test.ts tests/unit/architecture/dependency-boundaries.test.ts` passed during HMT-07 final verification.
+- `bun test tests/integration/mono/generic-instantiation.test.ts tests/integration/mono/proof-metadata-instantiation.test.ts` passed during HMT-07 final verification.
+- `bun test tests/integration/proof-mir/validation-and-attempt-splits.test.ts` passed during HMT-07 final verification.
+- `bun test tests/unit/hir/take-lowerer.test.ts tests/unit/hir/validation-lowerer.test.ts` passed during HMT-07 final verification.
+- `bun test tests/unit/proof-mir/take-lowerer.test.ts tests/unit/proof-mir/validation-lowerer.test.ts` passed during HMT-07 final verification.
+- `bun test tests/integration/proof-check/take-session-closure.test.ts tests/integration/proof-check/validation-and-attempts.test.ts` passed during HMT-07 final verification.
+- `bun run format` passed during HMT-07 final verification.
+- `bun run agent:check` passed during HMT-07 final verification.
