@@ -5,7 +5,10 @@ import type {
   TypedHirProgram,
 } from "../hir/hir";
 import { monoDiagnostic, type MonoDiagnostic } from "./diagnostics";
-import { cloneExpression, type CloneExpressionResult } from "./function-expression-cloner";
+import {
+  cloneExpressionWithContext,
+  type CloneExpressionResult,
+} from "./function-expression-cloner";
 import { type MonoOutgoingEdge, type MutableMonoFunctionRemap } from "./function-instantiator-body";
 import { ownerParametersForFunction } from "./function-instantiator-shell";
 import {
@@ -23,6 +26,10 @@ import {
   type MonoFunctionInstance,
   type MonoResourcePlace,
 } from "./mono-hir";
+import {
+  monoTransformContextFromLegacyCloneState,
+  type MonoTransformContext,
+} from "./mono-transform-context";
 import { type MonoResourceKindConcretizationContext } from "./resource-kind-concretizer";
 import { buildMonoSubstitution, type MonoSubstitution } from "./substitution";
 export function cloneCallExpression(input: {
@@ -38,23 +45,47 @@ export function cloneCallExpression(input: {
   readonly outgoingEdges: MonoOutgoingEdge[];
   readonly diagnostics: MonoDiagnostic[];
 }): CloneExpressionResult {
+  return cloneCallExpressionWithContext({
+    inner: input.inner,
+    expressionId: input.expressionId,
+    source: input.source,
+    sourceOrigin: input.sourceOrigin,
+    instance: input.instance,
+    substitution: input.substitution,
+    program: input.program,
+    transformContext: monoTransformContextFromLegacyCloneState({
+      remap: input.remap,
+      resourceKinds: input.context,
+      outgoingEdges: input.outgoingEdges,
+      diagnostics: input.diagnostics,
+    }),
+  });
+}
+
+export function cloneCallExpressionWithContext(input: {
+  readonly inner: Extract<HirExpression["kind"], { readonly kind: "call" }>;
+  readonly expressionId: MonoExpressionId;
+  readonly source: HirExpression;
+  readonly sourceOrigin: string;
+  readonly instance: MonoFunctionInstance;
+  readonly substitution: MonoSubstitution;
+  readonly program: TypedHirProgram;
+  readonly transformContext: MonoTransformContext;
+}): CloneExpressionResult {
   const monoType = normalizeMonoCheckedTypeForClone({
     type: input.source.type,
     substitution: input.substitution,
     program: input.program,
-    diagnostics: input.diagnostics,
+    diagnostics: input.transformContext.diagnostics,
   });
   if (monoType.kind === "error") return { kind: "error" };
-  const call = cloneCall({
+  const call = cloneCallWithContext({
     call: input.inner.call,
     callExpressionId: input.expressionId,
     instance: input.instance,
     substitution: input.substitution,
-    remap: input.remap,
     program: input.program,
-    context: input.context,
-    outgoingEdges: input.outgoingEdges,
-    diagnostics: input.diagnostics,
+    transformContext: input.transformContext,
   });
   if (call.kind === "error") return { kind: "error" };
   const resourceKindSubstitution = callResourceKindSubstitution({
@@ -62,18 +93,18 @@ export function cloneCallExpression(input: {
     clonedCall: call.call,
     program: input.program,
     baseSubstitution: input.substitution,
-    diagnostics: input.diagnostics,
+    diagnostics: input.transformContext.diagnostics,
   });
   if (resourceKindSubstitution.kind === "error") return { kind: "error" };
   const monoKind = concretizeResourceKindForClone({
     kind: input.source.resourceKind,
     type: monoType.type,
     context: {
-      ...input.context,
+      ...input.transformContext.resourceKinds,
       substitution: resourceKindSubstitution.substitution,
     },
     substitution: resourceKindSubstitution.substitution,
-    diagnostics: input.diagnostics,
+    diagnostics: input.transformContext.diagnostics,
   });
   if (monoKind.kind === "error") return { kind: "error" };
   return {
@@ -151,43 +182,57 @@ export function cloneCall(input: {
   readonly outgoingEdges: MonoOutgoingEdge[];
   readonly diagnostics: MonoDiagnostic[];
 }): { readonly kind: "ok"; readonly call: MonoCallExpression } | { readonly kind: "error" } {
-  const callee = cloneExpression({
+  return cloneCallWithContext({
+    call: input.call,
+    callExpressionId: input.callExpressionId,
+    instance: input.instance,
+    substitution: input.substitution,
+    program: input.program,
+    transformContext: monoTransformContextFromLegacyCloneState({
+      remap: input.remap,
+      resourceKinds: input.context,
+      outgoingEdges: input.outgoingEdges,
+      diagnostics: input.diagnostics,
+    }),
+  });
+}
+
+export function cloneCallWithContext(input: {
+  readonly call: HirCallExpression;
+  readonly callExpressionId: MonoExpressionId | undefined;
+  readonly instance: MonoFunctionInstance;
+  readonly substitution: MonoSubstitution;
+  readonly program: TypedHirProgram;
+  readonly transformContext: MonoTransformContext;
+}): { readonly kind: "ok"; readonly call: MonoCallExpression } | { readonly kind: "error" } {
+  const callee = cloneExpressionWithContext({
     source: input.call.callee,
     instance: input.instance,
     substitution: input.substitution,
-    remap: input.remap,
     program: input.program,
-    context: input.context,
-    outgoingEdges: input.outgoingEdges,
-    diagnostics: input.diagnostics,
+    transformContext: input.transformContext,
   });
   if (callee.kind === "error") return { kind: "error" };
   let receiver: MonoExpression | undefined;
   if (input.call.receiver !== undefined) {
-    const clonedReceiver = cloneExpression({
+    const clonedReceiver = cloneExpressionWithContext({
       source: input.call.receiver,
       instance: input.instance,
       substitution: input.substitution,
-      remap: input.remap,
       program: input.program,
-      context: input.context,
-      outgoingEdges: input.outgoingEdges,
-      diagnostics: input.diagnostics,
+      transformContext: input.transformContext,
     });
     if (clonedReceiver.kind === "error") return { kind: "error" };
     receiver = clonedReceiver.expression;
   }
   const clonedArguments: MonoCallArgument[] = [];
   for (const callArgument of input.call.arguments) {
-    const clonedArgument = cloneCallArgument({
+    const clonedArgument = cloneCallArgumentWithContext({
       argument: callArgument,
       instance: input.instance,
       substitution: input.substitution,
-      remap: input.remap,
       program: input.program,
-      context: input.context,
-      outgoingEdges: input.outgoingEdges,
-      diagnostics: input.diagnostics,
+      transformContext: input.transformContext,
     });
     if (clonedArgument.kind === "error") return { kind: "error" };
     clonedArguments.push(clonedArgument.argument);
@@ -198,7 +243,7 @@ export function cloneCall(input: {
       type: ownerArg,
       substitution: input.substitution,
       program: input.program,
-      diagnostics: input.diagnostics,
+      diagnostics: input.transformContext.diagnostics,
     });
     if (normalized.kind === "error") return { kind: "error" };
     ownerTypeArguments.push(normalized.type);
@@ -209,7 +254,7 @@ export function cloneCall(input: {
       type: typeArg,
       substitution: input.substitution,
       program: input.program,
-      diagnostics: input.diagnostics,
+      diagnostics: input.transformContext.diagnostics,
     });
     if (normalized.kind === "error") return { kind: "error" };
     typeArguments.push(normalized.type);
@@ -263,7 +308,7 @@ export function cloneCall(input: {
         functionTypeArguments: typeArguments,
       }),
     );
-    input.outgoingEdges.push({
+    input.transformContext.outgoingEdges.push({
       source: { kind: "function", functionId: input.instance.instanceId },
       targetKind: "function",
       targetKey,
@@ -282,7 +327,7 @@ export function cloneCall(input: {
     (input.call.calleeFunctionId === undefined || input.call.recovered === true) &&
     (input.call.compilerIntrinsic === undefined || input.call.recovered === true)
   ) {
-    input.diagnostics.push(
+    input.transformContext.diagnostics.push(
       monoDiagnostic({
         severity: "error",
         code: "MONO_UNRESOLVED_CALL_TARGET",
@@ -304,25 +349,19 @@ export function cloneCall(input: {
   return { kind: "ok", call };
 }
 
-function cloneCallArgument(input: {
+function cloneCallArgumentWithContext(input: {
   readonly argument: HirCallArgument;
   readonly instance: MonoFunctionInstance;
   readonly substitution: MonoSubstitution;
-  readonly remap: MutableMonoFunctionRemap;
   readonly program: TypedHirProgram;
-  readonly context: MonoResourceKindConcretizationContext;
-  readonly outgoingEdges: MonoOutgoingEdge[];
-  readonly diagnostics: MonoDiagnostic[];
+  readonly transformContext: MonoTransformContext;
 }): { readonly kind: "ok"; readonly argument: MonoCallArgument } | { readonly kind: "error" } {
-  const expression = cloneExpression({
+  const expression = cloneExpressionWithContext({
     source: input.argument.expression,
     instance: input.instance,
     substitution: input.substitution,
-    remap: input.remap,
     program: input.program,
-    context: input.context,
-    outgoingEdges: input.outgoingEdges,
-    diagnostics: input.diagnostics,
+    transformContext: input.transformContext,
   });
   if (expression.kind === "error") return { kind: "error" };
   let place: MonoResourcePlace | undefined;
@@ -331,10 +370,10 @@ function cloneCallArgument(input: {
       place: input.argument.place,
       instance: input.instance,
       substitution: input.substitution,
-      context: input.context,
+      context: input.transformContext.resourceKinds,
       program: input.program,
-      remap: input.remap,
-      diagnostics: input.diagnostics,
+      remap: input.transformContext.remap,
+      diagnostics: input.transformContext.diagnostics,
     });
     if (placeResult.kind === "error") return { kind: "error" };
     place = placeResult.place;

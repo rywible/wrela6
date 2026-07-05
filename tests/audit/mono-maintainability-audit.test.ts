@@ -112,3 +112,18 @@ test("new recursive mono HIR traversal stays in approved cloner modules", () => 
 
   expect(offenders).toEqual([]);
 });
+
+test("mono expression and call cloners expose context-first clone entry points", () => {
+  const expressionSource = monoSource("function-expression-cloner.ts");
+  const callSource = monoSource("function-call-cloner.ts");
+
+  expect(expressionSource).toContain("export function cloneExpressionWithContext");
+  expect(expressionSource).toContain("export function cloneValidationWithContext");
+  expect(expressionSource).toContain("transformContext: MonoTransformContext");
+  expect(expressionSource).toContain("monoTransformExpressionId(");
+
+  expect(callSource).toContain("export function cloneCallExpressionWithContext");
+  expect(callSource).toContain("export function cloneCallWithContext");
+  expect(callSource).toContain("function cloneCallArgumentWithContext");
+  expect(callSource).toContain("transformContext: MonoTransformContext");
+});
