@@ -3,7 +3,7 @@ import type { FunctionId, ImageId, TypeId } from "../semantic/ids";
 import { walkMonoBlock } from "./body-walker";
 import { monoDiagnostic, type MonoDiagnostic } from "./diagnostics";
 import { createConcretizationContext, type MonoFunctionRemap } from "./function-instantiator-shell";
-import { cloneBlock } from "./function-statement-cloner";
+import { cloneBlockWithContext } from "./function-statement-cloner";
 import {
   createMonoTransformContext,
   immutableRemapFrom,
@@ -106,15 +106,12 @@ function instantiateMonoFunctionBodyInternal(
     diagnostics,
   });
 
-  const cloned = cloneBlock({
+  const cloned = cloneBlockWithContext({
     source: sourceFunction.body,
     instance: input.instance,
     substitution: input.substitution,
-    remap: transformContext.remap,
     program: input.program,
-    context: transformContext.resourceKinds,
-    outgoingEdges: transformContext.outgoingEdges,
-    diagnostics: transformContext.diagnostics,
+    transformContext,
   });
   if (cloned.kind === "error") {
     if (diagnostics.length === 0) {

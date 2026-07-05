@@ -18,7 +18,7 @@ import type {
 } from "../semantic/surface/resource-kind";
 import type { CheckedType } from "../semantic/surface/type-model";
 import { monoDiagnostic, type MonoDiagnostic } from "./diagnostics";
-import { instantiatedHirId, instantiatedHirIdKey, type MonoInstanceId } from "./ids";
+import { instantiatedHirIdKey, type MonoInstanceId } from "./ids";
 import { checkInstanceEligibility } from "./instance-eligibility";
 import {
   canonicalFunctionInstanceId,
@@ -44,6 +44,7 @@ import {
   type MonoRequirementOwner,
   type MonoStatementId,
 } from "./mono-hir";
+import { monoExpressionIdFor, monoLocalIdFor, monoStatementIdFor } from "./mono-transform-context";
 import {
   concretizeResourceKind,
   type MonoResourceKindConcretizationContext,
@@ -87,6 +88,8 @@ export interface MonoFunctionRemap {
   >;
   readonly proofExpressionIdRemap: ReadonlyMap<number, MonoProofExpressionId>;
 }
+
+export { monoExpressionIdFor, monoLocalIdFor, monoStatementIdFor };
 
 export function instantiateMonoFunctionShell(
   input: InstantiateMonoFunctionShellInput,
@@ -615,24 +618,6 @@ function monoRequirementIdFor(
     hirId: hirRequirementId,
     instanceId,
   };
-}
-
-export function monoLocalIdFor(instanceId: MonoInstanceId, hirLocalId: HirLocalId): MonoLocalId {
-  return instantiatedHirId(instanceId, hirLocalId);
-}
-
-export function monoExpressionIdFor(
-  instanceId: MonoInstanceId,
-  hirExpressionId: HirExpressionId,
-): MonoExpressionId {
-  return instantiatedHirId(instanceId, hirExpressionId);
-}
-
-export function monoStatementIdFor(
-  instanceId: MonoInstanceId,
-  hirStatementId: HirStatementId,
-): MonoStatementId {
-  return instantiatedHirId(instanceId, hirStatementId);
 }
 
 function monoLocalTable(entries: readonly MonoLocal[]): MonoLocalTable {

@@ -8,7 +8,6 @@ import type {
 import { monoDiagnostic, type MonoDiagnostic } from "./diagnostics";
 import { cloneExpression } from "./function-expression-cloner";
 import { type MonoOutgoingEdge, type MutableMonoFunctionRemap } from "./function-instantiator-body";
-import { monoStatementIdFor } from "./function-instantiator-shell";
 import {
   cloneForIteration,
   cloneResourcePlace,
@@ -28,11 +27,24 @@ import {
   type MonoStatementId,
   type MonoStatementKind,
 } from "./mono-hir";
+import {
+  monoTransformContextFromLegacyCloneState,
+  monoTransformStatementId,
+  type MonoTransformContext,
+} from "./mono-transform-context";
 import { type MonoResourceKindConcretizationContext } from "./resource-kind-concretizer";
 import { type MonoSubstitution } from "./substitution";
 export type CloneStatementResult =
   | { readonly kind: "ok"; readonly statement: MonoStatement | null }
   | { readonly kind: "error" };
+
+interface CloneBlockWithContextInput {
+  readonly source: HirBlock;
+  readonly instance: MonoFunctionInstance;
+  readonly substitution: MonoSubstitution;
+  readonly program: TypedHirProgram;
+  readonly transformContext: MonoTransformContext;
+}
 
 export function cloneBlock(input: {
   readonly source: HirBlock;
@@ -44,17 +56,35 @@ export function cloneBlock(input: {
   readonly outgoingEdges: MonoOutgoingEdge[];
   readonly diagnostics: MonoDiagnostic[];
 }): { readonly kind: "ok"; readonly block: MonoBlock } | { readonly kind: "error" } {
+  return cloneBlockWithContext({
+    source: input.source,
+    instance: input.instance,
+    substitution: input.substitution,
+    program: input.program,
+    transformContext: monoTransformContextFromLegacyCloneState({
+      remap: input.remap,
+      resourceKinds: input.context,
+      outgoingEdges: input.outgoingEdges,
+      diagnostics: input.diagnostics,
+    }),
+  });
+}
+
+export function cloneBlockWithContext(
+  input: CloneBlockWithContextInput,
+): { readonly kind: "ok"; readonly block: MonoBlock } | { readonly kind: "error" } {
   const statements: MonoStatement[] = [];
   for (const source of input.source.statements) {
     const cloned = cloneStatement({
       source,
       instance: input.instance,
       substitution: input.substitution,
-      remap: input.remap,
+      remap: input.transformContext.remap,
       program: input.program,
-      context: input.context,
-      outgoingEdges: input.outgoingEdges,
-      diagnostics: input.diagnostics,
+      context: input.transformContext.resourceKinds,
+      outgoingEdges: input.transformContext.outgoingEdges,
+      diagnostics: input.transformContext.diagnostics,
+      transformContext: input.transformContext,
     });
     if (cloned.kind === "error") return { kind: "error" };
     if (cloned.statement !== null) statements.push(cloned.statement);
@@ -74,12 +104,23 @@ function cloneStatement(input: {
   readonly context: MonoResourceKindConcretizationContext;
   readonly outgoingEdges: MonoOutgoingEdge[];
   readonly diagnostics: MonoDiagnostic[];
+  readonly transformContext: MonoTransformContext;
 }): CloneStatementResult {
-  const nextStatementId = input.source.statementId;
-  const monoStatementId = monoStatementIdFor(input.remap.instanceId, nextStatementId);
-  input.remap.statementRemap.set(nextStatementId, monoStatementId);
+  const monoStatementId = monoTransformStatementId(
+    input.transformContext,
+    input.source.statementId,
+  );
   const sourceOrigin = String(input.source.sourceOrigin);
   const inner = input.source.kind;
+  const statementContext = {
+    instance: input.instance,
+    substitution: input.substitution,
+    remap: input.remap,
+    program: input.program,
+    context: input.context,
+    outgoingEdges: input.outgoingEdges,
+    diagnostics: input.diagnostics,
+  };
   switch (inner.kind) {
     case "block":
       return cloneBlockStatement({
@@ -88,128 +129,71 @@ function cloneStatement(input: {
         sourceOrigin,
         instance: input.instance,
         substitution: input.substitution,
-        remap: input.remap,
         program: input.program,
-        context: input.context,
-        outgoingEdges: input.outgoingEdges,
-        diagnostics: input.diagnostics,
+        transformContext: input.transformContext,
       });
     case "let":
       return cloneLetStatement({
         inner,
         statementId: monoStatementId,
         sourceOrigin,
-        instance: input.instance,
-        substitution: input.substitution,
-        remap: input.remap,
-        program: input.program,
-        context: input.context,
-        outgoingEdges: input.outgoingEdges,
-        diagnostics: input.diagnostics,
+        ...statementContext,
       });
     case "assignment":
       return cloneAssignmentStatement({
         inner,
         statementId: monoStatementId,
         sourceOrigin,
-        instance: input.instance,
-        substitution: input.substitution,
-        remap: input.remap,
-        program: input.program,
-        context: input.context,
-        outgoingEdges: input.outgoingEdges,
-        diagnostics: input.diagnostics,
+        ...statementContext,
       });
     case "if":
       return cloneIfStatement({
         inner,
         statementId: monoStatementId,
         sourceOrigin,
-        instance: input.instance,
-        substitution: input.substitution,
-        remap: input.remap,
-        program: input.program,
-        context: input.context,
-        outgoingEdges: input.outgoingEdges,
-        diagnostics: input.diagnostics,
+        ...statementContext,
       });
     case "while":
       return cloneWhileStatement({
         inner,
         statementId: monoStatementId,
         sourceOrigin,
-        instance: input.instance,
-        substitution: input.substitution,
-        remap: input.remap,
-        program: input.program,
-        context: input.context,
-        outgoingEdges: input.outgoingEdges,
-        diagnostics: input.diagnostics,
+        ...statementContext,
       });
     case "loop":
       return cloneLoopStatement({
         inner,
         statementId: monoStatementId,
         sourceOrigin,
-        instance: input.instance,
-        substitution: input.substitution,
-        remap: input.remap,
-        program: input.program,
-        context: input.context,
-        outgoingEdges: input.outgoingEdges,
-        diagnostics: input.diagnostics,
+        ...statementContext,
       });
     case "for":
       return cloneForStatement({
         inner,
         statementId: monoStatementId,
         sourceOrigin,
-        instance: input.instance,
-        substitution: input.substitution,
-        remap: input.remap,
-        program: input.program,
-        context: input.context,
-        outgoingEdges: input.outgoingEdges,
-        diagnostics: input.diagnostics,
+        ...statementContext,
       });
     case "match":
       return cloneMatchStatement({
         inner,
         statementId: monoStatementId,
         sourceOrigin,
-        instance: input.instance,
-        substitution: input.substitution,
-        remap: input.remap,
-        program: input.program,
-        context: input.context,
-        outgoingEdges: input.outgoingEdges,
-        diagnostics: input.diagnostics,
+        ...statementContext,
       });
     case "validationMatch":
       return cloneValidationMatchStatement({
         inner,
         statementId: monoStatementId,
         sourceOrigin,
-        instance: input.instance,
-        substitution: input.substitution,
-        remap: input.remap,
-        program: input.program,
-        context: input.context,
-        outgoingEdges: input.outgoingEdges,
-        diagnostics: input.diagnostics,
+        ...statementContext,
       });
     case "take":
       return cloneTakeStatement({
         inner,
         statementId: monoStatementId,
         sourceOrigin,
-        instance: input.instance,
-        substitution: input.substitution,
-        remap: input.remap,
-        program: input.program,
-        context: input.context,
-        outgoingEdges: input.outgoingEdges,
-        diagnostics: input.diagnostics,
+        ...statementContext,
       });
     case "return":
       return cloneReturnOrYieldStatement({
@@ -217,13 +201,7 @@ function cloneStatement(input: {
         expression: inner.expression,
         statementId: monoStatementId,
         sourceOrigin,
-        instance: input.instance,
-        substitution: input.substitution,
-        remap: input.remap,
-        program: input.program,
-        context: input.context,
-        outgoingEdges: input.outgoingEdges,
-        diagnostics: input.diagnostics,
+        ...statementContext,
       });
     case "yield":
       return cloneReturnOrYieldStatement({
@@ -231,13 +209,7 @@ function cloneStatement(input: {
         expression: inner.expression,
         statementId: monoStatementId,
         sourceOrigin,
-        instance: input.instance,
-        substitution: input.substitution,
-        remap: input.remap,
-        program: input.program,
-        context: input.context,
-        outgoingEdges: input.outgoingEdges,
-        diagnostics: input.diagnostics,
+        ...statementContext,
       });
     case "break":
       return {
@@ -262,13 +234,7 @@ function cloneStatement(input: {
         inner,
         statementId: monoStatementId,
         sourceOrigin,
-        instance: input.instance,
-        substitution: input.substitution,
-        remap: input.remap,
-        program: input.program,
-        context: input.context,
-        outgoingEdges: input.outgoingEdges,
-        diagnostics: input.diagnostics,
+        ...statementContext,
       });
     case "error":
       return reportRecovery({
@@ -286,21 +252,15 @@ function cloneBlockStatement(input: {
   readonly sourceOrigin: string;
   readonly instance: MonoFunctionInstance;
   readonly substitution: MonoSubstitution;
-  readonly remap: MutableMonoFunctionRemap;
   readonly program: TypedHirProgram;
-  readonly context: MonoResourceKindConcretizationContext;
-  readonly outgoingEdges: MonoOutgoingEdge[];
-  readonly diagnostics: MonoDiagnostic[];
+  readonly transformContext: MonoTransformContext;
 }): CloneStatementResult {
-  const blockResult = cloneBlock({
+  const blockResult = cloneBlockWithContext({
     source: input.inner.block,
     instance: input.instance,
     substitution: input.substitution,
-    remap: input.remap,
     program: input.program,
-    context: input.context,
-    outgoingEdges: input.outgoingEdges,
-    diagnostics: input.diagnostics,
+    transformContext: input.transformContext,
   });
   if (blockResult.kind === "error") return { kind: "error" };
   const statement: MonoStatement = {

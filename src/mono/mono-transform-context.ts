@@ -1,7 +1,7 @@
 import type { HirExpressionId, HirLocalId, HirRequirementId, HirStatementId } from "../hir/ids";
 import type { MonoDiagnostic } from "./diagnostics";
 import type { MonoOutgoingEdge } from "./function-instantiator-body";
-import type { MonoInstanceId } from "./ids";
+import { instantiatedHirId, type MonoInstanceId } from "./ids";
 import type {
   MonoExpressionId,
   MonoInstantiatedProofId,
@@ -28,6 +28,24 @@ export interface MonoTransformContext {
   readonly diagnostics: MonoDiagnostic[];
 }
 
+export function monoLocalIdFor(instanceId: MonoInstanceId, hirLocalId: HirLocalId): MonoLocalId {
+  return instantiatedHirId(instanceId, hirLocalId);
+}
+
+export function monoExpressionIdFor(
+  instanceId: MonoInstanceId,
+  hirExpressionId: HirExpressionId,
+): MonoExpressionId {
+  return instantiatedHirId(instanceId, hirExpressionId);
+}
+
+export function monoStatementIdFor(
+  instanceId: MonoInstanceId,
+  hirStatementId: HirStatementId,
+): MonoStatementId {
+  return instantiatedHirId(instanceId, hirStatementId);
+}
+
 export function createMonoTransformContext(input: {
   readonly remap: MonoFunctionRemap;
   readonly resourceKinds: MonoResourceKindConcretizationContext;
@@ -44,6 +62,51 @@ export function createMonoTransformContext(input: {
 
 export function monoTransformRemap(context: MonoTransformContext): MonoFunctionRemap {
   return immutableRemapFrom(context.remap);
+}
+
+export interface LegacyMonoCloneState {
+  readonly remap: MutableMonoFunctionRemap;
+  readonly resourceKinds: MonoResourceKindConcretizationContext;
+  readonly outgoingEdges: MonoOutgoingEdge[];
+  readonly diagnostics: MonoDiagnostic[];
+}
+
+export function monoTransformContextFromLegacyCloneState(
+  input: LegacyMonoCloneState,
+): MonoTransformContext {
+  return {
+    remap: input.remap,
+    resourceKinds: input.resourceKinds,
+    outgoingEdges: input.outgoingEdges,
+    diagnostics: input.diagnostics,
+  };
+}
+
+export function monoTransformLocalId(
+  context: MonoTransformContext,
+  sourceId: HirLocalId,
+): MonoLocalId {
+  const id = monoLocalIdFor(context.remap.instanceId, sourceId);
+  context.remap.localRemap.set(sourceId, id);
+  return id;
+}
+
+export function monoTransformExpressionId(
+  context: MonoTransformContext,
+  sourceId: HirExpressionId,
+): MonoExpressionId {
+  const id = monoExpressionIdFor(context.remap.instanceId, sourceId);
+  context.remap.expressionRemap.set(sourceId, id);
+  return id;
+}
+
+export function monoTransformStatementId(
+  context: MonoTransformContext,
+  sourceId: HirStatementId,
+): MonoStatementId {
+  const id = monoStatementIdFor(context.remap.instanceId, sourceId);
+  context.remap.statementRemap.set(sourceId, id);
+  return id;
 }
 
 export function mutableRemapFrom(remap: MonoFunctionRemap): MutableMonoFunctionRemap {
