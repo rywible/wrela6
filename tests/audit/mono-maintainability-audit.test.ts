@@ -127,3 +127,12 @@ test("mono expression and call cloners expose context-first clone entry points",
   expect(callSource).toContain("function cloneCallArgumentWithContext");
   expect(callSource).toContain("transformContext: MonoTransformContext");
 });
+
+test("mono statement cloner exposes context-first block and match-arm entry points", () => {
+  const source = monoSource("function-statement-cloner.ts");
+
+  expect(source).toContain("export function cloneBlockWithContext");
+  expect(source).toContain("export function cloneMatchArmWithContext");
+  expect(source).toContain("transformContext: MonoTransformContext");
+  expect(source).toContain("monoTransformStatementId(");
+});
