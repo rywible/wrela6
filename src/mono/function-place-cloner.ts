@@ -9,14 +9,13 @@ import { type HirOwnedId } from "../hir/ids";
 import type { ConcreteResourceKind } from "../semantic/surface/resource-kind";
 import type { CheckedType } from "../semantic/surface/type-model";
 import { monoDiagnostic, type MonoDiagnostic } from "./diagnostics";
-import { cloneCall } from "./function-call-cloner";
-import { cloneExpression, type CloneExpressionResult } from "./function-expression-cloner";
-import { type MonoOutgoingEdge, type MutableMonoFunctionRemap } from "./function-instantiator-body";
+import { cloneCallWithContext } from "./function-call-cloner";
 import {
-  createNormalizationContext,
-  monoExpressionIdFor,
-  monoLocalIdFor,
-} from "./function-instantiator-shell";
+  cloneExpressionWithContext,
+  type CloneExpressionResult,
+} from "./function-expression-cloner";
+import { type MonoOutgoingEdge, type MutableMonoFunctionRemap } from "./function-instantiator-body";
+import { createNormalizationContext } from "./function-instantiator-shell";
 import { type CloneStatementResult } from "./function-statement-cloner";
 import { type MonoInstanceId } from "./ids";
 import { normalizeMonoCheckedType } from "./instantiation-key";
@@ -38,6 +37,12 @@ import {
   type MonoResourceKindConcretizationContext,
 } from "./resource-kind-concretizer";
 import { substituteCheckedType, type MonoSubstitution } from "./substitution";
+import {
+  monoExpressionIdFor,
+  monoLocalIdFor,
+  monoTransformContextFromLegacyCloneState,
+  type MonoTransformContext,
+} from "./mono-transform-context";
 export function cloneForIteration(input: {
   readonly iteration: HirForIteration;
   readonly instance: MonoFunctionInstance;
@@ -46,6 +51,45 @@ export function cloneForIteration(input: {
   readonly program: TypedHirProgram;
   readonly diagnostics: MonoDiagnostic[];
   readonly sourceOrigin: string;
+}): { readonly kind: "ok"; readonly iteration: MonoForIteration } | { readonly kind: "error" } {
+  return cloneForIterationWithResourceContext({
+    iteration: input.iteration,
+    instance: input.instance,
+    substitution: input.substitution,
+    program: input.program,
+    sourceOrigin: input.sourceOrigin,
+    resourceKinds: input.context,
+    diagnostics: input.diagnostics,
+  });
+}
+
+export function cloneForIterationWithContext(input: {
+  readonly iteration: HirForIteration;
+  readonly instance: MonoFunctionInstance;
+  readonly substitution: MonoSubstitution;
+  readonly program: TypedHirProgram;
+  readonly sourceOrigin: string;
+  readonly transformContext: MonoTransformContext;
+}): { readonly kind: "ok"; readonly iteration: MonoForIteration } | { readonly kind: "error" } {
+  return cloneForIterationWithResourceContext({
+    iteration: input.iteration,
+    instance: input.instance,
+    substitution: input.substitution,
+    program: input.program,
+    sourceOrigin: input.sourceOrigin,
+    resourceKinds: input.transformContext.resourceKinds,
+    diagnostics: input.transformContext.diagnostics,
+  });
+}
+
+function cloneForIterationWithResourceContext(input: {
+  readonly iteration: HirForIteration;
+  readonly instance: MonoFunctionInstance;
+  readonly substitution: MonoSubstitution;
+  readonly program: TypedHirProgram;
+  readonly sourceOrigin: string;
+  readonly resourceKinds: MonoResourceKindConcretizationContext;
+  readonly diagnostics: MonoDiagnostic[];
 }): { readonly kind: "ok"; readonly iteration: MonoForIteration } | { readonly kind: "error" } {
   switch (input.iteration.kind) {
     case "ordinary":
@@ -61,7 +105,7 @@ export function cloneForIteration(input: {
       const itemKind = concretizeResourceKindForClone({
         kind: input.iteration.itemResourceKind,
         type: itemType.type,
-        context: input.context,
+        context: input.resourceKinds,
         substitution: input.substitution,
         diagnostics: input.diagnostics,
       });
@@ -96,27 +140,43 @@ export function cloneTakeOperand(input: {
   readonly outgoingEdges: MonoOutgoingEdge[];
   readonly diagnostics: MonoDiagnostic[];
 }): { readonly kind: "ok"; readonly operand: MonoTakeOperand } | { readonly kind: "error" } {
+  return cloneTakeOperandWithContext({
+    operand: input.operand,
+    instance: input.instance,
+    substitution: input.substitution,
+    program: input.program,
+    transformContext: monoTransformContextFromLegacyCloneState({
+      remap: input.remap,
+      resourceKinds: input.context,
+      outgoingEdges: input.outgoingEdges,
+      diagnostics: input.diagnostics,
+    }),
+  });
+}
+
+export function cloneTakeOperandWithContext(input: {
+  readonly operand: HirTakeOperand;
+  readonly instance: MonoFunctionInstance;
+  readonly substitution: MonoSubstitution;
+  readonly program: TypedHirProgram;
+  readonly transformContext: MonoTransformContext;
+}): { readonly kind: "ok"; readonly operand: MonoTakeOperand } | { readonly kind: "error" } {
   switch (input.operand.kind) {
     case "place": {
-      const place = cloneResourcePlace({
+      const place = cloneResourcePlaceWithContext({
         place: input.operand.place,
         instance: input.instance,
         substitution: input.substitution,
-        context: input.context,
         program: input.program,
-        remap: input.remap,
-        diagnostics: input.diagnostics,
+        transformContext: input.transformContext,
       });
       if (place.kind === "error") return { kind: "error" };
-      const expression = cloneExpression({
+      const expression = cloneExpressionWithContext({
         source: input.operand.expression,
         instance: input.instance,
         substitution: input.substitution,
-        remap: input.remap,
         program: input.program,
-        context: input.context,
-        outgoingEdges: input.outgoingEdges,
-        diagnostics: input.diagnostics,
+        transformContext: input.transformContext,
       });
       if (expression.kind === "error") return { kind: "error" };
       return {
@@ -126,44 +186,39 @@ export function cloneTakeOperand(input: {
     }
     case "takeOnlyCall": {
       const callExpressionId = monoExpressionIdFor(
-        input.remap.instanceId,
+        input.transformContext.remap.instanceId,
         input.operand.callExpressionId,
       );
-      const call = cloneCall({
+      const call = cloneCallWithContext({
         call: input.operand.call,
         callExpressionId,
         instance: input.instance,
         substitution: input.substitution,
-        remap: input.remap,
         program: input.program,
-        context: input.context,
-        outgoingEdges: input.outgoingEdges,
-        diagnostics: input.diagnostics,
+        transformContext: input.transformContext,
       });
       if (call.kind === "error") return { kind: "error" };
-      const resultPlace = cloneResourcePlace({
+      const resultPlace = cloneResourcePlaceWithContext({
         place: input.operand.resultPlace,
         instance: input.instance,
         substitution: input.substitution,
-        context: input.context,
         program: input.program,
-        remap: input.remap,
-        diagnostics: input.diagnostics,
+        transformContext: input.transformContext,
       });
       if (resultPlace.kind === "error") return { kind: "error" };
       const resultType = normalizeMonoCheckedTypeForClone({
         type: input.operand.resultType,
         substitution: input.substitution,
         program: input.program,
-        diagnostics: input.diagnostics,
+        diagnostics: input.transformContext.diagnostics,
       });
       if (resultType.kind === "error") return { kind: "error" };
       const resultResourceKind = concretizeResourceKindForClone({
         kind: input.operand.resultResourceKind,
         type: resultType.type,
-        context: input.context,
+        context: input.transformContext.resourceKinds,
         substitution: input.substitution,
-        diagnostics: input.diagnostics,
+        diagnostics: input.transformContext.diagnostics,
       });
       if (resultResourceKind.kind === "error") return { kind: "error" };
       return {
@@ -181,15 +236,12 @@ export function cloneTakeOperand(input: {
     case "error": {
       let expression: MonoExpression | undefined;
       if (input.operand.expression !== undefined) {
-        const cloned = cloneExpression({
+        const cloned = cloneExpressionWithContext({
           source: input.operand.expression,
           instance: input.instance,
           substitution: input.substitution,
-          remap: input.remap,
           program: input.program,
-          context: input.context,
-          outgoingEdges: input.outgoingEdges,
-          diagnostics: input.diagnostics,
+          transformContext: input.transformContext,
         });
         if (cloned.kind === "error") return { kind: "error" };
         expression = cloned.expression;
@@ -213,21 +265,44 @@ export function cloneTakeKind(input: {
   readonly diagnostics: MonoDiagnostic[];
   readonly sourceOrigin: string;
 }): { readonly kind: "ok"; readonly takeKind: MonoTakeKind } | { readonly kind: "error" } {
+  return cloneTakeKindWithContext({
+    takeKind: input.takeKind,
+    instance: input.instance,
+    substitution: input.substitution,
+    program: input.program,
+    sourceOrigin: input.sourceOrigin,
+    transformContext: monoTransformContextFromLegacyCloneState({
+      remap: input.remap,
+      resourceKinds: input.context,
+      outgoingEdges: input.outgoingEdges,
+      diagnostics: input.diagnostics,
+    }),
+  });
+}
+
+export function cloneTakeKindWithContext(input: {
+  readonly takeKind: HirTakeKind;
+  readonly instance: MonoFunctionInstance;
+  readonly substitution: MonoSubstitution;
+  readonly program: TypedHirProgram;
+  readonly sourceOrigin: string;
+  readonly transformContext: MonoTransformContext;
+}): { readonly kind: "ok"; readonly takeKind: MonoTakeKind } | { readonly kind: "error" } {
   switch (input.takeKind.kind) {
     case "stream": {
       const itemType = normalizeMonoCheckedTypeForClone({
         type: input.takeKind.itemType,
         substitution: input.substitution,
         program: input.program,
-        diagnostics: input.diagnostics,
+        diagnostics: input.transformContext.diagnostics,
       });
       if (itemType.kind === "error") return { kind: "error" };
       const itemKind = concretizeResourceKindForClone({
         kind: input.takeKind.itemResourceKind,
         type: itemType.type,
-        context: input.context,
+        context: input.transformContext.resourceKinds,
         substitution: input.substitution,
-        diagnostics: input.diagnostics,
+        diagnostics: input.transformContext.diagnostics,
       });
       if (itemKind.kind === "error") return { kind: "error" };
       return {
@@ -246,14 +321,12 @@ export function cloneTakeKind(input: {
       };
     }
     case "buffer": {
-      const bufferPlace = cloneResourcePlace({
+      const bufferPlace = cloneResourcePlaceWithContext({
         place: input.takeKind.bufferPlace,
         instance: input.instance,
         substitution: input.substitution,
-        context: input.context,
         program: input.program,
-        remap: input.remap,
-        diagnostics: input.diagnostics,
+        transformContext: input.transformContext,
       });
       if (bufferPlace.kind === "error") return { kind: "error" };
       return {
@@ -292,9 +365,30 @@ export function cloneResourcePlace(input: {
   readonly remap: MutableMonoFunctionRemap;
   readonly diagnostics: MonoDiagnostic[];
 }): { readonly kind: "ok"; readonly place: MonoResourcePlace } | { readonly kind: "error" } {
+  return cloneResourcePlaceWithContext({
+    place: input.place,
+    instance: input.instance,
+    substitution: input.substitution,
+    program: input.program,
+    transformContext: monoTransformContextFromLegacyCloneState({
+      remap: input.remap,
+      resourceKinds: input.context,
+      outgoingEdges: [],
+      diagnostics: input.diagnostics,
+    }),
+  });
+}
+
+export function cloneResourcePlaceWithContext(input: {
+  readonly place: HirResourcePlace;
+  readonly instance: MonoFunctionInstance;
+  readonly substitution: MonoSubstitution;
+  readonly program: TypedHirProgram;
+  readonly transformContext: MonoTransformContext;
+}): { readonly kind: "ok"; readonly place: MonoResourcePlace } | { readonly kind: "error" } {
   const substituted = substituteCheckedType(input.place.type, input.substitution);
   if (substituted.diagnostics.length > 0) {
-    input.diagnostics.push(...substituted.diagnostics);
+    input.transformContext.diagnostics.push(...substituted.diagnostics);
     return { kind: "error" };
   }
   const normalized = normalizeMonoCheckedType(
@@ -302,7 +396,7 @@ export function cloneResourcePlace(input: {
     createNormalizationContext(input.program),
   );
   if (normalized.kind === "error") {
-    input.diagnostics.push(...normalized.diagnostics);
+    input.transformContext.diagnostics.push(...normalized.diagnostics);
     return { kind: "error" };
   }
   const monoType = normalized.type;
@@ -310,17 +404,21 @@ export function cloneResourcePlace(input: {
     kind: input.place.resourceKind,
     ...(monoType.kind === "applied" ? { appliedType: monoType } : {}),
     ...(monoType.kind === "target" ? { targetTypeId: monoType.targetTypeId } : {}),
-    context: { ...input.context, substitution: input.substitution },
+    context: { ...input.transformContext.resourceKinds, substitution: input.substitution },
   });
   if (kindResult.kind === "error") {
-    input.diagnostics.push(kindResult.diagnostic);
+    input.transformContext.diagnostics.push(kindResult.diagnostic);
     return { kind: "error" };
   }
-  const root = clonePlaceRoot(input.place.root, input.remap, input.instance.instanceId);
+  const root = clonePlaceRoot(
+    input.place.root,
+    input.transformContext.remap,
+    input.instance.instanceId,
+  );
   const projection = input.place.projection.map(clonePlaceProjection);
   let localId: MonoLocalId | undefined;
   if (input.place.localId !== undefined) {
-    const remapped = input.remap.localRemap.get(input.place.localId);
+    const remapped = input.transformContext.remap.localRemap.get(input.place.localId);
     if (remapped !== undefined) {
       localId = remapped;
     }

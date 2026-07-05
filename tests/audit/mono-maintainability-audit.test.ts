@@ -136,3 +136,17 @@ test("mono statement cloner exposes context-first block and match-arm entry poin
   expect(source).toContain("transformContext: MonoTransformContext");
   expect(source).toContain("monoTransformStatementId(");
 });
+
+test("mono place take and validation-statement cloners expose context-first entry points", () => {
+  const placeSource = monoSource("function-place-cloner.ts");
+  const validationSource = monoSource("function-validation-statement-cloner.ts");
+
+  expect(placeSource).toContain("export function cloneResourcePlaceWithContext");
+  expect(placeSource).toContain("function cloneTakeOperandWithContext");
+  expect(placeSource).toContain("function cloneTakeKindWithContext");
+  expect(placeSource).toContain("function cloneForIterationWithContext");
+  expect(placeSource).toContain("transformContext: MonoTransformContext");
+
+  expect(validationSource).toContain("export function cloneValidationMatchStatementWithContext");
+  expect(validationSource).toContain("transformContext: MonoTransformContext");
+});
