@@ -1,61 +1,42 @@
 import {
   CollectingDiagnosticSink,
-  ImportDiscovery,
   KeywordTable,
   Lexer,
   ModulePath,
   SourceText,
+  moduleImportRequestsFromParsedTopLevelDeclarations,
   parseModuleGraph as parseFrontendModuleGraph,
   type LexedModule,
-  type ParsedModuleGraph,
 } from "../../frontend";
-import {
-  lowerTypedHir as lowerSourceTypedHir,
-  type LowerTypedHirInput,
-  type LowerTypedHirResult,
-} from "../../hir";
-import type {
-  ComputeRepresentationLayoutFactsInput,
-  ComputeRepresentationLayoutFactsResult,
-} from "../../layout";
+import { Parser } from "../../frontend/parser/parser";
+import { lowerTypedHir as lowerSourceTypedHir, type LowerTypedHirInput } from "../../hir";
+import type { ComputeRepresentationLayoutFactsInput } from "../../layout";
 import { computeRepresentationLayoutFacts as computeSourceRepresentationLayoutFacts } from "../../layout";
 import {
   monomorphizeWholeImage as monomorphizeSourceWholeImage,
   type MonomorphizeWholeImageInput,
-  type MonomorphizeWholeImageResult,
 } from "../../mono";
 import {
   constructOptIr as constructSourceOptIr,
   optimizeOptIr as optimizeSourceOptIr,
   productionOptIrOptimizationPolicy,
   type BuildOptimizedOptIrInput,
-  type ConstructOptIrResult,
-  type OptimizeOptIrResult,
 } from "../../opt-ir";
-import type { OptIrFactSet } from "../../opt-ir/facts/fact-index";
-import type { OptIrOperation } from "../../opt-ir/operations";
-import type { OptIrProgram } from "../../opt-ir/program";
-import {
-  checkProofAndResources as checkProofAndResourcesSource,
-  type CheckProofAndResourcesInput,
-  type CheckProofAndResourcesResult,
-} from "../../proof-check";
+import { checkProofAndResources as checkProofAndResourcesSource } from "../../proof-check";
 import { layoutAuthorityFingerprintForProofCheckInput } from "../../proof-check/validation/input-validator";
 import {
   buildProofMir as buildSourceProofMir,
   type BuildProofMirInput,
-  type BuildProofMirResult,
 } from "../../proof-mir/proof-mir-builder";
+import type { Diagnostic } from "../../shared/diagnostics";
 import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
 import { buildItemIndex, type ItemIndex } from "../../semantic/item-index";
 import { CoreTypeCatalog, resolveNames } from "../../semantic/names";
 import { checkSemanticSurface } from "../../semantic/surface";
-import { type PlatformPrimitiveId, type TypeId } from "../../semantic/ids";
-import { uefiAArch64TargetDiagnostic, type UefiAArch64TargetDiagnostic } from "./diagnostics";
-import type {
-  CompilerPackageInput,
-  UefiAArch64ValidationFixturePacketSource,
-} from "./package-input";
+import type { CheckedType } from "../../semantic/surface";
+import { type TypeId } from "../../semantic/ids";
+import type { UefiAArch64TargetDiagnostic } from "./diagnostics";
+import { moduleNameToUefiPackageModulePathKey } from "./package-input";
 import {
   uefiAArch64CompilerIntrinsicNameCatalog,
   uefiAArch64PlatformPrimitiveNameCatalog,
@@ -66,15 +47,10 @@ import {
   productionUefiAArch64ProofCheckInputAuthority,
   productionUefiAArch64ProofMirBuildTargetContext,
 } from "./target-surfaces";
-import type {
-  UefiAArch64StaticChar16String,
-  UefiAArch64StaticChar16StringPointer,
-} from "./firmware-strings";
 import {
-  compilerIntrinsicCallsFromTypedHir,
-  extractUefiAArch64StaticChar16MetadataFromCompilerIntrinsics,
+  materializeStaticChar16ConstantPoolReferences,
   optimizedOptIrArtifact,
-  remapStaticChar16MetadataToOptIrValues,
+  staticChar16MetadataFromOptIrConstantPool,
 } from "./package-pipeline-static-char16";
 import {
   layoutFactsToProofMirInput,
@@ -87,19 +63,69 @@ import {
 } from "./package-pipeline-stage-inputs";
 import { packageSemanticTargetSurface } from "./package-pipeline-semantic-target";
 import { uefiAArch64SourceApiBridge } from "./source-api-bridge";
+import type {
+  PackageModuleGraphParseInput,
+  PackageMonomorphizedImageAdapter,
+  PackageMonomorphizedImageInput,
+  PackageOptimizedOptIrAdapter,
+  PackageOptimizedOptIrInput,
+  PackageParsedModuleGraphAdapter,
+  PackageProofCheckAdapter,
+  PackageProofCheckInput,
+  PackageProofMirAdapter,
+  PackageProofMirInput,
+  PackageRepresentationLayoutFactsAdapter,
+  PackageRepresentationLayoutFactsInput,
+  PackageTypedHirAdapter,
+  PackageTypedHirInput,
+  RunUefiAArch64PackagePipelineToOptIrInput,
+  UefiAArch64PackageOptIrPipelineOutput,
+  UefiAArch64PackagePipelineDependencies,
+  UefiAArch64PackagePipelineStageKey,
+  UefiAArch64PackageProofCheckPipelineOutput,
+  UefiAArch64PackageStageResult,
+} from "./package-pipeline-adapters";
+import { passedVerification, uefiAArch64Ok, type UefiAArch64TargetResult } from "./result";
 import {
-  passedVerification,
-  uefiAArch64Error,
-  uefiAArch64Ok,
-  verificationSummaryFromRuns,
-  type UefiAArch64TargetResult,
-} from "./result";
-import type { UefiAArch64TargetDriverSurface } from "./target-driver-surface";
+  PACKAGE_PIPELINE_VERIFIER_KEY,
+  createUefiAArch64StageRecorder,
+  failedOptIrStages,
+  mapPackageStageDiagnostics,
+  packagePipelineDiagnostic,
+  packagePipelineError,
+  passedOptIrStages,
+  sourcePayloadFromDiagnostic,
+} from "./package-pipeline-records";
 
-const PACKAGE_PIPELINE_VERIFIER_KEY = "uefi-aarch64-package-pipeline";
 const PACKAGE_PIPELINE_RUN_KEY = "to-opt-ir";
+const PACKAGE_PIPELINE_PROOF_CHECK_RUN_KEY = "to-proof-check";
 
-export { extractUefiAArch64StaticChar16MetadataFromCompilerIntrinsics } from "./package-pipeline-static-char16";
+export type {
+  PackageModuleGraphParseInput,
+  PackageMonomorphizedImageAdapter,
+  PackageMonomorphizedImageInput,
+  PackageOptimizedOptIrAdapter,
+  PackageOptimizedOptIrInput,
+  PackageParsedModuleGraphAdapter,
+  PackageProofCheckAdapter,
+  PackageProofCheckInput,
+  PackageProofMirAdapter,
+  PackageProofMirInput,
+  PackageRepresentationLayoutFactsAdapter,
+  PackageRepresentationLayoutFactsInput,
+  PackageTypedHirAdapter,
+  PackageTypedHirInput,
+  RunUefiAArch64PackagePipelineToOptIrInput,
+  UefiAArch64OptimizedOptIrArtifact,
+  UefiAArch64PackageOptIrPipelineOutput,
+  UefiAArch64PackagePipelineDependencies,
+  UefiAArch64PackagePipelineStageKey,
+  UefiAArch64PackageProofCheckPipelineOutput,
+  UefiAArch64PackageStageResult,
+  UefiAArch64StaticChar16IntrinsicMetadata,
+  UefiAArch64StaticChar16PointerRecord,
+  UefiAArch64StageRecord,
+} from "./package-pipeline-adapters";
 export {
   layoutFactsToProofMirInput,
   monomorphizedImageToLayoutFactsInput,
@@ -110,199 +136,10 @@ export {
   proofMirToCheckInput,
 } from "./package-pipeline-stage-inputs";
 
-export type UefiAArch64PackagePipelineStageKey =
-  | "frontend"
-  | "semantic"
-  | "monomorphization"
-  | "layout-facts"
-  | "proof-mir"
-  | "proof-check"
-  | "opt-ir";
-
-export interface UefiAArch64StageRecord<StageKey extends string> {
-  readonly stageKey: StageKey;
-  readonly status: "passed" | "failed";
-}
-
-export interface PackageModuleGraphParseInput {
-  readonly packageInput: CompilerPackageInput;
-}
-
-export interface PackageParsedModuleGraphAdapter {
-  readonly kind: "parsed-graph";
-  readonly parsedGraph: ParsedModuleGraph;
-}
-
-export interface PackageTypedHirInput {
-  readonly packageInput: CompilerPackageInput;
-  readonly target: UefiAArch64TargetDriverSurface;
-  readonly parsedGraph: PackageParsedModuleGraphAdapter;
-}
-
-export interface PackageTypedHirAdapter {
-  readonly kind: "typed-hir";
-  readonly lowerTypedHirInput: LowerTypedHirInput;
-  readonly lowerTypedHirResult: LowerTypedHirResult;
-  readonly sourceApiResultConstructorTypeId?: TypeId;
-}
-
-export interface PackageMonomorphizedImageInput {
-  readonly target: UefiAArch64TargetDriverSurface;
-  readonly typedHir: PackageTypedHirAdapter;
-}
-
-export interface PackageMonomorphizedImageAdapter {
-  readonly kind: "mono-image";
-  readonly monomorphizeWholeImageInput: MonomorphizeWholeImageInput;
-  readonly monomorphizeWholeImageResult: MonomorphizeWholeImageResult & { readonly kind: "ok" };
-  readonly reachablePlatformPrimitiveIds: readonly PlatformPrimitiveId[];
-  readonly staticChar16Metadata: UefiAArch64StaticChar16IntrinsicMetadata;
-  readonly sourceApiResultConstructorTypeId?: TypeId;
-}
-
-export interface PackageRepresentationLayoutFactsInput {
-  readonly target: UefiAArch64TargetDriverSurface;
-  readonly monomorphizedImage: PackageMonomorphizedImageAdapter;
-}
-
-export interface PackageRepresentationLayoutFactsAdapter {
-  readonly kind: "layout-facts";
-  readonly computeRepresentationLayoutFactsInput: ComputeRepresentationLayoutFactsInput;
-  readonly computeRepresentationLayoutFactsResult: ComputeRepresentationLayoutFactsResult & {
-    readonly kind: "ok";
-  };
-  readonly staticChar16Metadata: UefiAArch64StaticChar16IntrinsicMetadata;
-  readonly sourceApiResultConstructorTypeId?: TypeId;
-}
-
-export interface PackageProofMirInput {
-  readonly target: UefiAArch64TargetDriverSurface;
-  readonly monomorphizedImage: PackageMonomorphizedImageAdapter;
-  readonly layoutFacts: PackageRepresentationLayoutFactsAdapter;
-}
-
-export interface PackageProofMirAdapter {
-  readonly kind: "proof-mir";
-  readonly buildProofMirInput: BuildProofMirInput;
-  readonly buildProofMirResult: BuildProofMirResult & { readonly kind: "ok" };
-  readonly staticChar16Metadata: UefiAArch64StaticChar16IntrinsicMetadata;
-  readonly sourceApiResultConstructorTypeId?: TypeId;
-}
-
-export interface PackageProofCheckInput {
-  readonly target: UefiAArch64TargetDriverSurface;
-  readonly proofMir: PackageProofMirAdapter;
-  readonly layoutFacts: PackageRepresentationLayoutFactsAdapter;
-}
-
-export interface PackageProofCheckAdapter {
-  readonly kind: "proof-check";
-  readonly checkProofAndResourcesInput: CheckProofAndResourcesInput;
-  readonly checkProofAndResourcesResult: CheckProofAndResourcesResult & { readonly kind: "ok" };
-  readonly staticChar16Metadata: UefiAArch64StaticChar16IntrinsicMetadata;
-  readonly sourceApiResultConstructorTypeId?: TypeId;
-}
-
-export interface PackageOptimizedOptIrInput {
-  readonly target: UefiAArch64TargetDriverSurface;
-  readonly proofCheck: PackageProofCheckAdapter;
-  readonly proofMir: PackageProofMirAdapter;
-  readonly layoutFacts: PackageRepresentationLayoutFactsAdapter;
-}
-
-export interface UefiAArch64StaticChar16PointerRecord {
-  readonly valueKey: string;
-  readonly pointer: UefiAArch64StaticChar16StringPointer;
-}
-
-export interface UefiAArch64StaticChar16IntrinsicMetadata {
-  readonly staticChar16Strings: readonly UefiAArch64StaticChar16String[];
-  readonly staticChar16Pointers: readonly UefiAArch64StaticChar16PointerRecord[];
-}
-
-export interface UefiAArch64OptimizedOptIrArtifact {
-  readonly program: OptIrProgram;
-  readonly operations: readonly OptIrOperation[];
-  readonly unoptimizedOperations: readonly OptIrOperation[];
-  readonly facts: OptIrFactSet;
-  readonly staticChar16Strings: readonly UefiAArch64StaticChar16String[];
-  readonly staticChar16Pointers: readonly UefiAArch64StaticChar16PointerRecord[];
-  readonly validationFixturePacketSources?: readonly UefiAArch64ValidationFixturePacketSource[];
-}
-
-export interface PackageOptimizedOptIrAdapter {
-  readonly program: OptIrProgram;
-  readonly operations: readonly OptIrOperation[];
-  readonly unoptimizedOperations: readonly OptIrOperation[];
-  readonly facts: OptIrFactSet;
-  readonly staticChar16Strings: readonly UefiAArch64StaticChar16String[];
-  readonly staticChar16Pointers: readonly UefiAArch64StaticChar16PointerRecord[];
-  readonly buildOptimizedOptIrInput: BuildOptimizedOptIrInput;
-  readonly constructOptIrResult: ConstructOptIrResult & { readonly kind: "ok" };
-  readonly buildOptimizedOptIrResult: OptimizeOptIrResult & { readonly kind: "ok" };
-}
-
-export type UefiAArch64PackageStageResult<Value> =
-  | {
-      readonly kind: "ok";
-      readonly value: Value;
-      readonly diagnostics: readonly UefiAArch64TargetDiagnostic[];
-    }
-  | {
-      readonly kind: "error";
-      readonly diagnostics: readonly UefiAArch64TargetDiagnostic[];
-    };
-
-export interface UefiAArch64PackagePipelineDependencies {
-  readonly parseModuleGraph: (
-    input: PackageModuleGraphParseInput,
-  ) => UefiAArch64PackageStageResult<PackageParsedModuleGraphAdapter>;
-  readonly lowerTypedHir: (
-    input: PackageTypedHirInput,
-  ) => UefiAArch64PackageStageResult<PackageTypedHirAdapter>;
-  readonly monomorphizeWholeImage: (
-    input: PackageMonomorphizedImageInput,
-  ) => UefiAArch64PackageStageResult<PackageMonomorphizedImageAdapter>;
-  readonly computeRepresentationLayoutFacts: (
-    input: PackageRepresentationLayoutFactsInput,
-  ) => UefiAArch64PackageStageResult<PackageRepresentationLayoutFactsAdapter>;
-  readonly buildProofMir: (
-    input: PackageProofMirInput,
-  ) => UefiAArch64PackageStageResult<PackageProofMirAdapter>;
-  readonly checkProofAndResources: (
-    input: PackageProofCheckInput,
-  ) => UefiAArch64PackageStageResult<PackageProofCheckAdapter>;
-  readonly buildOptimizedOptIr: (
-    input: PackageOptimizedOptIrInput,
-  ) => UefiAArch64PackageStageResult<PackageOptimizedOptIrAdapter>;
-}
-
-export interface RunUefiAArch64PackagePipelineToOptIrInput {
-  readonly packageInput: CompilerPackageInput;
-  readonly target: UefiAArch64TargetDriverSurface;
-}
-
-export interface UefiAArch64PackageOptIrPipelineOutput {
-  readonly target: UefiAArch64TargetDriverSurface;
-  readonly parsedGraph: PackageParsedModuleGraphAdapter;
-  readonly typedHir: PackageTypedHirAdapter;
-  readonly monomorphizedImage: PackageMonomorphizedImageAdapter;
-  readonly layoutFacts: PackageRepresentationLayoutFactsAdapter;
-  readonly proofMir: PackageProofMirAdapter;
-  readonly proofCheck: PackageProofCheckAdapter;
-  readonly optimizedOptIr: PackageOptimizedOptIrAdapter;
-  readonly optIr: UefiAArch64OptimizedOptIrArtifact;
-  readonly semanticPlatformCatalogFingerprint: string;
-  readonly proofMirRuntimeCatalogFingerprint: string;
-  readonly reachablePlatformPrimitiveIds: readonly unknown[];
-  readonly runtimeCatalogFingerprint: string;
-  readonly stages: readonly UefiAArch64StageRecord<UefiAArch64PackagePipelineStageKey>[];
-}
-
-export function runUefiAArch64PackagePipelineToOptIr(
+export function runUefiAArch64PackagePipelineToProofCheck(
   input: RunUefiAArch64PackagePipelineToOptIrInput,
   dependencies: UefiAArch64PackagePipelineDependencies = productionPackagePipelineDependencies(),
-): UefiAArch64TargetResult<UefiAArch64PackageOptIrPipelineOutput> {
+): UefiAArch64TargetResult<UefiAArch64PackageProofCheckPipelineOutput> {
   const stages = createUefiAArch64StageRecorder<UefiAArch64PackagePipelineStageKey>();
 
   const parsed = dependencies.parseModuleGraph(packageInputToModuleGraphParseInput(input));
@@ -351,23 +188,6 @@ export function runUefiAArch64PackagePipelineToOptIr(
   }
   stages.passed("proof-check");
 
-  const optIr = dependencies.buildOptimizedOptIr(
-    proofCheckToOptimizedOptIrInput(
-      proofCheck.value,
-      proofMir.value,
-      layoutFacts.value,
-      input.target,
-    ),
-  );
-  if (optIr.kind === "error") {
-    return packagePipelineError(stages.failed("opt-ir"), optIr.diagnostics);
-  }
-  const optIrArtifact = optimizedOptIrArtifact(optIr.value, input.packageInput);
-  if (optIrArtifact.kind === "error") {
-    return packagePipelineError(stages.failed("opt-ir"), optIrArtifact.diagnostics);
-  }
-  stages.passed("opt-ir");
-
   return uefiAArch64Ok({
     value: Object.freeze({
       target: input.target,
@@ -377,8 +197,6 @@ export function runUefiAArch64PackagePipelineToOptIr(
       layoutFacts: layoutFacts.value,
       proofMir: proofMir.value,
       proofCheck: proofCheck.value,
-      optimizedOptIr: optIr.value,
-      optIr: optIrArtifact.value,
       semanticPlatformCatalogFingerprint: input.target.semanticPlatformCatalogFingerprint,
       proofMirRuntimeCatalogFingerprint: input.target.proofMirRuntimeCatalogFingerprint,
       reachablePlatformPrimitiveIds: Object.freeze([
@@ -386,6 +204,46 @@ export function runUefiAArch64PackagePipelineToOptIr(
       ]),
       runtimeCatalogFingerprint: input.target.proofMirRuntimeCatalogFingerprint,
       stages: stages.records(),
+    }),
+    verification: passedVerification(
+      PACKAGE_PIPELINE_VERIFIER_KEY,
+      PACKAGE_PIPELINE_PROOF_CHECK_RUN_KEY,
+    ),
+  });
+}
+
+export function runUefiAArch64PackagePipelineToOptIr(
+  input: RunUefiAArch64PackagePipelineToOptIrInput,
+  dependencies: UefiAArch64PackagePipelineDependencies = productionPackagePipelineDependencies(),
+): UefiAArch64TargetResult<UefiAArch64PackageOptIrPipelineOutput> {
+  const proofChecked = runUefiAArch64PackagePipelineToProofCheck(input, dependencies);
+  if (proofChecked.kind === "error") return proofChecked;
+
+  const optIr = dependencies.buildOptimizedOptIr(
+    proofCheckToOptimizedOptIrInput(
+      proofChecked.value.proofCheck,
+      proofChecked.value.proofMir,
+      proofChecked.value.layoutFacts,
+      input.target,
+    ),
+  );
+  if (optIr.kind === "error") {
+    return packagePipelineError(failedOptIrStages(proofChecked.value.stages), optIr.diagnostics);
+  }
+  const optIrArtifact = optimizedOptIrArtifact(optIr.value, input.packageInput);
+  if (optIrArtifact.kind === "error") {
+    return packagePipelineError(
+      failedOptIrStages(proofChecked.value.stages),
+      optIrArtifact.diagnostics,
+    );
+  }
+
+  return uefiAArch64Ok({
+    value: Object.freeze({
+      ...proofChecked.value,
+      optimizedOptIr: optIr.value,
+      optIr: optIrArtifact.value,
+      stages: passedOptIrStages(proofChecked.value.stages),
     }),
     verification: passedVerification(PACKAGE_PIPELINE_VERIFIER_KEY, PACKAGE_PIPELINE_RUN_KEY),
   });
@@ -411,40 +269,43 @@ export function parseModuleGraph(
     keywords: KeywordTable.default(),
     diagnostics,
   });
-  const imports = new ImportDiscovery({ diagnostics });
+  const parser = new Parser();
   const modules: LexedModule[] = [...input.packageInput.sourceFiles]
     .sort((left, right) => compareCodeUnitStrings(left.sourceKey, right.sourceKey))
     .map((sourceFile) => {
       const source = SourceText.from(sourceFile.sourceKey, sourceFile.text);
       const lexResult = lexer.lex(source);
-      const path = ModulePath.from(moduleNameToModulePathKey(sourceFile.moduleName));
+      const parseResult = parser.parse({ source, tokens: lexResult.tokens });
+      const path = ModulePath.from(moduleNameToUefiPackageModulePathKey(sourceFile.moduleName));
       return {
         path,
         source,
         tokens: lexResult.tokens,
-        imports: imports.discover({
+        imports: moduleImportRequestsFromParsedTopLevelDeclarations({
           importer: path,
           source,
-          tokens: lexResult.tokens,
+          tree: parseResult.tree,
         }),
+        parseResult,
       };
     });
   const parsedGraph = parseFrontendModuleGraph({
     graph: {
-      entry: ModulePath.from(moduleNameToModulePathKey(input.packageInput.entryModuleName)),
+      entry: ModulePath.from(
+        moduleNameToUefiPackageModulePathKey(input.packageInput.entryModuleName),
+      ),
       modules,
     },
     lexerDiagnostics: diagnostics.diagnostics,
   });
   const targetDiagnostics = [
-    ...(parsedGraph.diagnostics.length === 0
-      ? []
-      : [
-          packagePipelineDiagnostic(
-            "frontend",
-            `frontend-diagnostics:${parsedGraph.diagnostics.length}`,
-          ),
-        ]),
+    ...parsedGraph.diagnostics.map((diagnostic) =>
+      packagePipelineDiagnostic(
+        "frontend",
+        frontendDiagnosticStableDetail(diagnostic),
+        sourcePayloadFromDiagnostic(diagnostic),
+      ),
+    ),
     ...missingImportDiagnostics(modules),
   ];
   if (targetDiagnostics.length > 0) {
@@ -463,7 +324,9 @@ function missingImportDiagnostics(
   const moduleKeys = new Set(modules.map((module) => module.path.key));
   return modules.flatMap((module) =>
     module.imports
-      .filter((request) => !moduleKeys.has(moduleNameToModulePathKey(request.moduleName)))
+      .filter(
+        (request) => !moduleKeys.has(moduleNameToUefiPackageModulePathKey(request.moduleName)),
+      )
       .map((request) =>
         packagePipelineDiagnostic(
           "frontend",
@@ -473,9 +336,14 @@ function missingImportDiagnostics(
   );
 }
 
-function moduleNameToModulePathKey(moduleName: string): string {
-  const normalized = moduleName.replace(/\./g, "/");
-  return normalized.endsWith(".wr") ? normalized : `${normalized}.wr`;
+function frontendDiagnosticStableDetail(diagnostic: Diagnostic): string {
+  return [
+    "frontend",
+    diagnostic.code,
+    diagnostic.source.name,
+    String(diagnostic.span.start),
+    String(diagnostic.span.end),
+  ].join(":");
 }
 
 export function lowerTypedHir(
@@ -523,7 +391,6 @@ export function lowerTypedHir(
       diagnostics: mapPackageStageDiagnostics("semantic", surface.diagnostics),
     };
   }
-
   const lowerTypedHirInput = Object.freeze({
     graph,
     index: indexResult.index,
@@ -531,6 +398,7 @@ export function lowerTypedHir(
     coreTypes,
     program: surface.program,
     ...(surface.image !== undefined ? { image: surface.image } : {}),
+    enabledTargetFeatures: input.packageInput.enabledTargetFeatures,
   } satisfies LowerTypedHirInput);
   const lowerTypedHirResult = lowerSourceTypedHir(lowerTypedHirInput);
   if (lowerTypedHirResult.diagnostics.length > 0) {
@@ -539,6 +407,8 @@ export function lowerTypedHir(
       diagnostics: mapPackageStageDiagnostics("semantic", lowerTypedHirResult.diagnostics),
     };
   }
+  const semanticValidationContracts = surface.program.proofSurface.validationContracts.entries();
+  const hirValidations = lowerTypedHirResult.program.proofMetadata.validations.entries();
 
   return {
     kind: "ok",
@@ -547,6 +417,15 @@ export function lowerTypedHir(
       lowerTypedHirInput,
       lowerTypedHirResult,
       ...sourceApiResultConstructorTypeId(indexResult.index),
+      ...validationResultConstructorTypeIds([
+        ...semanticValidationContracts.map((contract) => contract.resultType),
+        ...hirValidations.map((validation) => validation.pendingResultPlace.type),
+      ]),
+      ...statusCarrierPayloadTypeIds([
+        ...sourceApiResultPayloadTypes(indexResult.index),
+        ...semanticValidationContracts.map((contract) => contract.errPayloadType),
+        ...hirValidations.map((validation) => validation.errPayloadType),
+      ]),
     }),
     diagnostics: [],
   };
@@ -560,6 +439,43 @@ function sourceApiResultConstructorTypeId(index: ItemIndex): {
     return {};
   }
   return { sourceApiResultConstructorTypeId: bridge.resultType.constructor.typeId };
+}
+
+function sourceApiResultPayloadTypes(index: ItemIndex): readonly CheckedType[] {
+  const bridge = uefiAArch64SourceApiBridge(index);
+  return bridge === undefined ? Object.freeze([]) : Object.freeze([bridge.bootErrorType]);
+}
+
+function validationResultConstructorTypeIds(
+  resultTypes: readonly CheckedType[],
+  existingIds: readonly TypeId[] = Object.freeze([]),
+): {
+  readonly validationResultConstructorTypeIds?: readonly TypeId[];
+} {
+  const ids = new Set<TypeId>(existingIds);
+  for (const resultType of resultTypes) {
+    if (resultType.kind === "applied" && resultType.constructor.kind === "source") {
+      ids.add(resultType.constructor.typeId);
+    }
+  }
+  const sorted = [...ids].sort((left, right) => (left as number) - (right as number));
+  return sorted.length === 0 ? {} : { validationResultConstructorTypeIds: Object.freeze(sorted) };
+}
+
+function statusCarrierPayloadTypeIds(
+  payloadTypes: readonly CheckedType[],
+  existingIds: readonly TypeId[] = Object.freeze([]),
+): {
+  readonly statusCarrierPayloadTypeIds?: readonly TypeId[];
+} {
+  const ids = new Set<TypeId>(existingIds);
+  for (const payloadType of payloadTypes) {
+    if (payloadType.kind === "source") {
+      ids.add(payloadType.typeId);
+    }
+  }
+  const sorted = [...ids].sort((left, right) => (left as number) - (right as number));
+  return sorted.length === 0 ? {} : { statusCarrierPayloadTypeIds: Object.freeze(sorted) };
 }
 
 export function monomorphizeWholeImage(
@@ -583,12 +499,7 @@ export function monomorphizeWholeImage(
     };
   }
 
-  const staticChar16Metadata = extractUefiAArch64StaticChar16MetadataFromCompilerIntrinsics(
-    compilerIntrinsicCallsFromTypedHir(lowerTypedHirResult),
-  );
-  if (staticChar16Metadata.kind === "error") {
-    return { kind: "error", diagnostics: staticChar16Metadata.diagnostics };
-  }
+  const monoValidations = monomorphizeWholeImageResult.program.proofMetadata.validations.entries();
 
   return {
     kind: "ok",
@@ -599,10 +510,17 @@ export function monomorphizeWholeImage(
       reachablePlatformPrimitiveIds: Object.freeze([
         ...monomorphizeWholeImageResult.reachablePlatformPrimitiveIds,
       ]),
-      staticChar16Metadata: staticChar16Metadata.value,
       ...(input.typedHir.sourceApiResultConstructorTypeId === undefined
         ? {}
         : { sourceApiResultConstructorTypeId: input.typedHir.sourceApiResultConstructorTypeId }),
+      ...validationResultConstructorTypeIds(
+        monoValidations.map((validation) => validation.pendingResultPlace.type),
+        input.typedHir.validationResultConstructorTypeIds,
+      ),
+      ...statusCarrierPayloadTypeIds(
+        monoValidations.map((validation) => validation.errPayloadType),
+        input.typedHir.statusCarrierPayloadTypeIds,
+      ),
     }),
     diagnostics: [],
   };
@@ -636,12 +554,22 @@ export function computeRepresentationLayoutFacts(
       kind: "layout-facts" as const,
       computeRepresentationLayoutFactsInput,
       computeRepresentationLayoutFactsResult,
-      staticChar16Metadata: input.monomorphizedImage.staticChar16Metadata,
       ...(input.monomorphizedImage.sourceApiResultConstructorTypeId === undefined
         ? {}
         : {
             sourceApiResultConstructorTypeId:
               input.monomorphizedImage.sourceApiResultConstructorTypeId,
+          }),
+      ...(input.monomorphizedImage.validationResultConstructorTypeIds === undefined
+        ? {}
+        : {
+            validationResultConstructorTypeIds:
+              input.monomorphizedImage.validationResultConstructorTypeIds,
+          }),
+      ...(input.monomorphizedImage.statusCarrierPayloadTypeIds === undefined
+        ? {}
+        : {
+            statusCarrierPayloadTypeIds: input.monomorphizedImage.statusCarrierPayloadTypeIds,
           }),
     }),
     diagnostics: [],
@@ -675,12 +603,22 @@ export function buildProofMir(
       kind: "proof-mir" as const,
       buildProofMirInput,
       buildProofMirResult,
-      staticChar16Metadata: input.monomorphizedImage.staticChar16Metadata,
       ...(input.monomorphizedImage.sourceApiResultConstructorTypeId === undefined
         ? {}
         : {
             sourceApiResultConstructorTypeId:
               input.monomorphizedImage.sourceApiResultConstructorTypeId,
+          }),
+      ...(input.monomorphizedImage.validationResultConstructorTypeIds === undefined
+        ? {}
+        : {
+            validationResultConstructorTypeIds:
+              input.monomorphizedImage.validationResultConstructorTypeIds,
+          }),
+      ...(input.monomorphizedImage.statusCarrierPayloadTypeIds === undefined
+        ? {}
+        : {
+            statusCarrierPayloadTypeIds: input.monomorphizedImage.statusCarrierPayloadTypeIds,
           }),
     }),
     diagnostics: [],
@@ -703,7 +641,7 @@ export function checkProofAndResources(
     return {
       kind: "error",
       diagnostics: authority.diagnostics.map((diagnostic) =>
-        packageStageDiagnostic("proof-check", `${diagnostic.code}:${diagnostic.stableDetail}`),
+        packagePipelineDiagnostic("proof-check", `${diagnostic.code}:${diagnostic.stableDetail}`),
       ),
     };
   }
@@ -725,10 +663,17 @@ export function checkProofAndResources(
       kind: "proof-check" as const,
       checkProofAndResourcesInput: authority.value,
       checkProofAndResourcesResult,
-      staticChar16Metadata: input.proofMir.staticChar16Metadata,
       ...(input.proofMir.sourceApiResultConstructorTypeId === undefined
         ? {}
         : { sourceApiResultConstructorTypeId: input.proofMir.sourceApiResultConstructorTypeId }),
+      ...(input.proofMir.validationResultConstructorTypeIds === undefined
+        ? {}
+        : {
+            validationResultConstructorTypeIds: input.proofMir.validationResultConstructorTypeIds,
+          }),
+      ...(input.proofMir.statusCarrierPayloadTypeIds === undefined
+        ? {}
+        : { statusCarrierPayloadTypeIds: input.proofMir.statusCarrierPayloadTypeIds }),
     }),
     diagnostics: [],
   };
@@ -740,10 +685,25 @@ export function buildOptimizedOptIr(
   const checkProofAndResourcesResult = input.proofCheck.checkProofAndResourcesResult;
   const layoutFactsResult = input.layoutFacts.computeRepresentationLayoutFactsResult;
   const targetOptions =
-    input.proofCheck.sourceApiResultConstructorTypeId === undefined
+    input.proofCheck.sourceApiResultConstructorTypeId === undefined &&
+    input.proofCheck.validationResultConstructorTypeIds === undefined &&
+    input.proofCheck.statusCarrierPayloadTypeIds === undefined
       ? {}
       : {
-          sourceApiResultConstructorTypeId: input.proofCheck.sourceApiResultConstructorTypeId,
+          ...(input.proofCheck.sourceApiResultConstructorTypeId === undefined
+            ? {}
+            : {
+                sourceApiResultConstructorTypeId: input.proofCheck.sourceApiResultConstructorTypeId,
+              }),
+          ...(input.proofCheck.validationResultConstructorTypeIds === undefined
+            ? {}
+            : {
+                validationResultConstructorTypeIds:
+                  input.proofCheck.validationResultConstructorTypeIds,
+              }),
+          ...(input.proofCheck.statusCarrierPayloadTypeIds === undefined
+            ? {}
+            : { statusCarrierPayloadTypeIds: input.proofCheck.statusCarrierPayloadTypeIds }),
         };
 
   const buildOptimizedOptIrInput = Object.freeze({
@@ -763,8 +723,15 @@ export function buildOptimizedOptIr(
       diagnostics: mapPackageStageDiagnostics("opt-ir", constructOptIrResult.diagnostics),
     };
   }
-  const optimized = optimizeSourceOptIr({
+  const optIrWithStaticChar16 = materializeStaticChar16ConstantPoolReferences({
     program: constructOptIrResult.program,
+    operations: constructOptIrResult.program.operations ?? [],
+  });
+  if (optIrWithStaticChar16.kind === "error") {
+    return { kind: "error", diagnostics: optIrWithStaticChar16.diagnostics };
+  }
+  const optimized = optimizeSourceOptIr({
+    program: optIrWithStaticChar16.program,
     facts: constructOptIrResult.facts,
     target: buildOptimizedOptIrInput.target,
     policy: buildOptimizedOptIrInput.policy,
@@ -788,8 +755,7 @@ export function buildOptimizedOptIr(
       ]),
     };
   }
-  const staticChar16Metadata = remapStaticChar16MetadataToOptIrValues({
-    metadata: input.proofCheck.staticChar16Metadata,
+  const optimizedStaticChar16Metadata = staticChar16MetadataFromOptIrConstantPool({
     program: buildOptimizedOptIrResult.program,
     operations: buildOptimizedOptIrResult.operations,
   });
@@ -799,81 +765,14 @@ export function buildOptimizedOptIr(
     value: Object.freeze({
       program: buildOptimizedOptIrResult.program,
       operations: Object.freeze([...buildOptimizedOptIrResult.operations]),
-      unoptimizedOperations: Object.freeze([...(constructOptIrResult.program.operations ?? [])]),
+      unoptimizedOperations: Object.freeze([...optIrWithStaticChar16.operations]),
       facts: buildOptimizedOptIrResult.facts,
-      staticChar16Strings: Object.freeze([...staticChar16Metadata.staticChar16Strings]),
-      staticChar16Pointers: Object.freeze([...staticChar16Metadata.staticChar16Pointers]),
+      staticChar16Strings: Object.freeze([...optimizedStaticChar16Metadata.staticChar16Strings]),
+      staticChar16Pointers: Object.freeze([...optimizedStaticChar16Metadata.staticChar16Pointers]),
       buildOptimizedOptIrInput,
       constructOptIrResult,
       buildOptimizedOptIrResult,
     }),
     diagnostics: [],
   };
-}
-
-function createUefiAArch64StageRecorder<StageKey extends string>() {
-  const records: UefiAArch64StageRecord<StageKey>[] = [];
-  return {
-    passed(stageKey: StageKey): readonly UefiAArch64StageRecord<StageKey>[] {
-      records.push(Object.freeze({ stageKey, status: "passed" as const }));
-      return this.records();
-    },
-    failed(stageKey: StageKey): readonly UefiAArch64StageRecord<StageKey>[] {
-      records.push(Object.freeze({ stageKey, status: "failed" as const }));
-      return this.records();
-    },
-    records(): readonly UefiAArch64StageRecord<StageKey>[] {
-      return Object.freeze([...records]);
-    },
-  };
-}
-
-function packagePipelineError<Value>(
-  stages: readonly UefiAArch64StageRecord<UefiAArch64PackagePipelineStageKey>[],
-  diagnostics: readonly UefiAArch64TargetDiagnostic[],
-): UefiAArch64TargetResult<Value> {
-  return uefiAArch64Error({
-    diagnostics,
-    verification: verificationSummaryFromRuns(
-      stages.map((stage) => ({
-        verifierKey: PACKAGE_PIPELINE_VERIFIER_KEY,
-        runKey: stage.stageKey,
-        status: stage.status,
-      })),
-    ),
-  });
-}
-
-function packageStageDiagnostic(
-  stageKey: UefiAArch64PackagePipelineStageKey,
-  stableDetail: string,
-): UefiAArch64TargetDiagnostic {
-  return uefiAArch64TargetDiagnostic({
-    code: "UEFI_AARCH64_PIPELINE_FAILED",
-    ownerKey: `uefi-aarch64-package-pipeline:${stageKey}`,
-    stableDetail,
-  });
-}
-
-function packagePipelineDiagnostic(
-  stageKey: UefiAArch64PackagePipelineStageKey,
-  stableDetail: string,
-): UefiAArch64TargetDiagnostic {
-  return packageStageDiagnostic(stageKey, stableDetail);
-}
-
-function mapPackageStageDiagnostics(
-  stageKey: UefiAArch64PackagePipelineStageKey,
-  diagnostics: readonly {
-    readonly code?: string;
-    readonly stableDetail?: string;
-    readonly message?: string;
-  }[],
-): readonly UefiAArch64TargetDiagnostic[] {
-  return diagnostics.map((diagnostic, index) => {
-    const originalDetail =
-      diagnostic.stableDetail ?? diagnostic.message ?? diagnostic.code ?? `diagnostic:${index}`;
-    const originalCode = diagnostic.code ?? "unknown";
-    return packageStageDiagnostic(stageKey, `${originalCode}:${originalDetail}`);
-  });
 }

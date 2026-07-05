@@ -55,8 +55,12 @@ describe("KeywordTable", () => {
 
     test("expression and binding keywords", () => {
       expect(keywords.lookup("let")).toBe(TokenKind.Let);
+      expect(keywords.lookup("true")).toBe(TokenKind.True);
+      expect(keywords.lookup("false")).toBe(TokenKind.False);
       expect(keywords.lookup("if")).toBe(TokenKind.If);
       expect(keywords.lookup("not")).toBe(TokenKind.Not);
+      expect(keywords.lookup("and")).toBe(TokenKind.And);
+      expect(keywords.lookup("or")).toBe(TokenKind.Or);
       expect(keywords.lookup("while")).toBe(TokenKind.While);
       expect(keywords.lookup("for")).toBe(TokenKind.For);
       expect(keywords.lookup("in")).toBe(TokenKind.In);

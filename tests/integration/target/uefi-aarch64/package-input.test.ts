@@ -1,5 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, normalize, relative } from "node:path";
+import {
   compilerPackageInput,
   defaultUefiAArch64SourceRoots,
   packageInputFromFixtureProject,
@@ -89,6 +102,26 @@ describe("UEFI compiler package input", () => {
     ]);
   });
 
+  test("rejects API module names that cannot round-trip through module paths", () => {
+    const result = compilerPackageInput({
+      packageKey: "smoke-basic",
+      entryModuleName: "../evil",
+      sourceRoots: [
+        { kind: "project", rootKey: "project", rootPath: "src", trustedForAuthority: false },
+      ],
+      sourceFiles: [
+        { sourceKey: "src/image.wr", moduleName: "image", text: "module image\n" },
+        { sourceKey: "src/evil.wr", moduleName: "../evil", text: "module evil\n" },
+      ],
+    });
+
+    expect(result.kind).toBe("error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual([
+      "package-input:invalid-entry-module-name:../evil",
+      "package-input:invalid-source-module-name:../evil",
+    ]);
+  });
+
   test("adds toolchain stdlib as untrusted source by default", () => {
     expect(defaultUefiAArch64SourceRoots({ projectSourceRoot: "src" })).toEqual([
       { kind: "project", rootKey: "project", rootPath: "src", trustedForAuthority: false },
@@ -148,6 +181,7 @@ describe("UEFI compiler package input", () => {
           if (text === undefined) throw new Error(`Unexpected read: ${path}`);
           return text;
         },
+        realPath: (path) => path,
       },
     });
 
@@ -161,6 +195,91 @@ describe("UEFI compiler package input", () => {
         text: "module core.unit\n",
       },
     ]);
+  });
+
+  test("skips lexical source-root escape entries from injected filesystem hosts", () => {
+    const result = packageInputFromFixtureProject("/fixtures/smoke-basic", {
+      sourceRoots: defaultUefiAArch64SourceRoots({
+        projectSourceRoot: "src",
+        stdlibMode: "none",
+      }),
+      filesystem: {
+        readDirectory: (path) =>
+          path === "/fixtures/smoke-basic/src" ? ["image.wr", "../escape.wr"] : [],
+        isDirectory: () => false,
+        readTextFile: (path) => {
+          if (path !== "/fixtures/smoke-basic/src/image.wr") {
+            throw new Error(`Unexpected read: ${path}`);
+          }
+          return "module image\n";
+        },
+        realPath: (path) => path,
+      },
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.value.sourceFiles).toEqual([
+      { sourceKey: "src/image.wr", moduleName: "image", text: "module image\n" },
+    ]);
+  });
+
+  test("keeps realpath-aware package traversal inside each declared source root", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "wrela-package-input-"));
+    try {
+      const project = join(workspace, "project");
+      const source = join(project, "src");
+      const inside = join(source, "inside");
+      const outside = join(workspace, "outside");
+      const siblingPrefix = join(project, "src-evil");
+      mkdirSync(inside, { recursive: true });
+      mkdirSync(outside, { recursive: true });
+      mkdirSync(siblingPrefix, { recursive: true });
+      writeFileSync(join(source, "image.wr"), "module image\n");
+      writeFileSync(join(inside, "local.wr"), "module inside.local\n");
+      writeFileSync(join(outside, "leaked-file.wr"), "module leaked.file\n");
+      mkdirSync(join(outside, "leaked-dir"));
+      writeFileSync(join(outside, "leaked-dir", "secret.wr"), "module leaked.dir.secret\n");
+      writeFileSync(join(siblingPrefix, "prefix-secret.wr"), "module leaked.prefix\n");
+      symlinkSync(join(outside, "leaked-file.wr"), join(source, "file-link.wr"));
+      symlinkSync(join(outside, "leaked-dir"), join(source, "dir-link"));
+      symlinkSync(join(siblingPrefix, "prefix-secret.wr"), join(source, "prefix-link.wr"));
+      symlinkSync(join(inside, "local.wr"), join(source, "inside-link.wr"));
+      symlinkSync(source, join(source, "source-cycle"));
+
+      const result = packageInputFromFixtureProject(project, {
+        sourceRoots: defaultUefiAArch64SourceRoots({
+          projectSourceRoot: "src",
+          stdlibMode: "none",
+        }),
+        filesystem: {
+          readDirectory: (path) => readdirSync(path),
+          isDirectory: (path) => statSync(path).isDirectory(),
+          readTextFile: (path) => readFileSync(path, "utf8"),
+          realPath: (path) => realpathSync(path),
+        },
+        paths: { join, normalize, relative },
+      });
+
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") return;
+      expect(result.value.sourceFiles.map((sourceFile) => sourceFile.sourceKey)).toEqual([
+        "src/image.wr",
+        "src/inside-link.wr",
+        "src/inside/local.wr",
+      ]);
+      expect(result.value.sourceFiles.map((sourceFile) => sourceFile.text)).not.toContain(
+        "module leaked.file\n",
+      );
+      expect(result.value.sourceFiles.map((sourceFile) => sourceFile.text)).not.toContain(
+        "module leaked.dir.secret\n",
+      );
+      expect(result.value.sourceFiles.map((sourceFile) => sourceFile.text)).not.toContain(
+        "module leaked.prefix\n",
+      );
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
   });
 
   test("passes enabled target features through fixture package input", () => {
@@ -180,6 +299,7 @@ describe("UEFI compiler package input", () => {
           }
           return "module image\n";
         },
+        realPath: (path) => path,
       },
     });
 
@@ -211,6 +331,7 @@ describe("UEFI compiler package input", () => {
           }
           return "module image\n";
         },
+        realPath: (path) => path,
       },
     });
 
@@ -238,6 +359,7 @@ describe("UEFI compiler package input", () => {
         readDirectory: (path) => (path === "/fixtures/packet-counter/src" ? ["image.wr"] : []),
         isDirectory: () => false,
         readTextFile: () => "module image\n",
+        realPath: (path) => path,
       },
     });
 

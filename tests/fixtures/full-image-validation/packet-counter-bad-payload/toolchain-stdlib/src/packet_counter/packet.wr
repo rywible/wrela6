@@ -1,6 +1,5 @@
+use Validation from wrela_std.core.validation
 use UefiStatus from wrela_std.target.uefi.status
-
-class Validation[Ok, Err, Source]:
 
 enum PacketKind:
     count
@@ -26,7 +25,7 @@ validated buffer CounterPacket:
         source.len <= max_frame_bytes else UefiStatus.bad_buffer_size
         layout.fits else UefiStatus.bad_buffer_size
 
-pub fn validate_counter_packet(
+fn validate_counter_packet(
     source: Ptr,
     max_frame_bytes: usize,
 ) -> Validation[CounterPacket, UefiStatus, Ptr]:

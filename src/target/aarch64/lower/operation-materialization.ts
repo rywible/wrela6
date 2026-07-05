@@ -1,8 +1,12 @@
-import type { OptIrFactId, OptIrRegionId, OptIrValueId } from "../../../opt-ir/ids";
+import type {
+  OptIrConstantId,
+  OptIrFactId,
+  OptIrRegionId,
+  OptIrValueId,
+} from "../../../opt-ir/ids";
 import type { OptIrOperation } from "../../../opt-ir/operations";
 import type { AArch64FactQuery } from "../facts/aarch64-fact-query";
 import type { AArch64MachineInstruction } from "../machine-ir/machine-instruction";
-import { aarch64FloatMachineType } from "../machine-ir/machine-types";
 import {
   aarch64MemoryOrderingMetadata,
   type AArch64RegionMemoryType,
@@ -18,10 +22,7 @@ import {
 import type { AArch64RelocationReference } from "../machine-ir/relocation-reference";
 import type { AArch64VirtualRegister } from "../machine-ir/virtual-register";
 import { selectAArch64EndianDecode } from "../select/endian-selection";
-import {
-  selectAArch64FusedMultiplyAdd,
-  type AArch64FpEnvironmentPolicy,
-} from "../select/fp-selection";
+import type { AArch64FpEnvironmentPolicy } from "../select/fp-selection";
 import { selectAArch64VectorOperation } from "../select/vector-selection";
 import { aarch64OperationSupportForKind } from "../target-surface/operation-matrix";
 import type { AArch64AbiTargetSurface } from "../target-surface/target-surface";
@@ -56,6 +57,11 @@ import type {
 } from "./pipeline-stages";
 import type { AArch64RegionAddressBasisDecision } from "./region-lowering";
 import { AArch64CallOperationMaterializer } from "./operation-materializer-calls";
+import {
+  materializeAArch64ConstAddrOperation,
+  type AArch64StaticReadonlyPointer,
+} from "./operation-materializer-const-addr";
+import { materializeAArch64FpNumericOperation } from "./operation-materializer-fp-numeric";
 
 export {
   machineTypeForOptIrType,
@@ -85,6 +91,7 @@ export interface AArch64OperationMaterializationContext {
   readonly factQuery?: AArch64FactQuery;
   readonly operationSupportContracts?: ReadonlyMap<number, AArch64OperationSupportContract>;
   readonly firmware?: AArch64FirmwareLoweringContext;
+  readonly staticReadonlyPointers?: ReadonlyMap<OptIrConstantId, AArch64StaticReadonlyPointer>;
   readonly regionAddressBasisForRegion?: (
     regionId: OptIrRegionId,
   ) => AArch64RegionAddressBasisDecision | undefined;
@@ -226,6 +233,8 @@ class OperationMaterializer extends AArch64CallOperationMaterializer {
           operation.constant.normalizedValue,
         );
         return { kind: "ok" };
+      case "constAddr":
+        return this.materializeConstAddr(operation);
       case "integerUnary":
         return this.materializeIntegerUnary(operation);
       case "integerBinary":
@@ -308,6 +317,20 @@ class OperationMaterializer extends AArch64CallOperationMaterializer {
       case "proofErasedMarker":
         return { kind: "ok" };
     }
+  }
+
+  private materializeConstAddr(
+    operation: OperationOf<"constAddr">,
+  ): { readonly kind: "ok" } | { readonly kind: "error"; readonly stableDetail: string } {
+    return materializeAArch64ConstAddrOperation({
+      operation,
+      staticReadonlyPointers: this.context.staticReadonlyPointers,
+      resultRegister: (operationToMaterialize, index) =>
+        this.resultRegister(operationToMaterialize, index),
+      materializeStaticReadonlyPointer: (input) => this.materializeStaticReadonlyPointer(input),
+      emitCopy: (output, input, label) => this.emitCopy(output, input, label),
+      recordExplanation: (message) => this.explanation.push(message),
+    });
   }
 
   private materializeIntegerUnary(operation: OperationOf<"integerUnary">): { readonly kind: "ok" } {
@@ -776,57 +799,27 @@ class OperationMaterializer extends AArch64CallOperationMaterializer {
   private materializeFpNumeric(
     operation: OperationOf<"fpNumeric">,
   ): { readonly kind: "ok" } | { readonly kind: "error"; readonly stableDetail: string } {
-    const output =
-      operation.resultIds.length === 0
-        ? this.syntheticRegister("fp-discard", aarch64FloatMachineType(64))
-        : this.resultRegister(operation, 0);
-    const left = this.sourceRegisterAt(operation.sourceValueIds, 0);
-    if (left.kind === "error") return left;
-    const right = this.sourceRegisterAt(operation.sourceValueIds, 1);
-    if (right.kind === "error") return right;
-    const addend = this.sourceRegisterAt(operation.sourceValueIds, 2);
-    if (addend.kind === "error") return addend;
-    const selection = selectAArch64FusedMultiplyAdd({
-      operationId: operation.operationId,
-      factAnswer: this.context.factQuery?.fpContractionForOperation(operation.operationId) ?? {
-        kind: "unknown",
-        factsUsed: [],
-        explanation: [
-          `No FP numeric fact query is in scope for operation:${String(operation.operationId)}.`,
-        ],
-      },
+    return materializeAArch64FpNumericOperation({
+      operation,
+      fpContractionForOperation: (operationId) =>
+        this.context.factQuery?.fpContractionForOperation(operationId),
       fpEnvironment: this.context.fpEnvironment,
-      resultRegisterClass: output.registerClass,
-      sourceRegisterClasses: [
-        left.register.registerClass,
-        right.register.registerClass,
-        addend.register.registerClass,
-      ],
-      vectorPolicy: this.context.vectorPolicyForOperation?.(operation)?.policy,
-      numericContract: operation.numericContract,
+      vectorPolicyForOperation: (operationToMaterialize) =>
+        this.context.vectorPolicyForOperation?.(operationToMaterialize),
+      syntheticRegister: (label, type) => this.syntheticRegister(label, type),
+      resultRegister: (operationToMaterialize, index) =>
+        this.resultRegister(operationToMaterialize, index),
+      sourceRegisterAt: (sourceValueIds, index) => this.sourceRegisterAt(sourceValueIds, index),
+      recordDecision: (decision) =>
+        this.recordDecision(
+          decision as {
+            readonly factsUsed: readonly (OptIrFactId | number)[];
+            readonly explanation: readonly string[];
+          },
+        ),
+      emit: (opcode, operands, flags, label, issueClass) =>
+        this.emit(opcode, operands, flags, label, issueClass),
     });
-    this.recordDecision(selection);
-    if (selection.kind === "rejected") {
-      return {
-        kind: "error",
-        stableDetail: selection.reason,
-      };
-    }
-    this.emit(
-      selection.opcode,
-      [
-        defVreg(output, output.type),
-        useVreg(left.register, left.register.type),
-        useVreg(right.register, right.register.type),
-        useVreg(addend.register, addend.register.type),
-        implicitUseResource({ kind: "FPCR" }),
-        implicitDefResource({ kind: "FPSR" }),
-      ],
-      { mayTrap: false },
-      operation.kind,
-      "fp",
-    );
-    return { kind: "ok" };
   }
 
   private emitBarrier(label: string): void {

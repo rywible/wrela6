@@ -33,7 +33,13 @@ export type ResolvedReference =
   | { readonly kind: "image"; readonly itemId: ItemId; readonly imageId: ImageId }
   | { readonly kind: "field"; readonly ownerItemId: ItemId; readonly fieldId: FieldId }
   | { readonly kind: "typeParameter"; readonly owner: TypeParameterOwner; readonly index: number }
-  | { readonly kind: "parameter"; readonly parameterId: ParameterId };
+  | { readonly kind: "parameter"; readonly parameterId: ParameterId }
+  | {
+      readonly kind: "local";
+      readonly name: string;
+      readonly bindingSpan: SourceSpan;
+      readonly ordinal: number;
+    };
 
 export interface SyntaxReferenceKey {
   readonly moduleId: ModuleId;

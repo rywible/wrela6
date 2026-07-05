@@ -1,0 +1,10 @@
+{
+  "phase": "parse",
+  "diagnostics": [
+    {
+      "code": "PARSE_EXPECTED_TOP_LEVEL_DECLARATION",
+      "spanText": "pub",
+      "count": 1
+    }
+  ]
+}

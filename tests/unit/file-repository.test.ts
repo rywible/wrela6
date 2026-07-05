@@ -3,8 +3,8 @@ import { mkdtemp, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { BunFileRepository } from "../../src/lexer/bun-file-repository";
-import { ModulePath } from "../../src/lexer/module-path";
+import { BunFileRepository } from "../../src/frontend/lexer/bun-file-repository";
+import { ModulePath } from "../../src/frontend/lexer/module-path";
 import { FakeFileRepository } from "../support/lexer-fakes";
 
 describe("FakeFileRepository", () => {
@@ -50,7 +50,7 @@ describe("BunFileRepository", () => {
     await writeFile(join(root, "main.wr"), "uefi image Main:\n");
 
     const repository = new BunFileRepository({ root });
-    const { ModulePath } = await import("../../src/lexer/module-path");
+    const { ModulePath } = await import("../../src/frontend/lexer/module-path");
     const path = ModulePath.from("main.wr");
     const result = await repository.read(path);
 
@@ -67,7 +67,7 @@ describe("BunFileRepository", () => {
     await writeFile(join(root, "present.wr"), "");
 
     const repository = new BunFileRepository({ root });
-    const { ModulePath } = await import("../../src/lexer/module-path");
+    const { ModulePath } = await import("../../src/frontend/lexer/module-path");
     const result = await repository.read(ModulePath.from("absent.wr"));
 
     expect(result.kind).toBe("missing");

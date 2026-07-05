@@ -192,16 +192,29 @@ function resolveMonoTypeLayout(
 function findPlatformFunctionInstance(
   program: MonomorphizedHirProgram,
   sourceFunctionId: FunctionId,
-): MonoFunctionInstance | undefined {
+):
+  | { readonly kind: "missing" }
+  | {
+      readonly kind: "ambiguous";
+      readonly matches: readonly MonoFunctionInstance[];
+    }
+  | {
+      readonly kind: "resolved";
+      readonly functionInstance: MonoFunctionInstance;
+    } {
   const matches = program.functions
     .entries()
     .filter((instance) => instance.sourceFunctionId === sourceFunctionId);
   if (matches.length === 0) {
-    return undefined;
+    return { kind: "missing" };
   }
-  return [...matches].sort((left, right) =>
+  const sortedMatches = [...matches].sort((left, right) =>
     compareCodeUnitStrings(String(left.instanceId), String(right.instanceId)),
-  )[0];
+  );
+  if (sortedMatches.length > 1) {
+    return { kind: "ambiguous", matches: sortedMatches };
+  }
+  return { kind: "resolved", functionInstance: sortedMatches[0]! };
 }
 
 function collectHiddenParameters(
@@ -396,8 +409,11 @@ export function computePlatformAbiFacts(
       continue;
     }
 
-    const platformFunction = findPlatformFunctionInstance(input.program, edge.sourceFunctionId);
-    if (platformFunction === undefined) {
+    const platformFunctionResult = findPlatformFunctionInstance(
+      input.program,
+      edge.sourceFunctionId,
+    );
+    if (platformFunctionResult.kind === "missing") {
       diagnostics.push(
         platformEdgeDiagnostic(edge, {
           code: "LAYOUT_ABI_CLASSIFICATION_FAILED",
@@ -407,10 +423,23 @@ export function computePlatformAbiFacts(
       );
       continue;
     }
+    if (platformFunctionResult.kind === "ambiguous") {
+      diagnostics.push(
+        platformEdgeDiagnostic(edge, {
+          code: "LAYOUT_PLATFORM_FUNCTION_INSTANCE_AMBIGUOUS",
+          message:
+            "Ambiguous monomorphized platform function instances for platform contract edge.",
+          stableDetail: platformFunctionResult.matches
+            .map((match) => String(match.instanceId))
+            .join("|"),
+        }),
+      );
+      continue;
+    }
 
     const result = computePlatformAbiFactForEdge({
       edge,
-      platformFunction,
+      platformFunction: platformFunctionResult.functionInstance,
       target: input.target,
       targetFacts: input.targetFacts,
       types: input.types,

@@ -1,4 +1,4 @@
-import type { Diagnostic } from "../../shared/diagnostics";
+import { stableDiagnosticDetail, type Diagnostic } from "../../shared/diagnostics";
 import type { SourceSpan, SourceText } from "../../shared";
 import type { ModuleId } from "../ids";
 import { compareCodeUnitStrings } from "../surface/deterministic-sort";
@@ -15,7 +15,8 @@ export type NameReferenceKind =
   | "imageDevice"
   | "memberName"
   | "typeParameter"
-  | "parameter";
+  | "parameter"
+  | "local";
 
 export type NameResolutionDiagnosticCode =
   | "NAME_UNRESOLVED_MODULE"
@@ -97,7 +98,16 @@ function diagnostic(
   span: SourceSpan,
   order: NameResolutionDiagnosticOrder,
 ): NameResolutionDiagnostic {
-  return { code, severity: "error", message, source, span, order };
+  return {
+    code,
+    severity: "error",
+    message,
+    source,
+    span,
+    ownerKey: `name:${order.kind}`,
+    stableDetail: stableDiagnosticDetail({ code, source, span }),
+    order,
+  };
 }
 
 export function unresolvedModule(input: {

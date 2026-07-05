@@ -20,7 +20,7 @@ export interface ObjectSectionForTestOptions {
   readonly stableKey: string;
   readonly classKey?: string;
   readonly alignmentBytes?: number;
-  readonly bytes?: readonly number[];
+  readonly bytes?: Uint8Array | readonly number[];
   readonly fragments?: readonly {
     readonly stableKey: string;
     readonly startOffsetBytes?: number;
@@ -234,7 +234,7 @@ export function literalPoolForTest(input: {
   readonly stableKey: string;
   readonly sectionKey?: string;
   readonly offsetBytes?: number;
-  readonly data?: readonly number[];
+  readonly data?: Uint8Array | readonly number[];
   readonly users?: readonly {
     readonly stableKey: string;
     readonly useOffsetBytes: number;

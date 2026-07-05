@@ -27,6 +27,7 @@ export interface WrelaMoveCopyWrapperExplanation {
   readonly sourceValue: OptIrValueId;
   readonly resultValue: OptIrValueId;
   readonly factChain: WrelaFactChain;
+  readonly consumedFactFamilies: readonly string[];
   readonly invariant: RewriteInvariant;
 }
 
@@ -84,6 +85,7 @@ export function runWrelaMoveCopyWrapperElision(
       ...candidate.noaliasFactIds,
       ...candidate.erasureFactIds,
     ],
+    consumedFactFamilies: ["ownership", "noalias", "erasure"],
     invariant:
       candidate.kind === "wrapper"
         ? { kind: "abiWrapperEquivalence" }

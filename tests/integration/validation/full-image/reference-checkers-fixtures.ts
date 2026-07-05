@@ -122,14 +122,14 @@ export function traceWithBinarySpine(
   } as unknown as FullImageReferenceCheckerInput["trace"];
 }
 
-export function artifactWithBytes(bytes: readonly number[]): UefiAArch64ImageArtifact {
+export function artifactWithBytes(bytes: Uint8Array | readonly number[]): UefiAArch64ImageArtifact {
   return {
     artifactName: "smoke-console-toolchain-stdlib.efi",
     peCoffArtifact: {
       artifactName: "smoke-console-toolchain-stdlib.efi",
       mediaType: "application/vnd.microsoft.portable-executable",
       fileExtension: ".efi",
-      bytes,
+      bytes: Uint8Array.from(bytes),
       deterministicMetadata: peCoffMetadataForReferenceTest(),
       verification: { runs: [] },
     },
@@ -178,7 +178,7 @@ export function linkedSectionForReferenceTest(
   rva: number,
   virtualSizeBytes: number,
   flags: number,
-  bytes: readonly number[],
+  bytes: Uint8Array | readonly number[],
 ): ReturnType<typeof linkedImageLayoutForPeCoffTest>["sections"][number] {
   return {
     stableKey,
@@ -187,7 +187,7 @@ export function linkedSectionForReferenceTest(
     alignmentBytes: 4096,
     rva,
     virtualSizeBytes,
-    bytes,
+    bytes: Uint8Array.from(bytes),
     contributions: [
       {
         stableKey: `contribution:${stableKey}`,

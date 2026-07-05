@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
+import type { OptIrConstant } from "../../../../src/opt-ir/constants";
 import { emptyOptIrFactSet } from "../../../../src/opt-ir/facts/fact-index";
-import { optIrIntegerConstant } from "../../../../src/opt-ir/constants";
+import {
+  optIrDataConstantFingerprint,
+  optIrIntegerConstant,
+} from "../../../../src/opt-ir/constants";
 import {
   optIrConstantId,
   optIrCallId,
@@ -11,9 +15,10 @@ import {
 } from "../../../../src/opt-ir/ids";
 import {
   optIrConstantOperation,
+  optIrConstAddrOperation,
   optIrPlatformCallOperation,
 } from "../../../../src/opt-ir/operations";
-import { optIrUnsignedIntegerType } from "../../../../src/opt-ir/types";
+import { optIrAddressType, optIrUnsignedIntegerType } from "../../../../src/opt-ir/types";
 import {
   PE_MACHINE_ARM64,
   PE_SUBSYSTEM_EFI_APPLICATION,
@@ -35,7 +40,11 @@ import {
   optIrFunctionForTest,
   optIrProgramForTest,
 } from "../../../support/opt-ir/cfg-fakes";
-import { optIrFunctionTable, optIrRegionTable } from "../../../../src/opt-ir/program";
+import {
+  optIrConstantTable,
+  optIrFunctionTable,
+  optIrRegionTable,
+} from "../../../../src/opt-ir/program";
 import { uefiTargetSurfaceFixture } from "../../../support/target/uefi-aarch64/uefi-aarch64-fixtures";
 
 describe("UEFI AArch64 binary spine", () => {
@@ -131,12 +140,7 @@ describe("UEFI AArch64 binary spine", () => {
 
     const result = runUefiAArch64BinarySpine({
       target: target.value,
-      optIr: packageOptIrFixture(target.value, consoleOutputOptIrFixture(), {
-        staticChar16Strings: Object.freeze([staticString]),
-        staticChar16Pointers: Object.freeze([
-          Object.freeze({ valueKey: "optir.value:1", pointer }),
-        ]),
-      }),
+      optIr: packageOptIrFixture(target.value, consoleOutputConstAddrOptIrFixture(staticString)),
       artifactName: "console.efi",
     });
 
@@ -183,7 +187,9 @@ describe("UEFI AArch64 binary spine", () => {
     const section = result.value.linkedLayout.sections.find(
       (candidate) => candidate.stableKey === ".rdata",
     );
-    expect(section?.bytes).toEqual(expect.arrayContaining([0x01, 0x02, 0x41, 0x42]));
+    expect(Array.from(section?.bytes ?? [])).toEqual(
+      expect.arrayContaining([0x01, 0x02, 0x41, 0x42]),
+    );
   });
 
   test("rejects console output firmware calls without static CHAR16 metadata", () => {
@@ -297,7 +303,7 @@ function validationFixturePacketSourceOptIrFixture() {
 
 function staticChar16StringForTest() {
   const result = materializeUefiAArch64StaticChar16String({
-    stableKey: "binary-spine-console-marker",
+    stableKey: "utf16-static-binary-spine-console-marker",
     value: "OK\r\n",
   });
   expect(result.kind).toBe("ok");
@@ -346,6 +352,70 @@ function consoleOutputOptIrFixture() {
   const program = optIrProgramForTest({
     functions: optIrFunctionTable([sourceFunction]),
     regions: optIrRegionTable([]),
+  });
+  return { program, operations: [pointer, call] };
+}
+
+function consoleOutputConstAddrOptIrFixture(
+  staticString: ReturnType<typeof staticChar16StringForTest>,
+) {
+  const originId = optIrOriginId(200);
+  const bytes = Object.freeze([...staticString.bytes]);
+  const alignment = 2;
+  const section = ".rodata";
+  const dataConstant: OptIrConstant = Object.freeze({
+    kind: "data" as const,
+    constantId: optIrConstantId(1),
+    type: optIrAddressType(),
+    normalizedValue: 0n,
+    bytes,
+    alignment,
+    section,
+    stableKey: staticString.stableKey,
+    fingerprint: optIrDataConstantFingerprint({
+      bytes,
+      alignment,
+      section,
+      stableKey: staticString.stableKey,
+    }),
+  });
+  const pointer = optIrConstAddrOperation({
+    operationId: optIrOperationId(1),
+    resultId: optIrValueId(1),
+    resultType: optIrAddressType(),
+    constantId: dataConstant.constantId,
+    originId,
+  });
+  const call = optIrPlatformCallOperation({
+    operationId: optIrOperationId(2),
+    callId: optIrCallId(2),
+    target: { kind: "platform", platformKey: "uefi.console.outputString" },
+    argumentIds: [optIrValueId(1)],
+    resultIds: [optIrValueId(100)],
+    resultTypes: [optIrUnsignedIntegerType(64)],
+    originId,
+  });
+  const block = optIrBlockForTest({
+    parameters: [],
+    operations: [pointer.operationId, call.operationId],
+    terminator: {
+      kind: "return",
+      operationId: optIrOperationId(99),
+      values: [optIrValueId(100)],
+      originId,
+    },
+    originId,
+  });
+  const sourceFunction = optIrFunctionForTest({
+    blocks: [block],
+    entryBlock: block.blockId,
+    externalRoot: { reason: "imageEntry", originId },
+    originId,
+  });
+  const program = optIrProgramForTest({
+    functions: optIrFunctionTable([sourceFunction]),
+    regions: optIrRegionTable([]),
+    constants: optIrConstantTable([dataConstant]),
   });
   return { program, operations: [pointer, call] };
 }

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import {
   fixtureSpecForFullImageCase,
   fullImageValidationCaseKey,
@@ -32,46 +32,49 @@ type CliResult =
       readonly stableDetail: string;
     };
 
-const SCENARIOS = new Set<FullImageValidationScenarioKey>([
-  "smoke-console",
-  "packet-counter",
-  "status-error",
-  "watchdog-or-boot-policy",
-]);
-const STDLIB_MODES = new Set<FullImageValidationStdlibMode>([
-  "toolchain-stdlib",
-  "ejected-stdlib",
-  "direct-platform",
-]);
+const SCENARIOS = new Set<FullImageValidationScenarioKey>(
+  fullImageValidationV1Cases().map((caseKey) => caseKey.scenario),
+);
+const STDLIB_MODES = new Set<FullImageValidationStdlibMode>(
+  fullImageValidationV1Cases().map((caseKey) => caseKey.stdlibMode),
+);
 
 const nodeFixtureProjectFilesystem: FixtureProjectFilesystem = Object.freeze({
   readDirectory: (path: string) => readdirSync(path),
   isDirectory: (path: string) => statSync(path).isDirectory(),
   readTextFile: (path: string) => readFileSync(path, "utf8"),
+  realPath: (path: string) => realpathSync(path),
 });
 
-const cli = parseCli(Bun.argv.slice(2));
-
-if (cli.kind === "error") {
-  writeCliError(cli);
-  process.exit(2);
+if (import.meta.main) {
+  const exitCode = await main(Bun.argv.slice(2));
+  process.exit(exitCode);
 }
 
-const report = await runFullImageValidation(cli.request, {
-  filesystem: nodeFixtureProjectFilesystem,
-  environment: process.env,
-  ...(cli.request.qemuSmoke.kind === "disabled"
-    ? {}
-    : { qemuHostEffects: nodeUefiAArch64QemuHostEffects() }),
-});
+async function main(args: readonly string[]): Promise<number> {
+  const cli = parseCli(args);
 
-if (cli.json) {
-  console.log(JSON.stringify(report, null, 2));
-} else {
-  console.log(formatHumanReport(report));
+  if (cli.kind === "error") {
+    writeCliError(cli);
+    return 2;
+  }
+
+  const report = await runFullImageValidation(cli.request, {
+    filesystem: nodeFixtureProjectFilesystem,
+    environment: process.env,
+    ...(cli.request.qemuSmoke.kind === "disabled"
+      ? {}
+      : { qemuHostEffects: nodeUefiAArch64QemuHostEffects() }),
+  });
+
+  if (cli.json) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    console.log(formatHumanReport(report));
+  }
+
+  return report.status === "passed" ? 0 : 1;
 }
-
-process.exit(report.status === "passed" ? 0 : 1);
 
 function parseCli(args: readonly string[]): CliResult {
   let json = args.includes("--json");
@@ -186,7 +189,7 @@ function writeCliError(error: Extract<CliResult, { readonly kind: "error" }>): v
   console.error(`${error.code} ${error.stableDetail}`);
 }
 
-function formatHumanReport(report: FullImageValidationReport): string {
+export function formatHumanReport(report: FullImageValidationReport): string {
   const lines = [
     `full-image-validation ${report.status}`,
     `target ${report.targetKey}`,
@@ -205,7 +208,7 @@ function formatHumanReport(report: FullImageValidationReport): string {
       lines.push(`  diagnostic ${diagnostic.code} ${diagnostic.stableDetail}`);
     }
     for (const diagnostic of caseReport.compilerDiagnostics) {
-      lines.push(`  compiler ${diagnostic.code} ${diagnostic.stableDetail}`);
+      lines.push(`  compiler ${formatCompilerDiagnostic(diagnostic)}`);
     }
     for (const stageRun of caseReport.stageRuns.filter((run) => run.status === "failed")) {
       lines.push(
@@ -232,4 +235,18 @@ function formatHumanReport(report: FullImageValidationReport): string {
   }
 
   return lines.join("\n");
+}
+
+function formatCompilerDiagnostic(
+  diagnostic: FullImageValidationReport["cases"][number]["compilerDiagnostics"][number],
+): string {
+  const source = diagnostic.source;
+  if (source !== undefined && source.startLine !== undefined && source.startColumn !== undefined) {
+    return [
+      `${source.sourceName}:${source.startLine}:${source.startColumn}`,
+      source.originalCode,
+      source.message,
+    ].join(" ");
+  }
+  return `${diagnostic.code} ${diagnostic.stableDetail}`;
 }

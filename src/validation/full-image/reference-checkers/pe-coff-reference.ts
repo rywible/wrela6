@@ -166,7 +166,7 @@ function rawSectionReport(
 
 function sizeReport(
   image: ParsedPeCoffImage,
-  bytes: readonly number[],
+  bytes: ArrayLike<number>,
 ): FullImageValidationCheckReport {
   const expectedFileSize = image.sectionHeaders.reduce(
     (max, section) => Math.max(max, section.rawDataPointerBytes + section.rawDataSizeBytes),

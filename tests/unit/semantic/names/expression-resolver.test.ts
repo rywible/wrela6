@@ -688,6 +688,50 @@ describe("resolveExpressions", () => {
     expect(unresolvedNameDiag!.message).toContain("Missing");
   });
 
+  test("emits NAME_AMBIGUOUS_NAME for ambiguous module-qualified member chain item", () => {
+    const graph = parseModuleGraphForTest([
+      ["app/main.wr", "fn test():\n    std.io.Writer.default\n"],
+      ["std/io.wr", "class Writer:\ndataclass Writer:\n    value: u32\n"],
+    ]);
+    const { index } = buildItemIndex({ graph });
+    const moduleNamespace = buildModuleNamespace(index);
+    const memberNamespace = buildMemberNamespace(index);
+    const referenceKeys = new ReferenceKeyBuilder();
+    const importResult = resolveImports({ graph, index, moduleNamespace, referenceKeys });
+    const moduleContexts = buildModuleContexts(index, importResult.importedScopes);
+
+    resolveTypeReferences({
+      graph,
+      index,
+      coreTypes: CoreTypeCatalog.default(),
+      moduleNamespace,
+      memberNamespace,
+      moduleContexts,
+      referenceKeys,
+    });
+
+    const result = resolveExpressions({
+      graph,
+      index,
+      coreTypes: CoreTypeCatalog.default(),
+      moduleNamespace,
+      memberNamespace,
+      moduleContexts,
+      referenceKeys,
+    });
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "NAME_AMBIGUOUS_NAME",
+    );
+    expect(
+      result.references
+        .entries()
+        .some(
+          (entry) => entry.key.kind === "moduleQualifiedItem" && entry.reference.kind === "type",
+        ),
+    ).toBe(false);
+  });
+
   test("resolves expression in let statement initializer", () => {
     const graph = parseModuleGraphForTest([
       ["app/main.wr", "fn helper() -> u32\n\nfn test():\n    let x = helper()\n"],

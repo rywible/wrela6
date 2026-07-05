@@ -45,10 +45,10 @@ describe("AArch64 PE/COFF EFI writer integration", () => {
       throw new Error("expected EFI artifacts");
     }
 
-    expect(firstWritten.artifact.bytes.slice(0, 2)).toEqual([0x4d, 0x5a]);
+    expect(Array.from(firstWritten.artifact.bytes.slice(0, 2))).toEqual([0x4d, 0x5a]);
     expect(
       firstWritten.artifact.bytes.slice(PE_HEADER_OFFSET_BYTES, PE_HEADER_OFFSET_BYTES + 4),
-    ).toEqual([0x50, 0x45, 0x00, 0x00]);
+    ).toEqual(Uint8Array.of(0x50, 0x45, 0x00, 0x00));
     expect(firstWritten.artifact.bytes).toEqual(secondWritten.artifact.bytes);
     expect(firstWritten.artifact.deterministicMetadata.imageFingerprint).toBe(
       secondWritten.artifact.deterministicMetadata.imageFingerprint,
@@ -71,7 +71,7 @@ describe("AArch64 PE/COFF EFI writer integration", () => {
     if (linkedText === undefined || parsedText === undefined) {
       throw new Error("expected linked and parsed text sections");
     }
-    expect(parsedText.bytes).toEqual([...linkedText.bytes]);
+    expect(Array.from(parsedText.bytes)).toEqual(Array.from(linkedText.bytes));
 
     const exceptionSource = firstLinked.layout.dataDirectorySources.find(
       (source) => source.directoryKind === "exception",

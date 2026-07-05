@@ -1,0 +1,2 @@
+fn boot():
+    let first = packet[0]

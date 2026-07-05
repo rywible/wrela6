@@ -158,6 +158,7 @@ function completeRegistryInput(overrides?: { readonly statement?: ProofMirStatem
         kind: "ok" as const,
         value: { kind: "value", value: 0 as never },
       }),
+      lowerDerivedFieldComparison: () => undefined,
     },
     iterator: {
       lowerFor: () => ({ kind: "ok" as const, value: undefined }),

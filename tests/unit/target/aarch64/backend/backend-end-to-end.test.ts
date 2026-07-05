@@ -85,7 +85,7 @@ describe("AArch64 backend end-to-end compile", () => {
       "fixture.function",
     ]);
     expect(result.objectModule.unwindRecords[0]?.frameShape).toBe("frameless-leaf");
-    expect(result.objectModule.sections[0]?.bytes).toEqual([
+    expect(Array.from(result.objectModule.sections[0]?.bytes ?? [])).toEqual([
       0xe0, 0x00, 0x80, 0xd2, 0xc0, 0x03, 0x5f, 0xd6,
     ]);
     expect(result.verification.runs.every((run) => run.status === "passed")).toBe(true);
@@ -111,7 +111,7 @@ describe("AArch64 backend end-to-end compile", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected object module");
-    expect(result.objectModule.sections[0]?.bytes).toEqual([
+    expect(Array.from(result.objectModule.sections[0]?.bytes ?? [])).toEqual([
       0xe0, 0x00, 0x80, 0xd2, 0x21, 0x01, 0x80, 0xd2, 0x02, 0x00, 0x01, 0x8b, 0xc0, 0x03, 0x5f,
       0xd6,
     ]);
@@ -178,7 +178,7 @@ describe("AArch64 backend end-to-end compile", () => {
       { stableKey: "fixture.function", offsetBytes: 0 },
       { stableKey: "fixture.function:block:1", offsetBytes: 12 },
     ]);
-    expect(result.objectModule.sections[0]?.bytes).toEqual([
+    expect(Array.from(result.objectModule.sections[0]?.bytes ?? [])).toEqual([
       0xe0, 0x00, 0x80, 0xd2, 0x01, 0x00, 0x00, 0x91, 0x00, 0x00, 0x00, 0x14, 0x60, 0x00, 0x80,
       0xd2, 0xc0, 0x03, 0x5f, 0xd6,
     ]);
@@ -296,7 +296,10 @@ describe("AArch64 backend end-to-end compile", () => {
     });
     expect(result.objectModule.relocations[0]?.offsetBytes).toBe(8);
     expect(
-      result.objectModule.sections.find((section) => String(section.stableKey) === ".text")?.bytes,
+      Array.from(
+        result.objectModule.sections.find((section) => String(section.stableKey) === ".text")
+          ?.bytes ?? [],
+      ),
     ).toEqual([
       0xff, 0x43, 0x00, 0xd1, 0xfe, 0x07, 0x00, 0xf9, 0x00, 0x00, 0x00, 0x94, 0xfe, 0x07, 0x40,
       0xf9, 0xff, 0x43, 0x00, 0x91, 0xc0, 0x03, 0x5f, 0xd6,
@@ -388,7 +391,9 @@ describe("AArch64 backend end-to-end compile", () => {
     ]);
     expect(result.objectModule.relocations).toEqual([]);
     expect(result.objectModule.unwindRecords[0]?.frameShape).toBe("frameless-leaf");
-    expect(result.objectModule.sections[0]?.bytes).toEqual([0xc0, 0x03, 0x5f, 0xd6]);
+    expect(Array.from(result.objectModule.sections[0]?.bytes ?? [])).toEqual([
+      0xc0, 0x03, 0x5f, 0xd6,
+    ]);
   });
 
   test("classifies projected machine ABI values instead of empty public boundaries", () => {
@@ -488,9 +493,9 @@ describe("AArch64 backend end-to-end compile", () => {
       "spill.pressure:serializable-unwind:size:32",
     ]);
     const bytes = result.objectModule.sections[0]?.bytes ?? [];
-    expect(bytes.slice(0, 4)).toEqual([0xff, 0x83, 0x00, 0xd1]);
+    expect(Array.from(bytes.slice(0, 4))).toEqual([0xff, 0x83, 0x00, 0xd1]);
     expect(bytes).toContain(0xf9);
-    expect(bytes.slice(-8)).toEqual([0xff, 0x83, 0x00, 0x91, 0xc0, 0x03, 0x5f, 0xd6]);
+    expect(Array.from(bytes.slice(-8))).toEqual([0xff, 0x83, 0x00, 0x91, 0xc0, 0x03, 0x5f, 0xd6]);
   });
 
   test("uses fact-backed constant rematerialization instead of spilling at use sites", () => {
@@ -893,13 +898,16 @@ describe("AArch64 backend end-to-end compile", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected public ABI object module");
     expect(result.debugArtifacts?.allocationPlan).toContain(
-      "fixture.function:call-boundary:public:call:fixture.function:helper:insn:1:clobber:x0,x1,x10,x11,x12,x13,x14,x15,x16,x17,x2,x3,x30,x4,x5,x6,x7,x8,x9:vclobber:v0,v1,v2,v3,v4,v5,v6,v7:pin::veneer:x16,x17",
+      "fixture.function:call-boundary:public:call:fixture.function:helper:insn:1:clobber:x0,x1,x10,x11,x12,x13,x14,x15,x16,x17,x2,x3,x30,x4,x5,x6,x7,x8,x9:vclobber:v0,v1,v2,v3,v4,v5,v6,v7,v8,v9,v10,v11,v12,v13,v14,v15,v16,v17,v18,v19,v20,v21,v22,v23,v24,v25,v26,v27,v28,v29,v30,v31:pin::veneer:x16,x17",
     );
     expect(
       (result.debugArtifacts?.allocationPlan ?? []).some((entry) =>
         entry.startsWith("fixture.function:vreg:1:v8:"),
       ),
-    ).toBe(true);
+    ).toBe(false);
+    expect(result.debugArtifacts?.allocationPlan).toContain(
+      "fixture.function:repair:spill:live-range:vreg:1",
+    );
   });
 
   test("no-spill allocation failure stops before object output", () => {

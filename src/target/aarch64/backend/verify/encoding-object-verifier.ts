@@ -454,7 +454,7 @@ function isExecutableTextSection(section: AArch64ObjectModule["sections"][number
 
 function verifyRelocationPatchOwner(
   relocation: AArch64ObjectModule["relocations"][number],
-  sectionBytes: readonly number[],
+  sectionBytes: Uint8Array,
   indexes: AArch64ObjectVerifierIndexes,
 ): readonly AArch64BackendDiagnostic[] {
   if (relocation.offsetBytes % 4 !== 0 || relocation.offsetBytes + 4 > sectionBytes.length) {
@@ -598,7 +598,7 @@ function pageOffset12(offsetBytes: number): number | undefined {
 
 function encodedPageOffset12(
   relocation: AArch64ObjectModule["relocations"][number],
-  sectionBytes: readonly number[],
+  sectionBytes: Uint8Array,
 ): number | undefined {
   if (relocation.offsetBytes % 4 !== 0 || relocation.offsetBytes + 4 > sectionBytes.length) {
     return undefined;
@@ -818,7 +818,7 @@ function verifyVeneerRange(
     : [];
 }
 
-function sameBytes(left: readonly number[], right: readonly number[]): boolean {
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
   return left.length === right.length && left.every((byte, index) => byte === right[index]);
 }
 
@@ -936,14 +936,14 @@ function isKnownUnwindFrameShape(frameShape: string): boolean {
 }
 
 function decodeAArch64CatalogOpcode(
-  bytes: readonly number[],
+  bytes: ArrayLike<number>,
   indexes: AArch64ObjectVerifierIndexes,
 ): string | undefined {
   return decodeAArch64CatalogEntry(bytes, indexes)?.opcode;
 }
 
 function decodeAArch64CatalogEntry(
-  bytes: readonly number[],
+  bytes: ArrayLike<number>,
   indexes: AArch64ObjectVerifierIndexes,
   relocationFamily?: string,
 ): AArch64EncodingCatalogEntry | undefined {

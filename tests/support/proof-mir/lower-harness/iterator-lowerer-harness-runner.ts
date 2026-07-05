@@ -1,15 +1,16 @@
 import { callSiteRequirementId, hirRequirementId, obligationId } from "../../../../src/hir/ids";
 import { monoInstanceId } from "../../../../src/mono/ids";
+import { proofMetadataIdKey } from "../../../../src/mono/proof-metadata-tables";
 import { monoResolvedCallTargetTableFromEntries } from "../../../../src/mono/resolved-call-targets";
 import type { MonoBlock, MonoForIteration, MonoLocal } from "../../../../src/mono/mono-hir";
 import type { ProofMirCanonicalKey } from "../../../../src/proof-mir/canonicalization/canonical-keys";
-import { proofMirDiagnostic } from "../../../../src/proof-mir/diagnostics";
 import { createProofMirCallLowerer } from "../../../../src/proof-mir/lower/call-lowerer";
 import {
   lowerForImpl,
   lowerOrdinaryForStatement,
   obligationIdsForIterator,
 } from "../../../../src/proof-mir/lower/iterator-lowerer";
+import type { ProofMirTakeLowerer } from "../../../../src/proof-mir/lower/lowering-context";
 import { type ActiveLoopFrame } from "../../../../src/proof-mir/lower/loop-lowerer";
 import { withLoopIfStatementLowering } from "../../../../src/proof-mir/lower/loop-if-statement-lowering";
 import {
@@ -163,6 +164,7 @@ export function lowerProofMirOrdinaryForForTest(
     locals: bindings.locals,
     body,
     placeBackedLocalNames: bindings.placeBackedLocalNames,
+    targetFeatures: input.targetFeatures,
   });
   if (contextResult.kind === "error") {
     return { kind: "error", diagnostics: contextResult.diagnostics };
@@ -206,16 +208,18 @@ export function lowerProofMirOrdinaryForForTest(
     activeLoopRef,
   });
 
-  const iteratorMetadata =
-    input.iteratorProtocol === "checkedIterator"
-      ? iteratorMetadataForTest({
-          functionInstanceId,
-          nextFunctionInstanceId,
-          iteratorObligationId,
-        })
-      : undefined;
+  const iteratorMetadata = iteratorMetadataForTest({
+    functionInstanceId,
+    nextFunctionInstanceId,
+    iteratorObligationId,
+  });
 
-  if (input.iteratorProtocol === "stream") {
+  if (input.iteratorProtocol === "stream" && !input.targetFeatures?.includes("streamLoop")) {
+    const unusedTakeLowerer: ProofMirTakeLowerer = {
+      lowerTake() {
+        throw new Error("disabled stream-loop gate must not invoke take lowering");
+      },
+    };
     const gateResult = lowerForImpl({
       context,
       forStatement: parsed.forStatement,
@@ -223,28 +227,39 @@ export function lowerProofMirOrdinaryForForTest(
       blockKey: entryBlockKey,
       shared,
       call: callLowerer,
+      take: unusedTakeLowerer,
       callRecorder,
       loopCarriedLocals,
       iteratorMetadata,
       continuationBlockKey,
     });
-    return gateResult.kind === "error"
-      ? { kind: "error", diagnostics: gateResult.diagnostics }
-      : {
-          kind: "error",
-          diagnostics: [
-            proofMirDiagnostic({
-              severity: "error",
-              code: "PROOF_MIR_UNLOWERABLE_MONO_STATEMENT",
-              message: "Stream for-loop lowering is semantics-gated.",
-              functionInstanceId,
-              ownerKey: `function:${String(functionInstanceId)}`,
-              rootCauseKey: "stream-for",
-              stableDetail: "gated",
-            }),
-          ],
-        };
+    if (gateResult.kind === "error") {
+      return { kind: "error", diagnostics: gateResult.diagnostics };
+    }
   }
+
+  const boundarySessionMembers = (() => {
+    if (parsed.forStatement.iteration.kind !== "stream") {
+      return undefined;
+    }
+    const originKey = context.graph.allocateSyntheticOrigin("stream:test-boundary");
+    return [
+      {
+        sessionProofKey: proofMetadataIdKey(parsed.forStatement.iteration.sessionId),
+        brandProofKey: proofMetadataIdKey(parsed.forStatement.iteration.itemBrandId),
+        obligationProofKey: proofMetadataIdKey(parsed.forStatement.iteration.closureObligationId),
+        ...(parsed.forStatement.iterable.place === undefined
+          ? {}
+          : {
+              placeKey: context.effects.placeFromMono({
+                monoPlace: parsed.forStatement.iterable.place,
+                originKey,
+              }),
+            }),
+        originKey,
+      },
+    ];
+  })();
 
   const loopResult = lowerOrdinaryForStatement({
     context,
@@ -256,11 +271,12 @@ export function lowerProofMirOrdinaryForForTest(
     call: callLowerer,
     callRecorder,
     loopCarriedLocals,
-    iteratorMetadata: iteratorMetadata!,
+    iteratorMetadata,
     obligationIds: obligationIdsForIterator({
       program,
-      iteratorMetadata: iteratorMetadata!,
+      iteratorMetadata,
     }),
+    boundarySessionMembers,
   });
   if (loopResult.kind === "error") {
     return { kind: "error", diagnostics: loopResult.diagnostics };

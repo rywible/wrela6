@@ -12,8 +12,6 @@ import type {
 } from "../domains/effects-resources";
 import type { ProofMirValueRepresentation } from "../model/graph";
 import type { ProofMirCanonicalKey } from "../canonicalization/canonical-keys";
-import { compareProofMirCanonicalKeys } from "../canonicalization/canonical-order";
-import type { ProofMirExitClosurePolicy } from "../model/graph";
 import type { DraftProofMirEdgeEffect } from "../domains/effects-resources";
 import {
   proofMirDiagnostic,
@@ -34,17 +32,18 @@ import {
 import {
   createEmptyDraftProofMirFunctionDraft,
   type DraftProofMirCanonicalTableAcceptResult,
+  type DraftProofMirExitClosurePolicy,
   type DraftProofMirFunctionDraft,
-  type DraftProofMirGraphBlockSnapshot,
   type DraftProofMirGraphExitSnapshot,
   type DraftProofMirGraphSnapshot,
 } from "./draft-program";
 import type { DraftProofMirGraphStatementSnapshot } from "./draft-statement";
 import { createDraftGraphEdgeBuilders } from "./draft-graph-terminators";
-
-export type DraftGraphBuilderResult =
-  | { readonly kind: "ok" }
-  | { readonly kind: "error"; readonly diagnostics: readonly ProofMirDiagnostic[] };
+import { errorResult, okResult, type DraftGraphBuilderResult } from "./draft-graph-builder-result";
+import { setDraftGraphBlockStateMerge } from "./draft-block-state-merge";
+import { exportDraftGraphSnapshot } from "./draft-graph-snapshot-export";
+import type { DraftGraphBlockStateMerge } from "./draft-block-state-merge";
+export type { DraftGraphBlockStateMerge } from "./draft-block-state-merge";
 
 export type DraftGraphControlEdgeKind =
   | "normal"
@@ -163,6 +162,7 @@ export interface DraftGraphBlockView {
   readonly parameters: readonly DraftGraphBlockParameter[];
   readonly statements: readonly DraftGraphStatement[];
   readonly terminator?: DraftGraphTerminator;
+  readonly stateMerge?: DraftGraphBlockStateMerge;
   readonly finalized: boolean;
 }
 
@@ -218,6 +218,10 @@ export interface DraftGraphBuilder {
   setTerminator(
     blockKey: ProofMirCanonicalKey,
     terminator: DraftGraphTerminator,
+  ): DraftGraphBuilderResult;
+  setBlockStateMerge(
+    blockKey: ProofMirCanonicalKey,
+    stateMerge: DraftGraphBlockStateMerge,
   ): DraftGraphBuilderResult;
   finalizeBlock(blockKey: ProofMirCanonicalKey): DraftGraphBuilderResult;
   createNormalEdge(input: {
@@ -305,7 +309,7 @@ export interface DraftGraphBuilder {
     readonly targetScope: ProofMirCanonicalKey;
     readonly origin: ProofMirCanonicalKey;
     readonly crossedScopes: readonly ProofMirCanonicalKey[];
-    readonly closure: Extract<ProofMirExitClosurePolicy, { readonly kind: "scopeExit" }>;
+    readonly closure: Extract<DraftProofMirExitClosurePolicy, { readonly kind: "scopeExit" }>;
   }): { readonly edge: ProofMirCanonicalKey; readonly exit: ProofMirCanonicalKey };
   createPanicExit(input: {
     readonly fromBlock: ProofMirCanonicalKey;
@@ -323,6 +327,7 @@ export interface DraftGraphBuilder {
     readonly monoLocalId: Parameters<typeof draftLocalKey>[0]["monoLocalId"];
     readonly name: string;
     readonly origin: ProofMirCanonicalKey;
+    readonly scopeKey?: ProofMirCanonicalKey;
     readonly type?: MonoCheckedType;
     readonly resourceKind?: ConcreteResourceKind;
     readonly storage?: ProofMirLocalStorageKind;
@@ -356,6 +361,7 @@ interface DraftGraphBlockState {
   parameters: DraftGraphBlockParameter[];
   statements: DraftGraphStatement[];
   terminator?: DraftGraphTerminator;
+  stateMerge?: DraftGraphBlockStateMerge;
   finalized: boolean;
 }
 
@@ -371,14 +377,6 @@ export interface DraftGraphEdgeState {
   readonly targetScopeKey: ProofMirCanonicalKey;
   readonly originKey: ProofMirCanonicalKey;
   readonly exitKey?: ProofMirCanonicalKey;
-}
-
-function okResult(): DraftGraphBuilderResult {
-  return { kind: "ok" };
-}
-
-function errorResult(diagnostics: readonly ProofMirDiagnostic[]): DraftGraphBuilderResult {
-  return { kind: "error", diagnostics: sortProofMirDiagnostics(diagnostics) };
 }
 
 function ownerKey(functionInstanceId: MonoInstanceId): string {
@@ -709,6 +707,19 @@ export function createDraftGraphBuilder(input: CreateDraftGraphBuilderInput): Dr
       return okResult();
     },
 
+    setBlockStateMerge(
+      blockKey: ProofMirCanonicalKey,
+      stateMerge: DraftGraphBlockStateMerge,
+    ): DraftGraphBuilderResult {
+      return setDraftGraphBlockStateMerge({
+        block: requireBlock(blockKey),
+        blockKey,
+        stateMerge,
+        functionInstanceId,
+        acceptOrigin,
+      });
+    },
+
     finalizeBlock(blockKey: ProofMirCanonicalKey): DraftGraphBuilderResult {
       const block = requireBlock(blockKey);
       if (block === undefined) {
@@ -793,6 +804,7 @@ export function createDraftGraphBuilder(input: CreateDraftGraphBuilderInput): Dr
       readonly monoLocalId: Parameters<typeof draftLocalKey>[0]["monoLocalId"];
       readonly name: string;
       readonly origin: ProofMirCanonicalKey;
+      readonly scopeKey?: ProofMirCanonicalKey;
       readonly type?: MonoCheckedType;
       readonly resourceKind?: ConcreteResourceKind;
       readonly storage?: ProofMirLocalStorageKind;
@@ -811,6 +823,7 @@ export function createDraftGraphBuilder(input: CreateDraftGraphBuilderInput): Dr
           functionInstanceId,
           name: input.name,
           originKey: input.origin,
+          ...(input.scopeKey === undefined ? {} : { scopeKey: input.scopeKey }),
           ...(input.type === undefined ? {} : { type: input.type }),
           ...(input.resourceKind === undefined ? {} : { resourceKind: input.resourceKind }),
           ...(input.storage === undefined ? {} : { storage: input.storage }),
@@ -917,26 +930,12 @@ export function createDraftGraphBuilder(input: CreateDraftGraphBuilderInput): Dr
     },
 
     exportGraphSnapshot(): DraftProofMirGraphSnapshot {
-      const blockSnapshots: DraftProofMirGraphBlockSnapshot[] = [];
-      for (const block of blocks.values()) {
-        blockSnapshots.push({
-          key: block.key,
-          role: block.role,
-          ...(block.terminator === undefined ? {} : { terminator: block.terminator }),
-          ...(block.parameters.length === 0 ? {} : { parameters: block.parameters.slice() }),
-          statements: loweredStatementsByBlock.get(block.key) ?? [],
-        });
-      }
-      blockSnapshots.sort((left, right) => compareProofMirCanonicalKeys(left.key, right.key));
-      return {
-        blocks: blockSnapshots,
-        edges: [...edges.values()].sort((left, right) =>
-          compareProofMirCanonicalKeys(left.key, right.key),
-        ),
-        exits: [...exitStates.values()].sort((left, right) =>
-          compareProofMirCanonicalKeys(left.key, right.key),
-        ),
-      };
+      return exportDraftGraphSnapshot({
+        blocks: blocks.values(),
+        edges: edges.values(),
+        exits: exitStates.values(),
+        loweredStatementsByBlock,
+      });
     },
 
     diagnostics(): readonly ProofMirDiagnostic[] {

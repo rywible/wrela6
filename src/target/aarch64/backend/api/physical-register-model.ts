@@ -1,4 +1,5 @@
 import { compareCodeUnitStrings } from "../../../../shared/deterministic-sort";
+import { AAPCS64_LOW_64_CALLEE_SAVED_SIMD_REGISTERS } from "../../aapcs64-registers";
 import type {
   AArch64AliasSetRecord,
   AArch64PhysicalRegisterModel,
@@ -25,6 +26,7 @@ export function createAArch64Rpi5PhysicalRegisterModel(): AArch64PhysicalRegiste
       [...rangeKeys("x", 0, 17), "x30"].sort(compareCodeUnitStrings),
     ),
     publicCalleeSavedGprs: Object.freeze(rangeKeys("x", 19, 28)),
+    publicCalleeSavedSimd: AAPCS64_LOW_64_CALLEE_SAVED_SIMD_REGISTERS,
     privateConventionCandidateGprs: Object.freeze(
       [...rangeKeys("x", 0, 17), ...rangeKeys("x", 19, 28)].sort(compareCodeUnitStrings),
     ),

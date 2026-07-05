@@ -753,7 +753,6 @@ function outgoingArgAreaSize(
     ),
   };
 }
-
 function createAArch64MaterializationContext(
   state: AArch64LoweringState,
   sourceFunction: OptIrFunction,
@@ -763,6 +762,7 @@ function createAArch64MaterializationContext(
     fpEnvironment: state.target.selection.fpEnvironment,
     factQuery: createAArch64FactQuery(state.facts),
     operationSupportContracts: state.operationSupportContracts,
+    staticReadonlyPointers: state.options.staticReadonlyPointers,
     relocationTargetFingerprint: state.target.relocation.relocationFingerprint,
     firmware:
       state.options.firmware === undefined

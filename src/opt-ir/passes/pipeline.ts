@@ -2,9 +2,9 @@ import { OPT_IR_PRODUCTION_PASS_SCHEDULE } from "../policy/pass-order-policy";
 import { runPipelineEntry } from "./pipeline-dispatch";
 import {
   emptyDecisionLog,
-  optimizationRegionsForProgram,
   rejectExternalProvenance,
   sortedOperations,
+  stateChanged,
   verifyPipelineState,
   withOptimizedProvenance,
 } from "./pipeline-state";
@@ -34,6 +34,7 @@ export function optimizeOptIr(input: OptimizeOptIrInput): OptimizeOptIrResult {
   let state: PipelineState = {
     program: input.program,
     operations: sortedOperations(input.program.operations ?? []),
+    optimizationRegions: Object.freeze([...(input.program.optimizationRegions ?? [])]),
     facts: input.facts,
     diagnostics: [],
     decisionLog: undefined,
@@ -44,12 +45,47 @@ export function optimizeOptIr(input: OptimizeOptIrInput): OptimizeOptIrResult {
   if (isPipelineError(afterConstruction)) return afterConstruction;
   state = afterConstruction;
 
-  for (const entry of OPT_IR_PRODUCTION_PASS_SCHEDULE) {
-    const step = runPipelineEntry(state, input, entry);
-    if (isPipelineError(step)) {
-      return step;
+  for (let entryIndex = 0; entryIndex < OPT_IR_PRODUCTION_PASS_SCHEDULE.length; ) {
+    const entry = OPT_IR_PRODUCTION_PASS_SCHEDULE[entryIndex];
+    if (entry === undefined) {
+      break;
     }
-    state = step;
+    if (entry.fixpoint === undefined) {
+      const step = runPipelineEntry(state, input, entry);
+      if (isPipelineError(step)) {
+        return step;
+      }
+      state = step;
+      entryIndex += 1;
+      continue;
+    }
+
+    const fixpointId = entry.fixpoint.fixpointId;
+    const groupStart = entryIndex;
+    let groupEnd = groupStart + 1;
+    while (
+      groupEnd < OPT_IR_PRODUCTION_PASS_SCHEDULE.length &&
+      OPT_IR_PRODUCTION_PASS_SCHEDULE[groupEnd]?.fixpoint?.fixpointId === fixpointId
+    ) {
+      groupEnd += 1;
+    }
+
+    const group = OPT_IR_PRODUCTION_PASS_SCHEDULE.slice(groupStart, groupEnd);
+    const fuel = fixpointFuelLimit(entry.fixpoint.fuel);
+    for (let round = 0; round < fuel; round += 1) {
+      const beforeRound = state;
+      for (const groupEntry of group) {
+        const step = runPipelineEntry(state, input, groupEntry);
+        if (isPipelineError(step)) {
+          return step;
+        }
+        state = step;
+      }
+      if (!stateChanged(beforeRound, state)) {
+        break;
+      }
+    }
+    entryIndex = groupEnd;
   }
 
   const beforeLowering = verifyPipelineState(state, { kind: "before-target-lowering" });
@@ -61,7 +97,7 @@ export function optimizeOptIr(input: OptimizeOptIrInput): OptimizeOptIrResult {
     state.program,
     decisionLog,
     state.operations,
-    optimizationRegionsForProgram(state.program),
+    state.optimizationRegions,
   );
   return {
     kind: "ok",
@@ -73,4 +109,15 @@ export function optimizeOptIr(input: OptimizeOptIrInput): OptimizeOptIrResult {
     diagnostics: state.diagnostics,
     verificationCheckpoints: state.verificationCheckpoints,
   };
+}
+
+function fixpointFuelLimit(
+  fuel: NonNullable<(typeof OPT_IR_PRODUCTION_PASS_SCHEDULE)[number]["fixpoint"]>["fuel"],
+): number {
+  switch (fuel.kind) {
+    case "fixedRounds":
+      return fuel.rounds;
+    case "worklist":
+      return fuel.maxItems;
+  }
 }

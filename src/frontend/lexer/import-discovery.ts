@@ -1,11 +1,11 @@
 import type { DiagnosticSink } from "./diagnostics";
-import { TokenKind } from "./token-kind";
-import type { Token } from "./token";
-import type { TokenStream } from "./token-stream";
 import type { ModuleImportRequest } from "./module-import-request";
 import type { ModulePath } from "./module-path";
-import type { SourceText } from "./source-text";
 import { SourceSpan } from "./source-span";
+import type { SourceText } from "./source-text";
+import type { Token } from "./token";
+import { TokenKind } from "./token-kind";
+import type { TokenStream } from "./token-stream";
 
 interface ImportDiscoveryDependencies {
   diagnostics: DiagnosticSink;
@@ -23,6 +23,7 @@ export class ImportDiscovery {
     const items = tokens.items;
     const result: ModuleImportRequest[] = [];
     let index = 0;
+    let indentationDepth = 0;
 
     while (index < items.length) {
       const token = items[index]!;
@@ -31,27 +32,39 @@ export class ImportDiscovery {
         break;
       }
 
-      if (token.kind !== TokenKind.Use) {
-        index++;
+      if (token.kind === TokenKind.Indent) {
+        indentationDepth += 1;
+        index += 1;
+        continue;
+      }
+
+      if (token.kind === TokenKind.Dedent) {
+        indentationDepth = Math.max(0, indentationDepth - 1);
+        index += 1;
+        continue;
+      }
+
+      if (indentationDepth !== 0 || token.kind !== TokenKind.Use) {
+        index += 1;
         continue;
       }
 
       const useToken = token;
-      index++;
+      index += 1;
 
       const importNames: Token[] = [];
-      const hasTrailingComma = this.collectImportNames(items, index, importNames);
-      index = hasTrailingComma.index;
+      const names = this.collectImportNames(items, index, importNames);
+      index = names.index;
 
       if (importNames.length === 0) {
         this.reportMalformed(source, useToken.span);
-        index = this.advancePastStatement(items, hasTrailingComma.index);
+        index = this.advancePastStatement(items, names.index);
         continue;
       }
 
-      if (hasTrailingComma.trailingComma) {
-        this.reportMalformed(source, items[hasTrailingComma.index - 1]!.span);
-        index = this.advancePastStatement(items, hasTrailingComma.index);
+      if (names.trailingComma) {
+        this.reportMalformed(source, items[names.index - 1]!.span);
+        index = this.advancePastStatement(items, names.index);
         continue;
       }
 
@@ -61,7 +74,7 @@ export class ImportDiscovery {
         continue;
       }
 
-      index++;
+      index += 1;
 
       const moduleParts: { text: string; token: Token }[] = [];
       const moduleResult = this.collectModuleName(items, index, moduleParts);
@@ -79,8 +92,7 @@ export class ImportDiscovery {
         continue;
       }
 
-      const hasExtraTokens = this.checkExtraTokens(items, index);
-      if (hasExtraTokens) {
+      if (this.hasExtraTokens(items, index)) {
         this.reportMalformed(source, items[index]!.span);
         index = this.advancePastStatement(items, index);
         continue;
@@ -101,87 +113,81 @@ export class ImportDiscovery {
       index = this.advancePastStatement(items, index);
     }
 
-    return result;
+    return Object.freeze(result);
   }
 
   private collectImportNames(
     items: readonly Token[],
     startIndex: number,
     names: Token[],
-  ): { index: number; trailingComma: boolean } {
+  ): { readonly index: number; readonly trailingComma: boolean } {
     let index = startIndex;
 
-    if (index >= items.length) {
-      return { index, trailingComma: false };
-    }
-
-    if (items[index]!.kind !== TokenKind.Identifier) {
+    if (index >= items.length || items[index]!.kind !== TokenKind.Identifier) {
       return { index, trailingComma: false };
     }
 
     names.push(items[index]!);
-    index++;
+    index += 1;
 
     while (index < items.length) {
       if (items[index]!.kind !== TokenKind.Comma) {
         break;
       }
 
-      index++;
+      index += 1;
 
       if (index < items.length && items[index]!.kind === TokenKind.Identifier) {
         names.push(items[index]!);
-        index++;
-      } else {
-        return { index, trailingComma: true };
+        index += 1;
+        continue;
       }
+
+      return { index, trailingComma: true };
     }
 
     return { index, trailingComma: false };
-  }
-
-  private checkExtraTokens(items: readonly Token[], index: number): boolean {
-    return (
-      index < items.length &&
-      items[index]!.kind !== TokenKind.Newline &&
-      items[index]!.kind !== TokenKind.Eof
-    );
   }
 
   private collectModuleName(
     items: readonly Token[],
     startIndex: number,
     parts: { text: string; token: Token }[],
-  ): { index: number; trailingDot: boolean } {
+  ): { readonly index: number; readonly trailingDot: boolean } {
     let index = startIndex;
 
-    if (index >= items.length) {
-      return { index, trailingDot: false };
-    }
-
-    if (!this.isModuleNameToken(items[index]!)) {
+    if (index >= items.length || !this.isModuleNameToken(items[index]!)) {
       return { index, trailingDot: false };
     }
 
     parts.push({ text: items[index]!.lexeme, token: items[index]! });
-    index++;
+    index += 1;
 
     while (index < items.length) {
       if (items[index]!.kind !== TokenKind.Dot) {
         break;
       }
 
-      index++;
+      index += 1;
 
       if (index < items.length && this.isModuleNameToken(items[index]!)) {
         parts.push({ text: items[index]!.lexeme, token: items[index]! });
-        index++;
-      } else {
-        return { index, trailingDot: true };
+        index += 1;
+        continue;
       }
+
+      return { index, trailingDot: true };
     }
 
     return { index, trailingDot: false };
+  }
+
+  private hasExtraTokens(items: readonly Token[], index: number): boolean {
+    return (
+      index < items.length &&
+      items[index]!.kind !== TokenKind.Newline &&
+      items[index]!.kind !== TokenKind.Eof
+    );
   }
 
   private static readonly nonModuleTokens: ReadonlySet<TokenKind> = new Set([
@@ -232,7 +238,7 @@ export class ImportDiscovery {
         return index + 1;
       }
 
-      index++;
+      index += 1;
     }
 
     return index;
@@ -245,6 +251,8 @@ export class ImportDiscovery {
       message: "Malformed import statement.",
       source,
       span,
+      ownerKey: "lexer:import",
+      stableDetail: `import-malformed:${source.name}:${span.start}:${span.end}`,
     });
   }
 }

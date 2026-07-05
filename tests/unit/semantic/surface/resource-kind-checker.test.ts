@@ -93,6 +93,25 @@ test("applied type derives resource kind from arguments using the provided conte
   expect(resourceKindForType({ type, context })).toEqual(concreteKind("Linear"));
 });
 
+test("applied stream constructor preserves stream kind over copy argument", () => {
+  const fixture = parseAndResolveSurfaceFixture([
+    ["main.wr", "stream PacketStream contains u32 bound 1:\n"],
+  ]);
+  const streamType = fixture.index.types()[0]!;
+  const type = appliedType({
+    constructor: { kind: "source", typeId: streamType.id },
+    arguments: [coreCheckedType(coreTypeId("u32"))],
+    resourceKind: concreteKind("Copy"),
+  });
+
+  expect(
+    resourceKindForType({
+      type,
+      context: emptyKindContext(fixture.coreTypes, fixture.index),
+    }),
+  ).toEqual(concreteKind("Stream"));
+});
+
 test("source type returns copy by default", () => {
   expect(
     resourceKindForType({

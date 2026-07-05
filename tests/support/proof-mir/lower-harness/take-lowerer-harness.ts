@@ -23,6 +23,7 @@ import { createProofMirLocalClassifier } from "../../../../src/proof-mir/lower/l
 import {
   createProofMirLoweringContext,
   type ProofMirCallLowerer,
+  type ProofMirBlockTrackingRefs,
   type ProofMirExpressionLowerer,
   type ProofMirLoweringContext,
   type ProofMirLoweringResult,
@@ -47,6 +48,17 @@ export interface TakeLowererFixture {
   readonly functionInstanceId: MonoInstanceId;
   readonly takeStatement: MonoTakeStatement;
   readonly monoStatement: MonoStatement;
+  readonly program: MonomorphizedHirProgram;
+  readonly locals: readonly MonoLocal[];
+  readonly expression: ProofMirExpressionLowerer;
+  readonly call?: ProofMirCallLowerer;
+  readonly statement?: ProofMirStatementLowerer;
+}
+
+export interface TakeLowererSequenceFixture {
+  readonly functionInstanceId: MonoInstanceId;
+  readonly takeStatements: readonly MonoTakeStatement[];
+  readonly monoStatements: readonly MonoStatement[];
   readonly program: MonomorphizedHirProgram;
   readonly locals: readonly MonoLocal[];
   readonly expression: ProofMirExpressionLowerer;
@@ -99,6 +111,7 @@ function buildLoweringContextForTakeTest(input: {
   readonly body: MonoBlock;
   readonly locals: readonly MonoLocal[];
   readonly program: MonomorphizedHirProgram;
+  readonly blockTracking?: ProofMirBlockTrackingRefs;
 }): ProofMirLoweringResult<{
   readonly context: ProofMirLoweringContext;
   readonly entryBlockKey: ProofMirCanonicalKey;
@@ -188,6 +201,7 @@ function buildLoweringContextForTakeTest(input: {
     graph,
     ssa: createProofMirGraphSsa({ functionInstanceId: input.functionInstanceId, ownerKey }),
     effects: createProofMirEffectsResources({ functionInstanceId: input.functionInstanceId }),
+    ...(input.blockTracking === undefined ? {} : { blockTracking: input.blockTracking }),
   });
 
   context.ssa.registerBlock(entryBlockKey);
@@ -239,5 +253,58 @@ export function lowerProofMirTakeForTest(input: TakeLowererFixture): TakeLowerin
     exits: recorder.exits,
     operandEvaluated: true,
     ...(aliasStorage === undefined ? {} : { aliasStorage }),
+  };
+}
+
+export function lowerProofMirTakeSequenceForTest(
+  input: TakeLowererSequenceFixture,
+): TakeLoweringTestResult {
+  const body: MonoBlock = {
+    statements: input.monoStatements,
+    sourceOrigin: "source:test",
+  };
+  const currentBlockRef: { blockKey?: ProofMirCanonicalKey } = {};
+  const continuationBlockRef: { blockKey?: ProofMirCanonicalKey } = {};
+  const contextResult = buildLoweringContextForTakeTest({
+    functionInstanceId: input.functionInstanceId,
+    body,
+    locals: input.locals,
+    program: input.program,
+    blockTracking: { currentBlockRef, continuationBlockRef },
+  });
+  if (contextResult.kind === "error") {
+    return { kind: "error", diagnostics: contextResult.diagnostics };
+  }
+
+  const { context, entryBlockKey } = contextResult.value;
+  currentBlockRef.blockKey = entryBlockKey;
+  const recorder = createTakeBodyRecorder(context.graph);
+  const takeLowerer = createProofMirTakeLowerer({
+    expression: input.expression,
+    ...(input.call === undefined ? {} : { call: input.call }),
+    ...(input.statement === undefined ? {} : { statement: input.statement }),
+    recorder,
+  });
+
+  for (const takeStatement of input.takeStatements) {
+    const blockKey = currentBlockRef.blockKey;
+    if (blockKey === undefined) {
+      throw new RangeError("Take lowering sequence lost the current block.");
+    }
+    const lowered = takeLowerer.lowerTake({
+      context,
+      statement: takeStatement,
+      blockKey,
+    });
+    if (lowered.kind === "error") {
+      return { kind: "error", diagnostics: lowered.diagnostics };
+    }
+  }
+
+  return {
+    kind: "ok",
+    statements: recorder.statements,
+    exits: recorder.exits,
+    operandEvaluated: true,
   };
 }

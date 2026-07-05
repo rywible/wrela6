@@ -70,7 +70,7 @@ export class ValidatedBufferDeclarationView extends AstView {
     return presentTokenText(this.nameToken());
   }
 
-  nameSpan(): import("../../lexer").SourceSpan | undefined {
+  nameSpan(): import("../lexer").SourceSpan | undefined {
     return presentTokenSpan(this.nameToken());
   }
 

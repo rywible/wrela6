@@ -1,0 +1,13 @@
+use UefiStatus from wrela_abi.target.uefi.status
+
+platform fn output_string(message: Utf16Static) -> UefiStatus
+
+uefi image TwoBranchControlFlowImage:
+    fn boot() -> UefiStatus:
+        if false:
+            return UefiStatus.success
+
+        if true:
+            return output_string(utf16_static("WRELA_TWO_BRANCH_OK\r\n"))
+        else:
+            return UefiStatus.success

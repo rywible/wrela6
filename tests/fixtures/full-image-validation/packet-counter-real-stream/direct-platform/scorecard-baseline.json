@@ -1,0 +1,14 @@
+{
+  "schema": "wrela.cost-scorecard-baseline",
+  "schemaVersion": 1,
+  "caseKey": "packet-counter-real-stream/direct-platform",
+  "metrics": {
+    "optIrOperationsPre": 52,
+    "optIrOperationsPost": 55,
+    "objectSectionBytes": 988,
+    "executableTextBytes": 1896,
+    "finalImageBytes": 4608,
+    "staticInstructionEstimate": 474,
+    "staticCycleEstimate": 626
+  }
+}

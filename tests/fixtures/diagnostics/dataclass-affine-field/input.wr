@@ -1,0 +1,8 @@
+stream PacketStream contains u32 bound 1:
+
+dataclass Holder:
+    token: PacketStream
+
+uefi image Boot:
+    fn boot() -> Never:
+        return

@@ -1,4 +1,9 @@
-import { optIrConstructionIdAllocator, optIrCfgEdgeTable, type OptIrEdge } from "../cfg";
+import {
+  optIrConstructionIdAllocator,
+  optIrCfgEdgeTable,
+  type OptIrBlock,
+  type OptIrEdge,
+} from "../cfg";
 import { optIrConstantPool, type OptIrConstantPool } from "../constants";
 import {
   optIrCallId,
@@ -10,14 +15,17 @@ import {
   type OptIrOriginId,
   type OptIrValueId,
 } from "../ids";
-import { optIrFunctionTable, optIrProgram, optIrRegionTable, optIrConstantTable } from "../program";
-import type { OptIrBlock } from "../cfg";
-import type { OptIrFunction } from "../program";
+import {
+  optIrFunctionTable,
+  optIrProgram,
+  optIrRegionTable,
+  optIrConstantTable,
+  type OptIrFunction,
+} from "../program";
 import type { OptIrTerminator } from "../terminators";
-import { optIrUnitType } from "../types";
+import { optIrUnitType, type OptIrType } from "../types";
 import type { OptIrRegion } from "../regions";
 import type { OptIrTargetSurface } from "../target-surface";
-import type { OptIrType } from "../types";
 import type { LayoutFactProgram } from "../../layout/layout-program";
 import type { MonoCheckedType } from "../../mono/mono-hir";
 import type { OptIrFactRecord } from "../facts/fact-index";
@@ -35,7 +43,6 @@ import { optIrProvenanceBuilder } from "./provenance-builder";
 import {
   optIrBooleanBinaryOperation,
   optIrBooleanNotOperation,
-  optIrAggregateConstructOperation,
   optIrAggregateExtractOperation,
   optIrConstantOperation,
   optIrIntegerBinaryOperation,
@@ -60,6 +67,7 @@ import {
   compareStableKeys,
   proofMirScopedValueKey,
 } from "./proof-mir-lowering-support";
+import { lowerProofMirConstructObjectStatement } from "./proof-mir-construct-lowering";
 import {
   booleanBinaryOperator,
   byteWidthForType,
@@ -87,7 +95,6 @@ import {
   statementOriginId,
 } from "./proof-mir-lowering-helpers";
 import type { OptIrSkeletonLoweringResult } from "./lowering-types";
-import { proofMetadataIdKey } from "../../mono/proof-metadata-tables";
 import {
   aliasProofMirValue,
   basePlaceValueAliasesForBlock,
@@ -97,9 +104,11 @@ import {
   proofMirPlaceRootAliasKey,
   propagatedPlaceValueAliasesByBlock,
   rootValueAliasForPlace,
+  valueAliasForTakeOperand,
   type ProofMirPlaceValueAliases,
 } from "./proof-mir-place-aliases";
-
+import { attemptStartInBlock, runtimeValueForAttemptOperand } from "./proof-mir-attempt-operands";
+import { lowerProofMirSwitchTerminator } from "./proof-mir-switch-lowering";
 export type { OptIrSkeletonLoweringResult } from "./lowering-types";
 export type { OptIrValidatedBufferFactForLowering };
 export {
@@ -665,17 +674,14 @@ function lowerProofMirStatement(
       ];
     }
     case "constructObject":
-      return [
-        optIrAggregateConstructOperation({
-          operationId: nextStatementOperationId(context),
-          fieldIds: statement.kind.fields.map((field) =>
-            proofMirValueIdFor(function_, field.value, context),
-          ),
-          resultId: proofMirValueIdFor(function_, statement.kind.result, context),
-          resultType: proofMirValueTypeForLowering(function_, statement.kind.result, context),
-          originId,
-        }),
-      ];
+      return lowerProofMirConstructObjectStatement({
+        function_,
+        construct: statement.kind,
+        context,
+        originId,
+        valueTypeForLowering: (valueId) =>
+          proofMirValueTypeForLowering(function_, valueId, context),
+      });
     case "call": {
       const operation = lowerProofMirCall(function_, statement.kind.call, context, originId);
       const result = statement.kind.call.result;
@@ -738,7 +744,6 @@ function lowerProofMirStatement(
     case "releaseLoan":
     case "validate":
     case "attempt":
-    case "take":
     case "openSessionMember":
     case "closeSessionMember":
     case "openObligation":
@@ -751,6 +756,31 @@ function lowerProofMirStatement(
           originId,
         }),
       ];
+    case "take": {
+      if (statement.kind.take.sessionMember?.placeId !== undefined) {
+        const valueAlias = valueAliasForTakeOperand({
+          function_,
+          operand: statement.kind.take.operand,
+          context,
+          aliases: placeAliases,
+        });
+        if (valueAlias !== undefined) {
+          bindPlaceValueAlias({
+            function_,
+            aliases: placeAliases,
+            placeId: statement.kind.take.sessionMember.placeId,
+            valueId: valueAlias,
+          });
+        }
+      }
+      return [
+        optIrProofErasedMarkerOperation({
+          operationId: nextStatementOperationId(context),
+          erasedProof: statement.kind.kind,
+          originId,
+        }),
+      ];
+    }
     case "load":
       if (entryParameterLoadStatementIds.has(statement.statementId)) {
         return [];
@@ -828,6 +858,7 @@ function lowerProofMirCall(
         target: {
           kind: "intrinsic",
           intrinsicKey: call.target.intrinsicKey,
+          literalValue: call.target.literalValue,
           sourceValueKey: call.target.sourceValueKey,
         },
       });
@@ -850,7 +881,7 @@ function lowerProofMirMatchAttemptTerminator(
   if (terminator.kind.kind !== "matchAttempt") {
     return { kind: "unreachable", operationId, originId };
   }
-  const attempt = attemptStartInBlock(function_, block, terminator.kind.match.attemptId);
+  const attempt = attemptStartInBlock(block, terminator.kind.match.attemptId);
   const statusValue =
     attempt === undefined ? undefined : runtimeValueForAttemptOperand(function_, attempt);
   if (attempt === undefined || statusValue === undefined) {
@@ -886,52 +917,6 @@ function lowerProofMirMatchAttemptTerminator(
     ),
     originId,
   };
-}
-
-function attemptStartInBlock(
-  function_: ProofMirFunction,
-  block: ProofMirBlock,
-  attemptId: Extract<
-    ProofMirBlock["terminator"]["kind"],
-    { readonly kind: "matchAttempt" }
-  >["match"]["attemptId"],
-): Extract<ProofMirStatement["kind"], { readonly kind: "attempt" }>["attempt"] | undefined {
-  const attemptKey = proofMetadataIdKey(attemptId);
-  for (const statement of block.statements) {
-    if (statement.kind.kind !== "attempt") {
-      continue;
-    }
-    if (proofMetadataIdKey(statement.kind.attempt.attemptId) === attemptKey) {
-      return statement.kind.attempt;
-    }
-  }
-  return undefined;
-}
-
-function runtimeValueForAttemptOperand(
-  function_: ProofMirFunction,
-  attempt: Extract<ProofMirStatement["kind"], { readonly kind: "attempt" }>["attempt"],
-): ProofMirValueId | undefined {
-  const result = attempt.fallible.result;
-  if (result === undefined) {
-    return undefined;
-  }
-  switch (result.kind) {
-    case "value":
-    case "valueAndPlace":
-      return result.value;
-    case "place": {
-      const place = function_.places.get(result.place);
-      if (
-        place !== undefined &&
-        place.projection.length === 0 &&
-        (place.root.kind === "runtimeTemporary" || place.root.kind === "blockParameter")
-      ) {
-        return place.root.valueId;
-      }
-      return undefined;
-    }
-  }
 }
 
 function lowerProofMirTerminator(
@@ -973,33 +958,13 @@ function lowerProofMirTerminator(
         originId,
       };
     case "switch":
-      if (terminator.kind.fallback === undefined) {
-        context.diagnostics.push(
-          `terminator:${String(terminator.terminatorId)}:unsupported-switch`,
-        );
-        return { kind: "unreachable", operationId, originId };
-      }
-      return {
-        kind: "switch",
+      return lowerProofMirSwitchTerminator({
+        function_: function_,
+        switchKind: terminator.kind,
+        context,
         operationId,
-        scrutinee: proofMirValueIdFor(function_, terminator.kind.scrutinee, context),
-        cases: Object.freeze(
-          terminator.kind.cases.map((switchCase) =>
-            Object.freeze({
-              label: switchCase.label,
-              edge: context.allocator.edgeIdFor(
-                function_.functionInstanceId,
-                String(switchCase.target.edgeId),
-              ),
-            }),
-          ),
-        ),
-        defaultEdge: context.allocator.edgeIdFor(
-          function_.functionInstanceId,
-          String(terminator.kind.fallback.edgeId),
-        ),
         originId,
-      };
+      });
     case "return":
       return {
         kind: "return",

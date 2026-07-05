@@ -1,0 +1,100 @@
+// Ejected ordinary project source copy; target authority comes from certified platform contracts.
+use Result from wrela_std.core.result
+
+enum BootError:
+    Memory
+    DeviceDiscovery
+    DeviceUnavailable
+    MachinePlanFailed
+    ExitFailed
+    Bringup
+    PacketMalformed
+
+enum UefiDeviceName:
+    net0
+
+unique edge class UefiFirmware:
+    fn reserve_restricted_memory(self) -> Result[UefiMemoryReserved, BootError]:
+        uefi_reserve_restricted_memory(firmware=self)
+
+edge class UefiMemoryReserved:
+    fn discover_virtio(self) -> Result[VirtioDiscovery, BootError]:
+        uefi_discover_virtio(firmware=self)
+
+class VirtioDiscovery:
+    binder: UefiVirtioBinder
+    discovered_devices: VirtioDevices
+
+edge class UefiVirtioBinder:
+    fn bind_virtio_net(
+        self,
+        device: VirtioDevice,
+        name: UefiDeviceName,
+    ) -> Result[NetworkBinding, BootError]:
+        uefi_bind_virtio_net(binder=self, device=device, name=name)
+
+class VirtioDevices:
+    net0: VirtioDevice
+
+edge class VirtioDevice:
+
+class NetworkBinding:
+    planner: MachinePlanner
+    net0: NetworkDevice
+
+edge class MachinePlanner:
+    fn plan_machine(
+        self,
+        device_bindings: MachineDeviceBindings,
+    ) -> Result[MachinePlan, BootError]:
+        uefi_plan_machine(planner=self, device_bindings=device_bindings)
+
+class MachineDeviceBindings:
+    net0: NetworkDevice
+
+edge class MachinePlan:
+    fn exit(self) -> Result[Machine, BootError]:
+        uefi_exit_boot_services(machine_plan=self)
+
+class Machine:
+    device_set: MachineDevices
+
+class MachineDevices:
+    net0: NetworkDevice
+
+unique edge class NetworkDevice:
+    fn split(self) -> NetworkPaths:
+        uefi_split_network_device(device=self)
+
+class NetworkPaths:
+    rx: NetworkRxPath
+    tx: NetworkTxPath
+
+edge class NetworkRxPath:
+
+edge class NetworkTxPath:
+
+private platform fn uefi_reserve_restricted_memory(
+    firmware: UefiFirmware,
+) -> Result[UefiMemoryReserved, BootError]
+
+private platform fn uefi_discover_virtio(
+    firmware: UefiMemoryReserved,
+) -> Result[VirtioDiscovery, BootError]
+
+private platform fn uefi_bind_virtio_net(
+    binder: UefiVirtioBinder,
+    device: VirtioDevice,
+    name: UefiDeviceName,
+) -> Result[NetworkBinding, BootError]
+
+private platform fn uefi_plan_machine(
+    planner: MachinePlanner,
+    device_bindings: MachineDeviceBindings,
+) -> Result[MachinePlan, BootError]
+
+private platform fn uefi_exit_boot_services(
+    machine_plan: MachinePlan,
+) -> Result[Machine, BootError]
+
+private platform fn uefi_split_network_device(device: NetworkDevice) -> NetworkPaths

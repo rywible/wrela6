@@ -1,5 +1,7 @@
 export const UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID =
   "uefi.validation.fixturePacketSource";
+export const UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_STREAM_PRIMITIVE_ID =
+  "uefi.validation.fixturePacketStream";
 export const UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_FEATURE =
   "full-image-validation-fixture";
 export const UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_OPERATION_KEY =

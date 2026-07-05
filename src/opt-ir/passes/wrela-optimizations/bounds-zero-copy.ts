@@ -28,6 +28,7 @@ export interface WrelaBoundsZeroCopyResult {
     readonly kind: "boundsCheckEliminated" | "zeroCopyAccess";
     readonly operationId: OptIrOperationId;
     readonly factChain: readonly string[];
+    readonly consumedFactFamilies: readonly string[];
   }[];
 }
 
@@ -83,12 +84,18 @@ export function runWrelaBoundsZeroCopy(input: WrelaBoundsZeroCopyInput): WrelaBo
       kind: "boundsCheckEliminated",
       operationId: candidate.checkOperationId,
       factChain: candidate.factChain,
+      consumedFactFamilies: ["validatedBuffer"],
     });
   }
 
   const zeroCopy = new Set(input.zeroCopyAccessOperationIds ?? []);
   for (const operationId of zeroCopy) {
-    explanations.push({ kind: "zeroCopyAccess", operationId, factChain: ["zero-copy-access"] });
+    explanations.push({
+      kind: "zeroCopyAccess",
+      operationId,
+      factChain: ["zero-copy-access"],
+      consumedFactFamilies: ["validatedBuffer"],
+    });
   }
 
   return {

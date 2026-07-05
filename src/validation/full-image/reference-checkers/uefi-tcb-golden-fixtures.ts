@@ -63,6 +63,7 @@ export const FULL_IMAGE_UEFI_TCB_GOLDEN = Object.freeze({
     set_watchdog_timer: "uefi.boot.setWatchdogTimer",
     exit_boot_services_with_fresh_map: "uefi.boot.exitBootServices",
     validation_fixture_packet_source: "uefi.validation.fixturePacketSource",
+    validation_fixture_packet_stream: "uefi.validation.fixturePacketStream",
   }),
   runtimeHelpers: Object.freeze({
     "1000": Object.freeze({

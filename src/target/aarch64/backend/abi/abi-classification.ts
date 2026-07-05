@@ -1,4 +1,5 @@
 import { compareCodeUnitStrings } from "../../../../shared/deterministic-sort";
+import { AAPCS64_PUBLIC_CALL_VECTOR_CLOBBERS } from "../../aapcs64-registers";
 import {
   aarch64BackendDiagnostic,
   backendError,
@@ -120,7 +121,7 @@ export function classifyAArch64PublicAbiBoundary(
       clobberedGprs: Object.freeze(
         [...targetSurface.registerModel.publicCallerSavedGprs].sort(compareCodeUnitStrings),
       ),
-      clobberedVectorRegisters: Object.freeze(range("v", 0, 7)),
+      clobberedVectorRegisters: AAPCS64_PUBLIC_CALL_VECTOR_CLOBBERS,
       outgoingStackSizeBytes: align(parameterCursor.nextStackOffset, 16),
       outgoingStackAlignmentBytes: 16,
     }),

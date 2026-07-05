@@ -116,8 +116,11 @@ const EXPRESSION_STARTER_KINDS = new Set<SyntaxKind>([
   SyntaxKind.IdentifierToken,
   SyntaxKind.IntegerLiteralToken,
   SyntaxKind.StringLiteralToken,
+  SyntaxKind.TrueKeyword,
+  SyntaxKind.FalseKeyword,
   SyntaxKind.LeftBraceToken,
   SyntaxKind.NotKeyword,
+  SyntaxKind.TildeToken,
   SyntaxKind.MinusToken,
 ]);
 

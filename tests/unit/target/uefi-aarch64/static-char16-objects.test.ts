@@ -31,7 +31,9 @@ describe("UEFI static CHAR16 object materialization", () => {
     if (result.kind !== "ok") throw new Error("expected static object module");
     const objectModule = result.value.modules[0]?.objectModule;
     expect(objectModule?.sections[0]?.classKey).toBe(AARCH64_OBJECT_SECTION_CLASS_READ_ONLY_DATA);
-    expect(objectModule?.sections[0]?.bytes).toEqual([0x4f, 0, 0x4b, 0, 0x0d, 0, 0x0a, 0, 0, 0]);
+    expect(Array.from(objectModule?.sections[0]?.bytes ?? [])).toEqual([
+      0x4f, 0, 0x4b, 0, 0x0d, 0, 0x0a, 0, 0, 0,
+    ]);
     expect(objectModule?.symbols).toContainEqual(
       expect.objectContaining({
         kind: "global-definition",

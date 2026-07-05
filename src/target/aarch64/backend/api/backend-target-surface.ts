@@ -329,24 +329,15 @@ function normalizeAArch64PhysicalRegisterModel(
       .sort((left, right) => compareCodeUnitStrings(left.stableKey, right.stableKey)),
   );
   const registerByKey = new Map(registers.map((register) => [register.stableKey, register]));
-  const publicParameterGprs = Object.freeze(
-    [...registerModel.publicParameterGprs].sort(compareCodeUnitStrings),
+  const publicParameterGprs = sortedRegisterKeys(registerModel.publicParameterGprs);
+  const publicResultGprs = sortedRegisterKeys(registerModel.publicResultGprs);
+  const publicCallerSavedGprs = sortedRegisterKeys(registerModel.publicCallerSavedGprs);
+  const publicCalleeSavedGprs = sortedRegisterKeys(registerModel.publicCalleeSavedGprs);
+  const publicCalleeSavedSimd = sortedRegisterKeys(registerModel.publicCalleeSavedSimd);
+  const privateConventionCandidateGprs = sortedRegisterKeys(
+    registerModel.privateConventionCandidateGprs,
   );
-  const publicResultGprs = Object.freeze(
-    [...registerModel.publicResultGprs].sort(compareCodeUnitStrings),
-  );
-  const publicCallerSavedGprs = Object.freeze(
-    [...registerModel.publicCallerSavedGprs].sort(compareCodeUnitStrings),
-  );
-  const publicCalleeSavedGprs = Object.freeze(
-    [...registerModel.publicCalleeSavedGprs].sort(compareCodeUnitStrings),
-  );
-  const privateConventionCandidateGprs = Object.freeze(
-    [...registerModel.privateConventionCandidateGprs].sort(compareCodeUnitStrings),
-  );
-  const veneerScratchGprs = Object.freeze(
-    [...registerModel.veneerScratchGprs].sort(compareCodeUnitStrings),
-  );
+  const veneerScratchGprs = sortedRegisterKeys(registerModel.veneerScratchGprs);
 
   return Object.freeze({
     ...registerModel,
@@ -357,6 +348,7 @@ function normalizeAArch64PhysicalRegisterModel(
       publicResultGprs,
       publicCallerSavedGprs,
       publicCalleeSavedGprs,
+      publicCalleeSavedSimd,
       privateConventionCandidateGprs,
       veneerScratchGprs,
     }),
@@ -366,6 +358,7 @@ function normalizeAArch64PhysicalRegisterModel(
     publicResultGprs,
     publicCallerSavedGprs,
     publicCalleeSavedGprs,
+    publicCalleeSavedSimd,
     privateConventionCandidateGprs,
     veneerScratchGprs,
     encodingNumberOf: (register: AArch64PhysicalRegisterStableKey) =>
@@ -377,6 +370,12 @@ function normalizeAArch64PhysicalRegisterModel(
     permitsOperand: (query: AArch64RegisterOperandPermissionQuery) =>
       permitsOperandFromRegisterRecords(query, registerByKey),
   });
+}
+
+function sortedRegisterKeys(
+  registers: readonly AArch64PhysicalRegisterStableKey[],
+): readonly AArch64PhysicalRegisterStableKey[] {
+  return Object.freeze([...registers].sort(compareCodeUnitStrings));
 }
 
 function permitsOperandFromRegisterRecords(

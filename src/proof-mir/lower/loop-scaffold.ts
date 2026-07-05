@@ -1,6 +1,7 @@
 import { instantiatedHirIdKey } from "../../mono/ids";
 import type { MonoBlock, MonoLocal, MonoStatement } from "../../mono/mono-hir";
 import type { ProofMirCanonicalKey } from "../canonicalization/canonical-keys";
+import type { DraftProofMirSessionMemberReference } from "../domains/effects-resources";
 import { sortProofMirDiagnostics, type ProofMirDiagnostic } from "../diagnostics";
 import {
   proofMirSsaKeyString,
@@ -275,6 +276,7 @@ export function setupStructuredLoopScaffold(input: {
   readonly shared: LoopLoweringSharedInput;
   readonly loopCarriedLocals: readonly MonoLocal[];
   readonly boundaryPlaceKeys: readonly ProofMirCanonicalKey[];
+  readonly boundarySessionMembers?: readonly DraftProofMirSessionMemberReference[];
   readonly skipStatementRegistration?: boolean;
 }): ProofMirLoweringResult<StructuredLoopScaffold> {
   const originKey = originForStatement(input.context, input.statement);
@@ -310,7 +312,17 @@ export function setupStructuredLoopScaffold(input: {
   const boundaryResources = input.context.functionScopePlaceLowerer.collectLoopBoundarySet({
     loopRole,
     places: input.boundaryPlaceKeys,
+    sessionMembers: input.boundarySessionMembers,
   });
+  const stateMergeResult = input.context.graph.setBlockStateMerge(headerBlockKey, {
+    kind: "loopHeader",
+    loopScopeKey,
+    boundaryResources,
+    originKey,
+  });
+  if (stateMergeResult.kind === "error") {
+    return stateMergeResult;
+  }
 
   const predeclared = predeclareLoopHeaderParameters({
     context: input.context,

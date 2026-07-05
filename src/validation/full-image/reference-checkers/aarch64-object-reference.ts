@@ -54,7 +54,7 @@ function runAArch64ObjectReferenceChecker(
     moduleCategoryReport(
       "validation-fixture",
       binarySpine.validationFixtureObjects,
-      input.scenario === "packet-counter",
+      input.scenario === "packet-counter" || input.scenario === "packet-counter-real-stream",
     ),
     moduleCategoryReport("helper", binarySpine.helperObjects),
     targetFingerprintReport(input),
@@ -260,8 +260,13 @@ function duplicateOrUnsorted(label: string, keys: readonly string[]): readonly s
   return diagnostics;
 }
 
-function isNulTerminatedChar16Bytes(bytes: readonly number[]): boolean {
-  return bytes.length >= 2 && bytes.length % 2 === 0 && bytes.at(-1) === 0 && bytes.at(-2) === 0;
+function isNulTerminatedChar16Bytes(bytes: ArrayLike<number>): boolean {
+  return (
+    bytes.length >= 2 &&
+    bytes.length % 2 === 0 &&
+    bytes[bytes.length - 1] === 0 &&
+    bytes[bytes.length - 2] === 0
+  );
 }
 
 function moduleKeys(modules: readonly AArch64LinkInputModule[]): string {

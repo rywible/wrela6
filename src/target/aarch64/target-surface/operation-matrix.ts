@@ -45,6 +45,7 @@ export type AArch64OperationMatrix = ReadonlyMap<string, AArch64OperationSupport
 
 const REQUIRED_OPERATION_KINDS = [
   "constant",
+  "constAddr",
   "integerUnary",
   "integerBinary",
   "integerCompare",

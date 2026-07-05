@@ -23,8 +23,7 @@ test("proof fact reference passes PacketCounter when exposed proof facts cover t
         proofFact("validated-buffer-layout", "CounterPacket", "fixed-field-layout-through-byte-2"),
         proofFact("validated-buffer-layout", "CounterPacket", "payload-end"),
         proofFact("limit-check", "source.len <= limits.max_frame_bytes"),
-        proofFact("validation-success", "source-consumed-into-packet"),
-        proofFact("validation-error", "source-preserved-and-closed"),
+        proofFact("validation-success", "CounterPacket", "validated-buffer-authority"),
         proofFact("exit-closure", "clean"),
         proofFact("platform-call-precondition", "output_string"),
         proofFact("platform-call-precondition", "uefi.source.reserveRestrictedMemory"),
@@ -101,14 +100,9 @@ test("proof fact reference passes PacketCounter when exposed proof facts cover t
           stableDetail: "limit-check:source.len <= limits.max_frame_bytes",
         },
         {
-          evidenceKey: "validation-error-source-closed",
+          evidenceKey: "validation-success-packet-authority",
           authority: "compiler-trace",
-          stableDetail: "validation-error:source-preserved-and-closed",
-        },
-        {
-          evidenceKey: "validation-success-source-consumed",
-          authority: "compiler-trace",
-          stableDetail: "validation-success:source-consumed-into-packet",
+          stableDetail: "validation-success:CounterPacket:validated-buffer-authority",
         },
       ],
     },
@@ -133,8 +127,7 @@ test("proof fact reference fails honestly when PacketCounter proof facts are not
     "proof-fact:packet-counter:missing-exposed-fact:platform-call-precondition-reserve-restricted-memory",
     "proof-fact:packet-counter:missing-exposed-fact:platform-call-precondition-split-network-device",
     "proof-fact:packet-counter:missing-exposed-fact:source-length-limit",
-    "proof-fact:packet-counter:missing-exposed-fact:validation-error-source-closed",
-    "proof-fact:packet-counter:missing-exposed-fact:validation-success-source-consumed",
+    "proof-fact:packet-counter:missing-exposed-fact:validation-success-packet-authority",
   ]);
   expect(reports[0]?.evidence).toEqual([
     {
@@ -567,7 +560,7 @@ test("OptIR reference ignores Proof-MIR operations when checking optimized cover
   ]);
 });
 
-test("OptIR reference ignores unoptimized operations when checking optimized coverage", () => {
+test("OptIR reference uses unoptimized construction operations for packet coverage", () => {
   const reports = runFullImageReferenceCheckers({
     input: packetCounterInput({
       trace: {
@@ -593,11 +586,7 @@ test("OptIR reference ignores unoptimized operations when checking optimized cov
   });
 
   expect(reports.map((report) => report.stableDetail)).toEqual([
-    "opt-ir:packet-counter:missing-exposed-fact:integer-binary-operations",
-    "opt-ir:packet-counter:missing-exposed-fact:integer-compare-operations",
-    "opt-ir:packet-counter:missing-exposed-fact:packet-memory-loads",
     "opt-ir:packet-counter:missing-exposed-fact:uefi-bind-virtio-net-platform-call",
-    "opt-ir:packet-counter:missing-exposed-fact:uefi-console-platform-call",
     "opt-ir:packet-counter:missing-exposed-fact:uefi-discover-virtio-platform-call",
     "opt-ir:packet-counter:missing-exposed-fact:uefi-exit-boot-services-platform-call",
     "opt-ir:packet-counter:missing-exposed-fact:uefi-plan-machine-platform-call",

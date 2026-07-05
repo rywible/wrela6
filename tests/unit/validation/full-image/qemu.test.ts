@@ -49,18 +49,23 @@ test("builds default-boot-path QEMU smoke requests without shell marker", () => 
 });
 
 test("builds marker-only shell-startup requests for non-returning PacketCounter cases", () => {
-  expect(
-    fullImageQemuSmokeRequestForCase({
-      caseKey: "packet-counter/toolchain-stdlib",
-      launchMode: "uefi-shell-startup",
+  for (const caseKey of [
+    "packet-counter/toolchain-stdlib",
+    "packet-counter-real-stream/toolchain-stdlib",
+  ]) {
+    expect(
+      fullImageQemuSmokeRequestForCase({
+        caseKey,
+        launchMode: "uefi-shell-startup",
+        expectedConsoleMarkers: ["WRELA_PACKET_COUNTER_OK"],
+      }),
+    ).toEqual({
+      kind: "qemu",
+      allowSkip: true,
       expectedConsoleMarkers: ["WRELA_PACKET_COUNTER_OK"],
-    }),
-  ).toEqual({
-    kind: "qemu",
-    allowSkip: true,
-    expectedConsoleMarkers: ["WRELA_PACKET_COUNTER_OK"],
-    termination: "kill-after-marker",
-  });
+      termination: "kill-after-marker",
+    });
+  }
 });
 
 test("classifies known AArch64 firmware basenames as accepted", () => {
@@ -228,7 +233,7 @@ test("run helper delegates valid image requests through injected runner", async 
 });
 
 test("run helper defaults to UEFI shell startup path through real target harness with fakes", async () => {
-  const writes: Array<{ readonly path: string; readonly bytes: readonly number[] }> = [];
+  const writes: Array<{ readonly path: string; readonly bytes: Uint8Array }> = [];
 
   const report = await runFullImageValidationQemuSmoke({
     artifactName: "smoke-console-toolchain-stdlib.efi",
@@ -242,7 +247,7 @@ test("run helper defaults to UEFI shell startup path through real target harness
     hostEffects: {
       createTempDirectory: async (prefix) => `${prefix}full-image`,
       writeFile: async (path, bytes) => {
-        writes.push({ path, bytes });
+        writes.push({ path, bytes: Uint8Array.from(bytes) });
       },
       copyFile: async () => {},
       runProcess: async () => ({
@@ -262,7 +267,11 @@ test("run helper defaults to UEFI shell startup path through real target harness
     "WRELA_UEFI_SMOKE_OK",
     "WRELA_FULL_IMAGE_SMOKE_OK.wrela-uefi-aarch64-full-image",
   ]);
-  expect(writes[0]).toEqual({
+  expect(
+    writes[0] === undefined
+      ? undefined
+      : { path: writes[0].path, bytes: Array.from(writes[0].bytes) },
+  ).toEqual({
     path: "wrela-uefi-aarch64-full-image/EFI/WRELA/SMOKEAA64.EFI",
     bytes: [0x4d, 0x5a],
   });

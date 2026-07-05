@@ -11,7 +11,7 @@ import {
   type ExpressionView,
 } from "../frontend/ast/expression-views";
 import { RequirementView } from "../frontend/ast/requirement-views";
-import { descendants, presentTokenSpan, presentTokenText } from "../frontend/ast/syntax-query";
+import { descendants, presentTokenSpan } from "../frontend/ast/syntax-query";
 import { SyntaxKind } from "../frontend/syntax";
 import type {
   HirProofExpression,
@@ -23,6 +23,7 @@ import type { HirLoweringContext } from "./lowering-context";
 import { currentHirModuleId, hirDiagnostic } from "./lowering-context";
 import { hirProofExpressionId, ownedHirRequirementId } from "./ids";
 import type { HirOriginId } from "./ids";
+import { parseWrIntegerLiteral } from "../shared/integer-literal";
 
 function ownerOrdinal(context: HirLoweringContext): number {
   return context.proofMetadata.count("callSiteRequirement");
@@ -134,25 +135,25 @@ function buildProofExpression(input: {
   if (input.view instanceof LiteralExpressionView) {
     const token = input.view.literalToken();
     const text = input.view.literalText() ?? "";
+    if (token?.kind === SyntaxKind.TrueKeyword || token?.kind === SyntaxKind.FalseKeyword) {
+      return {
+        proofExpressionId: input.nextExpressionId(),
+        kind: "literal",
+        value: token.kind === SyntaxKind.TrueKeyword,
+        sourceOrigin: input.sourceOrigin,
+      };
+    }
     return {
       proofExpressionId: input.nextExpressionId(),
       kind: "literal",
       value:
-        token?.kind === SyntaxKind.StringLiteralToken ? text : BigInt(text.length > 0 ? text : "0"),
+        token?.kind === SyntaxKind.StringLiteralToken ? text : (parseWrIntegerLiteral(text) ?? 0n),
       sourceOrigin: input.sourceOrigin,
     };
   }
 
   if (input.view instanceof NameExpressionView) {
     const name = input.view.nameText() ?? "";
-    if (name === "true" || name === "false") {
-      return {
-        proofExpressionId: input.nextExpressionId(),
-        kind: "literal",
-        value: name === "true",
-        sourceOrigin: input.sourceOrigin,
-      };
-    }
     const span = presentTokenSpan(input.view.nameToken()) ?? input.view.node.span;
     const reference = referenceForSpan({
       surface: input.surface,
@@ -242,7 +243,7 @@ function buildProofExpression(input: {
     return {
       proofExpressionId: input.nextExpressionId(),
       kind: "binary",
-      operator: presentTokenText(input.view.operatorToken()) ?? "",
+      operator: input.view.operatorToken()?.green.lexeme ?? "",
       left,
       right,
       sourceOrigin: input.sourceOrigin,

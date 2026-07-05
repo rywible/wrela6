@@ -148,6 +148,37 @@ test("cross-stdlib equivalence compares structure without requiring byte identit
   ]);
 });
 
+test("cross-stdlib equivalence includes real-stream PacketCounter variants", () => {
+  const report = validationReport([
+    validationCase("packet-counter-real-stream", "toolchain-stdlib", {
+      artifactFingerprint: "sha256:toolchain",
+    }),
+    validationCase("packet-counter-real-stream", "ejected-stdlib", {
+      artifactFingerprint: "sha256:ejected",
+      packageKey: "packet-counter-real-stream-ejected",
+    }),
+    validationCase("packet-counter-real-stream", "direct-platform", {
+      artifactFingerprint: "sha256:direct",
+      packageKey: "packet-counter-real-stream-direct",
+    }),
+  ]);
+
+  const evidence = compareFullImageValidationStdlibModeEquivalence(report);
+
+  expect(evidence).toEqual([
+    {
+      groupKey: "packet-counter-real-stream:stdlib-modes",
+      comparedCases: [
+        "packet-counter-real-stream/toolchain-stdlib",
+        "packet-counter-real-stream/ejected-stdlib",
+        "packet-counter-real-stream/direct-platform",
+      ],
+      status: "passed",
+      stableDetail: "equivalence:platform-primitives-and-binary-structure",
+    },
+  ]);
+});
+
 test("cross-stdlib equivalence fails when production evidence is missing", () => {
   const report = validationReport([
     validationCase("packet-counter", "toolchain-stdlib", {
@@ -195,7 +226,7 @@ function validationReport(
 }
 
 function validationCase(
-  scenario: "smoke-console" | "packet-counter",
+  scenario: "smoke-console" | "packet-counter" | "packet-counter-real-stream",
   stdlibMode: "toolchain-stdlib" | "ejected-stdlib" | "direct-platform",
   overrides: Partial<FullImageValidationCaseReport> = {},
 ): FullImageValidationCaseReport {
@@ -281,12 +312,12 @@ function validationCase(
         evidence: [
           {
             evidenceKey:
-              scenario === "packet-counter"
+              scenario === "packet-counter" || scenario === "packet-counter-real-stream"
                 ? "static-char16-marker:WRELA_PACKET_COUNTER_OK"
                 : "static-char16-marker:WRELA_UEFI_SMOKE_OK",
             authority: "compiler-trace",
             stableDetail:
-              scenario === "packet-counter"
+              scenario === "packet-counter" || scenario === "packet-counter-real-stream"
                 ? "utf16-static:WRELA_PACKET_COUNTER_OK"
                 : "utf16-static:WRELA_UEFI_SMOKE_OK",
           },

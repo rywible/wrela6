@@ -132,7 +132,7 @@ export function lowerAttemptLetStatement(input: {
 }): ProofMirLoweringResult<void> {
   const originKey = input.context.originMap.fromMonoStatement({
     owner: { kind: "function", functionInstanceId: input.context.functionInstanceId },
-    sourceOrigin: input.statement.sourceOrigin as never,
+    sourceOrigin: input.statement.sourceOrigin,
     monoStatementId: input.statement.statementId,
   });
   const storage = localStorageKind(input.context, input.local);

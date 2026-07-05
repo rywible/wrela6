@@ -1,0 +1,10 @@
+{
+  "phase": "parse",
+  "diagnostics": [
+    {
+      "code": "LEX_INVALID_ESCAPE",
+      "spanText": "\\q",
+      "count": 1
+    }
+  ]
+}

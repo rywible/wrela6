@@ -12,12 +12,15 @@ export type {
   UefiAArch64BinarySpineStageKey,
 } from "./binary-spine";
 export {
+  compileUefiAArch64ImageAsync,
   compileUefiAArch64Image,
+  compileUefiAArch64ImageWithTraceAsync,
   compileUefiAArch64ImageWithTrace,
   createUefiAArch64TargetMetadata,
   fingerprintUefiAArch64ImageBytes,
 } from "./compile-uefi-aarch64-image";
 export type {
+  CompileUefiAArch64ImageAsyncInput,
   CompileUefiAArch64ImageInput,
   CompileUefiAArch64ImageResult,
   CompileUefiAArch64ImageTrace,
@@ -28,6 +31,7 @@ export type {
   UefiAArch64TargetDiagnostic,
   UefiAArch64TargetDiagnosticCode,
   UefiAArch64TargetDiagnosticInput,
+  UefiAArch64TargetDiagnosticSource,
 } from "./diagnostics";
 export {
   aarch64UefiImageProfileFromEntryProfile,
@@ -114,7 +118,6 @@ export {
   buildProofMir,
   checkProofAndResources,
   computeRepresentationLayoutFacts,
-  extractUefiAArch64StaticChar16MetadataFromCompilerIntrinsics,
   layoutFactsToProofMirInput,
   lowerTypedHir,
   monomorphizeWholeImage,
@@ -126,6 +129,7 @@ export {
   productionPackagePipelineDependencies,
   proofCheckToOptimizedOptIrInput,
   proofMirToCheckInput,
+  runUefiAArch64PackagePipelineToProofCheck,
   runUefiAArch64PackagePipelineToOptIr,
 } from "./package-pipeline";
 export {
@@ -152,6 +156,7 @@ export type {
   UefiAArch64PackageOptIrPipelineOutput,
   UefiAArch64PackagePipelineDependencies,
   UefiAArch64PackagePipelineStageKey,
+  UefiAArch64PackageProofCheckPipelineOutput,
   UefiAArch64PackageStageResult,
   UefiAArch64StageRecord,
   UefiAArch64StaticChar16PointerRecord,
@@ -184,11 +189,13 @@ export {
 } from "./qemu-smoke";
 export type {
   PlanUefiAArch64QemuSmokeCommandInput,
+  UefiAArch64DisabledSmokeRequest,
   UefiAArch64QemuHostEffects,
   UefiAArch64QemuRunnerOutput,
   UefiAArch64QemuSmokeCommandPlan,
   UefiAArch64QemuSmokeConfig,
   UefiAArch64QemuSmokeRequest,
+  UefiAArch64InlineSmokeRequest,
   UefiAArch64ShellSuccessMarker,
   UefiAArch64SmokeArtifactPathEnvironmentResult,
   UefiAArch64SmokeRequest,

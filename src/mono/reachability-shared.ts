@@ -23,7 +23,7 @@ export interface ReachabilityResult {
   readonly diagnostics: readonly MonoDiagnostic[];
 }
 
-export type WorkState = "unseen" | "inProgress" | "completed";
+export type WorkState = "unseen" | "inProgress" | "completed" | "failed";
 
 export interface ReachabilityState {
   readonly program: TypedHirProgram;

@@ -6,7 +6,7 @@ import {
   type StaticBindingTimeClassification,
 } from "../analyses/binding-time-analysis";
 import type { MonoInstanceId } from "../../mono/ids";
-import type { OptIrConstant } from "../constants";
+import type { OptIrConstant, OptIrIntegerConstant } from "../constants";
 import { optIrIntegerConstant } from "../constants";
 import type { OptIrCodeSizeBudget, OptIrExpansionBudgetInput } from "../policy/expansion-budget";
 import { createOptIrExpansionBudgetLedger, optIrCodeSizeDelta } from "../policy/expansion-budget";
@@ -41,6 +41,11 @@ import {
 } from "./specialization/static-driving";
 import { specializationResidualEquivalence } from "./specialization/residual-invariant";
 import { cloneSignatureKey, type OptIrCloneStaticOperand } from "./specialization/clone-signature";
+import { removeUnreferencedSpecializedOriginals } from "./specialization/unreferenced-original-pruning";
+import {
+  compareSpecializationWorkItems,
+  specializationWorkItem as workItem,
+} from "./specialization/work-items";
 
 export type OptIrWholeProgramSpecializationWorkItemKind = "cleanup" | "sccp" | "inlining";
 
@@ -159,6 +164,7 @@ export function runWholeProgramSpecialization(
     currentOperations,
   );
   const cloneBySignature = new Map<string, OptIrMaterializedSpecializationClone>();
+  const specializedCalleeKeys = new Set<string>();
 
   for (const candidate of cloneCandidates(currentProgram, currentOperations, functionByInstance)) {
     const staticOperands = staticOperandsForCall(candidate, staticValues, bindingTime);
@@ -186,6 +192,7 @@ export function runWholeProgramSpecialization(
         existingClone.function.monoInstanceId,
         existingClone.bakedParameterIndices,
       );
+      specializedCalleeKeys.add(String(candidate.callee.monoInstanceId));
       decisionLog = appendDecision(
         decisionLog,
         candidateKey,
@@ -234,6 +241,7 @@ export function runWholeProgramSpecialization(
       clone.function.monoInstanceId,
       clone.bakedParameterIndices,
     );
+    specializedCalleeKeys.add(String(candidate.callee.monoInstanceId));
     operationById = new Map(
       currentOperations.map((operation) => [operation.operationId, operation]),
     );
@@ -264,12 +272,17 @@ export function runWholeProgramSpecialization(
       }),
     );
   }
+  const pruned = removeUnreferencedSpecializedOriginals({
+    program: currentProgram,
+    operations: currentOperations,
+    specializedCalleeKeys,
+  });
 
   return Object.freeze({
-    program: currentProgram,
-    operations: Object.freeze([...currentOperations].sort(compareOperations)),
+    program: pruned.program,
+    operations: Object.freeze([...pruned.operations].sort(compareOperations)),
     decisionLog: decisionLog ?? { entries: () => [] },
-    worklist: Object.freeze(worklist.sort(compareWorkItems)),
+    worklist: Object.freeze(worklist.sort(compareSpecializationWorkItems)),
     rewriteObligations: Object.freeze(rewriteObligations),
     remainingImageBudget: ledger.remaining({ kind: "image" }),
   });
@@ -364,7 +377,7 @@ function foldStaticOperation(
   operation: OptIrOperation,
   staticValues: ReadonlyMap<OptIrValueId, OptIrConstant>,
   bindingTime: ReturnType<typeof analyzeBindingTime>,
-): OptIrConstant | undefined {
+): OptIrIntegerConstant | undefined {
   if (
     operation.kind !== "integerBinary" ||
     bindingTime.classificationOf(operation.resultIds[0] as OptIrValueId).kind !== "static"
@@ -596,14 +609,6 @@ function cloneCandidateKey(candidate: CloneCandidate): string {
   )}:site=${Number(candidate.callOperation.operationId)}`;
 }
 
-function workItem(
-  kind: OptIrWholeProgramSpecializationWorkItemKind,
-  functionId: OptIrFunctionId,
-  reason: string,
-): OptIrWholeProgramSpecializationWorkItem {
-  return Object.freeze({ kind, functionId, reason });
-}
-
 function isEffectBoundaryCall(operation: OptIrOperation): boolean {
   return (
     operation.kind === "runtimeCall" ||
@@ -614,16 +619,4 @@ function isEffectBoundaryCall(operation: OptIrOperation): boolean {
 
 function compareOperations(left: OptIrOperation, right: OptIrOperation): number {
   return Number(left.operationId) - Number(right.operationId);
-}
-
-function compareWorkItems(
-  left: OptIrWholeProgramSpecializationWorkItem,
-  right: OptIrWholeProgramSpecializationWorkItem,
-): number {
-  return (
-    Number(left.functionId) - Number(right.functionId) ||
-    ["cleanup", "sccp", "inlining"].indexOf(left.kind) -
-      ["cleanup", "sccp", "inlining"].indexOf(right.kind) ||
-    left.reason.localeCompare(right.reason)
-  );
 }

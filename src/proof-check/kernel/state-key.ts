@@ -59,7 +59,10 @@ function serializeObligationState(state: CheckedObligationState): string {
 }
 
 function serializeSessionState(state: CheckedSessionState): string {
-  return lengthDelimitedField("session", `${state.sessionKey}:${state.brandKey ?? ""}`);
+  return lengthDelimitedField(
+    "session",
+    `${state.sessionKey}:${state.brandKey ?? ""}:${state.streamLoanKey ?? ""}`,
+  );
 }
 
 function serializeValidationState(state: CheckedValidationState): string {

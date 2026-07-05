@@ -218,6 +218,10 @@ export function targetSurfaceForInternalConstructionTest(): OptIrTargetSurface {
       volatileLoad: "preserveOrdering",
       volatileStore: "preserveOrdering",
     },
+    endianFoldContract: {
+      permitsFirmwareEndianFold: false,
+      permitsVolatileEndianFold: false,
+    },
     intrinsicLowering: {
       resolve: (intrinsicKey) => intrinsics.get(intrinsicKey),
     },

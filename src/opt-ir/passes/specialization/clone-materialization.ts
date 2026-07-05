@@ -1,6 +1,6 @@
 import { monoInstanceId, type MonoInstanceId } from "../../../mono/ids";
 import { optIrCfgEdgeTable } from "../../cfg";
-import type { OptIrConstant } from "../../constants";
+import type { OptIrConstant, OptIrIntegerConstant } from "../../constants";
 import type { OptIrBlockId, OptIrEdgeId, OptIrOperationId, OptIrValueId } from "../../ids";
 import {
   optIrBlockId,
@@ -113,13 +113,13 @@ export function materializeSpecializationClone(
       .filter((operand) => operand.binding.kind === "constant")
       .map((operand) => operand.parameterIndex),
   );
-  const bakedConstants = new Map(
+  const bakedConstants = new Map<number, OptIrIntegerConstant>(
     staticOperands.flatMap((operand) => {
       if (operand.binding.kind !== "constant") {
         return [];
       }
       const constant = staticValues.get(operand.valueId);
-      return constant === undefined ? [] : [[operand.parameterIndex, constant] as const];
+      return constant?.kind === "integer" ? [[operand.parameterIndex, constant] as const] : [];
     }),
   );
   const blockIdMap = new Map<OptIrBlockId, OptIrBlockId>();
@@ -322,6 +322,7 @@ function rewriteClonedOperation(
   }
   switch (operation.kind) {
     case "constant":
+    case "constAddr":
     case "memoryLoad":
     case "proofErasedMarker":
       return Object.freeze(base);

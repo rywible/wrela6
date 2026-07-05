@@ -29,7 +29,7 @@ describe("layoutImageSections", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected layout");
     expect(result.value.sections.map((section) => section.stableKey)).toEqual([".text"]);
-    expect(result.value.sections[0]!.bytes).toEqual([
+    expect(Array.from(result.value.sections[0]!.bytes)).toEqual([
       0xc0, 0x03, 0x5f, 0xd6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xc0, 0x03, 0x5f, 0xd6,
     ]);
     expect(result.value.contributions.map((contribution) => contribution.stableKey)).toEqual([

@@ -1,0 +1,9 @@
+stream ValidationFixturePacketStream contains Ptr bound 1:
+
+platform fn validation_fixture_packet_stream() -> ValidationFixturePacketStream
+
+uefi image Boot:
+    fn boot() -> Never:
+        for packet in validation_fixture_packet_stream():
+            return
+        return

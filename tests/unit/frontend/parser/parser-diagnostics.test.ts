@@ -44,6 +44,8 @@ describe("ParseDiagnostic type", () => {
       message: "Expected token.",
       source,
       span: source.span(0, 1),
+      ownerKey: "parser:token",
+      stableDetail: "span:0:1",
     };
     const base: Diagnostic = sourceDiagnostic;
     expect(base.code).toBe("PARSE_EXPECTED_TOKEN");
@@ -94,6 +96,8 @@ describe("combineDiagnostics", () => {
       message: `lex: ${code}`,
       source,
       span: source.span(start, end),
+      ownerKey: `lexer:${code}`,
+      stableDetail: `span:${start}:${end}`,
     };
   }
 
@@ -104,6 +108,8 @@ describe("combineDiagnostics", () => {
       message: `parse: ${code}`,
       source,
       span: source.span(start, end),
+      ownerKey: `parser:${code}`,
+      stableDetail: `span:${start}:${end}`,
     };
   }
 

@@ -1,0 +1,2 @@
+// Ejected ordinary project source copy; target authority comes from certified platform contracts.
+class Validation[Ok, Err, Source]:

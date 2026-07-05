@@ -1,10 +1,12 @@
 import type { ParsedModuleGraph } from "../frontend/module-graph-parser";
 import type { RedNode } from "../frontend/syntax/red-node";
+import type { SourceText } from "../frontend";
 import { SourceSpan } from "../shared/source-span";
 import type { ItemIndex } from "../semantic/item-index";
 import type { ResolvedReferences } from "../semantic/names";
 import type { CoreTypeCatalog } from "../semantic/names/core-types";
 import type {
+  CheckedFieldRecord,
   CheckedFunctionSignature,
   CheckedSemanticProgram,
 } from "../semantic/surface/checked-program";
@@ -46,6 +48,7 @@ export interface LowerTypedHirInput {
   readonly coreTypes: CoreTypeCatalog;
   readonly program: CheckedSemanticProgram;
   readonly image?: CheckedImageSeed;
+  readonly enabledTargetFeatures?: readonly string[];
 }
 
 export interface HirBodyIndexBuilder {
@@ -120,12 +123,39 @@ export interface HirLoweringContext {
   readonly places: HirResourcePlaceInterner;
   readonly brands: HirBrandRegistry;
   readonly proofMetadata: HirProofMetadataBuilder;
+  readonly enabledTargetFeatures: readonly string[];
   readonly validationResultAliases: Map<string, string>;
   readonly bodyIndex: HirBodyIndexBuilder;
   readonly referenceLookup: HirReferenceLookup;
+  readonly fieldLookupByOwnerAndName: () => ReadonlyMap<
+    ItemId,
+    ReadonlyMap<string, CheckedFieldRecord>
+  >;
   readonly ownerFunctionId?: FunctionId;
   readonly ownerItemId?: ItemId;
   readonly ownerModuleId?: ModuleId;
+}
+
+function createFieldLookupByOwnerAndName(
+  program: CheckedSemanticProgram,
+): () => ReadonlyMap<ItemId, ReadonlyMap<string, CheckedFieldRecord>> {
+  let cached: ReadonlyMap<ItemId, ReadonlyMap<string, CheckedFieldRecord>> | undefined;
+  return () => {
+    if (cached !== undefined) return cached;
+    const byOwner = new Map<ItemId, Map<string, CheckedFieldRecord>>();
+    for (const field of program.fields.entries()) {
+      let byName = byOwner.get(field.itemId);
+      if (byName === undefined) {
+        byName = new Map();
+        byOwner.set(field.itemId, byName);
+      }
+      if (!byName.has(field.name)) {
+        byName.set(field.name, field);
+      }
+    }
+    cached = byOwner;
+    return cached;
+  };
 }
 
 export interface LowerExpressionHarnessResult {
@@ -185,6 +215,7 @@ export function createHirProgramContext(input: LowerTypedHirInput): HirLoweringC
     places: new HirResourcePlaceInterner(owner),
     brands: new HirBrandRegistry(),
     proofMetadata: new HirProofMetadataBuilder(),
+    enabledTargetFeatures: input.enabledTargetFeatures ?? ["coroutineYield"],
     validationResultAliases: new Map(),
     bodyIndex: createHirBodyIndexBuilder(),
     referenceLookup: buildHirReferenceLookup({
@@ -193,6 +224,7 @@ export function createHirProgramContext(input: LowerTypedHirInput): HirLoweringC
       requirementReferences,
       diagnostics,
     }),
+    fieldLookupByOwnerAndName: createFieldLookupByOwnerAndName(input.program),
     ownerModuleId: moduleId(0),
   };
 }
@@ -239,6 +271,7 @@ export function hirDiagnostic(input: {
   readonly moduleId?: ModuleId;
   readonly spanStart?: number;
   readonly spanEnd?: number;
+  readonly source?: SourceText;
   readonly originId?: HirOriginId;
   readonly ownerKey: string;
   readonly originKey: string;
@@ -249,6 +282,7 @@ export function hirDiagnostic(input: {
     code,
     message: input.message,
     stableDetail: input.stableDetail,
+    ...(input.source !== undefined ? { source: input.source } : {}),
     ...(input.originId !== undefined ? { originId: input.originId } : {}),
     order: {
       moduleId: input.moduleId ?? moduleId(0),

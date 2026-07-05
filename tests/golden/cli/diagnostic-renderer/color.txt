@@ -1,0 +1,4 @@
+failed
+src/image.wr:2:11: [31merror[W6_DEMO][0m: Unknown identifier 'banana'.
+  entry = banana
+          [31m^^^^^^[0m

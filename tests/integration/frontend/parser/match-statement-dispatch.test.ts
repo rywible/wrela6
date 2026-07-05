@@ -5,7 +5,7 @@ import { Lexer } from "../../../../src/frontend/lexer/lexer";
 import { SourceText } from "../../../../src/frontend/lexer/source-text";
 import { Parser } from "../../../../src/frontend/parser/parser";
 import { SyntaxKind } from "../../../../src/frontend/syntax/syntax-kind";
-import type { RedNode } from "../../../../src/frontend/syntax/red-node";
+import { RedNode } from "../../../../src/frontend/syntax/red-node";
 
 function createLexer(): Lexer {
   return new Lexer({
@@ -24,15 +24,17 @@ describe("Match statement dispatch (integration)", () => {
   }
 
   test("match with single case round-trips", () => {
-    const source = SourceText.from("test.wr", "match x:\n    case a:\n        y\n");
+    const source = SourceText.from(
+      "test.wr",
+      "fn main() -> Never:\n    match x:\n        case a:\n            y\n",
+    );
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const root = result.tree.root();
-    const stmt = root.children()[0] as RedNode;
+    const stmt = collectByKind(result.tree.root(), SyntaxKind.MatchStatement)[0]!;
     expect(stmt.kind).toBe(SyntaxKind.MatchStatement);
 
     const children = stmt.children();
@@ -60,7 +62,7 @@ describe("Match statement dispatch (integration)", () => {
   test("match with constructor pattern round-trips", () => {
     const source = SourceText.from(
       "test.wr",
-      "match result:\n    case Ok(value):\n        handle\n",
+      "fn main() -> Never:\n    match result:\n        case Ok(value):\n            handle\n",
     );
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
@@ -68,8 +70,7 @@ describe("Match statement dispatch (integration)", () => {
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const root = result.tree.root();
-    const stmt = root.children()[0] as RedNode;
+    const stmt = collectByKind(result.tree.root(), SyntaxKind.MatchStatement)[0]!;
     expect(stmt.kind).toBe(SyntaxKind.MatchStatement);
 
     const matchBlock = getMatchBlock(stmt);
@@ -88,7 +89,7 @@ describe("Match statement dispatch (integration)", () => {
   test("match with multiple cases round-trips", () => {
     const source = SourceText.from(
       "test.wr",
-      "match x:\n    case a:\n        y\n    case b:\n        z\n",
+      "fn main() -> Never:\n    match x:\n        case a:\n            y\n        case b:\n            z\n",
     );
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
@@ -96,8 +97,7 @@ describe("Match statement dispatch (integration)", () => {
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const root = result.tree.root();
-    const stmt = root.children()[0] as RedNode;
+    const stmt = collectByKind(result.tree.root(), SyntaxKind.MatchStatement)[0]!;
     const matchBlock = getMatchBlock(stmt);
     const stmtList = getStmtList(matchBlock);
     expect(stmtList.children()[0]!.kind).toBe(SyntaxKind.MatchCase);
@@ -109,7 +109,7 @@ describe("Match statement dispatch (integration)", () => {
   test("match with qualified name pattern round-trips", () => {
     const source = SourceText.from(
       "test.wr",
-      "match x:\n    case PacketKind.ping:\n        handle\n",
+      "fn main() -> Never:\n    match x:\n        case PacketKind.ping:\n            handle\n",
     );
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
@@ -117,8 +117,7 @@ describe("Match statement dispatch (integration)", () => {
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const root = result.tree.root();
-    const stmt = root.children()[0] as RedNode;
+    const stmt = collectByKind(result.tree.root(), SyntaxKind.MatchStatement)[0]!;
     expect(stmt.kind).toBe(SyntaxKind.MatchStatement);
 
     const matchBlock = getMatchBlock(stmt);
@@ -136,7 +135,7 @@ describe("Match statement dispatch (integration)", () => {
   test("match statement inside a block", () => {
     const source = SourceText.from(
       "test.wr",
-      "if x:\n    match y:\n        case a:\n            z\n",
+      "fn main() -> Never:\n    if x:\n        match y:\n            case a:\n                z\n",
     );
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
@@ -144,8 +143,7 @@ describe("Match statement dispatch (integration)", () => {
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const root = result.tree.root();
-    const ifStmt = root.children()[0] as RedNode;
+    const ifStmt = collectByKind(result.tree.root(), SyntaxKind.IfStatement)[0]!;
     expect(ifStmt.kind).toBe(SyntaxKind.IfStatement);
 
     const ifBlock = ifStmt.children()[3] as RedNode;
@@ -160,3 +158,22 @@ describe("Match statement dispatch (integration)", () => {
     expect(result.parserDiagnostics).toHaveLength(0);
   });
 });
+
+function collectByKind(root: RedNode, kind: SyntaxKind): RedNode[] {
+  const matches: RedNode[] = [];
+  const stack: RedNode[] = [root];
+
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node.kind === kind) {
+      matches.push(node);
+    }
+    for (const child of node.children()) {
+      if (child instanceof RedNode) {
+        stack.push(child);
+      }
+    }
+  }
+
+  return matches.reverse();
+}

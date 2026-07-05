@@ -112,7 +112,7 @@ export interface PeCoffEfiImageArtifact {
   readonly artifactName: string;
   readonly mediaType: "application/vnd.microsoft.portable-executable";
   readonly fileExtension: ".efi";
-  readonly bytes: readonly number[];
+  readonly bytes: Uint8Array;
   readonly deterministicMetadata: PeCoffEfiDeterministicMetadata;
   readonly verification: PeCoffWriterVerificationSummary;
 }

@@ -140,7 +140,7 @@ export function layoutImageSections(
         alignmentBytes: input.target.constants.sectionAlignmentBytes,
         rva: alignedRva.value,
         virtualSizeBytes: sectionSize,
-        bytes: Object.freeze(placed.bytes),
+        bytes: Uint8Array.from(placed.bytes),
         contributions: Object.freeze(sectionContributions),
       }),
     );
@@ -211,7 +211,7 @@ function placeContributions(
   | {
       readonly kind: "ok";
       readonly placed: readonly PlacedContribution[];
-      readonly bytes: readonly number[];
+      readonly bytes: Uint8Array;
     }
   | { readonly kind: "error"; readonly diagnostic: LinkerDiagnostic } {
   const bytes: number[] = [];
@@ -261,7 +261,7 @@ function placeContributions(
     );
   }
 
-  return { kind: "ok", placed: Object.freeze(placed), bytes: Object.freeze(bytes) };
+  return { kind: "ok", placed: Object.freeze(placed), bytes: Uint8Array.from(bytes) };
 }
 
 function linkedProvenanceFor(

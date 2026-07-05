@@ -95,8 +95,8 @@ export interface ParsedPeSectionHeader {
   readonly numberOfRelocations: number;
   readonly numberOfLineNumbers: number;
   readonly characteristics: number;
-  readonly bytes: readonly number[];
-  readonly rawBytes: readonly number[];
+  readonly bytes: Uint8Array;
+  readonly rawBytes: Uint8Array;
 }
 
 export interface ParsedPeBaseRelocationEntry {
@@ -122,7 +122,7 @@ export interface ParsedPeCoffImage {
 }
 
 interface Reader {
-  readonly bytes: readonly number[];
+  readonly bytes: Uint8Array;
 }
 
 type ParsedSectionName =
@@ -150,17 +150,17 @@ function parseError<Value>(stableDetail: string): PeCoffWriterResult<Value> {
   });
 }
 
-export function parsePeCoffImage(bytes: readonly number[]): PeCoffWriterResult<ParsedPeCoffImage> {
+export function parsePeCoffImage(bytes: ArrayLike<number>): PeCoffWriterResult<ParsedPeCoffImage> {
   try {
     const byteValidation = validateBytes(bytes);
     if (byteValidation !== undefined) return parseError(byteValidation);
-    return parsePeCoffImageStrict(Object.freeze({ bytes: Object.freeze([...bytes]) }));
+    return parsePeCoffImageStrict(Object.freeze({ bytes: Uint8Array.from(bytes) }));
   } catch {
     return parseError("parser:unexpected-exception");
   }
 }
 
-function validateBytes(bytes: readonly number[]): string | undefined {
+function validateBytes(bytes: ArrayLike<number>): string | undefined {
   for (let index = 0; index < bytes.length; index += 1) {
     const byte = bytes[index];
     if (typeof byte !== "number" || !Number.isInteger(byte) || byte < 0 || byte > 0xff) {
@@ -367,8 +367,8 @@ function parseSections(
         numberOfRelocations: readU16Le(reader, offset + 32),
         numberOfLineNumbers: readU16Le(reader, offset + 34),
         characteristics: readU32Le(reader, offset + 36),
-        bytes: Object.freeze(rawBytes.slice(0, Math.min(rawBytes.length, virtualSizeBytes))),
-        rawBytes: Object.freeze(rawBytes),
+        bytes: rawBytes.slice(0, Math.min(rawBytes.length, virtualSizeBytes)),
+        rawBytes,
       }),
     );
   }
@@ -521,7 +521,7 @@ function firstNonZeroOffset(
 }
 
 function bytesEqual(
-  bytes: readonly number[],
+  bytes: ArrayLike<number>,
   offset: number,
   expected: readonly number[],
 ): boolean {

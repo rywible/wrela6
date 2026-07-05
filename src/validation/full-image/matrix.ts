@@ -6,8 +6,12 @@ export type FullImageValidationStdlibMode =
 export type FullImageValidationScenarioKey =
   | "smoke-console"
   | "packet-counter"
+  | "packet-counter-real-stream"
+  | "two-branch-control-flow"
   | "status-error"
-  | "watchdog-or-boot-policy";
+  | "watchdog-or-boot-policy"
+  | "stdlib-core-option-result"
+  | "stdlib-bits";
 
 export interface FullImageValidationCaseKey {
   readonly scenario: FullImageValidationScenarioKey;
@@ -45,8 +49,16 @@ export const FULL_IMAGE_VALIDATION_CASES = Object.freeze([
   ["packet-counter", "toolchain-stdlib"],
   ["packet-counter", "ejected-stdlib"],
   ["packet-counter", "direct-platform"],
+  ["packet-counter-real-stream", "toolchain-stdlib"],
+  ["packet-counter-real-stream", "ejected-stdlib"],
+  ["packet-counter-real-stream", "direct-platform"],
+  ["two-branch-control-flow", "toolchain-stdlib"],
+  ["two-branch-control-flow", "ejected-stdlib"],
+  ["two-branch-control-flow", "direct-platform"],
   ["status-error", "toolchain-stdlib"],
   ["watchdog-or-boot-policy", "toolchain-stdlib"],
+  ["stdlib-core-option-result", "toolchain-stdlib"],
+  ["stdlib-bits", "toolchain-stdlib"],
 ] as const);
 
 export type FullImageValidationRequiredStageKey =

@@ -1,0 +1,3 @@
+stream ValidationFixturePacketStream contains Ptr bound 1:
+
+platform fn validation_fixture_packet_stream() -> ValidationFixturePacketStream

@@ -1,0 +1,14 @@
+{
+  "schema": "wrela.cost-scorecard-baseline",
+  "schemaVersion": 1,
+  "caseKey": "smoke-console/ejected-stdlib",
+  "metrics": {
+    "optIrOperationsPre": 4,
+    "optIrOperationsPost": 2,
+    "objectSectionBytes": 76,
+    "executableTextBytes": 984,
+    "finalImageBytes": 3584,
+    "staticInstructionEstimate": 246,
+    "staticCycleEstimate": 272
+  }
+}

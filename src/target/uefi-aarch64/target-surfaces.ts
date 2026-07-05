@@ -150,6 +150,8 @@ export function authenticateUefiAArch64PeCoffWriterTargetForLinkedPolicy(input: 
 
 export interface UefiAArch64OptIrTargetSurfaceOptions {
   readonly sourceApiResultConstructorTypeId?: TypeId;
+  readonly validationResultConstructorTypeIds?: readonly TypeId[];
+  readonly statusCarrierPayloadTypeIds?: readonly TypeId[];
 }
 
 export function productionUefiAArch64OptIrTargetSurface(
@@ -157,6 +159,11 @@ export function productionUefiAArch64OptIrTargetSurface(
   options: UefiAArch64OptIrTargetSurfaceOptions = {},
 ): OptIrTargetSurface {
   const sourceApiResultConstructorTypeId = options.sourceApiResultConstructorTypeId;
+  const statusCarrierConstructorTypeIds = new Set<TypeId>([
+    ...(sourceApiResultConstructorTypeId === undefined ? [] : [sourceApiResultConstructorTypeId]),
+    ...(options.validationResultConstructorTypeIds ?? []),
+  ]);
+  const statusCarrierPayloadTypeIds = new Set<TypeId>(options.statusCarrierPayloadTypeIds ?? []);
   const platformEffects = optIrEffectCatalog(
     "platform",
     target,
@@ -193,13 +200,32 @@ export function productionUefiAArch64OptIrTargetSurface(
       aggregatePassing: "targetDefined" as const,
       returnValue: "targetDefined" as const,
     }),
-    ...(sourceApiResultConstructorTypeId === undefined
+    ...(statusCarrierConstructorTypeIds.size === 0
       ? {}
       : {
           sourceTypeAbi: Object.freeze({
             lowerType: (type: CheckedType) =>
-              isSourceApiResultType(type, sourceApiResultConstructorTypeId)
+              isSourceStatusCarrierType(type, statusCarrierConstructorTypeIds) ||
+              isSourceStatusPayloadType(type, statusCarrierPayloadTypeIds)
                 ? optIrUnsignedIntegerType(64)
+                : undefined,
+            lowerSwitchCaseLabel: (input: { readonly type: CheckedType; readonly label: string }) =>
+              isSourceStatusCarrierType(input.type, statusCarrierConstructorTypeIds)
+                ? sourceApiResultSwitchCaseLabel(input.label)
+                : undefined,
+            lowerSwitchCasePayload: (input: {
+              readonly type: CheckedType;
+              readonly label: string;
+              readonly payloadType: CheckedType;
+            }) =>
+              isSourceStatusCarrierType(input.type, statusCarrierConstructorTypeIds) &&
+              isSourceStatusPayloadType(input.payloadType, statusCarrierPayloadTypeIds) &&
+              sourceApiResultSwitchCaseLabel(input.label) === "1"
+                ? { kind: "scrutinee" as const }
+                : undefined,
+            lowerEmptyConstruct: (input: { readonly type: CheckedType }) =>
+              isSourceStatusCarrierType(input.type, statusCarrierConstructorTypeIds)
+                ? { kind: "integerConstant" as const, value: 0n }
                 : undefined,
           }),
         }),
@@ -219,6 +245,12 @@ export function productionUefiAArch64OptIrTargetSurface(
       atomicReadModifyWrite: "lowerToRuntimeCall" as const,
       volatileLoad: "preserveOrdering" as const,
       volatileStore: "preserveOrdering" as const,
+    }),
+    // DDI0487 permits architectural little-endian operation, but UEFI firmware
+    // table accesses and volatile reads remain target-owned side-effect boundaries.
+    endianFoldContract: Object.freeze({
+      permitsFirmwareEndianFold: false,
+      permitsVolatileEndianFold: false,
     }),
     intrinsicLowering: Object.freeze({
       resolve: (intrinsicKey: string) => intrinsicLowerings.get(intrinsicKey),
@@ -305,12 +337,33 @@ function optIrPlatformEffectRequirements(
   return Object.freeze([{ mode: "orderedEffectToken", tokenKey: `uefi-platform:${primitiveId}` }]);
 }
 
-function isSourceApiResultType(type: CheckedType, resultConstructorTypeId: TypeId): boolean {
+function isSourceStatusCarrierType(
+  type: CheckedType,
+  constructorTypeIds: ReadonlySet<TypeId>,
+): boolean {
   return (
     type.kind === "applied" &&
     type.constructor.kind === "source" &&
-    type.constructor.typeId === resultConstructorTypeId
+    constructorTypeIds.has(type.constructor.typeId)
   );
+}
+
+function isSourceStatusPayloadType(
+  type: CheckedType,
+  payloadTypeIds: ReadonlySet<TypeId>,
+): boolean {
+  return type.kind === "source" && payloadTypeIds.has(type.typeId);
+}
+
+function sourceApiResultSwitchCaseLabel(label: string): string | undefined {
+  switch (label) {
+    case "Ok":
+      return "0";
+    case "Err":
+      return "1";
+    default:
+      return undefined;
+  }
 }
 
 function optIrRuntimeEffectRequirements(

@@ -17,6 +17,7 @@ import {
   type AArch64PeCoffEfiWriterTargetSurfaceInput,
   type AArch64PeCoffEfiWriterTargetSurface,
   type PlannedPeCoffImage,
+  type SerializedPlannedPeCoffImage,
 } from "../../../src/pe-coff";
 import {
   dataSectionForLinkTest,
@@ -204,15 +205,21 @@ export function plannedImageForWriterTest(
   });
 }
 
-export function serializedBytesForPlannedImage(image: PlannedPeCoffImage): readonly number[] {
+export function serializedPlannedImageForTest(
+  image: PlannedPeCoffImage,
+): SerializedPlannedPeCoffImage {
   const result = serializePlannedPeCoffImage(image);
   if (result.kind !== "ok") {
     throw new Error("expected serialized planned PE/COFF image fixture");
   }
-  return result.value.bytes;
+  return result.value;
 }
 
-export function serializedImageBytesForParserTest(): readonly number[] {
+export function serializedBytesForPlannedImage(image: PlannedPeCoffImage): Uint8Array {
+  return serializedPlannedImageForTest(image).bytes;
+}
+
+export function serializedImageBytesForParserTest(): Uint8Array {
   return serializedBytesForPlannedImage(plannedImageForWriterTest());
 }
 
@@ -244,7 +251,7 @@ function linkedSectionForPeCoffTest(
   rva: number,
   virtualSizeBytes: number,
   flags: number,
-  bytes: readonly number[],
+  bytes: Uint8Array | readonly number[],
 ): LinkedImageSection {
   return {
     stableKey,
@@ -253,7 +260,7 @@ function linkedSectionForPeCoffTest(
     alignmentBytes: 4096,
     rva,
     virtualSizeBytes,
-    bytes,
+    bytes: Uint8Array.from(bytes),
     contributions: [
       {
         stableKey: `contribution:${stableKey}`,

@@ -130,6 +130,28 @@ describe("UEFI AArch64 entry thunk", () => {
     );
   });
 
+  test("plans relocation offsets from the encoded entry thunk byte walk", () => {
+    const backendTarget = authenticatedBackendTargetSurfaceForTest();
+    const plan = planUefiAArch64EntryThunk({
+      entryProfile: canonicalUefiAArch64EntryProfile(),
+      backendTarget,
+    });
+    const factory = createUefiAArch64EntryThunkObjectFactory({
+      entryProfile: canonicalUefiAArch64EntryProfile(),
+      backendTarget,
+    });
+
+    const factoryResult = factory.createEntryObject({ wrelaBootLinkageName: "wrela.image.boot" });
+
+    expect(plan.kind).toBe("ok");
+    if (plan.kind !== "ok") throw new Error("expected entry thunk plan");
+    expect(factoryResult.kind).toBe("ok");
+    if (factoryResult.kind !== "ok") throw new Error("expected entry object");
+    expect(plan.value.relocations.map((relocation) => relocation.offsetBytes)).toEqual(
+      factoryResult.relocations?.map((relocation) => relocation.offsetBytes),
+    );
+  });
+
   test("entry object factory encodes with the injected backend target catalogs", () => {
     const backendTarget = authenticatedBackendTargetSurfaceForTest();
     const rejectingBackendTarget: AArch64BackendTargetSurface = {

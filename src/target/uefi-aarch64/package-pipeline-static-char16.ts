@@ -1,8 +1,11 @@
-import type { LowerTypedHirResult } from "../../hir";
-import type { HirCompilerIntrinsicCallMetadata } from "../../hir/hir";
-import type { OptIrOperation } from "../../opt-ir/operations";
+import { optIrDataConstantFingerprint, type OptIrDataConstant } from "../../opt-ir/constants";
+import type { OptIrConstantId } from "../../opt-ir/ids";
+import { optIrConstAddrOperation, type OptIrOperation } from "../../opt-ir/operations";
 import type { OptIrProgram } from "../../opt-ir/program";
+import { optIrConstantTable } from "../../opt-ir/program";
+import { optIrConstantId } from "../../opt-ir/ids";
 import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
+import { stableDigestHex } from "../../shared/stable-json";
 import {
   fingerprintUefiAArch64StaticChar16String,
   materializeUefiAArch64StaticChar16String,
@@ -14,88 +17,18 @@ import type { CompilerPackageInput } from "./package-input";
 import type {
   PackageOptimizedOptIrAdapter,
   UefiAArch64OptimizedOptIrArtifact,
-  UefiAArch64PackagePipelineStageKey,
   UefiAArch64PackageStageResult,
   UefiAArch64StaticChar16IntrinsicMetadata,
   UefiAArch64StaticChar16PointerRecord,
 } from "./package-pipeline";
-import { uefiAArch64TargetDiagnostic, type UefiAArch64TargetDiagnostic } from "./diagnostics";
-import {
-  uefiAArch64Error,
-  uefiAArch64Ok,
-  verificationSummaryFromRuns,
-  type UefiAArch64TargetResult,
-} from "./result";
+import type { UefiAArch64TargetDiagnostic } from "./diagnostics";
+import { packagePipelineDiagnostic } from "./package-pipeline-records";
 
-const PACKAGE_PIPELINE_VERIFIER_KEY = "uefi-aarch64-package-pipeline";
-
-export function extractUefiAArch64StaticChar16MetadataFromCompilerIntrinsics(
-  calls: readonly HirCompilerIntrinsicCallMetadata[],
-): UefiAArch64TargetResult<UefiAArch64StaticChar16IntrinsicMetadata> {
-  const strings: UefiAArch64StaticChar16String[] = [];
-  const pointers: UefiAArch64StaticChar16PointerRecord[] = [];
-  const diagnostics: UefiAArch64TargetDiagnostic[] = [];
-  const sortedCalls = [...calls].sort((left, right) =>
-    compareCodeUnitStrings(left.sourceValueKey, right.sourceValueKey),
-  );
-
-  for (const call of sortedCalls) {
-    if (call.intrinsicKey !== "uefi.utf16_static" || call.returnTypeKey !== "uefi.Utf16Static") {
-      continue;
-    }
-    const stableKey = `utf16-static-${call.sourceValueKey}`;
-    const materialized = materializeUefiAArch64StaticChar16String({
-      stableKey,
-      value: call.literalValue,
-    });
-    if (materialized.kind === "error") {
-      diagnostics.push(...materialized.diagnostics);
-      continue;
-    }
-    strings.push(materialized.value);
-    pointers.push(
-      Object.freeze({
-        valueKey: call.sourceValueKey,
-        pointer: uefiAArch64StaticChar16StringPointer(materialized.value),
-      }),
-    );
-  }
-
-  if (diagnostics.length > 0) {
-    return uefiAArch64Error({
-      diagnostics,
-      verification: verificationSummaryFromRuns([
-        { verifierKey: PACKAGE_PIPELINE_VERIFIER_KEY, runKey: "static-char16", status: "failed" },
-      ]),
-    });
-  }
-
-  return uefiAArch64Ok({
-    value: Object.freeze({
-      staticChar16Strings: Object.freeze(strings),
-      staticChar16Pointers: Object.freeze(pointers),
-    }),
-    verification: verificationSummaryFromRuns([
-      { verifierKey: PACKAGE_PIPELINE_VERIFIER_KEY, runKey: "static-char16", status: "passed" },
-    ]),
-  });
-}
-
-export function compilerIntrinsicCallsFromTypedHir(
-  lowerTypedHirResult: LowerTypedHirResult,
-): readonly HirCompilerIntrinsicCallMetadata[] {
-  const calls: HirCompilerIntrinsicCallMetadata[] = [];
-  for (const function_ of lowerTypedHirResult.program.functions.entries()) {
-    const expressions = function_.bodyIndex?.expressions.entries() ?? [];
-    for (const expression of expressions) {
-      if (expression.kind.kind === "call" && expression.kind.call.compilerIntrinsic !== undefined) {
-        calls.push(expression.kind.call.compilerIntrinsic);
-      }
-    }
-  }
-  return Object.freeze(
-    calls.sort((left, right) => compareCodeUnitStrings(left.sourceValueKey, right.sourceValueKey)),
-  );
+export interface UefiAArch64ConstantPoolReadonlyPointer {
+  readonly symbolName: string;
+  readonly stableKey: string;
+  readonly fingerprint: string;
+  readonly label: string;
 }
 
 export function optimizedOptIrArtifact(
@@ -130,67 +63,204 @@ export function optimizedOptIrArtifact(
   };
 }
 
-export function emptyStaticChar16Metadata(): UefiAArch64StaticChar16IntrinsicMetadata {
-  return Object.freeze({
-    staticChar16Strings: Object.freeze([]),
-    staticChar16Pointers: Object.freeze([]),
-  });
-}
+export type UefiAArch64StaticChar16ConstantPoolMaterializationResult =
+  | {
+      readonly kind: "ok";
+      readonly program: OptIrProgram;
+      readonly operations: readonly OptIrOperation[];
+    }
+  | { readonly kind: "error"; readonly diagnostics: readonly UefiAArch64TargetDiagnostic[] };
 
-export function remapStaticChar16MetadataToOptIrValues(input: {
-  readonly metadata?: UefiAArch64StaticChar16IntrinsicMetadata;
+export function materializeStaticChar16ConstantPoolReferences(input: {
   readonly program: OptIrProgram;
   readonly operations: readonly OptIrOperation[];
-}): UefiAArch64StaticChar16IntrinsicMetadata {
-  if (input.metadata === undefined) {
-    return emptyStaticChar16Metadata();
-  }
-  const optIrValueKeysBySourceValueKey = new Map<string, string[]>();
+}): UefiAArch64StaticChar16ConstantPoolMaterializationResult {
+  let nextConstantId =
+    input.program.constants
+      .entries()
+      .reduce((maximum, constant) => Math.max(maximum, Number(constant.constantId)), 0) + 1;
+  const dataConstantsByFingerprint = new Map(
+    input.program.constants
+      .entries()
+      .filter(isStaticChar16DataConstant)
+      .map((constant) => [staticChar16StringFromDataConstant(constant).fingerprint, constant]),
+  );
+  const operations: OptIrOperation[] = [];
+  const diagnostics: UefiAArch64TargetDiagnostic[] = [];
+
   for (const operation of input.operations) {
     if (
       operation.kind !== "intrinsicCall" ||
       operation.target.kind !== "intrinsic" ||
-      operation.target.sourceValueKey === undefined ||
       operation.resultIds.length !== 1
     ) {
+      operations.push(operation);
       continue;
     }
-    appendStaticValueKey(
-      optIrValueKeysBySourceValueKey,
-      operation.target.sourceValueKey,
-      `optir.value:${String(operation.resultIds[0])}`,
+    if (operation.target.intrinsicKey !== "uefi.utf16_static") {
+      operations.push(operation);
+      continue;
+    }
+    if (operation.target.literalValue === undefined) {
+      diagnostics.push(
+        packagePipelineDiagnostic(
+          "opt-ir",
+          `static-char16:missing-literal:${String(operation.operationId)}`,
+        ),
+      );
+      operations.push(operation);
+      continue;
+    }
+    const materializedString = staticChar16StringFromLiteralValue(operation.target.literalValue);
+    if (materializedString.kind === "error") {
+      diagnostics.push(...materializedString.diagnostics);
+      continue;
+    }
+    const string = materializedString.value;
+    const resultId = operation.resultIds[0];
+    const resultType = operation.resultTypes[0];
+    if (resultId === undefined || resultType === undefined) {
+      operations.push(operation);
+      continue;
+    }
+    let constant = dataConstantsByFingerprint.get(string.fingerprint);
+    if (constant === undefined) {
+      constant = Object.freeze({
+        kind: "data" as const,
+        constantId: optIrConstantId(nextConstantId++),
+        type: Object.freeze({ kind: "address" as const }),
+        normalizedValue: 0n,
+        bytes: Object.freeze([...string.bytes]),
+        alignment: 2,
+        section: ".rodata",
+        stableKey: string.stableKey,
+        fingerprint: optIrDataConstantFingerprint({
+          bytes: string.bytes,
+          alignment: 2,
+          section: ".rodata",
+          stableKey: string.stableKey,
+        }),
+      });
+      dataConstantsByFingerprint.set(string.fingerprint, constant);
+    }
+    operations.push(
+      optIrConstAddrOperation({
+        operationId: operation.operationId,
+        resultId,
+        resultType,
+        constantId: constant.constantId,
+        originId: operation.originId,
+        displayName: operation.displayName,
+      }),
     );
   }
 
-  const pointersByValueKey = new Map<string, UefiAArch64StaticChar16StringPointer>();
-  const staticChar16Pointers: UefiAArch64StaticChar16PointerRecord[] = [];
-  for (const record of input.metadata.staticChar16Pointers) {
-    const optIrValueKeys = optIrValueKeysBySourceValueKey.get(record.valueKey);
-    if (optIrValueKeys === undefined || optIrValueKeys.length === 0) {
-      continue;
-    }
-    for (const valueKey of optIrValueKeys) {
-      appendStaticChar16PointerRecord(staticChar16Pointers, pointersByValueKey, {
-        valueKey,
-        pointer: record.pointer,
-      });
-    }
+  if (diagnostics.length > 0) {
+    return { kind: "error", diagnostics: Object.freeze(diagnostics) };
   }
-  propagateStaticChar16PointersThroughSourceCallParameters({
-    program: input.program,
-    operations: input.operations,
-    staticChar16Pointers,
-    pointersByValueKey,
+
+  const existingStaticConstantIds = new Set(
+    [...dataConstantsByFingerprint.values()].map((constant) => constant.constantId),
+  );
+  const constants = [
+    ...input.program.constants
+      .entries()
+      .filter(
+        (constant) =>
+          constant.kind !== "data" || !existingStaticConstantIds.has(constant.constantId),
+      ),
+    ...dataConstantsByFingerprint.values(),
+  ];
+
+  const program = Object.freeze({
+    ...input.program,
+    constants: optIrConstantTable(constants),
+    operations: Object.freeze(operations),
   });
+  return Object.freeze({
+    kind: "ok" as const,
+    program,
+    operations: Object.freeze(operations),
+  });
+}
+
+function staticChar16StringFromLiteralValue(
+  literalValue: string,
+):
+  | { readonly kind: "ok"; readonly value: UefiAArch64StaticChar16String }
+  | { readonly kind: "error"; readonly diagnostics: readonly UefiAArch64TargetDiagnostic[] } {
+  const stableKey = `utf16-static-${stableDigestHex({
+    kind: "uefi.utf16_static",
+    literalValue,
+  })}`;
+  const materialized = materializeUefiAArch64StaticChar16String({
+    stableKey,
+    value: literalValue,
+  });
+  return materialized.kind === "ok"
+    ? { kind: "ok", value: materialized.value }
+    : { kind: "error", diagnostics: materialized.diagnostics };
+}
+
+export function staticChar16MetadataFromOptIrConstantPool(input: {
+  readonly program: OptIrProgram;
+  readonly operations: readonly OptIrOperation[];
+}): UefiAArch64StaticChar16IntrinsicMetadata {
+  const stringsByConstantId = new Map(
+    input.program.constants
+      .entries()
+      .filter(isStaticChar16DataConstant)
+      .map((constant) => [constant.constantId, staticChar16StringFromDataConstant(constant)]),
+  );
+  const stringsByFingerprint = new Map<string, UefiAArch64StaticChar16String>();
+  const pointers: UefiAArch64StaticChar16PointerRecord[] = [];
+  const pointersByValueKey = new Map<string, UefiAArch64StaticChar16StringPointer>();
+
+  for (const operation of input.operations) {
+    if (operation.kind !== "constAddr") continue;
+    const resultId = operation.resultIds[0];
+    if (resultId === undefined) continue;
+    const string = stringsByConstantId.get(operation.constantId);
+    if (string === undefined) continue;
+    stringsByFingerprint.set(string.fingerprint, string);
+    appendStaticChar16PointerRecord(pointers, pointersByValueKey, {
+      valueKey: `optir.value:${String(resultId)}`,
+      pointer: uefiAArch64StaticChar16StringPointer(string),
+    });
+  }
 
   return Object.freeze({
-    staticChar16Strings: referencedStaticChar16Strings(input.metadata, staticChar16Pointers),
-    staticChar16Pointers: Object.freeze(
-      staticChar16Pointers.sort((left, right) =>
-        compareCodeUnitStrings(left.valueKey, right.valueKey),
+    staticChar16Strings: Object.freeze(
+      [...stringsByFingerprint.values()].sort((left, right) =>
+        compareCodeUnitStrings(left.stableKey, right.stableKey),
       ),
     ),
+    staticChar16Pointers: Object.freeze(
+      pointers.sort((left, right) => compareCodeUnitStrings(left.valueKey, right.valueKey)),
+    ),
   });
+}
+
+export function readonlyPointersFromOptIrConstantPool(
+  program: OptIrProgram,
+): ReadonlyMap<OptIrConstantId, UefiAArch64ConstantPoolReadonlyPointer> {
+  const pointers = new Map<OptIrConstantId, UefiAArch64ConstantPoolReadonlyPointer>();
+  for (const constant of program.constants.entries()) {
+    if (constant.kind !== "data" || constant.section !== ".rodata") continue;
+    const pointer = isStaticChar16DataConstant(constant)
+      ? uefiAArch64StaticChar16StringPointer(staticChar16StringFromDataConstant(constant))
+      : readonlyPointerFromDataConstant(constant);
+    pointers.set(
+      constant.constantId,
+      Object.freeze({
+        symbolName: pointer.symbolName,
+        stableKey: pointer.stableKey,
+        fingerprint: pointer.fingerprint,
+        label: "constant-pool-readonly",
+      }),
+    );
+  }
+  return pointers;
 }
 
 function isOptimizedOptIrArtifact(candidate: unknown): candidate is PackageOptimizedOptIrAdapter & {
@@ -388,31 +458,66 @@ function staticChar16PointersEqual(
   );
 }
 
-function referencedStaticChar16Strings(
-  metadata: UefiAArch64StaticChar16IntrinsicMetadata,
-  pointers: readonly UefiAArch64StaticChar16PointerRecord[],
-): readonly UefiAArch64StaticChar16String[] {
-  const referencedFingerprints = new Set(pointers.map((record) => record.pointer.fingerprint));
-  const strings = metadata.staticChar16Strings.filter((string) =>
-    referencedFingerprints.has(string.fingerprint),
-  );
-  return Object.freeze(strings);
+function isStaticChar16DataConstant(constant: unknown): constant is OptIrDataConstant {
+  if (typeof constant !== "object" || constant === null) return false;
+  const record = constant as Partial<OptIrDataConstant>;
+  if (record.kind !== "data") return false;
+  if (record.section !== ".rodata") return false;
+  if (typeof record.stableKey !== "string" || record.stableKey.length === 0) return false;
+  if (typeof record.fingerprint !== "string" || record.fingerprint.length === 0) {
+    return false;
+  }
+  if (typeof record.stableKey !== "string" || !record.stableKey.startsWith("utf16-static-")) {
+    return false;
+  }
+  if (!Array.isArray(record.bytes) || record.bytes.length < 2 || record.bytes.length % 2 !== 0) {
+    return false;
+  }
+  if (!record.bytes.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 0xff)) {
+    return false;
+  }
+  const codeUnits = codeUnitsFromUtf16LeBytes(record.bytes);
+  return codeUnits[codeUnits.length - 1] === 0;
 }
 
-function appendStaticValueKey(
-  index: Map<string, string[]>,
-  sourceValueKey: string,
-  optIrValueKey: string,
-): void {
-  const existing = index.get(sourceValueKey);
-  if (existing === undefined) {
-    index.set(sourceValueKey, [optIrValueKey]);
-    return;
+function staticChar16StringFromDataConstant(
+  constant: OptIrDataConstant,
+): UefiAArch64StaticChar16String {
+  const codeUnits = codeUnitsFromUtf16LeBytes(constant.bytes);
+  return Object.freeze({
+    stableKey: constant.stableKey,
+    codeUnits: Object.freeze([...codeUnits]),
+    bytes: Object.freeze([...constant.bytes]),
+    nulTerminated: true as const,
+    fingerprint: fingerprintUefiAArch64StaticChar16String({
+      stableKey: constant.stableKey,
+      codeUnits,
+      nulTerminated: true,
+    }),
+  });
+}
+
+function readonlyPointerFromDataConstant(
+  constant: OptIrDataConstant,
+): UefiAArch64ConstantPoolReadonlyPointer {
+  return Object.freeze({
+    symbolName: `__wrela_rodata_${sanitizeSymbolComponent(constant.fingerprint)}`,
+    stableKey: constant.stableKey,
+    fingerprint: constant.fingerprint,
+    label: "constant-pool-readonly",
+  });
+}
+
+function sanitizeSymbolComponent(value: string): string {
+  return value.replace(/[^A-Za-z0-9_]/g, "_");
+}
+
+function codeUnitsFromUtf16LeBytes(bytes: readonly number[]): readonly number[] {
+  const codeUnits: number[] = [];
+  for (let index = 0; index < bytes.length; index += 2) {
+    codeUnits.push(bytes[index]! | (bytes[index + 1]! << 8));
   }
-  if (!existing.includes(optIrValueKey)) {
-    existing.push(optIrValueKey);
-    existing.sort(compareCodeUnitStrings);
-  }
+  return Object.freeze(codeUnits);
 }
 
 function appendStaticChar16PointerRecord(
@@ -430,134 +535,4 @@ function appendStaticChar16PointerRecord(
     return true;
   }
   return false;
-}
-
-function propagateStaticChar16PointersThroughSourceCallParameters(input: {
-  readonly program: OptIrProgram;
-  readonly operations: readonly OptIrOperation[];
-  readonly staticChar16Pointers: UefiAArch64StaticChar16PointerRecord[];
-  readonly pointersByValueKey: Map<string, UefiAArch64StaticChar16StringPointer>;
-}): void {
-  const entryParametersByFunction = sourceEntryParametersByFunction(input.program);
-  const pointersByValueKey = pointerSetsByValueKey(input.pointersByValueKey);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const operation of input.operations) {
-      if (operation.kind !== "sourceCall" || operation.target.kind !== "source") {
-        continue;
-      }
-      const entryParameters = entryParametersByFunction.get(
-        String(operation.target.functionInstanceId),
-      );
-      if (entryParameters === undefined) {
-        continue;
-      }
-      for (let index = 0; index < operation.argumentIds.length; index += 1) {
-        const argumentId = operation.argumentIds[index];
-        const parameterId = entryParameters[index];
-        if (argumentId === undefined || parameterId === undefined) {
-          continue;
-        }
-        const argumentPointers = pointersByValueKey.get(`optir.value:${String(argumentId)}`);
-        if (argumentPointers === undefined || argumentPointers.size === 0) {
-          continue;
-        }
-        changed =
-          unionPointerSet(
-            pointersByValueKey,
-            `optir.value:${String(parameterId)}`,
-            argumentPointers,
-          ) || changed;
-      }
-    }
-  }
-
-  for (const [valueKey, pointers] of [...pointersByValueKey.entries()].sort((left, right) =>
-    compareCodeUnitStrings(left[0], right[0]),
-  )) {
-    if (pointers.size !== 1) {
-      continue;
-    }
-    const pointer = [...pointers.values()][0];
-    if (pointer === undefined) {
-      continue;
-    }
-    const existing = input.pointersByValueKey.get(valueKey);
-    if (existing !== undefined && !staticChar16PointersEqual(existing, pointer)) {
-      continue;
-    }
-    appendStaticChar16PointerRecord(input.staticChar16Pointers, input.pointersByValueKey, {
-      valueKey,
-      pointer,
-    });
-  }
-}
-
-function pointerSetsByValueKey(
-  pointersByValueKey: ReadonlyMap<string, UefiAArch64StaticChar16StringPointer>,
-): Map<string, Map<string, UefiAArch64StaticChar16StringPointer>> {
-  const output = new Map<string, Map<string, UefiAArch64StaticChar16StringPointer>>();
-  for (const [valueKey, pointer] of pointersByValueKey.entries()) {
-    output.set(valueKey, new Map([[staticChar16PointerStableKey(pointer), pointer]]));
-  }
-  return output;
-}
-
-function unionPointerSet(
-  pointersByValueKey: Map<string, Map<string, UefiAArch64StaticChar16StringPointer>>,
-  valueKey: string,
-  incomingPointers: ReadonlyMap<string, UefiAArch64StaticChar16StringPointer>,
-): boolean {
-  let pointerSet = pointersByValueKey.get(valueKey);
-  if (pointerSet === undefined) {
-    pointerSet = new Map<string, UefiAArch64StaticChar16StringPointer>();
-    pointersByValueKey.set(valueKey, pointerSet);
-  }
-
-  let changed = false;
-  for (const [pointerKey, pointer] of incomingPointers.entries()) {
-    if (pointerSet.has(pointerKey)) {
-      continue;
-    }
-    pointerSet.set(pointerKey, pointer);
-    changed = true;
-  }
-  return changed;
-}
-
-function staticChar16PointerStableKey(pointer: UefiAArch64StaticChar16StringPointer): string {
-  return `${pointer.stableKey}:${pointer.fingerprint}:${pointer.symbolName}`;
-}
-
-function sourceEntryParametersByFunction(
-  program: OptIrProgram,
-): ReadonlyMap<string, readonly number[]> {
-  const parametersByFunction = new Map<string, readonly number[]>();
-  for (const function_ of program.functions.entries()) {
-    const entryBlock = function_.blocks.find((block) => block.blockId === function_.entryBlock);
-    if (entryBlock === undefined) {
-      continue;
-    }
-    parametersByFunction.set(
-      String(function_.monoInstanceId),
-      Object.freeze(
-        entryBlock.parameters
-          .filter((parameter) => parameter.incomingRole === "entry")
-          .map((parameter) => Number(parameter.valueId)),
-      ),
-    );
-  }
-  return parametersByFunction;
-}
-
-function packagePipelineDiagnostic(
-  stageKey: UefiAArch64PackagePipelineStageKey,
-  stableDetail: string,
-): UefiAArch64TargetDiagnostic {
-  return uefiAArch64TargetDiagnostic({
-    code: "UEFI_AARCH64_PIPELINE_FAILED",
-    ownerKey: `uefi-aarch64-package-pipeline:${stageKey}`,
-    stableDetail,
-  });
 }

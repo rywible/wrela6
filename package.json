@@ -1,16 +1,49 @@
 {
-  "name": "wrela6",
-  "private": true,
+  "name": "wrela",
+  "version": "0.1.0",
+  "bin": {
+    "wrela": "dist/cli/main.js"
+  },
+  "files": [
+    "dist",
+    "stdlib",
+    "RELEASING.md",
+    "proof-model"
+  ],
   "type": "module",
-  "module": "src/index.ts",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/main.d.ts",
+      "import": "./dist/cli/main.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "agent:check": "bun run typecheck && bun run format:check && bun run lint && bun run policy:check && bun test",
+    "agent:check": "bun run verify:extended && bun run verify:full-image",
+    "build": "tsc -p tsconfig.build.json && bun scripts/fix-dist-esm-imports.ts",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint .",
     "policy:check": "bun scripts/check-policy.ts",
     "smoke:uefi-aarch64": "bun scripts/smoke-uefi-aarch64.ts",
     "validate:full-image": "bun run scripts/validate-full-image.ts",
+    "verify:cli-smoke": "bun test tests/integration/cli",
+    "verify:extended": "bun run typecheck && bun run build && bun run format:check && bun run lint && bun run policy:check && bun test && bun run verify:scorecard && bun run verify:qemu -- --allow-missing-qemu && bun run verify:lean -- --allow-missing-lean",
+    "verify:full-image": "bun run scripts/validate-full-image.ts --json",
+    "verify:lean": "bun run scripts/verify-lean.ts",
+    "verify:qemu": "bun run scripts/verify-qemu.ts",
+    "verify:release": "bun run scripts/verify-release.ts",
+    "verify:reproducible": "bun run verify:full-image",
+    "verify:scorecard": "bun run scripts/cost-scorecard.ts --check",
+    "verify:stdlib": "bun run verify:full-image",
     "test": "bun test",
     "test:unit": "bun test ./tests/unit",
     "test:integration": "bun test ./tests/integration",
@@ -18,10 +51,14 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/bun": "1.3.14",
     "fast-check": "^4.8.0",
     "oxfmt": "^0.53.0",
     "oxlint": "^1.68.0",
     "typescript": "^6.0.3"
-  }
+  },
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "packageManager": "bun@1.3.14"
 }

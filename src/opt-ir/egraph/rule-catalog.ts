@@ -6,8 +6,12 @@ import {
   type PassInvariantSchema,
   type RewriteInvariant,
 } from "../passes/pass-contract";
-import { optIrFactGate, type OptIrFactGate } from "./fact-gated-rule";
-import { optIrRewriteRule, type OptIrRewriteRule } from "./rewrite-rule";
+import { factKindsForGate, optIrFactGate, type OptIrFactGate } from "./fact-gated-rule";
+import {
+  type OptIrRewriteRecordInput,
+  optIrRewriteRule,
+  type OptIrRewriteRule,
+} from "./rewrite-rule";
 
 export const OPT_IR_EGRAPH_RULE_IDS = [
   "opt-ir.egraph.endian-load-folding",
@@ -130,8 +134,8 @@ export function createDefaultOptIrRuleCatalog(): OptIrRuleCatalog {
       preserveFactKind: "passDerived",
     }),
   ] as const;
-  const rules = ruleInputs.map((input) =>
-    optIrRewriteRule({
+  const rules = ruleInputs.map((input) => {
+    const rule = optIrRewriteRule({
       ruleId: input.ruleId,
       name: input.name,
       passId: PASS_ID,
@@ -148,8 +152,19 @@ export function createDefaultOptIrRuleCatalog(): OptIrRuleCatalog {
       invariantSchema: input.schema,
       preservationRules: [preservationRule(input.ruleId, input.preserveFactKind)],
       primaryPreservationRuleId: `${input.ruleId}:preserve:${input.preserveFactKind}`,
-    }),
-  );
+    });
+    const consumedFactFamilies = factKindsForGate(input.gate);
+    return Object.freeze({
+      ...rule,
+      createRewriteRecord(recordInput: OptIrRewriteRecordInput) {
+        const record = rule.createRewriteRecord(recordInput);
+        return Object.freeze({
+          ...record,
+          consumedFactFamilies: Object.freeze(consumedFactFamilies.slice()),
+        });
+      },
+    });
+  });
 
   return Object.freeze({
     passId: PASS_ID,

@@ -6,6 +6,10 @@ import {
   type AArch64PeCoffEfiWriterTargetSurfaceInput,
 } from "./aarch64-pe-coff-target";
 import {
+  PE_COFF_EFI_FILE_EXTENSION,
+  validatePeCoffEfiArtifactName,
+} from "./aarch64-pe-coff-artifact-name";
+import {
   peCoffError,
   peCoffOk,
   peCoffWriterDiagnostic,
@@ -18,6 +22,7 @@ import {
 } from "../diagnostics";
 import { PE_SIGNATURE_BYTES } from "../headers";
 import { createPeByteWriter, type PeByteWriter } from "../pe-byte-writer";
+import { finalizePeImageChecksum } from "../pe-image-checksum-finalization";
 import {
   planPeCoffSections,
   planPeDataDirectories,
@@ -46,14 +51,15 @@ export interface PlannedPeCoffImage {
 }
 
 export interface SerializedPlannedPeCoffImage {
-  readonly bytes: readonly number[];
+  readonly bytes: Uint8Array;
+  readonly headers: PlannedPeHeaders;
+  readonly checksum: number;
 }
 
 type WriteOperation = () => PeCoffWriterResult<number>;
 
 const DEFAULT_EFI_ARTIFACT_NAME = "wrela.efi";
 const PE_COFF_EFI_MEDIA_TYPE = "application/vnd.microsoft.portable-executable";
-const PE_COFF_EFI_FILE_EXTENSION = ".efi";
 
 const ORCHESTRATION_STAGES = [
   "target",
@@ -92,7 +98,7 @@ export function writeAArch64PeCoffEfiImage(
 ): WriteAArch64PeCoffEfiImageResult {
   const artifactName = input.artifactName ?? DEFAULT_EFI_ARTIFACT_NAME;
   const authenticatedTarget = authenticateWriterTarget(input.target);
-  const artifactNameDiagnostics = validateArtifactName(artifactName);
+  const artifactNameDiagnostics = validatePeCoffEfiArtifactName(artifactName);
   if (authenticatedTarget.kind === "error" || artifactNameDiagnostics.length > 0) {
     const targetDiagnostics =
       authenticatedTarget.kind === "error"
@@ -161,13 +167,20 @@ export function writeAArch64PeCoffEfiImage(
     return orchestrationError("parse", parsed.diagnostics);
   }
 
-  const verified = verifyParsedPeCoffImage({ planned: plannedImage, parsed: parsed.value });
+  const plannedImageWithChecksum: PlannedPeCoffImage = Object.freeze({
+    headers: serialized.value.headers,
+    sections: plannedImage.sections,
+  });
+  const verified = verifyParsedPeCoffImage({
+    planned: plannedImageWithChecksum,
+    parsed: parsed.value,
+  });
   if (verified.kind === "error") {
     return orchestrationError("verify", verified.diagnostics);
   }
 
   const verification = orchestrationVerification();
-  const bytes = Object.freeze([...serialized.value.bytes]);
+  const bytes = Uint8Array.from(serialized.value.bytes);
   const artifact = Object.freeze({
     artifactName,
     mediaType: PE_COFF_EFI_MEDIA_TYPE,
@@ -179,7 +192,7 @@ export function writeAArch64PeCoffEfiImage(
       baseRelocations: baseRelocations.value,
       sections: plannedSections.value.sections,
       dataDirectories: dataDirectories.value.directories,
-      headers: headers.value,
+      headers: serialized.value.headers,
       bytes,
     }),
     verification,
@@ -213,28 +226,18 @@ export function serializePlannedPeCoffImage(
     });
   }
 
+  const finalized = finalizePeImageChecksum({ writer, headers: image.headers });
+  if (finalized.kind === "error") {
+    return peCoffError({
+      diagnostics: finalized.diagnostics,
+      verification: IMAGE_SERIALIZATION_VERIFICATION,
+    });
+  }
+
   return peCoffOk({
-    value: Object.freeze({
-      bytes: writer.bytes(),
-    }),
+    value: finalized.value,
     verification: IMAGE_SERIALIZATION_VERIFICATION,
   });
-}
-
-function validateArtifactName(artifactName: string): readonly PeCoffWriterDiagnostic[] {
-  if (typeof artifactName !== "string") {
-    return Object.freeze([orchestrationDiagnostic(`artifact-name:type:${String(artifactName)}`)]);
-  }
-  if (artifactName.includes("/") || artifactName.includes("\\")) {
-    return Object.freeze([orchestrationDiagnostic(`artifact-name:path-separator:${artifactName}`)]);
-  }
-  if (!artifactName.endsWith(PE_COFF_EFI_FILE_EXTENSION)) {
-    return Object.freeze([orchestrationDiagnostic(`artifact-name:extension:${artifactName}`)]);
-  }
-  if (artifactName.length === PE_COFF_EFI_FILE_EXTENSION.length) {
-    return Object.freeze([orchestrationDiagnostic(`artifact-name:empty-stem:${artifactName}`)]);
-  }
-  return Object.freeze([]);
 }
 
 type AuthenticatedWriterTargetResult =
@@ -391,14 +394,6 @@ function orchestrationRun(
   });
 }
 
-function orchestrationDiagnostic(stableDetail: string): PeCoffWriterDiagnostic {
-  return peCoffWriterDiagnostic({
-    code: "PE_COFF_INPUT_INVALID",
-    ownerKey: "aarch64-pe-coff-efi-writer",
-    stableDetail,
-  });
-}
-
 function targetDiagnostic(stableDetail: string): PeCoffWriterDiagnostic {
   return peCoffWriterDiagnostic({
     code: "PE_COFF_TARGET_AUTH_FAILED",
@@ -414,7 +409,7 @@ interface DeterministicMetadataInput {
   readonly sections: readonly PlannedPeCoffSection[];
   readonly dataDirectories: unknown;
   readonly headers: PlannedPeHeaders;
-  readonly bytes: readonly number[];
+  readonly bytes: Uint8Array;
 }
 
 function deterministicMetadata(input: DeterministicMetadataInput): PeCoffEfiDeterministicMetadata {

@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { buildProofMir } from "../../../src/proof-mir";
-import { proofMirDiagnosticCode } from "../../../src/proof-mir/diagnostics";
 import {
   ordinaryIteratorProofMirFixture,
   proofMirSummary,
   streamForLoopProofMirFixture,
 } from "../../support/proof-mir/proof-mir-fixtures";
+import { proofMirRuntimeCatalogFake } from "../../support/proof-mir/proof-mir-fakes";
 
 describe("iterator protocol integration", () => {
   test("ordinary checked iterator for keeps loop and protocol edges explicit", () => {
@@ -44,27 +44,39 @@ describe("iterator protocol integration", () => {
     expect(proofMirSummary(result.mir)).toMatchSnapshot();
   });
 
-  test("stream for returns semantics gate without successful Proof MIR", () => {
-    const result = buildProofMir(streamForLoopProofMirFixture());
+  test("stream for builds Proof MIR when streamLoop target feature is enabled", () => {
+    const input = streamForLoopProofMirFixture();
+    const result = buildProofMir({
+      ...input,
+      target: {
+        ...input.target,
+        features: [...input.target.features, "streamLoop"],
+        runtimeCatalog: proofMirRuntimeCatalogFake({
+          targetId: input.target.runtimeCatalog.targetId,
+          features: [...input.target.runtimeCatalog.features, "streamLoop"],
+          operations: input.target.runtimeCatalog.entries(),
+        }),
+      },
+    });
 
-    expect(result.kind).toBe("error");
-    if (result.kind !== "error") {
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") {
       return;
     }
 
-    expect("mir" in result).toBe(false);
-    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
-      proofMirDiagnosticCode("PROOF_MIR_MISSING_SEMANTICS_GATE"),
+    const summary = JSON.parse(proofMirSummary(result.mir));
+    const streamFunction = summary.functions.find(
+      (functionGraph: { functionInstanceId: string }) =>
+        functionGraph.functionInstanceId === "fn:iterator-protocol",
     );
-
+    expect(streamFunction).toBeDefined();
     expect(
-      JSON.stringify(
-        result.diagnostics.map((diagnostic) => ({
-          code: diagnostic.code,
-          message: diagnostic.message,
-          rootCauseKey: diagnostic.rootCauseKey,
-        })),
+      streamFunction.blocks.some(
+        (block: { stateMerge?: { boundaryResources: { sessionMembers: readonly unknown[] } } }) =>
+          (block.stateMerge?.boundaryResources.sessionMembers.length ?? 0) > 0,
       ),
-    ).toMatchSnapshot();
+    ).toBe(true);
+
+    expect(proofMirSummary(result.mir)).toMatchSnapshot();
   });
 });

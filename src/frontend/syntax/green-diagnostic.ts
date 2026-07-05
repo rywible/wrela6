@@ -6,4 +6,6 @@ export interface GreenDiagnostic {
   message: string;
   relativeStart: number;
   relativeEnd: number;
+  ownerKey?: string;
+  stableDetail?: string;
 }

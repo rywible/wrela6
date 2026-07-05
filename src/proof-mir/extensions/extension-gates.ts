@@ -4,6 +4,7 @@ import {
   type ProofMirDiagnostic,
 } from "../diagnostics";
 import type { ProofMirOriginId } from "../ids";
+import type { MonoInstanceId } from "../../mono/ids";
 import type { ProofMirExtensionConstruct } from "../model/effects";
 
 export interface RejectUnsupportedProofMirExtensionConstructInput {
@@ -11,6 +12,8 @@ export interface RejectUnsupportedProofMirExtensionConstructInput {
   readonly targetFeatures: readonly string[];
   readonly monoMetadataAvailable?: boolean;
   readonly origin: ProofMirOriginId;
+  readonly sourceOrigin?: string;
+  readonly functionInstanceId?: MonoInstanceId;
 }
 
 export type RejectUnsupportedProofMirExtensionConstructResult =
@@ -28,15 +31,26 @@ function extensionGateDiagnostic(input: {
   readonly message: string;
   readonly construct: ProofMirExtensionConstruct;
   readonly origin: ProofMirOriginId;
+  readonly sourceOrigin?: string;
+  readonly functionInstanceId?: MonoInstanceId;
   readonly rootCauseKey: string;
 }): ProofMirDiagnostic {
+  const stableDetail =
+    input.sourceOrigin === undefined
+      ? `origin:${String(input.origin)}`
+      : `sourceOrigin:${input.sourceOrigin}`;
+
   return proofMirDiagnostic({
     severity: "error",
     code: input.code,
     message: input.message,
     ownerKey: `extension:${input.construct}`,
     rootCauseKey: input.rootCauseKey,
-    stableDetail: `origin:${String(input.origin)}`,
+    stableDetail,
+    ...(input.sourceOrigin === undefined ? {} : { sourceOrigin: input.sourceOrigin }),
+    ...(input.functionInstanceId === undefined
+      ? {}
+      : { functionInstanceId: input.functionInstanceId }),
   });
 }
 
@@ -56,6 +70,8 @@ export function rejectUnsupportedProofMirExtensionConstruct(
             message: "Coroutine yield requires the coroutineYield target feature.",
             construct: input.construct,
             origin: input.origin,
+            sourceOrigin: input.sourceOrigin,
+            functionInstanceId: input.functionInstanceId,
             rootCauseKey: "coroutineYield",
           }),
         ]);
@@ -69,6 +85,8 @@ export function rejectUnsupportedProofMirExtensionConstruct(
             message: "Stream for-loop requires the streamLoop target feature.",
             construct: input.construct,
             origin: input.origin,
+            sourceOrigin: input.sourceOrigin,
+            functionInstanceId: input.functionInstanceId,
             rootCauseKey: "streamLoop",
           }),
         ]);
@@ -82,6 +100,8 @@ export function rejectUnsupportedProofMirExtensionConstruct(
             message: "Cross-core construct requires mono concurrency metadata.",
             construct: input.construct,
             origin: input.origin,
+            sourceOrigin: input.sourceOrigin,
+            functionInstanceId: input.functionInstanceId,
             rootCauseKey: "crossCoreOwnership",
           }),
         ]);

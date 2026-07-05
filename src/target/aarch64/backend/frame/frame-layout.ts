@@ -7,6 +7,8 @@ import {
   type AArch64BackendResult,
 } from "../api/diagnostics";
 
+const MAX_AARCH64_FRAME_SIZE_BYTES = 16 * 1024 * 1024;
+
 export interface AArch64FrameSlotRequest {
   readonly slotKey: string;
   readonly sizeBytes: number;
@@ -89,6 +91,16 @@ export function layoutAArch64StackFrame(input: {
   const outgoingArgSizeBytes = align(input.outgoingArgBytes ?? 0, 16);
   cursor += outgoingArgSizeBytes;
   const totalSizeBytes = align(cursor + (input.requiresFrameRecord === true ? 16 : 0), 16);
+  if (totalSizeBytes > MAX_AARCH64_FRAME_SIZE_BYTES) {
+    diagnostics.push(
+      aarch64BackendDiagnostic({
+        code: "AARCH64_FRAME_TOO_LARGE",
+        ownerKey: "frame-layout",
+        rootCauseKey: `frame-layout:frame-too-large:${input.functionKey}:${totalSizeBytes}`,
+        stableDetail: `frame-layout:frame-too-large:${input.functionKey}:${totalSizeBytes}`,
+      }),
+    );
+  }
   if (diagnostics.length > 0) return backendError(diagnostics);
   return backendOk(
     Object.freeze({

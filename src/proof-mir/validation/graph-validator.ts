@@ -4,6 +4,11 @@ import {
   sortProofMirDiagnostics,
   type ProofMirDiagnostic,
 } from "../diagnostics";
+import {
+  validateControlEdgeOutgoingReference,
+  validateControlEdgeTarget,
+  validateStoredIncomingEdges,
+} from "./incoming-edge-validator";
 import type {
   ProofMirBlock,
   ProofMirBlockParameter,
@@ -11,25 +16,46 @@ import type {
   ProofMirControlEdge,
   ProofMirExitEdge,
   ProofMirFunction,
-  ProofMirStatement,
   ProofMirTerminatorKind,
   ProofMirValue,
 } from "../model/graph";
 import type { ProofMirOperand } from "../model/operands";
 import type { ProofMirValueId } from "../ids";
+import { collectStatementReferences } from "./reference-collector";
+import { countCriticalEdges, validateReducibility } from "./cfg-summary-validator";
 
 export interface ProofMirValidatorProgram {
   readonly functions: readonly ProofMirFunction[];
 }
 
+export interface ProofMirGraphValidationSummary {
+  readonly criticalEdgeCount: number;
+}
+
+export interface ProofMirGraphValidationResult {
+  readonly diagnostics: readonly ProofMirDiagnostic[];
+  readonly summary: ProofMirGraphValidationSummary;
+}
+
 export function validateProofMirGraph(program: ProofMirValidatorProgram): ProofMirDiagnostic[] {
+  return [...validateProofMirGraphWithSummary(program).diagnostics];
+}
+
+export function validateProofMirGraphWithSummary(
+  program: ProofMirValidatorProgram,
+): ProofMirGraphValidationResult {
   const diagnostics: ProofMirDiagnostic[] = [];
+  let criticalEdgeCount = 0;
 
   for (const functionGraph of program.functions) {
     validateFunctionGraph(functionGraph, diagnostics);
+    criticalEdgeCount += countCriticalEdges(functionGraph);
   }
 
-  return sortProofMirDiagnostics(diagnostics);
+  return Object.freeze({
+    diagnostics: sortProofMirDiagnostics(diagnostics),
+    summary: Object.freeze({ criticalEdgeCount }),
+  });
 }
 
 function validateFunctionGraph(
@@ -61,7 +87,10 @@ function validateFunctionGraph(
     validateJoinArguments(functionGraph, edge, ownerKey, diagnostics);
   }
 
+  validateStoredIncomingEdges(functionGraph, ownerKey, diagnostics);
   validateScalarSsa(functionGraph, ownerKey, diagnostics);
+  validateStatementReferences(functionGraph, ownerKey, diagnostics);
+  validateReducibility({ functionGraph, ownerKey, diagnostics });
   validateReturnAndPanicExits(functionGraph, ownerKey, diagnostics);
 }
 
@@ -147,6 +176,20 @@ function validateBlockTarget(
     });
   }
 
+  if (edge.fromBlockId !== block.blockId) {
+    recordDiagnostic(diagnostics, {
+      code: "PROOF_MIR_INCOMING_EDGES_MISMATCH",
+      message: "Proof MIR block target edge is owned by a different source block.",
+      ownerKey,
+      rootCauseKey: "cfg",
+      stableDetail: `edge-source:${String(target.edgeId)}:${String(edge.fromBlockId)}:${String(
+        block.blockId,
+      )}`,
+      functionInstanceId: functionGraph.functionInstanceId,
+      nodeDetail: String(block.blockId),
+    });
+  }
+
   if (!functionGraph.blocks.has(target.blockId)) {
     recordDiagnostic(diagnostics, {
       code: "PROOF_MIR_INVALID_CFG",
@@ -156,58 +199,6 @@ function validateBlockTarget(
       stableDetail: `missing-target-block:${String(target.blockId)}`,
       functionInstanceId: functionGraph.functionInstanceId,
       nodeDetail: String(block.terminator.terminatorId),
-    });
-  }
-}
-
-function validateControlEdgeOutgoingReference(
-  functionGraph: ProofMirFunction,
-  edge: ProofMirControlEdge,
-  ownerKey: string,
-  diagnostics: ProofMirDiagnostic[],
-): void {
-  const fromBlock = functionGraph.blocks.get(edge.fromBlockId);
-  if (fromBlock === undefined) {
-    recordDiagnostic(diagnostics, {
-      code: "PROOF_MIR_INVALID_CFG",
-      message: "Proof MIR control edge references a missing source block.",
-      ownerKey,
-      rootCauseKey: "cfg",
-      stableDetail: `missing-source-block:${String(edge.fromBlockId)}`,
-      functionInstanceId: functionGraph.functionInstanceId,
-      nodeDetail: String(edge.edgeId),
-    });
-    return;
-  }
-  if (fromBlock.terminator.outgoingEdges.includes(edge.edgeId)) {
-    return;
-  }
-  recordDiagnostic(diagnostics, {
-    code: "PROOF_MIR_DISCONNECTED_CONTROL_EDGE",
-    message: "Proof MIR control edge is not listed in its source block terminator outgoing edges.",
-    ownerKey,
-    rootCauseKey: "cfg",
-    stableDetail: `orphan-edge:${String(edge.edgeId)}:${String(edge.fromBlockId)}`,
-    functionInstanceId: functionGraph.functionInstanceId,
-    nodeDetail: String(edge.edgeId),
-  });
-}
-
-function validateControlEdgeTarget(
-  functionGraph: ProofMirFunction,
-  edge: ProofMirControlEdge,
-  ownerKey: string,
-  diagnostics: ProofMirDiagnostic[],
-): void {
-  if (edge.toBlockId !== undefined && !functionGraph.blocks.has(edge.toBlockId)) {
-    recordDiagnostic(diagnostics, {
-      code: "PROOF_MIR_INVALID_CFG",
-      message: "Proof MIR control edge references a missing destination block.",
-      ownerKey,
-      rootCauseKey: "cfg",
-      stableDetail: `missing-edge-target:${String(edge.edgeId)}:${String(edge.toBlockId)}`,
-      functionInstanceId: functionGraph.functionInstanceId,
-      nodeDetail: String(edge.edgeId),
     });
   }
 }
@@ -417,12 +408,14 @@ function validateScalarSsa(
       definitionCount.set(parameter.valueId, (definitionCount.get(parameter.valueId) ?? 0) + 1);
     }
     for (const statement of block.statements) {
-      for (const defined of collectDefinedValueIds(statement)) {
+      for (const defined of collectStatementReferences(statement).writes) {
         definitionCount.set(defined, (definitionCount.get(defined) ?? 0) + 1);
       }
     }
     for (const statement of block.statements) {
-      collectStatementUses(statement, `statement:${String(statement.statementId)}`, uses);
+      for (const read of collectStatementReferences(statement).reads) {
+        noteUse(uses, read, `statement:${String(statement.statementId)}`);
+      }
     }
     collectTerminatorUses(
       block.terminator.kind,
@@ -468,6 +461,71 @@ function validateScalarSsa(
         functionInstanceId: functionGraph.functionInstanceId,
         nodeDetail: String(valueId),
       });
+    }
+  }
+}
+
+function validateStatementReferences(
+  functionGraph: ProofMirFunction,
+  ownerKey: string,
+  diagnostics: ProofMirDiagnostic[],
+): void {
+  for (const block of functionGraph.blocks.entries()) {
+    for (const statement of block.statements) {
+      const references = collectStatementReferences(statement);
+      const site = `statement:${String(statement.statementId)}`;
+      for (const place of references.places) {
+        if (!functionGraph.places.has(place)) {
+          recordDiagnostic(diagnostics, {
+            code: "PROOF_MIR_DANGLING_REFERENCE",
+            message: "Proof MIR statement references a missing place.",
+            ownerKey,
+            rootCauseKey: "reference",
+            stableDetail: `category:place:${site}:${String(place)}`,
+            functionInstanceId: functionGraph.functionInstanceId,
+            nodeDetail: String(statement.statementId),
+          });
+        }
+      }
+      for (const loan of references.loans) {
+        if (!functionGraph.places.has(loan.placeId) || !functionGraph.scopes.has(loan.scopeId)) {
+          recordDiagnostic(diagnostics, {
+            code: "PROOF_MIR_DANGLING_REFERENCE",
+            message: "Proof MIR statement references a missing loan anchor.",
+            ownerKey,
+            rootCauseKey: "reference",
+            stableDetail: `category:loan:${site}:${String(loan.loanId)}`,
+            functionInstanceId: functionGraph.functionInstanceId,
+            nodeDetail: String(statement.statementId),
+          });
+        }
+      }
+      for (const session of references.sessions) {
+        if (session.placeId !== undefined && !functionGraph.places.has(session.placeId)) {
+          recordDiagnostic(diagnostics, {
+            code: "PROOF_MIR_DANGLING_REFERENCE",
+            message: "Proof MIR statement references a missing session place.",
+            ownerKey,
+            rootCauseKey: "reference",
+            stableDetail: `category:session:${site}:${String(session.sessionId.instanceId)}`,
+            functionInstanceId: functionGraph.functionInstanceId,
+            nodeDetail: String(statement.statementId),
+          });
+        }
+      }
+      for (const term of references.layoutTerms) {
+        if (term.termId === undefined) {
+          recordDiagnostic(diagnostics, {
+            code: "PROOF_MIR_DANGLING_REFERENCE",
+            message: "Proof MIR statement references a missing layout term.",
+            ownerKey,
+            rootCauseKey: "reference",
+            stableDetail: `category:layoutTerm:${site}:missing`,
+            functionInstanceId: functionGraph.functionInstanceId,
+            nodeDetail: String(statement.statementId),
+          });
+        }
+      }
     }
   }
 }
@@ -607,141 +665,6 @@ function collectTerminatorTargets(kind: ProofMirTerminatorKind): ProofMirBlockTa
   }
 }
 
-function collectDefinedValueIds(statement: ProofMirStatement): ProofMirValueId[] {
-  switch (statement.kind.kind) {
-    case "load":
-      return [statement.kind.result];
-    case "store":
-      return [];
-    case "movePlace":
-      return statement.kind.result === undefined ? [] : [statement.kind.result];
-    case "consumePlace":
-      return [];
-    case "borrowPlace":
-      return [];
-    case "releaseLoan":
-      return [];
-    case "literal":
-      return [statement.kind.value];
-    case "unary":
-      return [statement.kind.result];
-    case "binary":
-      return [statement.kind.result];
-    case "comparison":
-      return [statement.kind.result];
-    case "constructObject":
-      return [statement.kind.result];
-    case "call":
-      return statement.kind.call.result === undefined
-        ? []
-        : collectProducedValueIds(statement.kind.call.result);
-    case "validate":
-    case "attempt":
-    case "take":
-    case "openSessionMember":
-    case "closeSessionMember":
-    case "openObligation":
-    case "dischargeObligation":
-    case "advancePrivateState":
-    case "bindLayoutTerm":
-    case "recordFactEvidence":
-    case "requireFact":
-    case "readValidatedBufferField":
-      return statement.kind.kind === "readValidatedBufferField" ? [statement.kind.read.result] : [];
-    case "extension":
-      return [];
-    default: {
-      const unreachable: never = statement.kind;
-      return unreachable;
-    }
-  }
-}
-
-function collectProducedValueIds(
-  operand: NonNullable<
-    Extract<ProofMirStatement["kind"], { readonly kind: "call" }>["call"]["result"]
-  >,
-): ProofMirValueId[] {
-  switch (operand.kind) {
-    case "value":
-      return [operand.value];
-    case "place":
-      return [];
-    case "valueAndPlace":
-      return [operand.value];
-    default: {
-      const unreachable: never = operand;
-      return unreachable;
-    }
-  }
-}
-
-function collectStatementUses(
-  statement: ProofMirStatement,
-  site: string,
-  uses: Map<ProofMirValueId, string[]>,
-): void {
-  switch (statement.kind.kind) {
-    case "load":
-    case "store":
-      if (statement.kind.kind === "store") {
-        noteUse(uses, statement.kind.value, site);
-      }
-      break;
-    case "movePlace":
-    case "consumePlace":
-    case "borrowPlace":
-    case "releaseLoan":
-    case "validate":
-    case "attempt":
-    case "take":
-    case "openSessionMember":
-    case "closeSessionMember":
-    case "openObligation":
-    case "dischargeObligation":
-    case "advancePrivateState":
-      break;
-    case "bindLayoutTerm":
-      noteUse(uses, statement.kind.binding.value, site);
-      break;
-    case "recordFactEvidence":
-    case "requireFact":
-    case "extension":
-      break;
-    case "readValidatedBufferField":
-      noteUse(uses, statement.kind.read.result, site);
-      break;
-    case "literal":
-      break;
-    case "unary":
-      noteUse(uses, statement.kind.operand, site);
-      break;
-    case "binary":
-      noteUse(uses, statement.kind.left, site);
-      noteUse(uses, statement.kind.right, site);
-      break;
-    case "comparison":
-      noteUse(uses, statement.kind.left, site);
-      noteUse(uses, statement.kind.right, site);
-      break;
-    case "constructObject":
-      for (const field of statement.kind.fields) {
-        noteUse(uses, field.value, site);
-      }
-      break;
-    case "call":
-      noteOperandUses(statement.kind.call.receiver?.operand, site, uses);
-      for (const argument of statement.kind.call.arguments) {
-        noteOperandUses(argument.operand, site, uses);
-      }
-      break;
-    default: {
-      const unreachable: never = statement.kind;
-      return unreachable;
-    }
-  }
-}
-
 function collectTerminatorUses(
   kind: ProofMirTerminatorKind,
   site: string,
@@ -838,3 +761,4 @@ function recordDiagnostic(
 }
 
 export { proofMirCrossedScopes, proofMirScopeStack } from "../domains/scope-tree";
+export { deriveProofMirPredecessorSets } from "./incoming-edge-validator";

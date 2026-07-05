@@ -25,6 +25,8 @@ import {
 } from "./linked-image-layout";
 import type { AArch64LinkerTargetSurface } from "./image-layout-policy";
 import { wordToU32Le } from "../target/aarch64/backend/object/encoding-core";
+import { recomputeLinkedImageContributions } from "./contribution-recompute";
+import { linkedImageSectionDiagnostics } from "./section-layout-verifier";
 
 const VERIFIER_KEY = "linked-image-verifier";
 const OWNER_KEY = "linked-image-verifier";
@@ -68,7 +70,14 @@ export function verifyLinkedImageLayout(
   );
 
   diagnostics.push(...duplicateDiagnostics(layout));
-  diagnostics.push(...sectionDiagnostics(layout, input.target.constants.firstSectionRva));
+  diagnostics.push(
+    ...linkedImageSectionDiagnostics({
+      layout,
+      firstSectionRva: input.target.constants.firstSectionRva,
+      sectionAlignmentBytes: input.target.constants.sectionAlignmentBytes,
+    }),
+  );
+  diagnostics.push(...recomputeLinkedImageContributions(layout).diagnostics);
   diagnostics.push(...contributionDiagnostics(layout, sectionByKey));
   diagnostics.push(...symbolDiagnostics(layout.symbols, sectionByKey, contributionByKey));
   diagnostics.push(...relocationDiagnostics(layout, sectionByKey, symbolByKey));
@@ -103,63 +112,6 @@ function duplicateDiagnostics(layout: AArch64LinkedImageLayout): readonly Linker
     ...duplicatesBy(layout.provenance, (record) => record.stableKey, "provenance"),
     ...duplicatesBy(layout.factSpending, (record) => record.stableKey, "fact-spending"),
   ];
-}
-
-function sectionDiagnostics(
-  layout: AArch64LinkedImageLayout,
-  firstSectionRva: number,
-): readonly LinkerDiagnostic[] {
-  const sections = layout.sections;
-  const diagnostics: LinkerDiagnostic[] = [];
-  for (const section of sections) {
-    if (!isNonNegativeInteger(section.rva) || !isPositiveInteger(section.alignmentBytes)) {
-      diagnostics.push(diagnostic(`image-layout:section-rva-invalid:${section.stableKey}`));
-      continue;
-    }
-    if (section.rva % section.alignmentBytes !== 0) {
-      diagnostics.push(
-        diagnostic(
-          `image-layout:section-rva-misaligned:${section.stableKey}:${section.rva}:${section.alignmentBytes}`,
-        ),
-      );
-    }
-    if (section.virtualSizeBytes < section.bytes.length) {
-      diagnostics.push(
-        diagnostic(
-          `image-layout:section-virtual-size-too-small:${section.stableKey}:${section.virtualSizeBytes}:${section.bytes.length}`,
-        ),
-      );
-    }
-  }
-
-  const orderedSections = [...sections].sort((left, right) => {
-    const rvaComparison = left.rva - right.rva;
-    return rvaComparison === 0
-      ? compareCodeUnitStrings(left.stableKey, right.stableKey)
-      : rvaComparison;
-  });
-  const firstSection = orderedSections[0];
-  if (firstSection !== undefined && firstSection.rva < firstSectionRva) {
-    diagnostics.push(
-      diagnostic(
-        `image-layout:first-section-rva-below-policy:${firstSection.stableKey}:${firstSection.rva}:${firstSectionRva}`,
-      ),
-    );
-  }
-  for (let index = 1; index < orderedSections.length; index += 1) {
-    const previous = orderedSections[index - 1]!;
-    const current = orderedSections[index]!;
-    const previousEnd = previous.rva + previous.virtualSizeBytes;
-    const currentEnd = current.rva + current.virtualSizeBytes;
-    if (previousEnd > current.rva) {
-      diagnostics.push(
-        diagnostic(
-          `image-layout:section-rva-overlap:${previous.stableKey}:${current.stableKey}:${previous.rva}:${previousEnd}:${current.rva}:${currentEnd}`,
-        ),
-      );
-    }
-  }
-  return diagnostics;
 }
 
 function contributionDiagnostics(
@@ -747,7 +699,7 @@ type ActualEncodedRelocationValue =
 
 function actualEncodedRelocationValue(
   relocation: AppliedRelocation,
-  patchBytes: readonly number[],
+  patchBytes: ArrayLike<number>,
 ): ActualEncodedRelocationValue {
   const expectedWidthBytes = expectedAArch64RelocationWidthBytes(relocation.family);
   if (patchBytes.length !== expectedWidthBytes) {
@@ -854,21 +806,21 @@ function compareSymbols(left: ResolvedImageSymbol, right: ResolvedImageSymbol): 
     : rvaComparison;
 }
 
-function sameNumbers(left: readonly number[], right: readonly number[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function isNonNegativeInteger(value: number): boolean {
-  return Number.isSafeInteger(value) && value >= 0;
+function sameNumbers(left: ArrayLike<number>, right: ArrayLike<number>): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
 }
 
 function isPositiveInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0;
 }
 
-function diagnostic(stableDetail: string): LinkerDiagnostic {
+function diagnostic(stableDetail: string, code = "LINKER_IMAGE_LAYOUT_INVALID"): LinkerDiagnostic {
   return linkerDiagnostic({
-    code: "LINKER_IMAGE_LAYOUT_INVALID",
+    code,
     ownerKey: OWNER_KEY,
     stableDetail,
     provenance: [stableJson([VERIFIER_KEY, stableDetail])],

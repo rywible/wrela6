@@ -116,7 +116,7 @@ For each packet, the first failing test is the `Test/example` assertion or comma
 #### W0-02c — Seed known frontend-hole fixtures as tracked failures
 
 - **Depends:** W0-02b.
-- **Files:** `tests/fixtures/diagnostics/top-level-garbage/*`, `tests/fixtures/diagnostics/pub-fn/*`, `tests/fixtures/diagnostics/bad-escape/*`, `tests/fixtures/diagnostics/hex-split/*`.
+- **Files:** `tests/fixtures/diagnostics/top-level-garbage/*`, `tests/fixtures/diagnostics/pub-fn/*`, `tests/fixtures/diagnostics/bad-escape/*`, `tests/fixtures/diagnostics/ok-hex-split/*`.
 - **Do:** add fixtures for known zero-diagnostic bugs with expectations that future W1 tasks will flip to real codes.
 - **Test/example:** `{"phase":"parse","diagnostics":[],"trackedBy":"W1-02"}` records the current wrong behavior without hiding it.
 - **AC:** the corpus is green on the current tree and every seeded wrong-behavior fixture names its owning fix task.
@@ -149,7 +149,7 @@ For each packet, the first failing test is the `Test/example` assertion or comma
 
 - **Depends:** W0-04a.
 - **Files:** `tests/audit/subsystem-maintainability-audit.test.ts`, `docs/implementation/giant-file-split-map.md`.
-- **Do:** record every current `src/**/*.ts` file at or above 900 lines with its line count, owner boundary, and W0-05 split prerequisite. The current verified list is: `src/semantic/names/expression-resolver.ts` 1324, `src/opt-ir/operations.ts` 1045, `src/opt-ir/lower/lower-checked-mir.ts` 1031, `src/target/aarch64/backend/object/layout-encode-fixed-point.ts` 997, `src/proof-check/domains/validation.ts` 988, `src/proof-mir/lower/expression-lowerer.ts` 982, `src/proof-check/kernel/registry/transition-helpers.ts` 979, `src/mono/mono-hir.ts` 976, `src/target/aarch64/backend/object/object-module.ts` 973, `src/target/aarch64/backend/verify/encoding-object-verifier.ts` 972, `src/target/aarch64/lower/lower-function.ts` 964, `src/semantic/names/type-reference-resolver.ts` 956, `src/proof-check/domains/source-calls.ts` 951, `src/proof-check/domains/facts.ts` 951, `src/proof-mir/draft/draft-graph-builder.ts` 946, `src/target/aarch64/backend/api/machine-lowering.ts` 944, `src/proof-check/authority/authority-term-canonicalization.ts` 943, `src/proof-mir/domains/effects-resources.ts` 931, `src/target/uefi-aarch64/runtime-helper-instructions.ts` 929, `src/proof-mir/canonicalization/graph-snapshot-freeze.ts` 929, and `src/mono/reachability.ts` 915.
+- **Do:** record every current `src/**/*.ts` file at or above 900 lines with its line count, owner boundary, and W0-05 split prerequisite. The current verified list is: `src/semantic/names/expression-resolver.ts` 1324, `src/opt-ir/operations.ts` 1045, `src/opt-ir/lower/lower-checked-mir.ts` 1031, `src/target/aarch64/backend/object/layout-encode-fixed-point.ts` 997, `src/proof-check/domains/validation.ts` 988, `src/proof-check/kernel/registry/transition-helpers.ts` 979, `src/mono/mono-hir.ts` 976, `src/target/aarch64/backend/object/object-module.ts` 973, `src/target/aarch64/backend/verify/encoding-object-verifier.ts` 972, `src/target/aarch64/lower/lower-function.ts` 964, `src/semantic/names/type-reference-resolver.ts` 956, `src/proof-check/domains/source-calls.ts` 951, `src/proof-check/domains/facts.ts` 951, `src/proof-mir/draft/draft-graph-builder.ts` 946, `src/target/aarch64/backend/api/machine-lowering.ts` 944, `src/proof-check/authority/authority-term-canonicalization.ts` 943, `src/proof-mir/domains/effects-resources.ts` 931, `src/target/uefi-aarch64/runtime-helper-instructions.ts` 929, `src/proof-mir/canonicalization/graph-snapshot-freeze.ts` 929, and `src/mono/reachability.ts` 915.
 - **Test/example:** append 10 lines to a copied fixture of `src/semantic/names/expression-resolver.ts` and assert the audit says `grandfathered giant file grew`.
 - **AC:** `bun test tests/audit/subsystem-maintainability-audit.test.ts` fails when any grandfathered file grows and prints the matching W0-05 prerequisite.
 
@@ -226,6 +226,12 @@ For each packet, the first failing test is the `Test/example` assertion or comma
 - **Do:** model v8-v15/d8-d15 as public callee-saved and exclude them until W5-01 preserves them.
 - **Test/example:** `expect(vectorPool).not.toContain("v8");`.
 - **AC:** vector allocation tests show v8-v15 are unavailable unless saved.
+
+  **Implementation note (2026-07-04):** a late audit corrected the SIMD wording here:
+  AAPCS64 preserves only the low 64-bit `d8`-`d15` lanes, not full 128-bit `v8`-`v15`
+  values. The register model therefore records `d8`-`d15` as callee-saved, while public-call
+  vector clobbers conservatively include `v8`-`v15` so live `vector128` values cannot be kept
+  in upper-half-clobbered registers across public calls.
 
 #### W1-02a — Remove unsupported `pub` from repo fixtures and stdlib
 
@@ -386,6 +392,14 @@ For each packet, the first failing test is the `Test/example` assertion or comma
 - **Do:** swap `"Result"`/`"Validation"`/`"Attempt"` name checks for canonical type-id equality.
 - **Test/example:** `expect(surface.attemptContracts).not.toContain(userResultTypeId);`.
 - **AC:** stdlib contracts still infer; user collisions do not.
+
+  **Implementation note (2026-07-04):** PacketCounter validation fixtures previously declared
+  package-local `Validation[Ok, Err, Source]` markers, which correctly do **not** infer contracts
+  after W1-10. The production fix is to provide canonical `Validation` in the stdlib/ABI core
+  modules and have fixtures import that marker. UEFI OptIR lowering must carry exact canonical
+  constructor ids and exact source payload type ids through the package pipeline; switch-case Err
+  payload aliasing and empty carrier construction must use those ids, never bare names or structural
+  lookalikes.
 
 #### W1-11a — Introduce a first-class local scope tier
 
@@ -596,6 +610,10 @@ For each packet, the first failing test is the `Test/example` assertion or comma
 - **Do:** require pair keys to be reciprocal and to resolve to the same target.
 - **Test/example:** `expect(codes).toContain("AARCH64_OBJECT_RELOCATION_PAIR_MISMATCH");`.
 - **AC:** one-way pair-key objects fail before linking.
+
+  **Implementation note (2026-07-04):** the final audit found that an initial pass checked
+  only partner existence/family. The verifier now also rejects non-reciprocal `pairedRelocationKey`
+  metadata and same-family pairs whose targets differ.
 
 #### W2-04b — Emit or reject large stack adjustments before encoding
 
@@ -823,6 +841,14 @@ For each packet, the first failing test is the `Test/example` assertion or comma
 - **Test/example:** `{"code":"PROOF_MIR_UNSUPPORTED_EXTENSION_RECORD","spanText":"for","count":1}` for a disabled target.
 - **AC:** docs no longer claim stream loops are blocked for UEFI after implementation.
 
+  **Implementation note (2026-07-04):** the `stream-loop-disabled-target`
+  corpus fixture uses a diagnostics-harness Proof MIR target-feature override
+  to exercise an unsupported target while the production UEFI target continues
+  to enable `streamLoop`. The fixture now expects
+  `PROOF_MIR_MISSING_SEMANTICS_GATE` at the `for` token; the late
+  `PROOF_MIR_UNSUPPORTED_EXTENSION_RECORD` remains a downstream invariant
+  backstop.
+
 #### W3-03a — Reject `yield` before proof/opt lowering on unsupported targets
 
 - **Depends:** W0-02a, W0-02b, W0-02c.
@@ -926,6 +952,10 @@ For each packet, the first failing test is the `Test/example` assertion or comma
 - **Do:** parse `and`/`or` with documented precedence and lower as short-circuit CFG.
 - **Test/example:** `expect(evaluate("false and panic()")).toBe(false);` in the interpreter/differential harness once available.
 - **AC:** right operand is not evaluated when short-circuit decides the result.
+
+  **Implementation note (2026-07-04):** the final audit found that frontend/HIR support landed
+  before Proof MIR short-circuit lowering. Proof MIR now emits branch edges plus a join parameter
+  for `and`/`or`, so the RHS is present only on the runtime branch that needs it.
 
 #### W3-08c — Add bitwise tokens, parser precedence, and HIR typing
 
@@ -1064,6 +1094,7 @@ For each packet, the first failing test is the `Test/example` assertion or comma
 - **Do:** move safe invariant ops into preheaders and record each move.
 - **Test/example:** `expect(rewrite.reason.kind).toBe("licm-hoist");`.
 - **AC:** loop fixture changes program shape and W4-01 differential remains green.
+- **Implementation note (2026-07-04):** the immediate audit fix removes metadata-only success by rewriting the existing model: LICM reorders hoistable operation ids to the earliest safe position in their containing block because OptIR currently has no explicit preheader insertion in this pass. Full natural-loop/preheader CFG editing remains the W4-02 target above.
 
 #### W4-03a — Detect SROA-eligible aggregate regions
 
@@ -1096,6 +1127,7 @@ For each packet, the first failing test is the `Test/example` assertion or comma
 - **Do:** change region allocation mode and emit truthful rewrite records.
 - **Test/example:** `expect(promotedRegion.storage).toBe("stack");`.
 - **AC:** promoted fixture verifies and W4-01 differential is green.
+- **Implementation note (2026-07-04):** the immediate audit fix removes metadata-only success by using the model that exists today: SROA creates scalar field regions and rewrites matching memory accesses when operation sidecars are available; stack promotion rewrites `optimizationRegions` to stack-local promoted regions while preserving core region ids for verifier validity. Full SSA aggregate-field replacement and first-class storage-mode records remain the W4-03/W4-04 target above.
 
 #### W4-05a — Clone multi-block callee CFGs with fresh ids
 
@@ -1572,6 +1604,9 @@ For each packet, the first failing test is the `Test/example` assertion or comma
 - **Do:** migrate remaining internal importers and delete the shim directory.
 - **Test/example:** `test ! -d src/lexer`.
 - **AC:** suite and policy check pass without the shim directory.
+- **Implementation note (2026-07-04):** the legacy `src/lexer` shim directory
+  has been deleted; design docs now point callers to `src/frontend/lexer`,
+  frontend barrels, or root public barrels as appropriate.
 
 ### WAVE 7 — Scale and maintainability
 
@@ -1767,7 +1802,7 @@ Wave 8 is deliberately trimmed. Keep bounded local verification in this remediat
 
 - **Depends:** W6-05a, W6-05b, W8-01a, W8-01b, W8-02a, W8-02b, W8-03a, W8-03b.
 - **Files:** `package.json`, `scripts/verify-release.ts`.
-- **Do:** define `verify:release` as a local chain over `agent:check`, non-skip QEMU, non-skip Lean when required, scorecard, reproducible build, CLI smoke, and stdlib conformance.
+- **Do:** define `verify:release` as a local chain over `agent:check`, non-skip QEMU, non-skip Lean, scorecard, reproducible build, CLI smoke, and stdlib conformance.
 - **Test/example:** `expect(packageJson.scripts["verify:release"]).toContain("bun run agent:check");`.
 - **AC:** required release scripts cannot be skipped silently.
 
@@ -2213,6 +2248,7 @@ Each subtask: write the failing unit test first, fix, `agent:check`.
   3. **Feature enable + fixtures:** add `"streamLoop"` to the UEFI runtime-catalog features; add `tests/fixtures/full-image-validation/packet-counter-real-stream/` (REV-D §15.4) exercising a genuine `for buffer in batch:` over the certified stream producer, in all applicable stdlib modes; corpus fixture for the _disabled-feature_ diagnostic on a target without the feature.
   4. **Docs:** update `happy.md` status and the bringup plan doc (`docs/implementation/2026-07-03-source-level-uefi-bringup-plan.md` — REV-D flagged it stale; reconcile its open-issue note about `validation.ts:539` while there).
 - **AC:** real-stream fixture compiles, validates, and boots with the smoke marker under `bun run verify:qemu` when QEMU is configured; disabled-target diagnostic corpus case green; proof-check rejects a fixture that drops an item without discharge (negative test).
+  - **2026-07-04 drift note:** stream lowering did not need a second loop implementation; it now reuses the ordinary iterator loop/next/finished spine behind the existing `streamLoop` gate. The audit also exposed a separate snapshot freeze gap: loop scaffold computed `boundaryResources`, but draft graph snapshots did not preserve `stateMerge`, so final MIR loop headers could not carry stream session members until the snapshot/freeze path was wired.
 
 ### W3-03 — `yield`/coroutines: reject at the frontend now; implementation deferred behind the same gate
 
@@ -2615,6 +2651,66 @@ Wave 8 is not allowed to become a research grab bag. The remediation plan keeps 
 **REV-B:** §2.1→W7-05a/W7-05b · §2.2/2.3→W8-01a/W8-01b · §3.1→W4-08a · §3.2→W3-07a/W3-07b · §4.1→W4-09a/W4-09b/W2-09a/W2-09b · §4.2→W2-10a/W2-10b · §5.1→W4-10a/W4-10b/W4-10c · §5.2→W4-02a/W4-02b/W4-02c/W4-02d · §6.1→W5-02a/W5-02b/W5-02c/W5-02d · §6.2→W5-03a/W5-03b · §6.3→W2-14a/W2-14b · §7.1→W5-06a/W5-06b · §7.2→W2-13a/W2-13b/W2-13c/W2-13d · §8.1→W3-09a/W3-09b/W3-09c/W3-09d · §8.2→W7-06a/W7-06b · §8.3→W6-02a/W6-02b/W6-02c · §8.4→W8-06a · §8.5→W8-05a/W8-05b.
 **REV-C:** Critical#1→W1-06a/W1-06b · #2→W1-01a/W1-01b/W1-01c/W5-01a/W5-01b/W5-01c · #3→W1-07a · #4→W1-05a/W1-05b/W1-05c · #5→W1-12a/W1-12b · #6→W2-02a/W3-04a/W3-04b/W3-04c · #7→W1-13a/W1-13b · #8→W2-01a/W2-01b/W2-01c · #9→W1-14a/W1-14b · #10→W0-01a/W0-01b/W6-05a/W6-05b · #11→W6-04a/W6-04b/W6-01a/W6-01b/W6-01c/W6-01d/W6-01e/W6-01f/W6-01g · #12→W8-03a/W8-03b · module-graph diag→W1-15a/W1-15b · string double-diag→W1-03a/W1-03b/W1-03c · index span→W1-16c · linker parity→W2-03a/W2-03b · slow validator→W2-03a/W2-03b · reloc pairs→W2-04a/W2-04b · large frames→W2-04a/W2-04b · stream/yield/switch→W3-02a/W3-02b/W3-02c/W3-02d/W3-03a/W3-03b/W3-05a/W3-05b · generic entries→W3-06a/W3-06b · smoke→W2-15a/W2-15b · matrix→W3-11a/W3-11b · stdlib→W3-09a/W3-09b/W3-09c/W3-09d · package→W6-04a/W6-04b · layout-knows-UEFI→W3-10a · mono origin fallbacks→W2-08a/W2-08b · regex policy→W2-11a · big files→W0-04b/W0-05a/W0-05b/W0-05c/W0-05d/W0-05e/W0-05f/W7-04a/W7-04b · local gates→W0-01a/W0-01b/W6-05a/W6-05b/W8-04a/W8-04b.
 **REV-D:** #1→W3-02a/W3-02b/W3-02c/W3-02d · #2→W3-01a/W3-01b · #3→W6-01a/W6-01b/W6-01c/W6-01d/W6-01e/W6-01f/W6-01g · #4→W3-09a/W3-09b/W3-09c/W3-09d · #5→W1-12a/W1-12b · #6→W2-09a/W2-09b · #7→W2-15a/W2-15b · #8→W6-02a/W6-02b/W6-02c · #9→W1-09a/W1-09b · #10→W4-07a · #11→W2-08a/W2-08b · #12→W0-03a/W0-03b/W0-04b/W0-05a/W0-05b/W0-05c/W0-05d/W0-05e/W0-05f/W7-04a/W7-04b · #13→W6-06a/W6-06b · #14→W2-15a/W2-15b · #15→W6-07a/W6-07b/W2-06a/W2-06b · #16→W1-15a/W1-15b · #17→W0-03a/W0-03b · #18→W2-12a · #19/#20→W2-13a/W2-13b/W2-13c/W2-13d · #21→W3-11a/W3-11b · #22→W2-08a/W2-08b · #23→W2-05a · #24→W2-14a/W2-14b/W3-02a/W3-02b/W3-02c/W3-02d · #25→W6-04a/W6-04b · #26→W5-02a/W5-02b/W5-02c/W5-02d · #27→W5-03a/W5-03b · #28→W5-06a/W5-06b · #29→W5-02a/W5-02b/W5-02c/W5-02d · #30→W2-14a/W2-14b · #31→W3-07a/W3-07b · #32→W4-02a/W4-02b/W4-02c/W4-02d · #33→W2-10a/W2-10b · §2 seam items→W2-06a/W2-06b/W2-07a/W2-07b · §18 stringify→W1-14a/W1-14b · §16 Lean→W8-03a/W8-03b · §17 fuzz/system→W8-01a/W8-01b/W2-15a/W2-15b.
+
+## Implementation notes captured during execution
+
+- **W1-01 / W0-05b integration:** after the allocation-stage split, the live function pipeline still had a duplicate inline allocation path. The implementation was tightened so production allocation goes through `function-pipeline/allocation-stage.ts`, keeping the interim callee-saved exclusion policy in one place.
+- **W1-01 SIMD late-audit correction:** AAPCS64 only preserves the low 64 bits of `v8`-`v15`.
+  Public-call vector clobbers now include `v8`-`v15` in addition to `v0`-`v7` and `v16`-`v31`,
+  and the public SIMD callee-saved register model records only `d8`-`d15` as preserved lanes.
+- **W1-05 audit correction:** duplicate rejection exposed that scope-exit keys also needed site discrimination, not only branch/normal/panic/return control exits. `createScopeExit` now derives the exit/control-edge role from the source block and the logical edge kind, and repeated `take` lowering has regression coverage for distinct exit keys.
+- **W1-06 diagnostic code:** the accepted diagnostic code is `PROOF_MIR_INCOMING_EDGES_MISMATCH` (plural), matching the task packet. A transient singular spelling was rejected during integration review.
+- **W1-08 return-of-parameter inlining:** the OptIR schema does not currently expose a copy/identity operation suitable for the packet's suggested explicit copy. The final splice-based inliner represents call results as merge-block parameters fed by substituted callee return values, while cloned callee operands keep the parameter-to-argument substitution. The verifier-clean AC is preserved for identity, return-parameter, and multi-block callees.
+- **W1-04 statement separators:** existing statement parsers often consume their own trailing newline. The separator enforcement therefore accepts either the current lookahead separator or a separator already owned by the parsed statement node; otherwise valid two-line bodies were recovered as missing separators and later semantic diagnostics were skipped.
+- **W1-04 fresh-audit correction:** the former `hex-split` zero-diagnostic tracking fixture now lives under `ok-hex-split` without `trackedBy`, matching the current canonical integer-literal implementation and preserving the diagnostics corpus rule that only known wrong-behavior fixtures carry tracking metadata.
+- **W1-02 fresh-audit correction:** top-level parser recovery now stops at the next declaration starter as well as newline/EOF. This preserves the existing diagnostic for leading garbage while still parsing valid same-line declarations such as `banana fn foo()` after the bad token run.
+- **W1-15 / package API fresh-audit correction:** public UEFI package inputs now validate `entryModuleName` and every `sourceFile.moduleName` through the same module-name-to-`ModulePath` conversion used by the package pipeline. Invalid API-level names such as `../evil` return deterministic package-input diagnostics instead of throwing inside frontend module-graph parsing.
+- **W1-17c stream-loop rejection origins:** extension-gate diagnostics now carry the real statement `sourceOrigin` when available and use it in stable detail, falling back to the numeric proof-MIR origin only for source-less internal callers.
+- **W2-06 frontend diagnostics at the target seam:** the UEFI package pipeline maps each frontend diagnostic to one target diagnostic with source file, diagnostic code, and span in `stableDetail`. The old aggregate `frontend-diagnostics:<count>` form is kept only in historical plan/review text and the regression assertion that forbids producing it.
+- **W2-08 / W3-02 fresh-audit correction:** Proof-MIR lowerers no longer cast mono source-origin strings to `never` when creating origin-map records. The origin map stores source origins as canonical strings at the proof-MIR boundary. Iterator lowering also replaced the old fixed `hirExpressionId(101/102)` synthetic IDs with a deterministic allocator that derives fresh IDs from the function body and sorted call-site requirements.
+- **W2-08 follow-up:** the remaining `as never` sites under `src/proof-mir/lower` were removed. Scope-exit closures now use draft-scope keys in `DraftProofMirExitClosurePolicy`, and graph freezing resolves checked scopes plus allowed transfer effects to the frozen `ProofMirExitClosurePolicy` ids instead of smuggling draft keys through the model type.
+- **W2-13b fresh-audit correction:** PE/COFF serialization now writes an explicit zero checksum placeholder, computes the standard image checksum over the final file with that field skipped, patches the checksum field, and returns finalized header metadata from the serialized bytes. The verifier tests now assert the parsed checksum equals the computed checksum and that nonempty images no longer rely on a zero checksum acceptance hole.
+- **W3-02c fresh-audit correction:** the packet-counter real-stream fixture now exercises an actual `for source in validation_fixture_packet_stream()` path in all three stdlib modes. Making that production path work required the stream-loop fallback to lower call/place iterables through the take-mode Proof-MIR machinery, bind the take session member as an alias of the stream item, transfer ownership to the member place, close the stream loan when the session closes, and propagate the same take alias into OptIR lowering. The fixture keeps validation-match control flow in a helper so the take body remains linear and can be compiled through the current backend.
+- **W5-01 / W4-11 callee-saved scorecard interaction:** relaxing the pool to use public callee-saved registers correctly exposed packet-counter object-size regressions in `verify:scorecard`. The accepted implementation keeps the new ABI correctness, emits paired `stp-signed-offset`/`ldp-signed-offset` for adjacent GPR save slots, keeps FP/SIMD saves single until a dedicated FP pair surface exists, and does not update scorecard baselines for this regression.
+- **W5-08 late-audit completion:** the backend stress lane now generates deterministic call-heavy, spill-heavy, wide-constant, parallel-copy, and large-frame machine-program shapes. The integration test runs 200 seeded cases through the backend pipeline, object verifier, and machine interpreter differential.
+- **W4-02 audit correction:** the earlier LICM implementation still only reordered operations inside their original block. The final implementation computes natural loops from the CFG, detects or inserts loop preheaders, moves only effect-safe invariant operations whose operands remain available at the preheader, and emits rewrite records only for operation ids that actually leave a loop block.
+
+- **W4-02 final-audit correction:** LICM now separates runtime purity from safe speculation. Potentially trapping integer arithmetic such as checked `add` is not hoisted merely because it has no memory effect, and production LICM no longer passes a blanket "safe" set for all memory loads. Explicit region-safe load hoisting remains available only through the LICM contract input for future noalias/memory-version proofs.
+- **W4-05 audit correction:** whole-program inlining no longer denies every multi-block callee. The final implementation clones callee blocks, edges, terminators, operations, and internal block parameters with fresh ids; splices the caller block into pre-call and merge blocks; converts callee returns to merge jumps; allows nested non-terminal source/platform/intrinsic calls to remain as normal call sites; and preserves budget, recursive SCC, external root, escaped callable, runtime-call, and terminal-effect denials.
+- **W4-05 / CFG simplification interaction:** multi-block inlining exposed an existing cleanup hazard where an empty jump block defining a self-mapped block parameter could be merged away without a replacement value, leaving successor operations with non-dominating operands. CFG simplification now merges parameterized jump blocks only when every removed parameter has a real incoming replacement value.
+- **W4-05 / W4-11 CFG coalescing interaction:** verifier-clean multi-block inlining left acyclic wrapper chains such as `entry -> constAddr -> platformCall -> return`, which produced avoidable 8-byte object-section scorecard regressions. CFG simplification now coalesces forward-only linear jump chains with truthful dropped-edge bookkeeping, while refusing loop/header shapes with later backedge predecessors so PacketCounter dominance and DCE remain valid.
+- **W5-07 audit correction:** stale `utf16_static` side-table propagation was removed end to end. Proof-MIR now preserves the cooked intrinsic literal on the call target, OptIR materializes `uefi.utf16_static` into a deduplicated data constant plus `constAddr` before optimization, and final static CHAR16 pointer records are derived only from `constAddr`/constant-pool entries for firmware pointer certification and `.rodata` object emission. The late source-call-parameter propagation helper was deleted, and regression coverage now proves `staticChar16MetadataFromOptIrConstantPool` does not certify callee parameters unless they have direct `constAddr` evidence. The OptIR structural verifier now rejects duplicate constant ids, duplicate data stable keys, and data constant fingerprint mismatches.
+- **W5-07 / W4-10 scorecard correction:** constant-pool materialization exposed that the optimizer schedule declared scope-expansion fixpoints but executed the production schedule linearly. The optimizer now runs consecutive schedule entries with the same `fixpointId` to a bounded state-change fixpoint, and whole-program specialization prunes original non-root callees once all calls are retargeted to specialized clones. This removes residual source-call wrappers without reviving the deleted CHAR16 side table and keeps `verify:scorecard` at or below baseline.
+
+- **W4-11 final-audit correction:** scorecard JSON status now fails when either regressions or diagnostics are present, matching the process exit status and text report. Missing or invalid baselines can no longer print `"status": "passed"` in JSON.
+- **W7-02 late-audit completion:** PE byte writer internals, PE writer snapshots, planned PE sections, linked-image section and relocation payloads, AArch64 object sections/literal pools, entry-thunk/runtime-helper code bytes, QEMU/file-sink artifact handoff bytes, and final PE/UEFI artifact bytes now use `Uint8Array` at their emitted payload surfaces. Constructors and test fixtures still accept byte literals where useful, but copy into typed arrays at ownership boundaries; stable JSON serializes typed arrays as byte lists so deterministic fingerprints stay comparable.
+- **W7-03 final-audit correction:** the remaining perf AC is implemented without changing compiler output. HIR member fallback lookup uses a lazy `Map<itemId, Map<name, field>>`, `checkedTypeFingerprint` memoizes by checked-type object with a `WeakMap`, and `CheckedProgramBuilder.build()` reuses a cached snapshot until the builder mutates.
+- **W7-05 / W7-06 late-audit completion:** fixed keyword/punctuation green tokens with empty trivia are interned, while identifiers and trivia-bearing tokens remain fresh. The flat-CST spike is documented with a runnable 100,000-line benchmark, and the parallel/incremental compilation work is kept as design-first follow-on scope.
+- **W7-04 final-audit correction:** the giant-file split map was re-audited after Waves 1-6 and now lists only the 16 current `src/**/*.ts` files at or above 900 `wc -l` lines. `docs/implementation/remaining-giant-file-splits.md` records one concrete follow-on split ticket per remaining giant file, and the subsystem maintainability audit now rejects stale giant-file rows, missing map rows, and missing follow-on tickets.
+- **W8-05 / W8-06 late-audit completion:** the miscompile-confidence ladder and proof-check-to-Lean differential work are documented as bounded roadmap artifacts. The only executable W8-05 seed in this remediation pass is the 50-case straight-line unsigned arithmetic interpreter differential.
+- **W6-03 audit correction:** the manifest parser now fails closed on malformed TOML-subset lines, unknown sections, unknown keys, key/value pairs outside a section, and empty package names instead of silently falling back to defaults. The package loader continues to surface those parser errors as usage diagnostics.
+- **W6-03 fresh-audit correction:** package loading now reports a stable `cli:source-root:not-found:src` diagnostic when a manifest exists but `src/` is missing, and maps filesystem failures at the source-reading edge to a stable CLI package-input diagnostic instead of leaking host paths as internal errors. `wrela init` also refuses to overwrite an existing `wrela.toml` or `src/image.wr` before writing either file.
+- **W6-01f fresh-audit correction:** `wrela run --qemu` now has a direct dependency-injection seam for package loading, image compilation, environment lookup, QEMU host effects, and the smoke runner. The command integration tests assert marker-present and marker-absent behavior with fakes instead of depending on a local QEMU binary, while the default command path still uses the same skip-aware host policy as `verify:qemu`.
+- **Completion late-audit correction:** `docs/language/happy.md` is now the executable happy-path UEFI smoke program, and CLI integration extracts that fenced code into a temp project and builds it. The package build also rewrites emitted `dist/**/*.js` relative ESM imports to explicit `.js`/`index.js` specifiers so `node -e "import('./dist/index.js')"` works for the published package entry.
+- **Final audit correction:** `wrela check` now runs through a dedicated package proof-check boundary instead of composing the OptIR pipeline. The new `runUefiAArch64PackagePipelineToProofCheck` entry point records `to-proof-check`, exposes no OptIR artifacts, and has regression coverage proving injected OptIR construction is not called.
+- **Final audit correction:** package source traversal now requires every filesystem host to provide `realPath`, checks both lexical and resolved paths with `relative`, skips outside symlinked files/directories, and tracks active resolved directories so inside-root symlink cycles cannot recurse forever. CLI, validation, scorecard, and test fixture hosts all use the same realpath-aware boundary.
+- **Final audit correction:** W2-04b now rejects frames over 16 MiB during frame layout with `AARCH64_FRAME_TOO_LARGE`, and 5000-byte frames emit split legal SP adjustments before object encoding. The current encoder supports unshifted imm12 add/sub, so `stackAdjustInstructions` emits deterministic <=4080-byte chunks instead of relying on an unsupported shifted-immediate operand form.
+- **Final audit correction:** W2-13a now has artifact-level PE/COFF UEFI conformance coverage that links, writes, parses, and asserts AArch64 machine type, EFI subsystem, zero image base, section/file alignments, `.reloc`/DIR64 relocation contents, no `DYNAMIC_BASE`, and the deliberate UEFI-v1 `NX_COMPAT`-unset decision.
+- **Final audit correction:** W2-13c no longer has hard-coded entry-thunk relocation offsets in the public plan path. The planner and object factory derive branch relocation offsets from the same encoded instruction byte walk, with regression coverage comparing planned offsets to emitted object relocations.
+- **Final audit correction:** the shared `stableHash` helper now hashes the full Unicode code point for astral characters instead of only the high surrogate. ASCII/BMP hash behavior is preserved, and the regression test proves distinct astral code points no longer collide.
+- **Final audit correction:** W2-15a is satisfied by async compiler API entry points, `compileUefiAArch64ImageAsync` and `compileUefiAArch64ImageWithTraceAsync`, so the existing synchronous compile API does not sometimes return a `Promise`. The async input accepts `smoke: { kind: "run", config, hostEffects, ... }`, invokes the existing QEMU smoke runner through injected host effects, records a `qemu-smoke` verification run, and attaches the real smoke report before any artifact sink observes the artifact.
+- **Final audit correction:** `docs/language/happy.md` keeps the first fenced program executable and records the non-executable language rulings as prose immediately after it: string escapes, the `pub` ruling, local shadowing, non-recursion, bitwise precedence, and signed-integer deferral. The intentional `pub-fn` negative diagnostic corpus case lives under `tests/system/diagnostics/cases/` so `rg -n "\bpub\s+" stdlib tests/fixtures` remains a true source/fixture sweep while the diagnostic remains covered.
+- **Final audit correction:** the published `./cli` export is side-effect-free on import. `src/cli/main.ts` exports `runWrelaCli` and `runWrelaCliFromArgv`, and only reads `Bun.argv` when it is the main module. CLI argument parsing also treats another flag as a missing option value and rejects multiple `init` directories.
+- **Final audit correction:** the package release surface now matches the `bun x wrela build` contract. `package.json` publishes as `wrela` with a real version, public package access, the shipped `stdlib` files, and an executable `dist/cli/main.js` bin after build. The release-surface audit now rebuilds from a missing `dist`, checks Node ESM imports and executable mode, packs the package, installs it into a temp consumer, and invokes `bun x --no-install wrela init` plus `bun x --no-install wrela build`.
+- **Final audit correction:** release-surface checks that intentionally rebuild, import, pack, install, and invoke the package have explicit per-test timeouts, so `bun run agent:check` no longer depends on a command-line timeout override for normal local performance variance.
+- **Final audit correction:** `verify:release` now always invokes non-skip Lean through `bun run verify:lean`; the old `WRELA_RELEASE_REQUIRE_LEAN` opt-in was removed, and the release-surface audit rejects both that env gate and `--allow-missing-lean` in the release script.
+- **Final audit correction:** W2-05 now encodes every authored AArch64 known-byte fixture through the production RPi5 catalog and register model. The previous `lsl-immediate` catalog gap is closed by a real integer-encoder branch and decoder pattern, while `frame-address` remains documented as a catalog pseudo that exercises the existing `add-immediate` encoder bytes.
+- **Final audit correction:** W6-06b now has `docs/language/proof-divergence-recipes.md` with the four required recipes (`hoist the fact`, `consume before the merge`, `split the join`, and `duplicate the tail`) plus release-surface audit coverage for required anchors and local markdown links.
+- **Final audit correction:** optimizer keying no longer relies on raw `JSON.stringify` for value-number call targets, memory bounds authorities, memory value types, or region effect-requirement dedupe. These paths now use the shared stable JSON helper or `optIrTypeStableKey`, with regression coverage for reordered object properties and bigint runtime bounds.
+- **Final audit correction:** raw shared/front-end diagnostics now enforce the stable diagnostic contract directly. `Diagnostic` requires `ownerKey` and `stableDetail`, lexer and parser diagnostics populate deterministic source/span details, parser syntax-tree collection synthesizes stable public diagnostics even for legacy green-node fixtures, and shared diagnostic ordering includes owner and stable detail after source span.
+- **W6/W8 local product surface:** the CLI implementation uses small command modules under `src/cli/` and keeps filesystem/process access at the CLI edge. `wrela build --emit` writes real compiler-stage artifacts; `check` stops at the proof-check gate; `verify:extended` uses skip-aware QEMU/Lean commands while `verify:release` invokes the non-skip QEMU and non-skip Lean paths unconditionally.
+
+- **W6 final-audit correction:** the published package's legacy `module` field now points at the shipped built ESM entry `dist/index.js`, and the release-surface audit covers this alongside `exports`, `types`, and the CLI bin.
 
 ## Completion definition
 

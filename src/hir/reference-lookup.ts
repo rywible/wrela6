@@ -66,6 +66,8 @@ function referenceFingerprint(reference: ResolvedReference): string {
       }:${reference.index}`;
     case "parameter":
       return `parameter:${reference.parameterId}`;
+    case "local":
+      return `local:${reference.name}:${reference.bindingSpan.start}:${reference.bindingSpan.end}:${reference.ordinal}`;
   }
 }
 

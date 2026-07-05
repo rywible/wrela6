@@ -203,6 +203,74 @@ describe("validateProofMirGraph", () => {
     );
   });
 
+  test("rejects block targets whose edge is owned by a different source block", () => {
+    const sourceBlockId = proofMirBlockId(0);
+    const otherSourceBlockId = proofMirBlockId(1);
+    const targetBlockId = proofMirBlockId(2);
+    const edgeId = proofMirControlEdgeId(1);
+    const program = proofMirValidatorProgramFake([
+      proofMirValidatorFunctionFake({
+        blocks: [
+          {
+            blockId: sourceBlockId,
+            scopeId: proofMirScopeId(0),
+            parameters: [],
+            statements: [],
+            terminator: {
+              ...proofMirTerminatorFake({
+                kind: "goto",
+                target: { edgeId, blockId: targetBlockId },
+              }),
+              outgoingEdges: [edgeId],
+            },
+            incomingEdges: [],
+            origin: validatorOrigin("block:source"),
+          },
+          {
+            blockId: otherSourceBlockId,
+            scopeId: proofMirScopeId(0),
+            parameters: [],
+            statements: [],
+            terminator: proofMirTerminatorFake({ kind: "unreachable", reason: "afterNever" }),
+            incomingEdges: [],
+            origin: validatorOrigin("block:other-source"),
+          },
+          {
+            blockId: targetBlockId,
+            scopeId: proofMirScopeId(0),
+            parameters: [],
+            statements: [],
+            terminator: proofMirTerminatorFake({ kind: "unreachable", reason: "afterNever" }),
+            incomingEdges: [edgeId],
+            origin: validatorOrigin("block:target"),
+          },
+        ],
+        edges: [
+          proofMirControlEdgeFake({
+            edgeId,
+            fromBlockId: otherSourceBlockId,
+            toBlockId: targetBlockId,
+          }),
+        ],
+      }),
+    ]);
+
+    const diagnostics = validateProofMirGraph(program);
+    const mismatch = diagnostics.find(
+      (diagnostic) =>
+        diagnostic.code === proofMirDiagnosticCode("PROOF_MIR_INCOMING_EDGES_MISMATCH"),
+    );
+
+    expect(mismatch).toMatchObject({
+      ownerKey: "function:fn:validator-test",
+      rootCauseKey: "cfg",
+      stableDetail: `edge-source:${String(edgeId)}:${String(otherSourceBlockId)}:${String(
+        sourceBlockId,
+      )}`,
+      nodeDetail: "0",
+    });
+  });
+
   test("rejects join edges whose argument count does not match block parameters", () => {
     const joinBlockId = proofMirBlockId(1);
     const edgeId = proofMirControlEdgeId(1);

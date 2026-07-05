@@ -42,6 +42,17 @@ describe("expression views", () => {
     expect(view.literalText()).toBe("42");
   });
 
+  test("string literal expression exposes cooked value", () => {
+    const root = parseSourceRoot(String.raw`fn main():
+    "A\x41\u{1F600}"
+`);
+    const literalNode = descendants(root, SyntaxKind.LiteralExpression)[0]!;
+    const view = LiteralExpressionView.from(literalNode)!;
+
+    expect(view.literalText()).toBe(String.raw`"A\x41\u{1F600}"`);
+    expect(view.cookedStringValue()).toBe("AA😀");
+  });
+
   test("name expression exposes name text", () => {
     const root = parseSourceRoot("fn main():\n    value\n");
     const nameNode = descendants(root, SyntaxKind.NameExpression)[0]!;

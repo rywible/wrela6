@@ -7,6 +7,9 @@ import { Trivia } from "./trivia";
 import { TriviaKind } from "./trivia-kind";
 import type { KeywordTable } from "./keyword-table";
 import { Cursor } from "./cursor";
+import { stableDiagnosticDetail } from "../../shared/diagnostics";
+import { scanIntegerToken } from "./integer-scanner";
+import { scanStringToken } from "./string-scanner";
 
 export interface LexResult {
   source: SourceText;
@@ -25,6 +28,8 @@ const COMPOUND_OPERATORS: Record<string, TokenKind> = {
   "!=": TokenKind.BangEquals,
   "<=": TokenKind.LessEquals,
   ">=": TokenKind.GreaterEquals,
+  "<<": TokenKind.LeftShift,
+  ">>": TokenKind.RightShift,
 };
 
 const SINGLE_PUNCTUATION: Record<string, TokenKind> = {
@@ -43,6 +48,10 @@ const SINGLE_PUNCTUATION: Record<string, TokenKind> = {
   "*": TokenKind.Star,
   "/": TokenKind.Slash,
   "%": TokenKind.Percent,
+  "&": TokenKind.Ampersand,
+  "|": TokenKind.Pipe,
+  "^": TokenKind.Caret,
+  "~": TokenKind.Tilde,
   "<": TokenKind.Less,
   ">": TokenKind.Greater,
   "?": TokenKind.Question,
@@ -104,6 +113,7 @@ export class Lexer {
                 span: token.span,
                 leadingTrivia: token.leadingTrivia,
                 trailingTrivia,
+                cookedValue: token.cookedValue,
               });
             }
 
@@ -213,6 +223,12 @@ export class Lexer {
           : `Inconsistent indentation: ${width} spaces is not a multiple of 4.`,
         source,
         span: indentationTrivia.span,
+        ownerKey: "lexer:indentation",
+        stableDetail: stableDiagnosticDetail({
+          code: "LEX_INCONSISTENT_INDENT",
+          source,
+          span: indentationTrivia.span,
+        }),
       });
     }
 
@@ -261,6 +277,12 @@ export class Lexer {
           message: `Inconsistent indentation: width ${effectiveWidth} does not match any existing indentation level.`,
           source,
           span: indentationTrivia.span,
+          ownerKey: "lexer:indentation",
+          stableDetail: stableDiagnosticDetail({
+            code: "LEX_INCONSISTENT_INDENT",
+            source,
+            span: indentationTrivia.span,
+          }),
         });
       }
 
@@ -401,11 +423,21 @@ export class Lexer {
     }
 
     if (isDigit(current)) {
-      return this.scanInteger(source, cursor, leadingTrivia);
+      return scanIntegerToken({
+        source,
+        cursor,
+        leadingTrivia,
+        diagnostics: this.dependencies.diagnostics,
+      });
     }
 
     if (current === '"') {
-      return this.scanString(source, cursor, leadingTrivia);
+      return scanStringToken({
+        source,
+        cursor,
+        leadingTrivia,
+        diagnostics: this.dependencies.diagnostics,
+      });
     }
 
     const punctuationResult = this.tryScanPunctuationOrOperator(source, cursor);
@@ -453,106 +485,6 @@ export class Lexer {
     });
   }
 
-  private scanInteger(source: SourceText, cursor: Cursor, leadingTrivia: Trivia[]): Token {
-    const start = cursor.offset;
-    const text = source.text;
-    const length = text.length;
-    let offset = start;
-
-    cursor.advance();
-    offset++;
-
-    while (offset < length && isDigit(text[offset]!)) {
-      offset++;
-    }
-
-    cursor.advanceBy(offset - cursor.offset);
-
-    return new Token({
-      kind: TokenKind.IntegerLiteral,
-      lexeme: text.slice(start, offset),
-      span: source.span(start, offset),
-      leadingTrivia,
-      trailingTrivia: [],
-    });
-  }
-
-  private scanString(source: SourceText, cursor: Cursor, leadingTrivia: Trivia[]): Token {
-    const start = cursor.offset;
-    cursor.advance();
-    const text = source.text;
-    const length = text.length;
-    let offset = cursor.offset;
-
-    while (offset < length) {
-      const char = text[offset]!;
-
-      if (char === '"') {
-        cursor.advanceBy(offset + 1 - cursor.offset);
-
-        return new Token({
-          kind: TokenKind.StringLiteral,
-          lexeme: text.slice(start, offset + 1),
-          span: source.span(start, offset + 1),
-          leadingTrivia,
-          trailingTrivia: [],
-        });
-      }
-
-      if (char === "\r" || char === "\n") {
-        cursor.advanceBy(offset - cursor.offset);
-
-        this.dependencies.diagnostics.report({
-          code: "LEX_UNTERMINATED_STRING",
-          severity: "error",
-          message: "Unterminated string literal.",
-          source,
-          span: cursor.spanFrom(start),
-        });
-
-        return new Token({
-          kind: TokenKind.StringLiteral,
-          lexeme: text.slice(start, cursor.offset),
-          span: cursor.spanFrom(start),
-          leadingTrivia,
-          trailingTrivia: [],
-        });
-      }
-
-      if (char === "\\") {
-        const after = text[offset + 1];
-
-        if (after === "\r" || after === "\n" || after === undefined) {
-          cursor.advanceBy(offset - cursor.offset);
-          break;
-        }
-
-        offset += 2;
-        continue;
-      }
-
-      offset++;
-    }
-
-    cursor.advanceBy(offset - cursor.offset);
-
-    this.dependencies.diagnostics.report({
-      code: "LEX_UNTERMINATED_STRING",
-      severity: "error",
-      message: "Unterminated string literal at end of file.",
-      source,
-      span: cursor.spanFrom(start),
-    });
-
-    return new Token({
-      kind: TokenKind.StringLiteral,
-      lexeme: text.slice(start, cursor.offset),
-      span: cursor.spanFrom(start),
-      leadingTrivia,
-      trailingTrivia: [],
-    });
-  }
-
   private tryScanPunctuationOrOperator(
     source: SourceText,
     cursor: Cursor,
@@ -582,13 +514,20 @@ export class Lexer {
   private scanInvalid(source: SourceText, cursor: Cursor, leadingTrivia: Trivia[]): Token {
     const start = cursor.offset;
     cursor.advance();
+    const span = cursor.spanFrom(start);
 
     this.dependencies.diagnostics.report({
       code: "LEX_INVALID_CHARACTER",
       severity: "error",
       message: `Invalid character '${source.text.slice(start, cursor.offset)}'.`,
       source,
-      span: cursor.spanFrom(start),
+      span,
+      ownerKey: "lexer:character",
+      stableDetail: stableDiagnosticDetail({
+        code: "LEX_INVALID_CHARACTER",
+        source,
+        span,
+      }),
     });
 
     return new Token({

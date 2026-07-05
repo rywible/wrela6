@@ -246,7 +246,7 @@ export function applyResolvedRelocations(
           ? {}
           : { accessScaleBytes: relocation.instructionPatch.encodingOwner.accessScaleBytes }),
         expectedEncodedValue: result.expectedEncodedValue,
-        patchedBytes: Object.freeze(result.patchedBytes),
+        patchedBytes: Uint8Array.from(result.patchedBytes),
         ...(result.baseRelocation === undefined
           ? {}
           : { baseRelocationKey: result.baseRelocation.stableKey }),
@@ -375,7 +375,7 @@ function applyRelocation(input: {
   | {
       readonly kind: "ok";
       readonly expectedEncodedValue: bigint;
-      readonly patchedBytes: readonly number[];
+      readonly patchedBytes: Uint8Array;
       readonly baseRelocation?: ImageBaseRelocation;
     }
   | { readonly kind: "error"; readonly diagnostic: LinkerDiagnostic } {
@@ -530,7 +530,7 @@ function validateResolvedPairTargets(
 function cloneSections(sections: readonly LinkedImageSection[]): LinkedImageSection[] {
   return sections.map((section) => ({
     ...section,
-    bytes: [...section.bytes],
+    bytes: Uint8Array.from(section.bytes),
     contributions: section.contributions.map((contribution) => Object.freeze({ ...contribution })),
   }));
 }
@@ -538,7 +538,7 @@ function cloneSections(sections: readonly LinkedImageSection[]): LinkedImageSect
 function freezeSection(section: LinkedImageSection): LinkedImageSection {
   return Object.freeze({
     ...section,
-    bytes: Object.freeze([...section.bytes]),
+    bytes: Uint8Array.from(section.bytes),
     contributions: Object.freeze(
       section.contributions.map((contribution) => Object.freeze({ ...contribution })),
     ),
@@ -569,34 +569,33 @@ function readPatchBytes(
   section: LinkedImageSection,
   offsetBytes: number,
   widthBytes: number,
-): readonly number[] {
+): Uint8Array {
   return section.bytes.slice(offsetBytes, offsetBytes + widthBytes);
 }
 
 function writePatchBytes(
   section: LinkedImageSection,
   offsetBytes: number,
-  patchedBytes: readonly number[],
+  patchedBytes: ArrayLike<number>,
 ): void {
-  const bytes = section.bytes as number[];
   for (let index = 0; index < patchedBytes.length; index += 1) {
-    bytes[offsetBytes + index] = patchedBytes[index] ?? 0;
+    section.bytes[offsetBytes + index] = patchedBytes[index] ?? 0;
   }
 }
 
-function writeU32LeBytes(value: bigint): readonly number[] {
+function writeU32LeBytes(value: bigint): Uint8Array {
   const unsigned = BigInt.asUintN(32, value);
-  return Object.freeze([
+  return Uint8Array.of(
     Number(unsigned & 0xffn),
     Number((unsigned >> 8n) & 0xffn),
     Number((unsigned >> 16n) & 0xffn),
     Number((unsigned >> 24n) & 0xffn),
-  ]);
+  );
 }
 
-function writeU64LeBytes(value: bigint): readonly number[] {
+function writeU64LeBytes(value: bigint): Uint8Array {
   const unsigned = BigInt.asUintN(64, value);
-  return Object.freeze([
+  return Uint8Array.of(
     Number(unsigned & 0xffn),
     Number((unsigned >> 8n) & 0xffn),
     Number((unsigned >> 16n) & 0xffn),
@@ -605,7 +604,7 @@ function writeU64LeBytes(value: bigint): readonly number[] {
     Number((unsigned >> 40n) & 0xffn),
     Number((unsigned >> 48n) & 0xffn),
     Number((unsigned >> 56n) & 0xffn),
-  ]);
+  );
 }
 
 function relocationApplicationError(

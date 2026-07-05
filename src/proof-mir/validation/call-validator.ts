@@ -55,6 +55,7 @@ function callTargetsEqual(left: ProofMirCallTarget, right: ProofMirCallTarget): 
       return (
         right.kind === "compilerIntrinsic" &&
         left.intrinsicKey === right.intrinsicKey &&
+        left.literalValue === right.literalValue &&
         left.sourceValueKey === right.sourceValueKey &&
         left.returnTypeKey === right.returnTypeKey
       );

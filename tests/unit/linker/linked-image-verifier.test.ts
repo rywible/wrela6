@@ -84,7 +84,7 @@ describe("verifyLinkedImageLayout", () => {
     });
 
     expect(expectStableDetails(corrupted)).toContain(
-      "image-layout:first-section-rva-below-policy:.text:0:4096",
+      "image-layout:first-section-rva-mismatch:.text:0:4096",
     );
   });
 
@@ -230,14 +230,14 @@ describe("verifyLinkedImageLayout", () => {
           section.stableKey === ".data"
             ? {
                 ...section,
-                bytes: [0, 0, 0, 0, 0, 0, 0, 0],
+                bytes: Uint8Array.of(0, 0, 0, 0, 0, 0, 0, 0),
               }
             : section,
         ),
       appliedRelocations: (relocations) =>
         relocations.map((relocation) => ({
           ...relocation,
-          patchedBytes: [0, 0, 0, 0, 0, 0, 0, 0],
+          patchedBytes: Uint8Array.of(0, 0, 0, 0, 0, 0, 0, 0),
         })),
     });
 
@@ -309,14 +309,14 @@ describe("verifyLinkedImageLayout", () => {
           section.stableKey === ".data"
             ? {
                 ...section,
-                bytes: [0, 0, 0, 0, 0, 0, 0, 0],
+                bytes: Uint8Array.of(0, 0, 0, 0, 0, 0, 0, 0),
               }
             : section,
         ),
       appliedRelocations: (relocations) =>
         relocations.map((relocation) => ({
           ...relocation,
-          patchedBytes: [0, 0, 0, 0, 0, 0, 0, 0],
+          patchedBytes: Uint8Array.of(0, 0, 0, 0, 0, 0, 0, 0),
         })),
     });
 
@@ -479,7 +479,7 @@ function layoutWithMainAtOffset(
   objectOffsetBytes: number,
   family: AppliedRelocation["family"],
   expectedEncodedValue: bigint,
-  patchedBytes: readonly number[],
+  patchedBytes: Uint8Array | readonly number[],
   accessScaleBytes?: number,
 ): AArch64LinkedImageLayout {
   const rva = 0x1000 + objectOffsetBytes;
@@ -489,7 +489,10 @@ function layoutWithMainAtOffset(
         section.stableKey === ".data"
           ? {
               ...section,
-              bytes: [...patchedBytes, ...section.bytes.slice(patchedBytes.length)],
+              bytes: Uint8Array.from([
+                ...patchedBytes,
+                ...section.bytes.slice(patchedBytes.length),
+              ]),
             }
           : section,
       ),
@@ -511,7 +514,7 @@ function layoutWithMainAtOffset(
         addend: 0n,
         ...(accessScaleBytes === undefined ? {} : { accessScaleBytes }),
         expectedEncodedValue,
-        patchedBytes,
+        patchedBytes: Uint8Array.from(patchedBytes),
       })),
     baseRelocations: () => [],
     entry: (entry) => ({ ...entry, wrelaBootRva: rva }),
@@ -623,7 +626,7 @@ function completeLayoutForTest(): AArch64LinkedImageLayout {
         targetRva: 0x1000,
         addend: 0n,
         expectedEncodedValue: 0x1000n,
-        patchedBytes: [0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        patchedBytes: Uint8Array.of(0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00),
         baseRelocationKey: "base-reloc:dir64:.data:8192",
       },
     ],
@@ -693,7 +696,7 @@ function section(
   classKey: string,
   flags: number,
   rva: number,
-  bytes: readonly number[],
+  bytes: Uint8Array | readonly number[],
 ): LinkedImageSection {
   return {
     stableKey,
@@ -702,7 +705,7 @@ function section(
     alignmentBytes: 4096,
     rva,
     virtualSizeBytes: bytes.length,
-    bytes,
+    bytes: Uint8Array.from(bytes),
     contributions: [
       {
         stableKey: `module:test:boot:section:${stableKey}`,

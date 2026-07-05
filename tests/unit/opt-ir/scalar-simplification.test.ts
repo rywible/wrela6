@@ -169,17 +169,14 @@ describe("OptIR scalar simplification", () => {
     }
     expect(folded.constant.type).toEqual(booleanType);
     expect(folded.constant.normalizedValue).toBe(0n);
-    expect(result.function.blocks.map((block) => block.blockId)).toEqual([
-      optIrBlockId(1),
-      optIrBlockId(3),
-    ]);
+    expect(result.function.blocks.map((block) => block.blockId)).toEqual([optIrBlockId(1)]);
     expect(result.function.blocks[0]?.terminator).toEqual({
-      kind: "jump",
-      operationId: optIrOperationId(50),
-      edge: optIrEdgeId(2),
+      kind: "return",
+      operationId: optIrOperationId(103),
+      values: [],
       originId: optIrOriginId(1),
     });
-    expect(result.removedEdgeIds).toEqual([optIrEdgeId(1)]);
+    expect(result.removedEdgeIds).toEqual([optIrEdgeId(1), optIrEdgeId(2)]);
   });
 
   test("simplifies compares from scoped facts without inventing facts for unrelated values", () => {

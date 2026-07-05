@@ -230,7 +230,7 @@ test("semantic platform reference rejects direct-platform unknown primitive decl
         evidenceKey: "uefi-platform-primitive-name-catalog",
         authority: "compiler-trace",
         stableDetail:
-          "exit_boot_services_with_fresh_map=uefi.boot.exitBootServices,output_string=uefi.console.outputString,set_watchdog_timer=uefi.boot.setWatchdogTimer,uefi_bind_virtio_net=uefi.source.bindVirtioNet,uefi_discover_virtio=uefi.source.discoverVirtio,uefi_exit_boot_services=uefi.source.exitBootServices,uefi_plan_machine=uefi.source.planMachine,uefi_reserve_restricted_memory=uefi.source.reserveRestrictedMemory,uefi_split_network_device=uefi.source.splitNetworkDevice,validation_fixture_packet_source=uefi.validation.fixturePacketSource",
+          "exit_boot_services_with_fresh_map=uefi.boot.exitBootServices,output_string=uefi.console.outputString,set_watchdog_timer=uefi.boot.setWatchdogTimer,uefi_bind_virtio_net=uefi.source.bindVirtioNet,uefi_discover_virtio=uefi.source.discoverVirtio,uefi_exit_boot_services=uefi.source.exitBootServices,uefi_plan_machine=uefi.source.planMachine,uefi_reserve_restricted_memory=uefi.source.reserveRestrictedMemory,uefi_split_network_device=uefi.source.splitNetworkDevice,validation_fixture_packet_source=uefi.validation.fixturePacketSource,validation_fixture_packet_stream=uefi.validation.fixturePacketStream",
       },
       {
         evidenceKey: "declared-platform-primitives",

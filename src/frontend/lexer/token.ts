@@ -8,6 +8,7 @@ export class Token {
   readonly span: SourceSpan;
   readonly leadingTrivia: readonly Trivia[];
   readonly trailingTrivia: readonly Trivia[];
+  readonly cookedValue: string | undefined;
 
   constructor(init: {
     kind: TokenKind;
@@ -15,12 +16,14 @@ export class Token {
     span: SourceSpan;
     leadingTrivia: readonly Trivia[];
     trailingTrivia: readonly Trivia[];
+    cookedValue?: string;
   }) {
     this.kind = init.kind;
     this.lexeme = init.lexeme;
     this.span = init.span;
     this.leadingTrivia = [...init.leadingTrivia];
     this.trailingTrivia = [...init.trailingTrivia];
+    this.cookedValue = init.cookedValue;
   }
 
   reconstruct(): string {

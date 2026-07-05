@@ -125,7 +125,7 @@ describe("PE/COFF writer diagnostics", () => {
       artifactName: "test.efi",
       mediaType: "application/vnd.microsoft.portable-executable",
       fileExtension: ".efi",
-      bytes: Object.freeze([0x4d, 0x5a]),
+      bytes: Uint8Array.of(0x4d, 0x5a),
       deterministicMetadata: metadata,
       verification: passedVerification,
     };

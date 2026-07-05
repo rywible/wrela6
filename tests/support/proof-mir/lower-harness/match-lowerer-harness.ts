@@ -17,6 +17,7 @@ import type {
   MonoMatchArm,
   MonoStatement,
   MonoStatementId,
+  MonoTypeInstance,
 } from "../../../../src/mono/mono-hir";
 import type { MonomorphizedHirProgram } from "../../../../src/mono/mono-hir";
 import { monoStatementIdFor } from "../../../../src/mono/function-instantiator-shell";
@@ -74,6 +75,7 @@ function scalarType(): MonoCheckedType {
 function collectMatchLowererBindings(
   functionInstanceId: MonoInstanceId,
   scalarLocalNames: readonly string[],
+  localTypes?: ReadonlyMap<string, MonoCheckedType>,
 ): MatchLowererBindings {
   const locals: MonoLocal[] = [];
   const localsByName = new Map<string, MonoLocal>();
@@ -82,7 +84,7 @@ function collectMatchLowererBindings(
     const local: MonoLocal = {
       localId: instantiatedHirId(functionInstanceId, hirLocalId(nextLocalIndex++)),
       name,
-      type: scalarType(),
+      type: localTypes?.get(name) ?? scalarType(),
       resourceKind: "Copy",
       mode: "ordinary",
       introducedBy: "sourceLet",
@@ -273,11 +275,17 @@ function functionInstanceForMatchLowererTest(input: {
   } as unknown as MonoFunctionInstance;
 }
 
-function emptyProgramForMatchLowererTest(): MonomorphizedHirProgram {
+function programForMatchLowererTest(types: readonly MonoTypeInstance[]): MonomorphizedHirProgram {
   return {
+    types: {
+      entries: () => types,
+      get: (instanceId: MonoInstanceId) =>
+        types.find((typeInstance) => typeInstance.instanceId === instanceId),
+    },
     functions: { entries: () => [], get: () => undefined },
     proofMetadata: {
       factOrigins: { entries: () => [], get: () => undefined },
+      resourcePlaces: { entries: () => [], get: () => undefined },
     },
   } as unknown as MonomorphizedHirProgram;
 }
@@ -313,10 +321,12 @@ export type LowerProofMirMatchCaseInput =
 export interface LowerProofMirMatchForTestInput {
   readonly functionInstanceId?: MonoInstanceId;
   readonly scrutinee: string;
+  readonly scrutineeType?: MonoCheckedType;
   readonly cases: readonly LowerProofMirMatchCaseInput[];
   readonly monoExhaustive?: boolean;
   readonly scalarLocals?: readonly string[];
   readonly postamble?: readonly string[];
+  readonly programTypes?: readonly MonoTypeInstance[];
   readonly matchRefinements?: readonly {
     readonly caseLabel: string;
     readonly originId: MonoInstantiatedProofId<FactOriginId>;
@@ -339,6 +349,7 @@ function buildMatchLoweringTestContext(input: {
   readonly functionInstanceId: MonoInstanceId;
   readonly locals: readonly MonoLocal[];
   readonly body: MonoBlock;
+  readonly programTypes: readonly MonoTypeInstance[];
 }): ProofMirLoweringResult<{
   readonly context: ProofMirLoweringContext;
   readonly scopePlaceLowerer: ProofMirFunctionScopePlaceLowerer;
@@ -356,7 +367,7 @@ function buildMatchLoweringTestContext(input: {
       body: input.body,
     }),
     locals: input.locals,
-    program: emptyProgramForMatchLowererTest(),
+    program: programForMatchLowererTest(input.programTypes),
     collectLoopCarriedLocalsForLoop: emptyCollectLoopCarriedLocalsForLoop,
     placeBackedLocals: emptyPlaceBackedLocals,
   });
@@ -473,7 +484,11 @@ export function lowerProofMirMatchForTest(
       localNames.add(bindingLocal);
     }
   }
-  const bindings = collectMatchLowererBindings(functionInstanceId, [...localNames]);
+  const localTypes = new Map<string, MonoCheckedType>();
+  if (input.scrutineeType !== undefined) {
+    localTypes.set(input.scrutinee, input.scrutineeType);
+  }
+  const bindings = collectMatchLowererBindings(functionInstanceId, [...localNames], localTypes);
   const parsed = parseMatchLowererSource({
     functionInstanceId,
     bindings,
@@ -486,6 +501,7 @@ export function lowerProofMirMatchForTest(
     functionInstanceId,
     locals: bindings.locals,
     body: parsed.body,
+    programTypes: input.programTypes ?? [],
   });
   if (contextResult.kind === "error") {
     return { kind: "error", diagnostics: contextResult.diagnostics };

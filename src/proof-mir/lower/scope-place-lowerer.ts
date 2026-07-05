@@ -119,7 +119,7 @@ function originForStatement(
 ): ProofMirCanonicalKey {
   return originMap.fromMonoStatement({
     owner: { kind: "function", functionInstanceId },
-    sourceOrigin: statement.sourceOrigin as never,
+    sourceOrigin: statement.sourceOrigin,
     monoStatementId: statement.statementId,
   });
 }
@@ -131,7 +131,7 @@ function originForArm(
 ): ProofMirCanonicalKey {
   return originMap.fromHirOrigin({
     owner: { kind: "function", functionInstanceId },
-    sourceOrigin: arm.sourceOrigin as never,
+    sourceOrigin: arm.sourceOrigin,
   });
 }
 
@@ -142,7 +142,7 @@ function originForValidation(
 ): ProofMirCanonicalKey {
   return originMap.fromMonoProof({
     owner: { kind: "function", functionInstanceId },
-    sourceOrigin: validation.sourceOrigin as never,
+    sourceOrigin: validation.sourceOrigin,
     monoProofId: validation.validationId,
   });
 }
@@ -154,7 +154,7 @@ function originForAttempt(
 ): ProofMirCanonicalKey {
   return originMap.fromMonoProof({
     owner: { kind: "function", functionInstanceId },
-    sourceOrigin: attempt.sourceOrigin as never,
+    sourceOrigin: attempt.sourceOrigin,
     monoProofId: attempt.attemptId,
   });
 }

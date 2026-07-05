@@ -326,7 +326,7 @@ function layoutLabels(sections: readonly LinkedImageSection[]) {
   }));
 }
 
-function wordFromBytes(bytes: readonly number[]): number {
+function wordFromBytes(bytes: ArrayLike<number>): number {
   return (
     (bytes[0] ?? 0) | ((bytes[1] ?? 0) << 8) | ((bytes[2] ?? 0) << 16) | ((bytes[3] ?? 0) << 24)
   );

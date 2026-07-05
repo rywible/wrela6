@@ -34,7 +34,7 @@ import * as layoutPublic from "../../../src/layout/index";
 
 describe("LayoutDiagnosticCode", () => {
   test("catalog matches the canonical layout diagnostic code union", () => {
-    expect(LAYOUT_DIAGNOSTIC_CODES).toHaveLength(45);
+    expect(LAYOUT_DIAGNOSTIC_CODES).toHaveLength(46);
     for (const code of LAYOUT_DIAGNOSTIC_CODES) {
       expect(layoutDiagnosticCode(code) as string).toBe(code);
     }
@@ -255,7 +255,7 @@ describe("layout public barrel", () => {
     expect(layoutPublic.layoutDiagnostic).toBeTypeOf("function");
     expect(layoutPublic.sortLayoutDiagnostics).toBeTypeOf("function");
     expect(layoutPublic.layoutDiagnosticCode).toBeTypeOf("function");
-    expect(layoutPublic.LAYOUT_DIAGNOSTIC_CODES.length).toBe(45);
+    expect(layoutPublic.LAYOUT_DIAGNOSTIC_CODES.length).toBe(46);
   });
 
   test("exports builder contract types through type-only surface", () => {

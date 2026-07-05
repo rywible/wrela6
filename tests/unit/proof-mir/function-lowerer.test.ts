@@ -82,6 +82,7 @@ function completeRegistryInput(overrides?: {
         kind: "ok" as const,
         value: { kind: "value", value: 0 as never },
       }),
+      lowerDerivedFieldComparison: () => undefined,
     } satisfies ProofMirValidatedBufferReadLowerer,
     iterator: {
       lowerFor: () => ({ kind: "ok" as const, value: undefined }),

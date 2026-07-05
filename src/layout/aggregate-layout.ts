@@ -1,4 +1,4 @@
-import { monoInstanceId, type MonoInstanceId } from "../mono/ids";
+import type { MonoInstanceId } from "../mono/ids";
 import type { FieldId } from "../semantic/ids";
 import { fieldId } from "../semantic/ids";
 import type { SourceItemKind } from "../semantic/item-index/item-records";
@@ -98,7 +98,7 @@ export function resolveCheckedTypeToLayoutKey(
       if (mapped !== undefined) {
         return mapped;
       }
-      return { kind: "source", instanceId: monoInstanceId(`source:${type.typeId}`) };
+      return undefined;
     }
     case "applied": {
       if (type.constructor.kind === "core") {

@@ -26,7 +26,7 @@ export const TEXT_SECTION_KEY = ".text";
 export interface EncodedHelperInstruction {
   readonly opcodeLabel: string;
   readonly semanticLabel?: string;
-  readonly bytes: readonly number[];
+  readonly bytes: Uint8Array;
 }
 
 export function encodeStatusFromBootResultInstructions(input: {
@@ -49,7 +49,7 @@ export function encodeStatusFromBootResultInstructions(input: {
       Object.freeze({
         opcodeLabel,
         semanticLabel,
-        bytes: Object.freeze([...result.value.bytes]),
+        bytes: Uint8Array.from(result.value.bytes),
       }),
     );
     return true;
@@ -144,7 +144,7 @@ export function encodeEntryInitializeContextInstructions(input: {
     });
     if (result.kind === "error") return false;
     instructions.push(
-      Object.freeze({ opcodeLabel, semanticLabel, bytes: Object.freeze([...result.value.bytes]) }),
+      Object.freeze({ opcodeLabel, semanticLabel, bytes: Uint8Array.from(result.value.bytes) }),
     );
     return true;
   };
@@ -329,7 +329,7 @@ export function encodeExitBootServicesWithFreshMapInstructions(input: {
       Object.freeze({
         opcodeLabel,
         semanticLabel,
-        bytes: Object.freeze([...result.value.bytes]),
+        bytes: Uint8Array.from(result.value.bytes),
       }),
     );
     return true;
@@ -834,16 +834,16 @@ function byteOffsetOf(instructions: readonly EncodedHelperInstruction[], endInde
     .reduce((sum, instruction) => sum + instruction.bytes.length, 0);
 }
 
-function patchBranch19(bytes: readonly number[], distanceBytes: number): readonly number[] {
+function patchBranch19(bytes: ArrayLike<number>, distanceBytes: number): Uint8Array {
   const word = ((bytes[3]! << 24) | (bytes[2]! << 16) | (bytes[1]! << 8) | bytes[0]!) >>> 0;
   const immediate = (distanceBytes / 4) & 0x7ffff;
   const patched = (word & ~0x00ffffe0) | (immediate << 5);
-  return Object.freeze([
+  return Uint8Array.of(
     patched & 0xff,
     (patched >>> 8) & 0xff,
     (patched >>> 16) & 0xff,
     (patched >>> 24) & 0xff,
-  ]);
+  );
 }
 
 function sourceBootResultStatusBranchCases(): readonly {

@@ -35,8 +35,13 @@ const BINARY_OPERATORS: Partial<Record<SyntaxKind, BinaryOperatorInfo>> = {
   [SyntaxKind.StarToken]: { left: 60, right: 61, node: SyntaxKind.BinaryExpression },
   [SyntaxKind.SlashToken]: { left: 60, right: 61, node: SyntaxKind.BinaryExpression },
   [SyntaxKind.PercentToken]: { left: 60, right: 61, node: SyntaxKind.BinaryExpression },
+  [SyntaxKind.LeftShiftToken]: { left: 55, right: 56, node: SyntaxKind.BinaryExpression },
+  [SyntaxKind.RightShiftToken]: { left: 55, right: 56, node: SyntaxKind.BinaryExpression },
+  [SyntaxKind.AmpersandToken]: { left: 52, right: 53, node: SyntaxKind.BinaryExpression },
+  [SyntaxKind.CaretToken]: { left: 51, right: 52, node: SyntaxKind.BinaryExpression },
   [SyntaxKind.PlusToken]: { left: 50, right: 51, node: SyntaxKind.BinaryExpression },
   [SyntaxKind.MinusToken]: { left: 50, right: 51, node: SyntaxKind.BinaryExpression },
+  [SyntaxKind.PipeToken]: { left: 50, right: 51, node: SyntaxKind.BinaryExpression },
   [SyntaxKind.LessToken]: {
     left: 40,
     right: 0,
@@ -73,6 +78,8 @@ const BINARY_OPERATORS: Partial<Record<SyntaxKind, BinaryOperatorInfo>> = {
     node: SyntaxKind.EqualityExpression,
     nonAssociative: true,
   },
+  [SyntaxKind.AndKeyword]: { left: 30, right: 31, node: SyntaxKind.BinaryExpression },
+  [SyntaxKind.OrKeyword]: { left: 25, right: 26, node: SyntaxKind.BinaryExpression },
 };
 
 const COMPARISON_AND_EQUALITY_KINDS = new Set([
@@ -195,6 +202,7 @@ function parsePrefixOrPrimary(
 
   switch (kind) {
     case SyntaxKind.NotKeyword:
+    case SyntaxKind.TildeToken:
     case SyntaxKind.MinusToken: {
       const opToken = context.consume();
       const operand = parseExpressionWithContext(context, {
@@ -217,6 +225,8 @@ export function parsePrimaryExpression(context: ParserContext): GreenNode {
 
     case SyntaxKind.IntegerLiteralToken:
     case SyntaxKind.StringLiteralToken:
+    case SyntaxKind.TrueKeyword:
+    case SyntaxKind.FalseKeyword:
       return factory.node(SyntaxKind.LiteralExpression, [context.consume()]);
 
     case SyntaxKind.LeftBraceToken:
@@ -260,22 +270,32 @@ export function parsePostfixExpression(context: ParserContext, left: GreenNode):
         const lookahead = context.peek(1);
         if (lookahead && lookahead.kind === TokenKind.IntegerLiteral) {
           const mark = context.mark();
+          const errorMark = { ...mark, offset: mark.offset - left.width };
+          const unsupportedStart = context.peek().span.start;
+          let unsupportedEnd = context.peek().span.end;
           const errorChildren: GreenElement[] = [left, context.consume()];
           while (
             !context.isAtEnd &&
             context.currentSyntaxKind() !== SyntaxKind.RightBracketToken &&
             context.currentSyntaxKind() !== SyntaxKind.NewlineToken
           ) {
+            unsupportedEnd = context.peek().span.end;
             errorChildren.push(context.consume());
           }
           if (context.currentSyntaxKind() === SyntaxKind.RightBracketToken) {
+            unsupportedEnd = context.peek().span.end;
             errorChildren.push(context.consume());
           }
-          context.reportAtCurrent("PARSE_UNEXPECTED_TOKEN", "Unexpected token.");
+          context.reportSpan(
+            "PARSE_UNSUPPORTED_INDEX_EXPRESSION",
+            "Index expressions are not supported.",
+            unsupportedStart,
+            unsupportedEnd,
+          );
           left = nodeFromMark({
             factory,
             context,
-            mark,
+            mark: errorMark,
             kind: SyntaxKind.ErrorNode,
             children: errorChildren,
           });

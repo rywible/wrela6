@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { KeywordTable } from "../../src/lexer/keyword-table";
-import { TokenKind } from "../../src/lexer/token-kind";
+import { KeywordTable } from "../../src/frontend/lexer/keyword-table";
+import { TokenKind } from "../../src/frontend/lexer/token-kind";
 
 describe("KeywordTable", () => {
   describe("default table maps all language keywords", () => {

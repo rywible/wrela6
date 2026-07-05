@@ -21,7 +21,7 @@ describe("PE base relocation serialization", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected serialized relocations");
-    expect(result.value.bytes).toEqual([]);
+    expect(result.value.bytes).toEqual(new Uint8Array());
     expect(result.value.blocks).toEqual([]);
   });
 
@@ -33,7 +33,7 @@ describe("PE base relocation serialization", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected serialized relocations");
-    expect(result.value.bytes).toEqual([
+    expect(Array.from(result.value.bytes)).toEqual([
       0x00, 0x20, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0xa0, 0x00, 0x00,
     ]);
     expect(result.value.blocks).toEqual([
@@ -82,7 +82,7 @@ describe("PE base relocation serialization", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected serialized relocations");
-    expect(result.value.bytes).toEqual([
+    expect(Array.from(result.value.bytes)).toEqual([
       0x00, 0x10, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x08, 0xa0, 0x00, 0x00, 0x00, 0x30, 0x00,
       0x00, 0x0c, 0x00, 0x00, 0x00, 0x08, 0xa0, 0x10, 0xa0,
     ]);
@@ -106,7 +106,7 @@ describe("PE base relocation serialization", () => {
     if (result.kind !== "ok") throw new Error("expected serialized relocations");
     expect(result.value.blocks[0]?.blockSizeBytes).toBe(16);
     expect(result.value.blocks[0]?.entries.map((entry) => entry.peType)).toEqual([10, 10, 10, 0]);
-    expect(result.value.bytes.slice(-2)).toEqual([0x00, 0x00]);
+    expect(Array.from(result.value.bytes.slice(-2))).toEqual([0x00, 0x00]);
   });
 
   test("rejects duplicate base relocation RVAs", () => {

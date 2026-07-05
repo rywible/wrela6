@@ -136,7 +136,7 @@ const CANONICAL_RUNTIME_MATERIALIZATION_TEMPLATES: readonly CanonicalRuntimeMate
 export function canonicalUefiAArch64ProofMirRuntimeCatalog(): ProofMirRuntimeCatalog {
   const result = runtimeCatalog({
     targetId: UEFI_AARCH64_RUNTIME_TARGET_ID,
-    features: Object.freeze([]),
+    features: Object.freeze(["streamLoop"]),
     entries: CANONICAL_RUNTIME_MATERIALIZATION_TEMPLATES.map((template) => template.operation),
   });
   if (result.kind === "error") {

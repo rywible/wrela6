@@ -44,9 +44,14 @@ export enum TokenKind {
   Else,
   Otherwise,
   Let,
+  True,
+  False,
   // oxlint-disable-next-line id-length
   If,
   Not,
+  And,
+  // oxlint-disable-next-line id-length
+  Or,
   While,
   For,
   // oxlint-disable-next-line id-length
@@ -79,6 +84,12 @@ export enum TokenKind {
   Star,
   Slash,
   Percent,
+  Ampersand,
+  Pipe,
+  Caret,
+  Tilde,
+  LeftShift,
+  RightShift,
   Less,
   Greater,
   Question,

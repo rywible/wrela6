@@ -2,9 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { monoInstanceId } from "../../../src/mono/ids";
 import {
   buildOptIrRegionsForTest,
+  dedupeOptIrEffectRequirementsForTest,
   type OptIrRegionEntry,
   normalizeTargetEffectRequirementsForTest,
 } from "../../../src/opt-ir/lower/region-builder";
+import type { OptIrEffectRequirement } from "../../../src/opt-ir/effects";
 import type { OptIrRegion } from "../../../src/opt-ir/regions";
 import { layoutFactKey } from "../../../src/proof-check/model/fact-packet";
 
@@ -158,5 +160,18 @@ describe("OptIR region builder", () => {
       { mode: "mutate", region: framebuffer.aliasClass },
       { mode: "orderedEffectToken", tokenKey: "region:imageDevice:framebuffer" },
     ]);
+  });
+
+  test("dedupes structurally equal effect requirements with different property order", () => {
+    const first = {
+      mode: "orderedEffectToken",
+      tokenKey: "region:imageDevice:framebuffer",
+    } as const satisfies OptIrEffectRequirement;
+    const second = {
+      tokenKey: "region:imageDevice:framebuffer",
+      mode: "orderedEffectToken",
+    } as const satisfies OptIrEffectRequirement;
+
+    expect(dedupeOptIrEffectRequirementsForTest([first, second])).toEqual([first]);
   });
 });

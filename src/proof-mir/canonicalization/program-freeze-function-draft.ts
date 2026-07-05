@@ -3,7 +3,7 @@ import type {
   MonoFunctionSignature,
   MonoProofMetadata,
 } from "../../mono/mono-hir";
-import type { MonoInstanceId } from "../../mono/ids";
+import { type MonoInstanceId } from "../../mono/ids";
 import { functionId } from "../../semantic/ids";
 import { SourceSpan } from "../../shared/source-span";
 import { proofMirDiagnostic, type ProofMirDiagnostic } from "../diagnostics";
@@ -58,7 +58,6 @@ import type {
   ProofMirLocal,
   ProofMirPlace,
   ProofMirPrivateStateGenerationReference,
-  ProofMirScope,
   ProofMirValue,
 } from "../model/graph";
 import { proofMirCanonicalKey, type ProofMirCanonicalKey } from "./canonical-keys";
@@ -69,6 +68,7 @@ import {
   requireProofMirCanonicalKeyReference,
   type ProofMirCanonicalKeyLookup,
 } from "./id-assignment";
+import { freezeScopesFromAssignments } from "./program-freeze-scopes";
 
 import {
   ownerKeyForFunction,
@@ -91,31 +91,6 @@ import {
   sessionIdByProofKey,
   brandIdByProofKey,
 } from "./program-freeze-shared";
-
-function scopeKindFromRole(role: string): ProofMirScope["kind"] {
-  if (role === "function") {
-    return "function";
-  }
-  if (role.startsWith("loop:")) {
-    return "loop";
-  }
-  if (role.startsWith("matchArm:")) {
-    return "matchArm";
-  }
-  if (role.startsWith("validationArm:")) {
-    return "validationArm";
-  }
-  if (role.startsWith("attemptArm:")) {
-    return "attemptArm";
-  }
-  if (role.startsWith("take:")) {
-    return "take";
-  }
-  if (role.startsWith("suspendResume:")) {
-    return "suspendResume";
-  }
-  return "block";
-}
 
 export interface FreezeFunctionDraftProgramLookups {
   readonly factLookup: ProofMirCanonicalKeyLookup<ProofMirFactId>;
@@ -585,29 +560,19 @@ export function freezeFunctionDraft(input: {
     return "error";
   }
 
-  const frozenScopes: ProofMirScope[] = [];
-  for (const record of scopeAssignment.entries) {
-    const scopeId = scopeAssignment.lookup.resolve(record.key)!;
-    const origin = resolveOrigin(record.originKey, "originKey");
-    if (origin === undefined) {
-      return "error";
-    }
-    const parentScopeId =
-      record.parentScopeKey === undefined
-        ? undefined
-        : resolveScope(record.parentScopeKey, "parentScopeKey");
-    if (record.parentScopeKey !== undefined && parentScopeId === undefined) {
-      return "error";
-    }
-    frozenScopes.push({
-      scopeId,
-      ...(parentScopeId !== undefined ? { parentScopeId } : {}),
-      kind: scopeKindFromRole(record.role),
-      ownedLocals: [],
-      openedObligations: [],
-      openedSessionMembers: [],
-      origin,
-    });
+  const frozenScopes = freezeScopesFromAssignments({
+    scopeRecords: scopeAssignment.entries,
+    localRecords: localAssignment.entries,
+    functionInstance: input.functionInstance,
+    functionInstanceId,
+    ownerKey,
+    diagnostics: input.diagnostics,
+    resolveAssignedScope: (key) => scopeAssignment.lookup.resolve(key),
+    resolveParentScope: resolveScope,
+    resolveOrigin,
+  });
+  if (frozenScopes === "error") {
+    return "error";
   }
 
   const blocksTable = proofMirDeterministicTable({

@@ -1,0 +1,4 @@
+failed
+src/image.wr:2:11: error[W6_DEMO]: Unknown identifier 'banana'.
+  entry = banana
+          ^^^^^^

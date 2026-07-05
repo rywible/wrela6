@@ -17,7 +17,10 @@ import type {
   ProofMirPlace,
   ProofMirScope,
 } from "../../../src/proof-mir/model/graph";
-import { validationArmCleanupPlaceKeys } from "../../../src/proof-check/domains/validation-arm-cleanup";
+import {
+  exitScopeIntroducedPlaceCleanupKeys,
+  validationArmCleanupPlaceKeys,
+} from "../../../src/proof-check/domains/validation-arm-cleanup";
 
 test("validation arm cleanup ignores ordinary crossed scopes", () => {
   const functionScope = proofMirScopeId(0);
@@ -49,10 +52,27 @@ test("validation arm cleanup returns places introduced into crossed validation a
   ]);
 });
 
+test("exit scope cleanup returns places introduced into crossed match arms", () => {
+  const functionScope = proofMirScopeId(0);
+  const matchArmScope = proofMirScopeId(3);
+  const introducedPlace = proofMirPlaceId(0);
+  const functionGraph = functionWithCleanupCandidate({
+    targetScope: scopeForTest(matchArmScope, "matchArm", functionScope),
+    crossedScopes: [matchArmScope, functionScope],
+    introducedPlace,
+    edgeKind: "switchCase",
+  });
+
+  expect(
+    exitScopeIntroducedPlaceCleanupKeys({ functionGraph, exit: functionGraph.exits[0]! }),
+  ).toEqual(["proofMirPlace:0"]);
+});
+
 function functionWithCleanupCandidate(input: {
   readonly targetScope: ProofMirScope;
   readonly crossedScopes: readonly ReturnType<typeof proofMirScopeId>[];
   readonly introducedPlace: ReturnType<typeof proofMirPlaceId>;
+  readonly edgeKind?: ProofMirControlEdge["kind"];
 }): ProofMirFunction {
   const functionScope = scopeForTest(proofMirScopeId(0), "function");
   const entryBlockId = proofMirBlockId(0);
@@ -87,7 +107,7 @@ function functionWithCleanupCandidate(input: {
       edgeId,
       fromBlockId: entryBlockId,
       toBlockId: targetBlockId,
-      kind: "validationOk",
+      kind: input.edgeKind ?? "validationOk",
       arguments: [],
       facts: [],
       effects: [{ kind: "introducePlace", placeId: input.introducedPlace }],

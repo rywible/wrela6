@@ -1,0 +1,17 @@
+{
+  "phase": "semantic",
+  "diagnostics": [
+    {
+      "code": "HIR_BINARY_OPERAND_TYPE_MISMATCH",
+      "count": 2
+    },
+    {
+      "code": "HIR_ARITHMETIC_REQUIRES_INTEGER",
+      "count": 2
+    },
+    {
+      "code": "HIR_EXPRESSION_TYPE_MISMATCH",
+      "count": 1
+    }
+  ]
+}

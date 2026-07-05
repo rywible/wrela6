@@ -16,7 +16,11 @@ import type { DraftProofMirStatementKind } from "../draft/draft-statement";
 import { draftLocalKey } from "../draft/draft-keys";
 import type { ProofMirConsumeReason } from "../model/graph";
 import type { ProofMirDraftOperand } from "./lowering-operands";
-import { createLoweringIdAllocator, monoPlaceForLocal } from "./expression-lowerer-helpers";
+import {
+  createLoweringIdAllocator,
+  monoPlaceForStatementLocal,
+} from "./expression-lowerer-helpers";
+import { activeBlockKey } from "./active-block-key";
 import { syncLoweredPlaceToFunctionDraft } from "./lowering-place-sync";
 import { originForStatement } from "./lowering-origins";
 import { operandPlaceKey, operandValueKey } from "./lowering-operands";
@@ -95,6 +99,7 @@ function ensureLocalRegistered(
   context: ProofMirLoweringContext,
   local: MonoLocal,
   originKey: ProofMirCanonicalKey,
+  blockKey: ProofMirCanonicalKey,
 ): ProofMirCanonicalKey {
   const localKey = draftLocalKey({
     functionInstanceId: context.functionInstanceId,
@@ -113,6 +118,7 @@ function ensureLocalRegistered(
     monoLocalId: local.localId,
     name: local.name,
     origin: originKey,
+    scopeKey: context.graph.block(blockKey).scopeKey,
     type: local.type,
     resourceKind: local.resourceKind,
     ...(storage === undefined ? {} : { storage }),
@@ -254,7 +260,7 @@ function lowerLetStatement(input: {
   readonly value?: MonoExpression;
 }): ProofMirLoweringResult<void> {
   const originKey = originForStatement(input.context, input.statement);
-  const localKey = ensureLocalRegistered(input.context, input.local, originKey);
+  const localKey = ensureLocalRegistered(input.context, input.local, originKey, input.blockKey);
   const storage = localStorageKind(input.context, input.local);
 
   if (storage === undefined) {
@@ -285,6 +291,7 @@ function lowerLetStatement(input: {
   }
 
   const valueOperand = loweredValue.value;
+  const valueBlockKey = activeBlockKey(input.context, input.blockKey);
 
   if (storage === "scalarSsa") {
     const valueKey = operandValueKey(valueOperand);
@@ -303,7 +310,7 @@ function lowerLetStatement(input: {
     }
     const ssaKey = proofMirSsaLocalKey(localKey);
     input.context.ssa.defineScalar({
-      blockKey: input.blockKey,
+      blockKey: valueBlockKey,
       ssaKey,
       valueKey,
     });
@@ -311,7 +318,7 @@ function lowerLetStatement(input: {
       kind: "defineScalar",
       localKey,
       valueKey,
-      blockKey: input.blockKey,
+      blockKey: valueBlockKey,
     });
     return loweringOk(undefined);
   }
@@ -326,7 +333,7 @@ function lowerLetStatement(input: {
     context: input.context,
     recorder: input.recorder,
     idAllocator: input.idAllocator,
-    blockKey: input.blockKey,
+    blockKey: valueBlockKey,
     originKey,
     targetPlaceKey: targetPlaceKey.value,
     valueOperand,
@@ -397,6 +404,7 @@ function lowerAssignmentStatement(input: {
       if (loweredValue.kind === "error") {
         return loweredValue;
       }
+      const valueBlockKey = activeBlockKey(input.context, input.blockKey);
       const valueKey = operandValueKey(loweredValue.value);
       if (valueKey === undefined) {
         return loweringError([
@@ -417,7 +425,7 @@ function lowerAssignmentStatement(input: {
       });
       const ssaKey = proofMirSsaLocalKey(localKey);
       input.context.ssa.defineScalar({
-        blockKey: input.blockKey,
+        blockKey: valueBlockKey,
         ssaKey,
         valueKey,
       });
@@ -425,7 +433,7 @@ function lowerAssignmentStatement(input: {
         kind: "defineScalar",
         localKey,
         valueKey,
-        blockKey: input.blockKey,
+        blockKey: valueBlockKey,
       });
       return loweringOk(undefined);
     }
@@ -479,12 +487,13 @@ function lowerAssignmentStatement(input: {
   if (loweredValue.kind === "error") {
     return loweredValue;
   }
+  const valueBlockKey = activeBlockKey(input.context, input.blockKey);
 
   return recordPlaceAssignment({
     context: input.context,
     recorder: input.recorder,
     idAllocator: input.idAllocator,
-    blockKey: input.blockKey,
+    blockKey: valueBlockKey,
     originKey,
     targetPlaceKey: targetPlaceKey.value,
     valueOperand: loweredValue.value,
@@ -508,33 +517,20 @@ function lowerBlockStatement(input: {
     origin: originKey,
   });
 
+  let currentBlockKey = activeBlockKey(input.context, input.blockKey);
   for (const nestedStatement of input.block.statements) {
     const lowered = input.lowerStatement({
       context: input.context,
       statement: nestedStatement,
-      blockKey: input.blockKey,
+      blockKey: currentBlockKey,
     });
     if (lowered.kind === "error") {
       return lowered;
     }
+    currentBlockKey = activeBlockKey(input.context, currentBlockKey);
   }
 
   return loweringOk(undefined);
-}
-
-function monoPlaceForStatementLocal(
-  context: ProofMirLoweringContext,
-  local: MonoLocal,
-): MonoResourcePlace {
-  return monoPlaceForLocal({
-    program: context.program,
-    functionInstanceId: context.functionInstanceId,
-    localId: local.localId,
-    parameterId: local.parameterId,
-    type: local.type,
-    resourceKind: local.resourceKind,
-    sourceOrigin: local.sourceOrigin,
-  });
 }
 
 interface StatementLowererState {

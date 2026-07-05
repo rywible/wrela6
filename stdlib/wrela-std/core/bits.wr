@@ -1,0 +1,3 @@
+// Ordinary stdlib source wrapper; target authority comes from certified platform contracts.
+class Bits[Value]:
+    value: Value

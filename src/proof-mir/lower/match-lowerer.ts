@@ -1,8 +1,6 @@
 import { type FactOriginId } from "../../hir/ids";
 import { instantiatedHirIdKey } from "../../mono/ids";
 import type {
-  MonoCheckedType,
-  MonoEnumCaseRecord,
   MonoExpressionId,
   MonoInstantiatedProofId,
   MonoMatchArm,
@@ -10,7 +8,6 @@ import type {
   MonoStatement,
   MonoStatementId,
 } from "../../mono/mono-hir";
-import type { MonomorphizedHirProgram } from "../../mono/mono-hir";
 import type { ProofMirCanonicalKey } from "../canonicalization/canonical-keys";
 import {
   proofMirDiagnostic,
@@ -43,6 +40,13 @@ import {
   createProofMirScopePlaceLowerer,
   type ProofMirFunctionScopePlaceLowerer,
 } from "./scope-place-lowerer";
+import { bindingLocalEdgeEffects, lowerArmStatements } from "./match-arm-lowering";
+import {
+  armOwnsScope,
+  caseLabelFromPattern,
+  hasMonoSwitchExhaustivenessEvidence,
+  isWildcardPattern,
+} from "./match-exhaustiveness";
 
 export interface CreateProofMirMatchLowererInput {
   readonly expression: ProofMirExpressionLowerer & {};
@@ -84,67 +88,8 @@ function matchArmScopeRole(statementId: MonoStatementId, armIndex: number): stri
   return `matchArm:${statementRolePrefix(statementId)}:${armIndex}`;
 }
 
-function isWildcardPattern(patternText: string): boolean {
-  const trimmed = patternText.trim();
-  return trimmed === "_" || trimmed.endsWith("._");
-}
-
-function caseLabelFromPattern(patternText: string): string {
-  const segments = patternText.split(".");
-  return segments[segments.length - 1] ?? patternText;
-}
-
-function enumCasesForScrutineeType(
-  program: MonomorphizedHirProgram,
-  scrutineeType: MonoCheckedType,
-): readonly MonoEnumCaseRecord[] | undefined {
-  if (scrutineeType.kind !== "source") {
-    return undefined;
-  }
-  for (const typeInstance of program.types.entries()) {
-    if (
-      typeInstance.sourceTypeId === scrutineeType.typeId &&
-      typeInstance.sourceItemId === scrutineeType.itemId &&
-      typeInstance.enumCases.length > 0
-    ) {
-      return typeInstance.enumCases;
-    }
-  }
-  return undefined;
-}
-
-function hasMonoSwitchExhaustivenessEvidence(input: {
-  readonly context: ProofMirLoweringContext;
-  readonly matchStatement: MonoMatchStatement;
-  readonly monoExhaustiveOverride?: boolean;
-}): boolean {
-  if (input.monoExhaustiveOverride !== undefined) {
-    return input.monoExhaustiveOverride;
-  }
-  if (input.matchStatement.arms.some((arm) => isWildcardPattern(arm.patternText))) {
-    return true;
-  }
-  const enumCases = enumCasesForScrutineeType(
-    input.context.program,
-    input.matchStatement.scrutinee.type,
-  );
-  if (enumCases === undefined) {
-    return false;
-  }
-  const coveredPatterns = new Set(
-    input.matchStatement.arms
-      .filter((arm) => !isWildcardPattern(arm.patternText))
-      .map((arm) => caseLabelFromPattern(arm.patternText)),
-  );
-  return enumCases.every((enumCase) => coveredPatterns.has(enumCase.name));
-}
-
 function draftValueDependency(valueKey: ProofMirCanonicalKey): DraftProofMirFactDependency {
   return { kind: "value", valueKey };
-}
-
-function armOwnsScope(arm: MonoMatchArm): boolean {
-  return arm.bindingLocals.length > 0;
 }
 
 function resolveArmScopeKey(input: {
@@ -250,40 +195,6 @@ function wireFallThroughEdge(input: {
   }
   void input.scopePlaceLowerer;
   return loweringOk(edgeKey);
-}
-
-function lowerArmStatements(input: {
-  readonly context: ProofMirLoweringContext;
-  readonly expression: ProofMirExpressionLowerer & {};
-  readonly statementLowerer: ProofMirStatementLowerer;
-  readonly terminalLowerer: ProofMirTerminalLowerer;
-  readonly blockKey: ProofMirCanonicalKey;
-  readonly statements: readonly MonoStatement[];
-}): ProofMirLoweringResult<void> {
-  input.context.ssa.registerBlock(input.blockKey);
-  for (const statement of input.statements) {
-    if (statement.kind.kind === "return") {
-      const lowered = input.terminalLowerer.lowerReturn({
-        context: input.context,
-        expression: statement.kind.expression,
-        blockKey: input.blockKey,
-        terminal: false,
-      });
-      if (lowered.kind === "error") {
-        return lowered;
-      }
-      continue;
-    }
-    const lowered = input.statementLowerer.lowerStatement({
-      context: input.context,
-      statement,
-      blockKey: input.blockKey,
-    });
-    if (lowered.kind === "error") {
-      return lowered;
-    }
-  }
-  return loweringOk(undefined);
 }
 
 export function lowerMatchStatement(input: {
@@ -416,6 +327,7 @@ export function lowerMatchStatement(input: {
       targetScope: armScope,
       origin: originKey,
       factKeys,
+      effects: bindingLocalEdgeEffects({ context: input.context, arm, originKey }),
     });
     const edge = input.context.graph.edge(edgeKey);
     caseEdges.push({ label: caseLabelFromPattern(arm.patternText), edge });
@@ -432,16 +344,18 @@ export function lowerMatchStatement(input: {
       terminalLowerer: input.terminalLowerer,
       blockKey: armBlockKey,
       statements: arm.body.statements,
+      idAllocator: input.idAllocator,
     });
     if (loweredArm.kind === "error") {
       return loweredArm;
     }
+    const finalArmBlockKey = loweredArm.value.finalBlockKey;
 
-    if (!blockHasExitTerminator(input.context, armBlockKey)) {
+    if (!blockHasExitTerminator(input.context, finalArmBlockKey)) {
       const wired = wireFallThroughEdge({
         context: input.context,
         scopePlaceLowerer: input.scopePlaceLowerer,
-        fromBlockKey: armBlockKey,
+        fromBlockKey: finalArmBlockKey,
         toBlockKey: input.continuationBlockKey,
         originKey,
         role: `match.continuation:${caseLabelFromPattern(arm.patternText)}`,
@@ -491,15 +405,17 @@ export function lowerMatchStatement(input: {
       terminalLowerer: input.terminalLowerer,
       blockKey: fallbackBlockKey,
       statements: fallbackArm.body.statements,
+      idAllocator: input.idAllocator,
     });
     if (loweredFallback.kind === "error") {
       return loweredFallback;
     }
-    if (!blockHasExitTerminator(input.context, fallbackBlockKey)) {
+    const finalFallbackBlockKey = loweredFallback.value.finalBlockKey;
+    if (!blockHasExitTerminator(input.context, finalFallbackBlockKey)) {
       const wired = wireFallThroughEdge({
         context: input.context,
         scopePlaceLowerer: input.scopePlaceLowerer,
-        fromBlockKey: fallbackBlockKey,
+        fromBlockKey: finalFallbackBlockKey,
         toBlockKey: input.continuationBlockKey,
         originKey,
         role: "match.continuation:fallback",

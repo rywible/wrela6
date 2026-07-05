@@ -1,15 +1,19 @@
 import type { MonoInstanceId } from "../../mono/ids";
 import type { ProofMirCanonicalKey } from "../canonicalization/canonical-keys";
-import type { ProofMirExitClosurePolicy } from "../model/graph";
 import type { DraftProofMirEdgeEffect } from "../domains/effects-resources";
-import { draftControlEdgeKey, draftExitEdgeKey } from "./draft-keys";
+import {
+  draftControlEdgeKey,
+  draftExitEdgeKey,
+  draftSiteDiscriminatedEdgeRole,
+} from "./draft-keys";
 import type {
   DraftProofMirCanonicalTableAcceptResult,
+  DraftProofMirExitClosurePolicy,
   DraftProofMirFunctionDraft,
   DraftProofMirGraphExitSnapshot,
 } from "./draft-program";
+import type { DraftGraphBuilderResult } from "./draft-graph-builder-result";
 import type {
-  DraftGraphBuilderResult,
   DraftGraphControlEdgeKind,
   DraftGraphEdgeState,
   DraftGraphEdgeView,
@@ -19,7 +23,7 @@ interface DraftGraphBlockScopeLookup {
   readonly scopeKey: ProofMirCanonicalKey;
 }
 
-function functionExitClosurePolicy(terminal: boolean): ProofMirExitClosurePolicy {
+function functionExitClosurePolicy(terminal: boolean): DraftProofMirExitClosurePolicy {
   return {
     kind: "functionExit",
     requireNoLiveLoans: true,
@@ -134,7 +138,7 @@ export function createDraftGraphEdgeBuilders(input: CreateDraftGraphEdgeBuilders
     readonly targetScope: ProofMirCanonicalKey;
     readonly origin: ProofMirCanonicalKey;
     readonly crossedScopes: readonly ProofMirCanonicalKey[];
-    readonly closure: Extract<ProofMirExitClosurePolicy, { readonly kind: "scopeExit" }>;
+    readonly closure: Extract<DraftProofMirExitClosurePolicy, { readonly kind: "scopeExit" }>;
   }): { readonly edge: ProofMirCanonicalKey; readonly exit: ProofMirCanonicalKey };
   createPanicExit(input: {
     readonly fromBlock: ProofMirCanonicalKey;
@@ -168,7 +172,16 @@ export function createDraftGraphEdgeBuilders(input: CreateDraftGraphEdgeBuilders
     readonly argumentKeys?: readonly ProofMirCanonicalKey[];
     readonly exitKey?: ProofMirCanonicalKey;
   }): ProofMirCanonicalKey {
-    const edgeKey = draftControlEdgeKey({ functionInstanceId, role: edgeInput.role });
+    const edgeKey = draftControlEdgeKey({
+      functionInstanceId,
+      role: edgeInput.role,
+      fromBlockKey: edgeInput.fromBlock,
+      toBlockKey: edgeInput.toBlock,
+      originKey: edgeInput.origin,
+    });
+    if (edges.has(edgeKey)) {
+      throw new RangeError(`Duplicate draft graph control edge key: ${String(edgeKey)}.`);
+    }
     const edgeState: DraftGraphEdgeState = {
       key: edgeKey,
       kind: edgeInput.kind,
@@ -202,11 +215,14 @@ export function createDraftGraphEdgeBuilders(input: CreateDraftGraphEdgeBuilders
     readonly fromBlock: ProofMirCanonicalKey;
     readonly origin: ProofMirCanonicalKey;
     readonly exitKind?: DraftProofMirGraphExitSnapshot["exitKind"];
-    readonly closure?: ProofMirExitClosurePolicy;
+    readonly closure?: DraftProofMirExitClosurePolicy;
     readonly crossedScopeKeys?: readonly ProofMirCanonicalKey[];
     readonly targetScopeKey?: ProofMirCanonicalKey;
   }): ProofMirCanonicalKey {
     const exitKey = draftExitEdgeKey({ functionInstanceId, role: exitInput.role });
+    if (exitStates.has(exitKey)) {
+      throw new RangeError(`Duplicate draft graph exit edge key: ${String(exitKey)}.`);
+    }
     propagateAcceptResult(
       draft.exitEdges.accept({
         key: exitKey,
@@ -246,7 +262,13 @@ export function createDraftGraphEdgeBuilders(input: CreateDraftGraphEdgeBuilders
       readonly effects?: readonly DraftProofMirEdgeEffect[];
       readonly argumentKeys?: readonly ProofMirCanonicalKey[];
     }): ProofMirCanonicalKey {
-      const role = edgeMethodInput.role ?? `normal:${normalEdgeCounter.value++}`;
+      const role =
+        edgeMethodInput.role === undefined
+          ? `normal:${normalEdgeCounter.value++}`
+          : draftSiteDiscriminatedEdgeRole({
+              edgeKind: edgeMethodInput.role,
+              fromBlock: edgeMethodInput.fromBlock,
+            });
       return createEdge({
         role,
         kind: "normal",
@@ -272,8 +294,12 @@ export function createDraftGraphEdgeBuilders(input: CreateDraftGraphEdgeBuilders
       readonly effects?: readonly DraftProofMirEdgeEffect[];
       readonly argumentKeys?: readonly ProofMirCanonicalKey[];
     }): ProofMirCanonicalKey {
+      const role = draftSiteDiscriminatedEdgeRole({
+        edgeKind: edgeMethodInput.kind,
+        fromBlock: edgeMethodInput.fromBlock,
+      });
       return createEdge({
-        role: edgeMethodInput.kind,
+        role,
         kind: edgeMethodInput.kind,
         fromBlock: edgeMethodInput.fromBlock,
         toBlock: edgeMethodInput.toBlock,
@@ -346,8 +372,12 @@ export function createDraftGraphEdgeBuilders(input: CreateDraftGraphEdgeBuilders
       readonly effects?: readonly DraftProofMirEdgeEffect[];
       readonly argumentKeys?: readonly ProofMirCanonicalKey[];
     }): ProofMirCanonicalKey {
+      const role = draftSiteDiscriminatedEdgeRole({
+        edgeKind: edgeMethodInput.kind,
+        fromBlock: edgeMethodInput.fromBlock,
+      });
       return createEdge({
-        role: edgeMethodInput.kind,
+        role,
         kind: edgeMethodInput.kind,
         fromBlock: edgeMethodInput.fromBlock,
         toBlock: edgeMethodInput.toBlock,
@@ -436,10 +466,14 @@ export function createDraftGraphEdgeBuilders(input: CreateDraftGraphEdgeBuilders
       readonly targetScope: ProofMirCanonicalKey;
       readonly origin: ProofMirCanonicalKey;
       readonly crossedScopes: readonly ProofMirCanonicalKey[];
-      readonly closure: Extract<ProofMirExitClosurePolicy, { readonly kind: "scopeExit" }>;
+      readonly closure: Extract<DraftProofMirExitClosurePolicy, { readonly kind: "scopeExit" }>;
     }): { readonly edge: ProofMirCanonicalKey; readonly exit: ProofMirCanonicalKey } {
+      const role = draftSiteDiscriminatedEdgeRole({
+        edgeKind: edgeMethodInput.role,
+        fromBlock: edgeMethodInput.fromBlock,
+      });
       const exit = createExit({
-        role: edgeMethodInput.role,
+        role,
         fromBlock: edgeMethodInput.fromBlock,
         origin: edgeMethodInput.origin,
         exitKind: "scopeBreak",
@@ -448,7 +482,7 @@ export function createDraftGraphEdgeBuilders(input: CreateDraftGraphEdgeBuilders
         targetScopeKey: edgeMethodInput.targetScope,
       });
       const edge = createEdge({
-        role: edgeMethodInput.role,
+        role,
         kind: "scopeBreak",
         fromBlock: edgeMethodInput.fromBlock,
         toBlock: edgeMethodInput.toBlock,
@@ -464,15 +498,19 @@ export function createDraftGraphEdgeBuilders(input: CreateDraftGraphEdgeBuilders
       readonly fromBlock: ProofMirCanonicalKey;
       readonly origin: ProofMirCanonicalKey;
     }): { readonly edge: ProofMirCanonicalKey; readonly exit: ProofMirCanonicalKey } {
+      const role = draftSiteDiscriminatedEdgeRole({
+        edgeKind: "panicExit",
+        fromBlock: edgeMethodInput.fromBlock,
+      });
       const exit = createExit({
-        role: "panicExit",
+        role,
         fromBlock: edgeMethodInput.fromBlock,
         origin: edgeMethodInput.origin,
         exitKind: "panic",
         closure: functionExitClosurePolicy(false),
       });
       const edge = createEdge({
-        role: "panicExit",
+        role,
         kind: "panicExit",
         fromBlock: edgeMethodInput.fromBlock,
         sourceScope: blocks.get(edgeMethodInput.fromBlock)?.scopeKey ?? rootScopeKeyValue,

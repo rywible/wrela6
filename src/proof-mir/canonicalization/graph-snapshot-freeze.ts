@@ -16,13 +16,21 @@ import {
 } from "./draft-statement-freeze";
 import type {
   DraftGraphBlockTarget,
-  DraftGraphEdgeEffect,
   DraftGraphEdgeState,
   DraftGraphTerminator,
   DraftGraphValidationArmBinding,
 } from "../draft/draft-graph-builder";
 import type { ProofMirCanonicalKey } from "./canonical-keys";
+import {
+  freezeEdgeEffect,
+  freezeExitClosure,
+  freezeScopeKeyList,
+} from "./graph-edge-effect-freeze";
 import type { ProofMirCanonicalKeyLookup } from "./id-assignment";
+import {
+  pushFreezeUnresolvedReference,
+  type FreezeGraphSnapshotErrorContext,
+} from "./graph-freeze-errors";
 import {
   proofMirTerminatorId,
   type ProofMirBlockId,
@@ -50,6 +58,7 @@ import type {
   ProofMirValidationMatch,
 } from "../model/graph";
 import { proofMirCrossedScopes } from "../domains/scope-tree";
+import { freezeBlockStateMerge } from "./graph-state-merge-freeze";
 import { missingMonoTypePlaceholder } from "./program-freeze-shared";
 
 export interface FreezeGraphSnapshotLookups {
@@ -177,107 +186,6 @@ function resolveValueKey(
   valueKey: ProofMirCanonicalKey,
 ): ProofMirValueId | undefined {
   return lookups.valueLookup.resolve(valueKey);
-}
-
-interface FreezeGraphSnapshotErrorContext {
-  readonly diagnostics: ProofMirDiagnostic[];
-  readonly ownerKey: string;
-  readonly functionInstanceId: MonoInstanceId;
-}
-
-function pushFreezeUnresolvedReference(
-  context: FreezeGraphSnapshotErrorContext,
-  referenceKind: string,
-  stableDetail: string,
-  message: string,
-): void {
-  context.diagnostics.push(
-    proofMirDiagnostic({
-      severity: "error",
-      code: "PROOF_MIR_INVALID_TABLE_CANONICAL_KEY",
-      message,
-      functionInstanceId: context.functionInstanceId,
-      ownerKey: context.ownerKey,
-      rootCauseKey: referenceKind,
-      stableDetail,
-    }),
-  );
-}
-
-function freezeEdgeEffect(
-  lookups: FreezeGraphSnapshotLookups,
-  effect: DraftGraphEdgeEffect,
-): ProofMirEdgeEffect | undefined {
-  switch (effect.kind) {
-    case "consumePlace": {
-      const placeId = resolvePlaceKey(lookups, effect.placeKey);
-      return placeId === undefined ? undefined : { kind: "consumePlace", placeId };
-    }
-    case "introducePlace": {
-      const placeId = resolvePlaceKey(lookups, effect.placeKey);
-      return placeId === undefined ? undefined : { kind: "introducePlace", placeId };
-    }
-    case "startLoan":
-    case "endLoan": {
-      const loanId = lookups.loanLookup.resolve(effect.loanKey);
-      return loanId === undefined ? undefined : { kind: effect.kind, loanId };
-    }
-    case "openObligation":
-    case "dischargeObligation": {
-      const origin = lookups.resolveOrigin(effect.originKey);
-      const obligationId = lookups.resolveObligationId(effect.obligationProofKey);
-      if (origin === undefined || obligationId === undefined) {
-        return undefined;
-      }
-      return {
-        kind: effect.kind,
-        obligation: { obligationId, origin },
-      };
-    }
-    case "openSessionMember":
-    case "closeSessionMember": {
-      const origin = lookups.resolveOrigin(effect.originKey);
-      const sessionId = lookups.resolveSessionId(effect.sessionProofKey);
-      const brandId = lookups.resolveBrandId(effect.brandProofKey);
-      if (origin === undefined || sessionId === undefined || brandId === undefined) {
-        return undefined;
-      }
-      const obligationId =
-        effect.obligationProofKey === undefined
-          ? undefined
-          : lookups.resolveObligationId(effect.obligationProofKey);
-      if (effect.obligationProofKey !== undefined && obligationId === undefined) {
-        return undefined;
-      }
-      const placeId =
-        effect.placeKey === undefined ? undefined : resolvePlaceKey(lookups, effect.placeKey);
-      if (effect.placeKey !== undefined && placeId === undefined) {
-        return undefined;
-      }
-      return {
-        kind: effect.kind,
-        member: {
-          sessionId,
-          brandId,
-          ...(obligationId === undefined ? {} : { obligationId }),
-          ...(placeId === undefined ? {} : { placeId }),
-          origin,
-        },
-      };
-    }
-    case "advancePrivateState": {
-      const from = lookups.resolvePrivateStateGeneration(effect.fromGenerationKey);
-      const target = lookups.resolvePrivateStateGeneration(effect.toGenerationKey);
-      if (from === undefined || target === undefined) {
-        return undefined;
-      }
-      return { kind: "advancePrivateState", from, target };
-    }
-    default: {
-      const unreachable: never = effect;
-      return unreachable;
-    }
-  }
 }
 
 function freezeValidationBinding(
@@ -595,23 +503,13 @@ function freezeExitEdge(
   }
   const crossedScopes =
     exit.crossedScopeKeys !== undefined
-      ? (() => {
-          const scopes: ProofMirScopeId[] = [];
-          for (const scopeKey of exit.crossedScopeKeys) {
-            const scopeId = lookups.scopeLookup.resolve(scopeKey);
-            if (scopeId === undefined) {
-              pushFreezeUnresolvedReference(
-                errorContext,
-                "exit-crossed-scope",
-                String(scopeKey),
-                "Proof MIR freeze could not resolve an exit crossed scope reference.",
-              );
-              return "error" as const;
-            }
-            scopes.push(scopeId);
-          }
-          return scopes;
-        })()
+      ? freezeScopeKeyList({
+          lookups,
+          scopeKeys: exit.crossedScopeKeys,
+          errorContext,
+          diagnosticRole: "exit-crossed-scope",
+          message: "Proof MIR freeze could not resolve an exit crossed scope reference.",
+        })
       : fromBlockScopeKey === undefined
         ? []
         : crossedScopeIdsForFunctionExit({
@@ -630,13 +528,22 @@ function freezeExitEdge(
     targetScopeId === undefined
       ? ({ kind: "function", unwind: "none" } as const)
       : ({ kind: "scope", targetScopeId } as const);
+  const closure = freezeExitClosure({
+    lookups,
+    exitKey: exit.key,
+    closure: exit.closure,
+    errorContext,
+  });
+  if (closure === "error") {
+    return "error";
+  }
   return {
     exitId,
     fromBlockId,
     kind: exit.exitKind,
     boundary,
     crossedScopes,
-    closure: exit.closure,
+    closure,
     origin,
   };
 }
@@ -868,6 +775,17 @@ export function freezeBlocksFromGraphSnapshot(input: {
       );
       return "error";
     }
+    const stateMerge =
+      snapshotBlock === undefined
+        ? undefined
+        : freezeBlockStateMerge(input.lookups, snapshotBlock, {
+            diagnostics: input.diagnostics,
+            ownerKey: input.ownerKey,
+            functionInstanceId: input.functionInstanceId,
+          });
+    if (snapshotBlock?.stateMerge !== undefined && stateMerge === undefined) {
+      return "error";
+    }
     frozenBlocks.push({
       blockId,
       scopeId,
@@ -875,6 +793,7 @@ export function freezeBlocksFromGraphSnapshot(input: {
       statements,
       terminator,
       incomingEdges: input.incomingEdgesByBlock.get(blockId) ?? [],
+      ...(stateMerge === undefined ? {} : { stateMerge }),
       origin,
     });
     blockOrdinal += 1;

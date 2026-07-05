@@ -188,11 +188,33 @@ export function draftTerminatorKey(input: {
 export function draftControlEdgeKey(input: {
   readonly functionInstanceId: MonoInstanceId;
   readonly role: string;
+  readonly fromBlockKey?: ProofMirCanonicalKey;
+  readonly toBlockKey?: ProofMirCanonicalKey;
+  readonly originKey?: ProofMirCanonicalKey;
 }): ProofMirCanonicalKey {
-  return draftEntityKey("controlEdge", [
+  const fields: { readonly kind: string; readonly payload: string }[] = [
     monoInstanceField("functionInstanceId", input.functionInstanceId),
     stringField("role", input.role),
-  ]);
+  ];
+  if (input.fromBlockKey !== undefined) {
+    fields.push(canonicalReferenceField("fromBlockKey", input.fromBlockKey));
+  }
+  if (input.toBlockKey !== undefined) {
+    fields.push(canonicalReferenceField("toBlockKey", input.toBlockKey));
+  }
+  if (input.originKey !== undefined) {
+    fields.push(canonicalReferenceField("originKey", input.originKey));
+  }
+  return draftEntityKey("controlEdge", fields);
+}
+
+export function draftSiteDiscriminatedEdgeRole(input: {
+  readonly edgeKind: string;
+  readonly fromBlock: ProofMirCanonicalKey;
+}): string {
+  return String(
+    draftEntityKey(input.edgeKind, [canonicalReferenceField("fromBlock", input.fromBlock)]),
+  );
 }
 
 export function draftExitEdgeKey(input: {

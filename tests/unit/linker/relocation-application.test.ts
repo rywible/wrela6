@@ -54,7 +54,7 @@ describe("resolved relocation application", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected relocation application");
-    expect(bytesAt(result.value.sections, ".text", 0, 4)).toEqual(expectedBytes);
+    expect(Array.from(bytesAt(result.value.sections, ".text", 0, 4))).toEqual([...expectedBytes]);
     expect(result.value.appliedRelocations[0]).toEqual(
       expect.objectContaining({
         relocationKey: `module:test:reloc:reloc:reloc:${family}`,
@@ -66,7 +66,7 @@ describe("resolved relocation application", () => {
         targetRva: 0x1004,
         addend: 0n,
         expectedEncodedValue: 1n,
-        patchedBytes: expectedBytes,
+        patchedBytes: Uint8Array.from(expectedBytes),
       }),
     );
   });
@@ -100,7 +100,9 @@ describe("resolved relocation application", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected relocation application");
-    expect(bytesAt(result.value.sections, ".text", 0, 8)).toEqual([0, 0, 0, 0, 0, 32, 0, 0]);
+    expect(Array.from(bytesAt(result.value.sections, ".text", 0, 8))).toEqual([
+      0, 0, 0, 0, 0, 32, 0, 0,
+    ]);
     expect(result.value.appliedRelocations.map((relocation) => relocation.family)).toEqual([
       "pageoffset-12a",
       "pagebase-rel21",
@@ -136,7 +138,7 @@ describe("resolved relocation application", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected relocation application");
-    expect(bytesAt(result.value.sections, ".text", 4, 4)).toEqual([0, 4, 0, 0]);
+    expect(Array.from(bytesAt(result.value.sections, ".text", 4, 4))).toEqual([0, 4, 0, 0]);
   });
 
   test("addr64 writes image-base address, records dir64 base relocation, and does not mutate inputs", () => {
@@ -157,12 +159,14 @@ describe("resolved relocation application", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected relocation application");
-    expect(originalDataSection?.bytes).toEqual(originalBytes);
-    expect(result.value.sections.find((section) => section.stableKey === ".data")?.bytes).toEqual([
-      7, 16, 0, 0, 0, 0, 0, 0,
-    ]);
+    expect(Array.from(originalDataSection?.bytes ?? [])).toEqual(originalBytes);
+    expect(
+      Array.from(
+        result.value.sections.find((section) => section.stableKey === ".data")?.bytes ?? [],
+      ),
+    ).toEqual([7, 16, 0, 0, 0, 0, 0, 0]);
     expect(Object.isFrozen(result.value.sections[0])).toBe(true);
-    expect(Object.isFrozen(result.value.sections[0]?.bytes)).toBe(true);
+    expect(result.value.sections[0]?.bytes).toBeInstanceOf(Uint8Array);
     expect(result.value.baseRelocations).toEqual([
       {
         stableKey: "base-reloc:dir64:.data:8192",
@@ -331,9 +335,11 @@ describe("resolved relocation application", () => {
 
       expect(result.kind).toBe("ok");
       if (result.kind !== "ok") throw new Error("expected relocation application");
-      expect(result.value.sections.find((section) => section.stableKey === ".data")?.bytes).toEqual(
-        expectedDataBytes,
-      );
+      expect(
+        Array.from(
+          result.value.sections.find((section) => section.stableKey === ".data")?.bytes ?? [],
+        ),
+      ).toEqual([...expectedDataBytes]);
       expect(result.value.baseRelocations).toEqual([]);
     },
   );
@@ -499,11 +505,11 @@ function bytesAt(
   sectionKey: string,
   offset: number,
   length: number,
-): readonly number[] {
+): Uint8Array {
   return (
     sections
       .find((section) => section.stableKey === sectionKey)
-      ?.bytes.slice(offset, offset + length) ?? []
+      ?.bytes.slice(offset, offset + length) ?? new Uint8Array()
   );
 }
 

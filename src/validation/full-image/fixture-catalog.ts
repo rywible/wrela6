@@ -40,22 +40,36 @@ const POSITIVE_PACKET_COUNTER_FIXTURE_BYTES = Object.freeze([
 const ENABLED_TARGET_FEATURES_BY_SCENARIO = Object.freeze({
   "smoke-console": Object.freeze([]),
   "packet-counter": Object.freeze([UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_FEATURE]),
+  "packet-counter-real-stream": Object.freeze([
+    UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_FEATURE,
+  ]),
+  "two-branch-control-flow": Object.freeze([]),
   "status-error": Object.freeze([]),
   "watchdog-or-boot-policy": Object.freeze([]),
+  "stdlib-core-option-result": Object.freeze([]),
+  "stdlib-bits": Object.freeze([]),
 } satisfies Record<FullImageValidationScenarioKey, readonly string[]>);
 const EXPECTED_CONSOLE_MARKERS_BY_SCENARIO = Object.freeze({
   "smoke-console": Object.freeze(["WRELA_UEFI_SMOKE_OK"]),
   "packet-counter": Object.freeze(["WRELA_PACKET_COUNTER_OK"]),
+  "packet-counter-real-stream": Object.freeze(["WRELA_PACKET_COUNTER_OK"]),
+  "two-branch-control-flow": Object.freeze(["WRELA_TWO_BRANCH_OK"]),
   "status-error": Object.freeze([]),
   "watchdog-or-boot-policy": Object.freeze([]),
+  "stdlib-core-option-result": Object.freeze([]),
+  "stdlib-bits": Object.freeze([]),
 } satisfies Record<FullImageValidationScenarioKey, readonly string[]>);
 const EXPECTED_OPTIONAL_FIELDS_BY_SCENARIO = Object.freeze({
   "smoke-console": Object.freeze({}),
   "packet-counter": Object.freeze({}),
+  "packet-counter-real-stream": Object.freeze({}),
+  "two-branch-control-flow": Object.freeze({}),
   "status-error": Object.freeze({ expectedStatus: "bad_buffer_size" as const }),
   "watchdog-or-boot-policy": Object.freeze({
     expectedPrimitive: "set_watchdog_timer" as const,
   }),
+  "stdlib-core-option-result": Object.freeze({}),
+  "stdlib-bits": Object.freeze({}),
 } satisfies Record<
   FullImageValidationScenarioKey,
   {
@@ -69,6 +83,9 @@ export type PacketCounterFixtureByteCase =
   | "packet-counter/toolchain-stdlib"
   | "packet-counter/ejected-stdlib"
   | "packet-counter/direct-platform"
+  | "packet-counter-real-stream/toolchain-stdlib"
+  | "packet-counter-real-stream/ejected-stdlib"
+  | "packet-counter-real-stream/direct-platform"
   | "packet-counter-bad-payload/toolchain-stdlib";
 
 export function packetCounterFixtureBytes(
@@ -167,6 +184,7 @@ function validationFixturePacketSourceForFullImageCase(input: FullImageValidatio
 } {
   switch (input.scenario) {
     case "packet-counter":
+    case "packet-counter-real-stream":
       return {
         validationFixturePacketSource: Object.freeze({
           primitiveId: UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID,
@@ -176,8 +194,11 @@ function validationFixturePacketSourceForFullImageCase(input: FullImageValidatio
         }),
       };
     case "smoke-console":
+    case "two-branch-control-flow":
     case "status-error":
     case "watchdog-or-boot-policy":
+    case "stdlib-core-option-result":
+    case "stdlib-bits":
       return {};
   }
 }

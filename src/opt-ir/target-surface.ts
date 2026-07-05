@@ -51,6 +51,11 @@ export interface OptIrAtomicAndVolatilePolicy {
   readonly volatileStore: "preserveOrdering" | "lowerToRuntimeCall" | "reject";
 }
 
+export interface OptIrEndianFoldContract {
+  readonly permitsFirmwareEndianFold: boolean;
+  readonly permitsVolatileEndianFold: boolean;
+}
+
 export type OptIrIntrinsicLowering =
   | {
       readonly kind: "targetInstruction";
@@ -75,6 +80,18 @@ export interface OptIrIntrinsicLoweringSurface {
 
 export interface OptIrSourceTypeAbiSurface {
   readonly lowerType: (type: CheckedType) => OptIrType | undefined;
+  readonly lowerSwitchCaseLabel?: (input: {
+    readonly type: CheckedType;
+    readonly label: string;
+  }) => string | undefined;
+  readonly lowerSwitchCasePayload?: (input: {
+    readonly type: CheckedType;
+    readonly label: string;
+    readonly payloadType: CheckedType;
+  }) => { readonly kind: "scrutinee" } | undefined;
+  readonly lowerEmptyConstruct?: (input: {
+    readonly type: CheckedType;
+  }) => { readonly kind: "integerConstant"; readonly value: bigint } | undefined;
 }
 
 export interface OptIrTargetSurface {
@@ -86,5 +103,6 @@ export interface OptIrTargetSurface {
   readonly runtimeEffects: OptIrTargetEffectCatalog;
   readonly vector: OptIrVectorFeatureSurface;
   readonly atomicAndVolatile: OptIrAtomicAndVolatilePolicy;
+  readonly endianFoldContract: OptIrEndianFoldContract;
   readonly intrinsicLowering: OptIrIntrinsicLoweringSurface;
 }

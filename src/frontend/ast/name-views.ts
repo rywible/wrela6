@@ -1,5 +1,6 @@
 import { AstView } from "./ast-view";
-import { childNameTokens, presentTokenText } from "./syntax-query";
+import { childNameTokens, presentTokenSpan, presentTokenText } from "./syntax-query";
+import { SourceSpan } from "../lexer";
 import { RedNode, RedToken, SyntaxKind } from "../syntax";
 
 export class DottedModuleNameView extends AstView {
@@ -16,6 +17,14 @@ export class DottedModuleNameView extends AstView {
       .map((token) => presentTokenText(token))
       .filter((text): text is string => text !== undefined);
     return segments.length === 0 ? undefined : segments.join(".");
+  }
+
+  textSpan(): SourceSpan | undefined {
+    const segmentSpans = this.segments()
+      .map((token) => presentTokenSpan(token))
+      .filter((span): span is SourceSpan => span !== undefined);
+    if (segmentSpans.length === 0) return undefined;
+    return SourceSpan.from(segmentSpans[0]!.start, segmentSpans[segmentSpans.length - 1]!.end);
   }
 }
 

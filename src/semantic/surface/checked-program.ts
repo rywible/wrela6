@@ -347,49 +347,65 @@ export class CheckedProgramBuilder {
   private proofSurface: CheckedProofSurface | undefined;
   private monoClosureFacts: CheckedMonoClosureFacts | undefined;
   private validatedBufferFieldModels: ValidatedBufferFieldModel[] = [];
+  private cachedProgram: CheckedSemanticProgram | undefined;
+
+  private invalidateCache(): void {
+    this.cachedProgram = undefined;
+  }
 
   addType(record: CheckedTypeRecord): void {
+    this.invalidateCache();
     this.typeRecords.push(record);
   }
 
   addFunctionSignature(signature: CheckedFunctionSignature): void {
+    this.invalidateCache();
     this.functionRecords.push(signature);
   }
 
   addField(record: CheckedFieldRecord): void {
+    this.invalidateCache();
     this.fieldRecords.push(record);
   }
 
   addGenericParameter(record: CheckedGenericParameterRecord): void {
+    this.invalidateCache();
     this.genericParamRecords.push(record);
   }
 
   addCompletedMember(entry: CompletedMemberReference): void {
+    this.invalidateCache();
     this.completedMemberEntries.push(entry);
   }
 
   addCertifiedPlatformBinding(binding: CertifiedPlatformBinding): void {
+    this.invalidateCache();
     this.platformBindingRecords.push(binding);
   }
 
   addCompilerIntrinsicCall(call: CheckedCompilerIntrinsicCall): void {
+    this.invalidateCache();
     this.compilerIntrinsicCallRecords.push(call);
   }
 
   setProofSurface(surface: CheckedProofSurface): void {
+    this.invalidateCache();
     this.proofSurface = surface;
   }
 
   setMonoClosureFacts(facts: CheckedMonoClosureFacts): void {
+    this.invalidateCache();
     this.monoClosureFacts = facts;
   }
 
   setValidatedBufferFieldModels(models: readonly ValidatedBufferFieldModel[]): void {
+    this.invalidateCache();
     this.validatedBufferFieldModels = [...models];
   }
 
   build(): CheckedSemanticProgram {
-    return {
+    if (this.cachedProgram !== undefined) return this.cachedProgram;
+    const program = {
       types: checkedTypeTable(this.typeRecords),
       functions: checkedFunctionSignatureTable(this.functionRecords),
       fields: checkedFieldTable(this.fieldRecords),
@@ -401,5 +417,7 @@ export class CheckedProgramBuilder {
       monoClosureFacts: this.monoClosureFacts ?? checkedMonoClosureFactsEmpty(),
       validatedBufferFields: validatedBufferFieldModelTable(this.validatedBufferFieldModels),
     };
+    this.cachedProgram = program;
+    return program;
   }
 }

@@ -28,6 +28,26 @@ export type OptIrRegionOwner =
 export type OptIrRegionLifetime = "activation" | "program" | "external" | "constant";
 export type OptIrRegionVolatility = "nonVolatile" | "volatile";
 
+export type OptIrRegionOptimization =
+  | {
+      readonly kind: "scalarReplaced";
+      readonly fields: readonly {
+        readonly regionId: OptIrRegionId;
+        readonly byteOffset: bigint;
+        readonly byteWidth: number;
+      }[];
+    }
+  | {
+      readonly kind: "scalarReplacementField";
+      readonly sourceRegionId: OptIrRegionId;
+      readonly byteOffset: bigint;
+      readonly byteWidth: number;
+    }
+  | {
+      readonly kind: "stackPromoted";
+      readonly sourceKind: OptIrRegionKind;
+    };
+
 export interface OptIrRegion {
   readonly regionId: OptIrRegionId;
   readonly kind: OptIrRegionKind;
@@ -38,4 +58,5 @@ export interface OptIrRegion {
   readonly volatility: OptIrRegionVolatility;
   readonly effects: OptIrRegionEffectPolicy;
   readonly origin: OptIrOrigin;
+  readonly optimization?: OptIrRegionOptimization;
 }

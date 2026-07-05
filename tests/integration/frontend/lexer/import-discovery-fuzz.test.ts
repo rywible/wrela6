@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import fastCheck from "fast-check";
+import { SourceFileView } from "../../../../src/frontend/ast/declaration-views";
 import { CollectingDiagnosticSink } from "../../../../src/frontend/lexer/diagnostics";
-import { ImportDiscovery } from "../../../../src/frontend/lexer/import-discovery";
 import { KeywordTable } from "../../../../src/frontend/lexer/keyword-table";
 import { Lexer } from "../../../../src/frontend/lexer/lexer";
-import type { ModuleImportRequest } from "../../../../src/frontend/lexer/module-import-request";
-import { ModulePath } from "../../../../src/frontend/lexer/module-path";
 import { SourceText } from "../../../../src/frontend/lexer/source-text";
+import { Parser } from "../../../../src/frontend/parser/parser";
 
 interface ImportSnapshot {
   moduleName: string;
@@ -22,19 +21,28 @@ function discoverImports(input: string): {
   const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
   const source = SourceText.from("imports.wr", input);
   const result = lexer.lex(source);
-  const imports = new ImportDiscovery({ diagnostics }).discover({
-    importer: ModulePath.from("imports.wr"),
-    source,
-    tokens: result.tokens,
-  });
+  const parseResult = new Parser().parse({ source, tokens: result.tokens });
+  const sourceFile = SourceFileView.fromRoot(parseResult.tree.root());
+  const imports = sourceFile?.imports() ?? [];
 
   return {
-    imports: imports.map((request: ModuleImportRequest) => ({
-      moduleName: request.moduleName,
-      span: [request.span.start, request.span.end],
-      spanText: source.slice(request.span),
-    })),
-    diagnostics: diagnostics.diagnostics.map((diagnostic) => diagnostic.code),
+    imports: imports.flatMap((declaration) => {
+      const moduleName = declaration.moduleName();
+      const moduleNameText = moduleName?.text();
+      const moduleNameSpan = moduleName?.textSpan();
+      if (moduleNameText === undefined || moduleNameSpan === undefined) return [];
+      return [
+        {
+          moduleName: moduleNameText,
+          span: [moduleNameSpan.start, moduleNameSpan.end] as const,
+          spanText: source.slice(moduleNameSpan),
+        },
+      ];
+    }),
+    diagnostics: [
+      ...diagnostics.diagnostics.map((diagnostic) => diagnostic.code),
+      ...parseResult.parserDiagnostics.map((diagnostic) => diagnostic.code),
+    ],
   };
 }
 

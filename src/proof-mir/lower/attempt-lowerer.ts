@@ -1,13 +1,9 @@
-import { hirStatementId } from "../../hir/ids";
-import { instantiatedHirId, type MonoInstanceId } from "../../mono/ids";
-import type {
-  MonoAttempt,
-  MonoCheckedType,
-  MonoExpression,
-  MonoStatementId,
-} from "../../mono/mono-hir";
+import type { MonoInstanceId } from "../../mono/ids";
+import type { MonoAttempt, MonoCheckedType, MonoExpression } from "../../mono/mono-hir";
 import { proofMetadataIdKey } from "../../mono/proof-metadata-tables";
+import { coreTypeId } from "../../semantic/ids";
 import type { ConcreteResourceKind } from "../../semantic/surface/resource-kind";
+import { coreCheckedType } from "../../semantic/surface/type-model";
 import type { ProofMirCanonicalKey } from "../canonicalization/canonical-keys";
 import {
   proofMirDiagnostic,
@@ -21,12 +17,7 @@ import type {
   DraftProofMirGraphStatementSnapshot,
   DraftProofMirStatementKind,
 } from "../draft/draft-statement";
-import {
-  proofMirPlaceId,
-  proofMirValueId,
-  type ProofMirPlaceId,
-  type ProofMirValueId,
-} from "../ids";
+import { createAttemptIdAllocator, type ProofMirAttemptIdAllocator } from "./attempt-id-allocator";
 import { operandPlaceKey, operandValueKey, type ProofMirDraftOperand } from "./lowering-operands";
 import { setEmptyArmUnreachableTerminator } from "./empty-arm-terminator";
 import {
@@ -38,6 +29,8 @@ import {
   type ProofMirLoweringContext,
   type ProofMirLoweringResult,
 } from "./lowering-context";
+
+const attemptResultMonoType = coreCheckedType(coreTypeId("AttemptResult")) as MonoCheckedType;
 
 export interface DraftRecordedProofMirAttemptStatement {
   readonly statementKey: ProofMirCanonicalKey;
@@ -53,12 +46,6 @@ export interface ProofMirAttemptRecorder {
 export interface CreateProofMirAttemptLowererInput {
   readonly expression: ProofMirExpressionLowerer;
   readonly recorder?: ProofMirAttemptRecorder;
-}
-
-interface ProofMirAttemptIdAllocator {
-  valueForKey(key: ProofMirCanonicalKey): ProofMirValueId;
-  placeForKey(key: ProofMirCanonicalKey): ProofMirPlaceId;
-  nextMonoStatementId(functionInstanceId: MonoInstanceId): MonoStatementId;
 }
 
 interface LoweredAttemptStart {
@@ -96,38 +83,6 @@ function createAttemptRecorder(): ProofMirAttemptRecorder {
   };
 }
 
-function createAttemptIdAllocator(): ProofMirAttemptIdAllocator {
-  let nextPlace = 0;
-  let nextValue = 0;
-  let nextMonoStatement = 1;
-  const placeKeys = new Map<ProofMirCanonicalKey, ProofMirPlaceId>();
-  const valueKeys = new Map<ProofMirCanonicalKey, ProofMirValueId>();
-
-  return {
-    valueForKey(key) {
-      const existing = valueKeys.get(key);
-      if (existing !== undefined) {
-        return existing;
-      }
-      const id = proofMirValueId(nextValue++);
-      valueKeys.set(key, id);
-      return id;
-    },
-    placeForKey(key) {
-      const existing = placeKeys.get(key);
-      if (existing !== undefined) {
-        return existing;
-      }
-      const id = proofMirPlaceId(nextPlace++);
-      placeKeys.set(key, id);
-      return id;
-    },
-    nextMonoStatementId(functionInstanceId) {
-      return instantiatedHirId(functionInstanceId, hirStatementId(nextMonoStatement++));
-    },
-  };
-}
-
 function invalidAttemptOperandDiagnostic(input: {
   readonly functionInstanceId: MonoInstanceId;
   readonly attempt: MonoAttempt;
@@ -152,7 +107,7 @@ function originForAttempt(
 ): ProofMirCanonicalKey {
   return context.originMap.fromMonoProof({
     owner: { kind: "function", functionInstanceId: context.functionInstanceId },
-    sourceOrigin: attempt.sourceOrigin as never,
+    sourceOrigin: attempt.sourceOrigin,
     monoProofId: attempt.attemptId,
   });
 }
@@ -163,7 +118,7 @@ function originForExpression(
 ): ProofMirCanonicalKey {
   return context.originMap.fromMonoExpression({
     owner: { kind: "function", functionInstanceId: context.functionInstanceId },
-    sourceOrigin: expression.sourceOrigin as never,
+    sourceOrigin: expression.sourceOrigin,
     monoExpressionId: expression.expressionId,
   });
 }
@@ -226,7 +181,7 @@ function allocatePendingResultPlace(input: {
   const placeKey = input.context.effects.placeFromTemporary({
     ordinal: Number(input.attempt.attemptId.hirId),
     originKey: input.originKey,
-    type: { kind: "primitive", name: "AttemptResult" } as never,
+    type: attemptResultMonoType,
     resourceKind: "Affine",
   });
   void input.idAllocator.placeForKey(placeKey);

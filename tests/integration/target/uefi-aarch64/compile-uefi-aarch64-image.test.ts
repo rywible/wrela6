@@ -2,9 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { emptyOptIrFactSet } from "../../../../src/opt-ir/facts/fact-index";
 import {
   compileUefiAArch64Image,
+  compileUefiAArch64ImageWithTraceAsync,
   compileUefiAArch64ImageWithTrace,
   type PackageOptimizedOptIrAdapter,
   type UefiAArch64ImageArtifact,
+  type UefiAArch64QemuHostEffects,
+  type UefiAArch64QemuSmokeCommandPlan,
 } from "../../../../src/target/uefi-aarch64";
 import { optimizedOptIrProgramWithEntryParameterForAArch64Test } from "../../../support/target/aarch64/selection/optimized-opt-ir-fixtures";
 import {
@@ -86,6 +89,101 @@ describe("compileUefiAArch64Image", () => {
     expect(traced.trace.binarySpine.stages.map((stage) => String(stage.stageKey))).toEqual(
       binarySpineRunKeys,
     );
+  });
+
+  test("async trace API runs inline QEMU smoke through injected host effects", async () => {
+    const packageInput = uefiCompilePackageInputFixture("success");
+    expect(packageInput.kind).toBe("ok");
+    if (packageInput.kind !== "ok") return;
+    const host = fakeQemuHostEffects((command) => command.expectedConsoleMarkers.join("\n"));
+    const writtenArtifacts: UefiAArch64ImageArtifact[] = [];
+
+    const result = await compileUefiAArch64ImageWithTraceAsync({
+      packageInput: packageInput.value,
+      target: uefiTargetSurfaceFixture(),
+      artifactName: "inline-smoke.efi",
+      smoke: {
+        kind: "run",
+        config: qemuConfigForTest(),
+        hostEffects: host.effects,
+        expectedConsoleMarkers: ["WRELA_COMPILE_SMOKE_OK"],
+        timeoutMs: 1234,
+      },
+      packagePipelineDependencies: uefiAArch64PackagePipelineDependenciesForOptimizedFixture(),
+      output: {
+        writeArtifact: (artifact) => {
+          writtenArtifacts.push(artifact);
+          return {
+            kind: "ok" as const,
+            value: {},
+            diagnostics: [],
+            verification: { runs: [] },
+          };
+        },
+      },
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.artifact.smoke).toMatchObject({
+      status: "passed",
+      stableDetail: "qemu-smoke:markers-observed",
+      observedMarkers: ["WRELA_COMPILE_SMOKE_OK"],
+      targetDriverFingerprint: result.artifact.targetMetadata.targetDriverFingerprint,
+    });
+    expect(result.artifact.smoke?.stableDetail).not.toBe("qemu-smoke:separate-runner-required");
+    expect(host.timeouts).toEqual([1234]);
+    expect(host.commands).toHaveLength(1);
+    expect(host.commands[0]?.artifactName).toBe("inline-smoke.efi");
+    expect(host.writes.map((write) => write.path)).toEqual([
+      "wrela-uefi-aarch64-compile-test/EFI/BOOT/BOOTAA64.EFI",
+    ]);
+    expect(host.writes[0]?.bytes).toEqual(result.artifact.peCoffArtifact.bytes);
+    expect(writtenArtifacts).toHaveLength(1);
+    expect(writtenArtifacts[0]?.smoke).toEqual(result.artifact.smoke);
+    expect(result.verification.runs.at(-2)).toEqual({
+      verifierKey: "uefi-aarch64-compile",
+      runKey: "qemu-smoke",
+      status: "passed",
+    });
+    expect(result.verification.runs.at(-1)).toEqual({
+      verifierKey: "uefi-aarch64-compile",
+      runKey: "artifact-sink",
+      status: "passed",
+    });
+  });
+
+  test("async compile reports missing inline QEMU marker without failing artifact creation", async () => {
+    const packageInput = uefiCompilePackageInputFixture("success");
+    expect(packageInput.kind).toBe("ok");
+    if (packageInput.kind !== "ok") return;
+    const host = fakeQemuHostEffects(() => "");
+
+    const result = await compileUefiAArch64ImageWithTraceAsync({
+      packageInput: packageInput.value,
+      target: uefiTargetSurfaceFixture(),
+      artifactName: "inline-smoke-missing-marker.efi",
+      smoke: {
+        kind: "run",
+        config: qemuConfigForTest(),
+        hostEffects: host.effects,
+        expectedConsoleMarkers: ["WRELA_COMPILE_SMOKE_OK"],
+      },
+      packagePipelineDependencies: uefiAArch64PackagePipelineDependenciesForOptimizedFixture(),
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.artifact.smoke).toMatchObject({
+      status: "failed",
+      stableDetail: "qemu-smoke:missing-markers:WRELA_COMPILE_SMOKE_OK",
+      observedMarkers: [],
+    });
+    expect(result.verification.runs.at(-1)).toEqual({
+      verifierKey: "uefi-aarch64-compile",
+      runKey: "qemu-smoke",
+      status: "failed",
+    });
   });
 
   test("fails before package pipeline stages when target authentication fails", () => {
@@ -349,4 +447,44 @@ const binarySpineRunKeys = [
 
 function unsafePackagePipelineAdapter<Adapter>(value: unknown): Adapter {
   return Object.freeze(value as object) as Adapter;
+}
+
+function qemuConfigForTest() {
+  return Object.freeze({
+    qemuSystemAarch64Path: "/usr/bin/qemu-system-aarch64",
+    firmwareCodePath: "/tmp/AAVMF_CODE.fd",
+    machine: "virt" as const,
+    cpu: "cortex-a76" as const,
+    memoryMiB: 512,
+    accel: "tcg" as const,
+  });
+}
+
+function fakeQemuHostEffects(
+  stdoutForCommand: (command: UefiAArch64QemuSmokeCommandPlan) => string,
+) {
+  const commands: UefiAArch64QemuSmokeCommandPlan[] = [];
+  const timeouts: number[] = [];
+  const writes: Array<{ readonly path: string; readonly bytes: Uint8Array }> = [];
+  const effects: UefiAArch64QemuHostEffects = Object.freeze({
+    createTempDirectory: async (prefix: string) => `${prefix}compile-test`,
+    writeFile: async (path: string, bytes: Uint8Array | readonly number[]) => {
+      writes.push(Object.freeze({ path, bytes: Uint8Array.from(bytes) }));
+    },
+    copyFile: async () => {},
+    runProcess: async (command: UefiAArch64QemuSmokeCommandPlan, timeoutMs: number) => {
+      commands.push(command);
+      timeouts.push(timeoutMs);
+      return Object.freeze({
+        stdout: stdoutForCommand(command),
+        stderr: "",
+        timedOut: false,
+        cleanupFailed: false,
+        missingTools: false,
+        terminatedByHarness: true,
+      });
+    },
+    removeDirectory: async () => {},
+  });
+  return Object.freeze({ effects, commands, timeouts, writes });
 }

@@ -303,6 +303,9 @@ export function takeSessionTransferForTakeStatement(input: {
         obligationKey,
         brandKey: mirProofMetadataKey(sessionMember.brandId),
         producerEdgePathKey: operandPlaceKey,
+        ...(sessionMember.placeId === undefined
+          ? {}
+          : { memberPlaceKey: mirPlaceKey(sessionMember.placeId) }),
       };
     }
     case "validatedBufferClosure": {

@@ -585,10 +585,10 @@ Suggested responsibilities:
 The parser should not depend on lexer internals such as `Cursor`. It consumes
 public lexer tokens only.
 
-The lexer has moved from `src/lexer` to `src/frontend/lexer` so parser work
-starts in the intended module layout. The old `src/lexer` remains as a
-compatibility barrel; new frontend code should import through the frontend
-paths.
+Lexer implementation APIs live under `src/frontend/lexer` so parser work starts
+in the intended module layout. Frontend code should import through
+`src/frontend/lexer` or the frontend barrel; public callers may use root barrels
+when those barrels intentionally expose the lexer API.
 
 ## Testing Strategy
 

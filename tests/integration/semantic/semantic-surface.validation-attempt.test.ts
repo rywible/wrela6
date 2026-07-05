@@ -23,7 +23,7 @@ test("real checker emits no validation or attempt contracts from ambiguous sourc
 test("real checker emits validation contracts from explicit source validation signatures", () => {
   const result = checkSemanticSurfaceForTest([
     [
-      "main.wr",
+      "wrela_std/core.wr",
       [
         "class Validation[Ok, Err, Source]:",
         "class RawBuffer:",
@@ -31,10 +31,9 @@ test("real checker emits validation contracts from explicit source validation si
         "    params:",
         "        size: u8",
         "fn validate(source: RawBuffer) -> Validation[Packet, u32, RawBuffer]",
-        "uefi image Boot:",
-        "    fn main() -> Never",
       ].join("\n"),
     ],
+    ["main.wr", ["uefi image Boot:", "    fn main() -> Never"].join("\n")],
   ]);
 
   const contracts = result.program.proofSurface.validationContracts.entries();
@@ -52,15 +51,14 @@ test("real checker emits validation contracts from explicit source validation si
 test("real checker emits attempt contracts from explicit source attempt input metadata", () => {
   const result = checkSemanticSurfaceForTest([
     [
-      "main.wr",
+      "wrela_std/core.wr",
       [
         "class Attempt[Ok, Err, Input]:",
         "class Buffer:",
         "fn fallible(input: Buffer) -> Attempt[bool, u32, Buffer]",
-        "uefi image Boot:",
-        "    fn main() -> Never",
       ].join("\n"),
     ],
+    ["main.wr", ["uefi image Boot:", "    fn main() -> Never"].join("\n")],
   ]);
 
   const fallible = result.program.functions.entries()[0]!;
@@ -76,15 +74,14 @@ test("real checker emits attempt contracts from explicit source attempt input me
 test("real checker emits attempt contracts from source Result methods with proof-relevant receivers", () => {
   const result = checkSemanticSurfaceForTest([
     [
-      "main.wr",
+      "wrela_std/core.wr",
       [
         "class Result[Ok, Err]:",
         "private class Firmware:",
         "    fn discover(self) -> Result[bool, u32]",
-        "uefi image Boot:",
-        "    fn main() -> Never",
       ].join("\n"),
     ],
+    ["main.wr", ["uefi image Boot:", "    fn main() -> Never"].join("\n")],
   ]);
 
   const discover = result.program.functions.entries().find((func) => func.receiver !== undefined);

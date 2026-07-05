@@ -27,8 +27,8 @@ import type {
   AArch64RelocationCatalog,
 } from "../../../src/target/aarch64/backend/api/backend-catalog-interfaces";
 
-const branchToLinkageNameBytes = Object.freeze([0x00, 0x00, 0x00, 0x94]);
-const retBytes = Object.freeze([0xc0, 0x03, 0x5f, 0xd6]);
+const branchToLinkageNameBytes = Uint8Array.of(0x00, 0x00, 0x00, 0x94);
+const retBytes = Uint8Array.of(0xc0, 0x03, 0x5f, 0xd6);
 
 describe("AArch64 synthetic object providers", () => {
   test("entry provider is keyed by uefi-entry and emits a verified loader entry object", () => {
@@ -70,7 +70,7 @@ describe("AArch64 synthetic object providers", () => {
   });
 
   test("entry provider receives synthetic code bytes from the injected factory", () => {
-    const codeBytes = Object.freeze([0x00, 0x00, 0x00, 0x14]);
+    const codeBytes = Uint8Array.of(0x00, 0x00, 0x00, 0x14);
     const provider = createAArch64UefiEntrySyntheticObjectProvider({
       factory: entryObjectFactoryForTest({ entryCodeBytes: codeBytes }),
     });
@@ -135,12 +135,12 @@ describe("AArch64 synthetic object providers", () => {
 });
 
 function entryObjectFactoryForTest(
-  input: { readonly entryCodeBytes?: readonly number[] } = {},
+  input: { readonly entryCodeBytes?: Uint8Array | readonly number[] } = {},
 ): AArch64SyntheticObjectFactory {
   return {
     createEntryObject: () => ({
       kind: "ok",
-      codeBytes: input.entryCodeBytes ?? branchToLinkageNameBytes,
+      codeBytes: Uint8Array.from(input.entryCodeBytes ?? branchToLinkageNameBytes),
       relocations: [
         {
           stableKey: "reloc:entry:branch-to-boot",

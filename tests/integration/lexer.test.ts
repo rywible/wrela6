@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { CollectingDiagnosticSink } from "../../src/lexer/diagnostics";
-import { KeywordTable } from "../../src/lexer/keyword-table";
-import { Lexer } from "../../src/lexer/lexer";
-import { SourceText } from "../../src/lexer/source-text";
-import { TokenKind } from "../../src/lexer/token-kind";
+import { CollectingDiagnosticSink } from "../../src/frontend/lexer/diagnostics";
+import { KeywordTable } from "../../src/frontend/lexer/keyword-table";
+import { Lexer } from "../../src/frontend/lexer/lexer";
+import { SourceText } from "../../src/frontend/lexer/source-text";
+import { TokenKind } from "../../src/frontend/lexer/token-kind";
 
 function createLexer(): Lexer {
   const diagnostics = new CollectingDiagnosticSink();
@@ -169,7 +169,7 @@ describe("Lexer", () => {
   test("recovers from invalid characters", () => {
     const diagnostics = new CollectingDiagnosticSink();
     const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
-    const source = SourceText.from("bad.wr", "image ~ Main\n");
+    const source = SourceText.from("bad.wr", "image $ Main\n");
 
     const result = lexer.lex(source);
 
@@ -304,7 +304,7 @@ describe("Lexer", () => {
     const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
     const source = SourceText.from(
       "happy-snippet.wr",
-      "use UefiFirmware from core.uefi\n\nuefi image HelloWorld:\n",
+      "use write_smoke_marker from wrela_std.target.uefi.console\n\nuefi image HappySmokeImage:\n",
     );
 
     const result = lexer.lex(source);
@@ -315,7 +315,11 @@ describe("Lexer", () => {
       TokenKind.From,
       TokenKind.Identifier,
       TokenKind.Dot,
+      TokenKind.Identifier,
+      TokenKind.Dot,
       TokenKind.Uefi,
+      TokenKind.Dot,
+      TokenKind.Identifier,
       TokenKind.Newline,
       TokenKind.Newline,
       TokenKind.Uefi,

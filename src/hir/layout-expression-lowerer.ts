@@ -15,6 +15,7 @@ import type { HirLoweringContext } from "./lowering-context";
 import { currentHirModuleId, hirDiagnostic } from "./lowering-context";
 import type { HirOriginId } from "./ids";
 import { hirEnumCaseOrdinal } from "./enum-case-model";
+import { parseWrIntegerLiteral } from "../shared/integer-literal";
 
 export type LayoutFieldKind = "parameter" | "layout" | "derived";
 
@@ -86,7 +87,7 @@ function lowerIntegerLiteral(
     kind: "ok",
     expression: {
       kind: "integerLiteral",
-      value: BigInt(text.length > 0 ? text : "0"),
+      value: parseWrIntegerLiteral(text) ?? 0n,
       sourceOrigin,
     },
   };

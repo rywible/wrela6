@@ -42,7 +42,7 @@ describe("SourceFile parsing (integration)", () => {
     expect(children[3]!.kind).toBe(SyntaxKind.EndOfFileToken);
   });
 
-  test("identifier token becomes ExpressionStatement", () => {
+  test("identifier token is rejected as a top-level non-declaration", () => {
     const source = SourceText.from("unknown.wr", "hello");
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
@@ -52,9 +52,50 @@ describe("SourceFile parsing (integration)", () => {
     expect(result.tree.root().kind).toBe(SyntaxKind.SourceFile);
 
     const children = result.tree.root().children();
-    expect(children[0]!.kind).toBe(SyntaxKind.ExpressionStatement);
+    expect(children[0]!.kind).toBe(SyntaxKind.ErrorNode);
     expect(children[1]!.kind).toBe(SyntaxKind.EndOfFileToken);
-    expect(result.parserDiagnostics).toHaveLength(0);
+    expect(result.parserDiagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      "PARSE_EXPECTED_TOP_LEVEL_DECLARATION",
+    ]);
+  });
+
+  test("top-level recovery resumes at same-line declaration starter", () => {
+    const source = SourceText.from("same-line-recovery.wr", "banana fn foo()\n");
+    const lexResult = createLexer().lex(source);
+    const parser = new Parser();
+    const result = parser.parseLexResult({ lexResult });
+
+    expect(result.tree.reconstruct()).toBe(source.text);
+
+    const children = result.tree.root().children();
+    expect(children.map((child) => child.kind)).toEqual([
+      SyntaxKind.ErrorNode,
+      SyntaxKind.FunctionDeclaration,
+      SyntaxKind.EndOfFileToken,
+    ]);
+    expect(result.parserDiagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      "PARSE_EXPECTED_TOP_LEVEL_DECLARATION",
+    ]);
+  });
+
+  test("top-level recovery still resumes after newline before declaration starter", () => {
+    const source = SourceText.from("newline-recovery.wr", "banana\nfn foo()\n");
+    const lexResult = createLexer().lex(source);
+    const parser = new Parser();
+    const result = parser.parseLexResult({ lexResult });
+
+    expect(result.tree.reconstruct()).toBe(source.text);
+
+    const children = result.tree.root().children();
+    expect(children.map((child) => child.kind)).toEqual([
+      SyntaxKind.ErrorNode,
+      SyntaxKind.NewlineToken,
+      SyntaxKind.FunctionDeclaration,
+      SyntaxKind.EndOfFileToken,
+    ]);
+    expect(result.parserDiagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      "PARSE_EXPECTED_TOP_LEVEL_DECLARATION",
+    ]);
   });
 
   test("EOF is consumed exactly once as EndOfFileToken", () => {

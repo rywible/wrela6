@@ -62,6 +62,7 @@ export class ParserContext {
       message: `Expected ${SyntaxKind[kind]}.`,
       absoluteStart: this.offset,
       absoluteEnd: this.offset,
+      ...stableDiagnosticParts("PARSE_EXPECTED_TOKEN", this.offset, this.offset),
       claimed: false,
     });
 
@@ -86,6 +87,7 @@ export class ParserContext {
       message,
       absoluteStart: this.offset,
       absoluteEnd: this.offset,
+      ...stableDiagnosticParts(code, this.offset, this.offset),
       claimed: false,
     });
   }
@@ -97,6 +99,7 @@ export class ParserContext {
       message,
       absoluteStart: start,
       absoluteEnd: end,
+      ...stableDiagnosticParts(code, start, end),
       claimed: false,
     });
   }
@@ -109,6 +112,7 @@ export class ParserContext {
         message: "Parser nesting limit exceeded.",
         absoluteStart: this.offset,
         absoluteEnd: this.offset,
+        ...stableDiagnosticParts("PARSE_NESTING_LIMIT_EXCEEDED", this.offset, this.offset),
         claimed: false,
       });
       return false;
@@ -139,10 +143,47 @@ export class ParserContext {
         message: "Skipped unexpected tokens during recovery.",
         absoluteStart: start,
         absoluteEnd: end,
+        ...stableDiagnosticParts("PARSE_RECOVERY_SKIPPED_TOKENS", start, end),
         claimed: false,
       });
     }
 
     return skipped;
+  }
+}
+
+function stableDiagnosticParts(
+  code: ParseDiagnosticCode,
+  start: number,
+  end: number,
+): { readonly ownerKey: string; readonly stableDetail: string } {
+  return {
+    ownerKey: ownerKeyForParseDiagnostic(code),
+    stableDetail: `span:${start}:${end}`,
+  };
+}
+
+function ownerKeyForParseDiagnostic(code: ParseDiagnosticCode): string {
+  switch (code) {
+    case "PARSE_EXPECTED_STATEMENT_SEPARATOR":
+      return "parser:statement-separator";
+    case "PARSE_EXPECTED_TOP_LEVEL_DECLARATION":
+      return "parser:top-level-declaration";
+    case "PARSE_EXPECTED_DECLARATION":
+      return "parser:declaration";
+    case "PARSE_EXPECTED_EXPRESSION":
+      return "parser:expression";
+    case "PARSE_EXPECTED_TOKEN":
+      return "parser:token";
+    case "PARSE_NESTING_LIMIT_EXCEEDED":
+      return "parser:nesting";
+    case "PARSE_RECOVERY_SKIPPED_TOKENS":
+      return "parser:recovery";
+    case "PARSE_UNEXPECTED_TOKEN":
+      return "parser:unexpected-token";
+    case "PARSE_UNSUPPORTED_INDEX_EXPRESSION":
+      return "parser:index-expression";
+    case "PARSE_UNTERMINATED_BLOCK":
+      return "parser:block";
   }
 }

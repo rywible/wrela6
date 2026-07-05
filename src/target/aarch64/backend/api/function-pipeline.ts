@@ -2,6 +2,7 @@ import { compareCodeUnitStrings } from "../../../../shared/deterministic-sort";
 import type { AArch64MachineProgram } from "../../machine-ir/machine-program";
 import type { AArch64MachineFunction } from "../../machine-ir/machine-function";
 import type { AArch64AbiLocation as AArch64MachineAbiLocation } from "../../machine-ir/abi-location";
+import { aarch64Diagnostic } from "../../machine-ir/diagnostics";
 import type { AArch64RegisterClass } from "../../machine-ir/machine-types";
 import {
   classifyAArch64PublicAbiBoundary,
@@ -11,7 +12,6 @@ import {
   reconcileAArch64CallBoundaries,
   type AArch64ReconciledCallBoundary,
 } from "../abi/call-boundary-reconciliation";
-import { allocateAArch64Registers } from "../allocation/allocator";
 import type {
   AArch64AllocationRepairRequest,
   AArch64AllocatorInterval,
@@ -43,9 +43,12 @@ import type {
   AArch64LayoutPhysicalInstruction,
 } from "../object/layout-encode-fixed-point";
 import { verifyAArch64Allocation } from "../verify/allocation-verifier";
+import { verifyAArch64CalleeSavedAllocationPreservation } from "../../verify/abi-verifier";
 import type { AArch64BackendTargetSurface } from "./backend-target-surface";
 import type { AArch64ClosedImageBackendPlan } from "./closed-image-backend-plan";
 import {
+  aarch64BackendDiagnostic,
+  backendError,
   backendOk,
   sortAArch64BackendDiagnostics,
   type AArch64BackendDiagnostic,
@@ -89,11 +92,13 @@ import {
 } from "./post-ra-scheduler-classification";
 import {
   callLocationConstraintsForFunction,
-  constraintsByVirtualRegister,
   loweringCallBoundaries,
-  requiredPhysicalRegisterForSegment,
-  type AArch64CallLocationConstraint,
 } from "./function-call-constraints";
+import {
+  allocatorIntervalsFromLiveness,
+  runAArch64AllocationStage,
+} from "./function-pipeline/allocation-stage";
+import { calleeSavedRegistersForFrame } from "./function-pipeline/callee-saved-frame";
 
 export interface AArch64FunctionBackendArtifact {
   readonly functionKey: string;
@@ -399,26 +404,19 @@ function runSemanticStagesForFunction(
       (register) => !fixedCallRegisters.includes(register),
     ),
   );
-  const allocationPools = allocationRegisterPools(target);
   const boundaryUnavailableRegisters = unavailableRegistersFromCallBoundaries(
     reconciled.value.boundaries,
   ).filter((register) => !fixedCallRegisters.includes(register));
   const allocationStage = runAArch64FunctionStage({
     stageKey: "allocate-registers",
-    execute: () => {
-      const result = allocateAArch64Registers({
-        intervals: allocatorIntervals,
-        availableGprs: allocationPools.gprs,
-        availableVectorRegisters: allocationPools.vectors,
-        availableFpRegisters: allocationPools.fps,
-        unavailableRegisters: uniqueSortedRegisters([
-          ...scratchRegisters,
-          ...boundaryUnavailableRegisters,
-        ]),
-        aliases: physicalAliases,
-      });
-      return result.kind === "error" ? result : backendOk(result.allocation, result.diagnostics);
-    },
+    execute: () =>
+      runAArch64AllocationStage({
+        allocatorIntervals,
+        target,
+        physicalAliases,
+        scratchRegisters,
+        boundaryUnavailableRegisters,
+      }),
   });
   if (allocationStage.kind === "error") return allocationStage;
   const allocation = allocationStage.value;
@@ -465,13 +463,43 @@ function runSemanticStagesForFunction(
     },
   });
   if (verified.kind === "error") return verified;
+  const savedRegisters = calleeSavedRegistersForFrame({
+    allocation,
+    registerModel: target.registerModel,
+    saveLinkRegister: reconciled.value.boundaries.length > 0,
+  });
+  const verifiedCalleeSaved = runAArch64FunctionStage({
+    stageKey: "verify-allocation",
+    execute: () => {
+      const diagnostics = verifyAArch64CalleeSavedAllocationPreservation({
+        allocation,
+        savedRegisters,
+        registerModel: target.registerModel,
+        context: {
+          makeDiagnostic: aarch64Diagnostic,
+        },
+      });
+      if (diagnostics.length === 0) return backendOk(undefined);
+      return backendError(
+        diagnostics.map((diagnostic) =>
+          aarch64BackendDiagnostic({
+            code: "AARCH64_BACKEND_ABI_INVALID",
+            ownerKey: diagnostic.ownerKey,
+            rootCauseKey: diagnostic.rootCauseKey,
+            stableDetail: `${diagnostic.code}:${diagnostic.stableDetail}`,
+          }),
+        ),
+      );
+    },
+  });
+  if (verifiedCalleeSaved.kind === "error") return verifiedCalleeSaved;
   const frame = runAArch64FunctionStage({
     stageKey: "layout-frames",
     execute: () =>
       layoutAArch64StackFrame({
         functionKey,
         spillSlots: repair.value.spillSlots,
-        savedRegisters: reconciled.value.boundaries.length === 0 ? [] : ["x30"],
+        savedRegisters,
       }),
   });
   if (frame.kind === "error") return frame;
@@ -631,61 +659,6 @@ function runSemanticStagesForFunction(
       ),
     }),
   };
-}
-
-function allocatorIntervalsFromLiveness(
-  intervals: ReturnType<typeof buildAArch64LiveIntervals>["intervals"],
-  interference: ReturnType<typeof buildAArch64InterferenceGraph>,
-  callLocationConstraints: readonly AArch64CallLocationConstraint[],
-): readonly AArch64AllocatorInterval[] {
-  const constraintsByVreg = constraintsByVirtualRegister(callLocationConstraints);
-  return Object.freeze(
-    intervals.flatMap((interval) =>
-      interval.segments.map((segment) => ({
-        liveRangeKey: interval.liveRangeKey,
-        vreg: interval.vreg,
-        registerClass: registerClassForAllocation(interval.registerClass),
-        startOrder: segment.startOrder,
-        endOrder: segment.endOrder,
-        cutPoints: interval.cutPoints,
-        physicalInterferences: interference.physicalInterferencesFor(interval.vreg),
-        ...requiredPhysicalRegisterForSegment(segment, constraintsByVreg.get(interval.vreg)),
-        noSpill: interval.noSpill,
-      })),
-    ),
-  );
-}
-
-function allocationRegisterPools(target: AArch64BackendTargetSurface): {
-  readonly gprs: readonly string[];
-  readonly vectors: readonly string[];
-  readonly fps: readonly string[];
-} {
-  const allocatable = target.registerModel.registers.filter(
-    (register) => register.isAllocatable && target.registerModel.canAllocate(register.stableKey),
-  );
-  return Object.freeze({
-    gprs: allocatableRegisterKeys(allocatable, (register) => /^x\d+$/.test(register.stableKey)),
-    vectors: allocatableRegisterKeys(allocatable, (register) => /^v\d+$/.test(register.stableKey)),
-    fps: allocatableRegisterKeys(allocatable, (register) => /^d\d+$/.test(register.stableKey)),
-  });
-}
-
-function allocatableRegisterKeys(
-  registers: readonly { readonly stableKey: string; readonly encodingNumber: number }[],
-  predicate: (register: { readonly stableKey: string; readonly encodingNumber: number }) => boolean,
-): readonly string[] {
-  return Object.freeze(
-    registers
-      .filter(predicate)
-      .sort((left, right) => {
-        return (
-          left.encodingNumber - right.encodingNumber ||
-          compareCodeUnitStrings(left.stableKey, right.stableKey)
-        );
-      })
-      .map((register) => register.stableKey),
-  );
 }
 
 function machineCallSitesForFunction(
@@ -865,18 +838,4 @@ function abiValueForMachineLocation(
     sizeBytes: location.size,
     alignmentBytes: location.alignment,
   });
-}
-
-function registerClassForAllocation(
-  registerClass: AArch64RegisterClass,
-): AArch64BackendRegisterClass {
-  switch (registerClass) {
-    case "gpr64":
-    case "gpr32":
-    case "vector128":
-    case "vector64":
-      return registerClass;
-    case "fpScalar":
-      return "fp";
-  }
 }

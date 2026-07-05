@@ -13,7 +13,7 @@ const QEMU_HARNESS_FORCE_KILL_GRACE_MS = 500;
 export function nodeUefiAArch64QemuHostEffects(): UefiAArch64QemuHostEffects {
   return Object.freeze({
     createTempDirectory: async (prefix: string): Promise<string> => mkdtemp(join(tmpdir(), prefix)),
-    writeFile: async (path: string, bytes: readonly number[]): Promise<void> => {
+    writeFile: async (path: string, bytes: Uint8Array | readonly number[]): Promise<void> => {
       await mkdir(dirname(path), { recursive: true });
       await writeFile(path, Uint8Array.from(bytes));
     },

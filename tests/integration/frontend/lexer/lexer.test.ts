@@ -118,7 +118,10 @@ describe("Lexer", () => {
   test("lexes punctuation and compound operators", () => {
     const diagnostics = new CollectingDiagnosticSink();
     const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
-    const source = SourceText.from("operators.wr", "(a) -> b => c == d != e <= f >= g ?\n");
+    const source = SourceText.from(
+      "operators.wr",
+      "(a) -> b => c == d != e <= f >= g & h | i ^ j << k >> l ~m ?\n",
+    );
 
     const result = lexer.lex(source);
 
@@ -138,11 +141,43 @@ describe("Lexer", () => {
       TokenKind.Identifier,
       TokenKind.GreaterEquals,
       TokenKind.Identifier,
+      TokenKind.Ampersand,
+      TokenKind.Identifier,
+      TokenKind.Pipe,
+      TokenKind.Identifier,
+      TokenKind.Caret,
+      TokenKind.Identifier,
+      TokenKind.LeftShift,
+      TokenKind.Identifier,
+      TokenKind.RightShift,
+      TokenKind.Identifier,
+      TokenKind.Tilde,
+      TokenKind.Identifier,
       TokenKind.Question,
       TokenKind.Newline,
       TokenKind.Eof,
     ]);
     expect(result.tokens.reconstruct()).toBe(source.text);
+  });
+
+  test("lexes boolean and logical operator keywords as reserved tokens", () => {
+    const diagnostics = new CollectingDiagnosticSink();
+    const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+    const source = SourceText.from("booleans.wr", "true and false or value\n");
+
+    const result = lexer.lex(source);
+
+    expect(result.tokens.kinds()).toEqual([
+      TokenKind.True,
+      TokenKind.And,
+      TokenKind.False,
+      TokenKind.Or,
+      TokenKind.Identifier,
+      TokenKind.Newline,
+      TokenKind.Eof,
+    ]);
+    expect(result.tokens.reconstruct()).toBe(source.text);
+    expect(diagnostics.diagnostics).toEqual([]);
   });
 
   test("lexes integer and string literals", () => {
@@ -169,7 +204,7 @@ describe("Lexer", () => {
   test("recovers from invalid characters", () => {
     const diagnostics = new CollectingDiagnosticSink();
     const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
-    const source = SourceText.from("bad.wr", "image ~ Main\n");
+    const source = SourceText.from("bad.wr", "image $ Main\n");
 
     const result = lexer.lex(source);
 
@@ -304,7 +339,7 @@ describe("Lexer", () => {
     const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
     const source = SourceText.from(
       "happy-snippet.wr",
-      "use UefiFirmware from core.uefi\n\nuefi image HelloWorld:\n",
+      "use write_smoke_marker from wrela_std.target.uefi.console\n\nuefi image HappySmokeImage:\n",
     );
 
     const result = lexer.lex(source);
@@ -315,7 +350,11 @@ describe("Lexer", () => {
       TokenKind.From,
       TokenKind.Identifier,
       TokenKind.Dot,
+      TokenKind.Identifier,
+      TokenKind.Dot,
       TokenKind.Uefi,
+      TokenKind.Dot,
+      TokenKind.Identifier,
       TokenKind.Newline,
       TokenKind.Newline,
       TokenKind.Uefi,

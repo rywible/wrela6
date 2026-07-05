@@ -26,7 +26,7 @@ describe("recovery dispatch", () => {
     expect(result.tree.reconstruct()).toBe(source.text);
 
     const recoveryDiag = result.parserDiagnostics.find(
-      (diagnostic) => diagnostic.code === "PARSE_RECOVERY_SKIPPED_TOKENS",
+      (diagnostic) => diagnostic.code === "PARSE_EXPECTED_TOP_LEVEL_DECLARATION",
     );
     expect(recoveryDiag).toBeDefined();
 
@@ -39,7 +39,10 @@ describe("recovery dispatch", () => {
   });
 
   test("malformed block items produce SkippedTokens and later statements parse", () => {
-    const source = SourceText.from("block.wr", "if true:\n    @\n    x = 1\n");
+    const source = SourceText.from(
+      "block.wr",
+      "fn main() -> Never:\n    if true:\n        @\n        x = 1\n",
+    );
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });

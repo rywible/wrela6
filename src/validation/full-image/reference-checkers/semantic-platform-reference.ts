@@ -1,6 +1,9 @@
 import { compareCodeUnitStrings } from "../../../shared/deterministic-sort";
 import { uefiAArch64PlatformPrimitiveNameCatalog } from "../../../target/uefi-aarch64";
-import { UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID } from "../../../target/uefi-aarch64/validation-fixture-packet-rule";
+import {
+  UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID,
+  UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_STREAM_PRIMITIVE_ID,
+} from "../../../target/uefi-aarch64/validation-fixture-packet-rule";
 import type {
   FullImageValidationCheckReport,
   FullImageValidationEvidenceAuthority,
@@ -23,13 +26,21 @@ const PACKET_COUNTER_UEFI_SOURCE_PRIMITIVES = Object.freeze([
 ]);
 const EXPECTED_REACHABLE_PRIMITIVES_BY_SCENARIO = Object.freeze({
   "smoke-console": Object.freeze(["uefi.console.outputString"]),
+  "two-branch-control-flow": Object.freeze(["uefi.console.outputString"]),
   "packet-counter": Object.freeze([
     "uefi.console.outputString",
     ...PACKET_COUNTER_UEFI_SOURCE_PRIMITIVES,
     UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID,
   ]),
+  "packet-counter-real-stream": Object.freeze([
+    "uefi.console.outputString",
+    ...PACKET_COUNTER_UEFI_SOURCE_PRIMITIVES,
+    UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_STREAM_PRIMITIVE_ID,
+  ]),
   "status-error": Object.freeze([]),
   "watchdog-or-boot-policy": Object.freeze(["uefi.boot.setWatchdogTimer"]),
+  "stdlib-core-option-result": Object.freeze([]),
+  "stdlib-bits": Object.freeze([]),
 } satisfies Record<FullImageValidationScenarioKey, readonly string[]>);
 
 export function semanticPlatformReferenceChecker(): FullImageReferenceChecker {

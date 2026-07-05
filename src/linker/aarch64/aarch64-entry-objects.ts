@@ -50,7 +50,7 @@ export interface AArch64EntryObjectFactoryInput {
 export type AArch64SyntheticEntryObjectFactoryResult =
   | {
       readonly kind: "ok";
-      readonly codeBytes: readonly number[];
+      readonly codeBytes: Uint8Array;
       readonly relocations: readonly AArch64EntryObjectRelocationFactoryOutput[];
       readonly unwindRecords?: readonly AArch64ObjectUnwindRecord[];
     }
@@ -87,8 +87,8 @@ export type AArch64SyntheticUnwindObjectFactoryResult =
 
 export interface AArch64UnwindObjectFactoryOutput {
   readonly objectKey: string;
-  readonly pdataBytes: readonly number[];
-  readonly xdataBytes: readonly number[];
+  readonly pdataBytes: Uint8Array;
+  readonly xdataBytes: Uint8Array;
   readonly functionLinkageName: string;
   readonly frameShape: string;
   readonly pdataRelocation: AArch64UnwindObjectRelocationFactoryOutput;

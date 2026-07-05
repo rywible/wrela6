@@ -241,6 +241,7 @@ export function proofMirRuntimeCatalogWithUefiOperations(
 
   return proofMirRuntimeCatalogFake({
     targetId: targetId("wrela-uefi-aarch64-rpi5-v1"),
+    features: ["streamLoop"],
     operations,
     fingerprintName: "proof-mir-runtime:uefi-test",
     targetName: "wrela-uefi-aarch64-rpi5-v1",

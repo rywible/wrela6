@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -82,6 +82,38 @@ describe("BunFileRepository", () => {
     await symlink(outsideFile, symlinkPath);
 
     const repository = new BunFileRepository({ root });
+    const result = await repository.read(ModulePath.from("link.wr"));
+
+    expect(result.kind).toBe("unreadable");
+  });
+
+  test("symlink pointing inside root returns found", async () => {
+    root = await mkdtemp(join(tmpdir(), "wrela-lexer-"));
+    await writeFile(join(root, "target.wr"), "uefi image Linked:\n");
+    await symlink("target.wr", join(root, "link.wr"));
+
+    const repository = new BunFileRepository({ root });
+    const result = await repository.read(ModulePath.from("link.wr"));
+
+    expect(result.kind).toBe("found");
+
+    if (result.kind === "found") {
+      expect(result.source.text).toBe("uefi image Linked:\n");
+      expect(result.source.name).toBe("link.wr");
+    }
+  });
+
+  test("symlink pointing to root-prefixed sibling returns unreadable", async () => {
+    root = await mkdtemp(join(tmpdir(), "wrela-lexer-"));
+    const repositoryRoot = join(root, "root");
+    const outsideRoot = join(root, "root-evil");
+
+    await mkdir(repositoryRoot);
+    await mkdir(outsideRoot);
+    await writeFile(join(outsideRoot, "secret.wr"), "SECRET OUTSIDE ROOT\n");
+    await symlink("../root-evil/secret.wr", join(repositoryRoot, "link.wr"));
+
+    const repository = new BunFileRepository({ root: repositoryRoot });
     const result = await repository.read(ModulePath.from("link.wr"));
 
     expect(result.kind).toBe("unreadable");

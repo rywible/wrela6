@@ -332,7 +332,7 @@ describe("AArch64 relocation math", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected patched ADRP");
-    expect(result.value.patchedBytes).toEqual([0x00, 0x00, 0x00, 0xb0]);
+    expect(Array.from(result.value.patchedBytes)).toEqual([0x00, 0x00, 0x00, 0xb0]);
     expect(result.value.encodedValue).toBe(1n);
 
     const preservesNonRelocationBits = patchAArch64InstructionRelocation({
@@ -350,7 +350,9 @@ describe("AArch64 relocation math", () => {
     if (preservesNonRelocationBits.kind !== "ok") {
       throw new Error("expected patched preserving ADRP");
     }
-    expect(preservesNonRelocationBits.value.patchedBytes).toEqual([0x1f, 0x00, 0x00, 0xbf]);
+    expect(Array.from(preservesNonRelocationBits.value.patchedBytes)).toEqual([
+      0x1f, 0x00, 0x00, 0xbf,
+    ]);
   });
 
   test("patches only declared branch bits and low12 field slices", () => {
@@ -367,7 +369,7 @@ describe("AArch64 relocation math", () => {
     });
     expect(branch.kind).toBe("ok");
     if (branch.kind !== "ok") throw new Error("expected patched branch");
-    expect(branch.value.patchedBytes).toEqual([0x01, 0x00, 0x00, 0xfc]);
+    expect(Array.from(branch.value.patchedBytes)).toEqual([0x01, 0x00, 0x00, 0xfc]);
 
     const add = patchAArch64InstructionRelocation({
       family: "pageoffset-12a",
@@ -382,7 +384,7 @@ describe("AArch64 relocation math", () => {
     });
     expect(add.kind).toBe("ok");
     if (add.kind !== "ok") throw new Error("expected patched add low12");
-    expect(add.value.patchedBytes).toEqual([0xff, 0xd3, 0xc8, 0xff]);
+    expect(Array.from(add.value.patchedBytes)).toEqual([0xff, 0xd3, 0xc8, 0xff]);
   });
 
   test("rejects invalid instruction patch requests without throwing", () => {

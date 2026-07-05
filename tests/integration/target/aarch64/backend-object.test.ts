@@ -31,7 +31,7 @@ describe("AArch64 backend object integration", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected object module");
-    expect(result.objectModule.sections[0]?.bytes).toEqual([
+    expect(Array.from(result.objectModule.sections[0]?.bytes ?? [])).toEqual([
       0x40, 0x05, 0x80, 0xd2, 0xc0, 0x03, 0x5f, 0xd6,
     ]);
     expect(result.objectModule.relocations).toEqual([]);

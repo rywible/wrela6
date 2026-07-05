@@ -135,6 +135,28 @@ describe("AArch64 integer and branch encoder", () => {
     expect([...result.value.bytes]).toEqual([0x02, 0x00, 0x01, 0x8b]);
   });
 
+  test("encodes lsl x0, x1, #3 using the immediate bitfield alias", () => {
+    const result = encodeAArch64PhysicalInstructionWithFamilies(
+      {
+        catalog: RPI5_BACKEND_CATALOGS.encodingCatalog,
+        registerModel: RPI5_BACKEND_CATALOGS.registerModel,
+        instruction: {
+          opcode: "lsl-immediate",
+          operands: [
+            { kind: "register", register: "x0" },
+            { kind: "register", register: "x1" },
+            { kind: "immediate", value: 3n },
+          ],
+        },
+      },
+      aarch64IntegerBranchEncoderFamilies,
+    );
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error("expected lsl immediate encoding");
+    expect([...result.value.bytes]).toEqual([0x20, 0xf0, 0x7d, 0xd3]);
+  });
+
   test("encodes stack pointer add/sub immediate prologue arithmetic", () => {
     const sub = encodeAArch64PhysicalInstructionWithFamilies(
       {

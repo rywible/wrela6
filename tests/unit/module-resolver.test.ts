@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { DottedModuleResolver } from "../../src/lexer/module-resolver";
-import { ModulePath } from "../../src/lexer/module-path";
-import { SourceText } from "../../src/lexer/source-text";
+import { DottedModuleResolver } from "../../src/frontend/lexer/module-resolver";
+import { ModulePath } from "../../src/frontend/lexer/module-path";
+import { SourceText } from "../../src/frontend/lexer/source-text";
 
 describe("ModulePath", () => {
   test("normalizes duplicate slashes and leading dot-slash", () => {

@@ -6,7 +6,8 @@ import {
 } from "../model/fact-packet";
 import type { ProofCheckStatePatchEntry } from "../kernel/state-patch";
 import type { ProofCheckState } from "../kernel/state";
-import { openLoan } from "./loans";
+import { closeLoan } from "./loans";
+import { openTakeStream } from "./take-session-stream-operations";
 import type {
   CheckCrossedScopeExitInput,
   CheckValidatedTakePlaceOperationInput,
@@ -14,7 +15,6 @@ import type {
   DischargeTakeMemberInput,
   DischargeTakeObligationInput,
   OpenTakeBufferInput,
-  OpenTakeStreamInput,
   OpenTakeValidatedInput,
   TakeSessionTransferInput,
   TakeSessionTransferResult,
@@ -43,47 +43,12 @@ import {
   sortedLiveSessionMembers,
   sortedOpenObligations,
   sortedOpenSessions,
-  streamLoanForProducer,
   validatedSessionForPlace,
   validatedTakePlaceDiagnostic,
   wrongSessionDischargeDiagnostic,
 } from "./take-session-support";
 
-export function openTakeStream(input: OpenTakeStreamInput): TakeSessionTransferResult {
-  const ownerKey = defaultOwnerKey(input.operationOriginKey, "proof-check:take-stream");
-  if (input.state.sessions.has(input.sessionKey)) {
-    return errorTakeTransfer([
-      openSessionAlreadyExistsDiagnostic({ sessionKey: input.sessionKey, ownerKey }),
-    ]);
-  }
-
-  const loanResult = openLoan({
-    state: input.state,
-    loan: streamLoanForProducer(input.producerEdgePathKey),
-    operationOriginKey: ownerKey,
-  });
-  if (loanResult.kind === "error") {
-    return loanResult;
-  }
-
-  const patches: ProofCheckStatePatchEntry[] = [
-    openSessionPatch({ sessionKey: input.sessionKey, brandKey: input.brandKey }),
-    ...loanResult.patches,
-  ];
-  if (!input.state.obligations.has(input.closureObligationKey)) {
-    patches.splice(
-      1,
-      0,
-      openObligationPatch({
-        obligationKey: input.closureObligationKey,
-        status: "open",
-        sessionKey: input.sessionKey,
-      }),
-    );
-  }
-
-  return { kind: "ok", patches, packetEntries: loanResult.packetEntries };
-}
+export { openTakeStream };
 
 export function openTakeObligation(input: {
   readonly state: ProofCheckState;
@@ -363,6 +328,17 @@ export function closeTakeSession(input: CloseTakeSessionInput): TakeSessionTrans
   for (const obligation of openSessionObligations) {
     patches.push(closeObligationPatch(obligation));
   }
+  if (session.streamLoanKey !== undefined) {
+    const closeLoanResult = closeLoan({
+      state: input.state,
+      loanKey: session.streamLoanKey,
+      operationOriginKey: ownerKey,
+    });
+    if (closeLoanResult.kind === "error") {
+      return closeLoanResult;
+    }
+    patches.push(...closeLoanResult.patches);
+  }
 
   return okTakeTransfer(patches);
 }
@@ -541,6 +517,7 @@ export function transferTakeSession(input: TakeSessionTransferInput): TakeSessio
         brandKey: input.brandKey,
         closureObligationKey,
         producerEdgePathKey: input.producerEdgePathKey,
+        ...(input.memberPlaceKey === undefined ? {} : { memberPlaceKey: input.memberPlaceKey }),
         operationOriginKey: input.operationOriginKey,
       });
     }

@@ -1,6 +1,7 @@
-import type { ObligationId, SessionId, BrandId } from "../../hir/ids";
+import type { ObligationId } from "../../hir/ids";
 import type {
   MonoInstantiatedProofId,
+  MonoLocal,
   MonoObligation,
   MonoStatement,
   MonoTakeKind,
@@ -15,55 +16,45 @@ import {
   sortProofMirDiagnostics,
   type ProofMirDiagnostic,
 } from "../diagnostics";
-import { type DraftProofMirEdgeEffect } from "../domains/effects-resources";
+import type { DraftProofMirEdgeEffect } from "../domains/effects-resources";
 import type {
-  DraftProofMirGraphStatementSnapshot,
-  DraftProofMirObligationReference,
   DraftProofMirSessionMemberReference,
-  DraftProofMirStatementKind,
   DraftProofMirTakeOperand,
   DraftProofMirTakeStart,
 } from "../draft/draft-statement";
-import type { ProofMirExitClosurePolicy } from "../model/graph";
 import { wireGotoEdge } from "./loop-scaffold";
-import { operandPlaceKey, type ProofMirDraftOperand } from "./lowering-operands";
+import { operandPlaceKey, operandValueKey, type ProofMirDraftOperand } from "./lowering-operands";
+import { monoPlaceForStatementLocal } from "./expression-lowerer-helpers";
+import { syncLoweredPlaceToFunctionDraft } from "./lowering-place-sync";
 import {
   type ProofMirCallLowerer,
+  type ProofMirControlFlowLowerer,
   type ProofMirExpressionLowerer,
   type ProofMirLoweringContext,
   type ProofMirLoweringResult,
   type ProofMirStatementLowerer,
   type ProofMirTakeLowerer,
+  type ProofMirTerminalLowerer,
+  type ProofMirValidationLowerer,
 } from "./lowering-context";
+import { createTakeBodyRecorder, type ProofMirTakeBodyRecorder } from "./take-body-recorder";
+import { lowerProofMirTakeBodyStatements } from "./take-body-statement-lowering";
+import { draftObligationReference, draftSessionMemberReference } from "./take-reference-builders";
 
-export interface DraftRecordedProofMirTakeStatement {
-  readonly statementKey: ProofMirCanonicalKey;
-  readonly originKey: ProofMirCanonicalKey;
-  readonly kind: DraftProofMirStatementKind;
-}
-
-export interface DraftRecordedProofMirTakeExit {
-  readonly exitKey: ProofMirCanonicalKey;
-  readonly crossedScopes: readonly ProofMirCanonicalKey[];
-  readonly closure: ProofMirExitClosurePolicy;
-  readonly allowedTransfers: readonly DraftProofMirEdgeEffect[];
-}
-
-export interface ProofMirTakeBodyRecorder {
-  readonly statements: readonly DraftRecordedProofMirTakeStatement[];
-  readonly exits: readonly DraftRecordedProofMirTakeExit[];
-  recordStatement(
-    blockKey: ProofMirCanonicalKey,
-    originKey: ProofMirCanonicalKey,
-    kind: DraftProofMirStatementKind,
-  ): void;
-  recordExit(entry: DraftRecordedProofMirTakeExit): void;
-}
+export {
+  createTakeBodyRecorder,
+  type DraftRecordedProofMirTakeExit,
+  type DraftRecordedProofMirTakeStatement,
+  type ProofMirTakeBodyRecorder,
+} from "./take-body-recorder";
 
 export interface CreateProofMirTakeLowererInput {
   readonly expression: ProofMirExpressionLowerer;
   readonly call?: ProofMirCallLowerer;
   readonly statement?: ProofMirStatementLowerer;
+  readonly controlFlow?: ProofMirControlFlowLowerer;
+  readonly terminal?: ProofMirTerminalLowerer;
+  readonly validation?: ProofMirValidationLowerer;
   readonly recorder?: ProofMirTakeBodyRecorder;
 }
 
@@ -75,45 +66,6 @@ function loweringError(diagnostics: readonly ProofMirDiagnostic[]): ProofMirLowe
   return { kind: "error", diagnostics: sortProofMirDiagnostics([...diagnostics]) };
 }
 
-export function createTakeBodyRecorder(graph: {
-  addStatement(
-    blockKey: ProofMirCanonicalKey,
-    input: {
-      readonly origin: ProofMirCanonicalKey;
-    },
-  ): ProofMirCanonicalKey;
-  recordLoweredStatement(
-    blockKey: ProofMirCanonicalKey,
-    statement: DraftProofMirGraphStatementSnapshot,
-  ): void;
-}): ProofMirTakeBodyRecorder {
-  const statements: DraftRecordedProofMirTakeStatement[] = [];
-  const exits: DraftRecordedProofMirTakeExit[] = [];
-  return {
-    get statements() {
-      return statements.slice();
-    },
-    get exits() {
-      return exits.slice();
-    },
-    recordStatement(blockKey, originKey, kind) {
-      const statementKey = graph.addStatement(blockKey, {
-        origin: originKey,
-      });
-      const snapshot: DraftProofMirGraphStatementSnapshot = {
-        statementKey,
-        originKey,
-        kind,
-      };
-      statements.push(snapshot);
-      graph.recordLoweredStatement(blockKey, snapshot);
-    },
-    recordExit(entry) {
-      exits.push(entry);
-    },
-  };
-}
-
 function originForTake(input: {
   readonly context: ProofMirLoweringContext;
   readonly takeStatement: MonoTakeStatement;
@@ -122,40 +74,14 @@ function originForTake(input: {
   if (input.monoStatement !== undefined) {
     return input.context.originMap.fromMonoStatement({
       owner: { kind: "function", functionInstanceId: input.context.functionInstanceId },
-      sourceOrigin: input.monoStatement.sourceOrigin as never,
+      sourceOrigin: input.monoStatement.sourceOrigin,
       monoStatementId: input.monoStatement.statementId,
     });
   }
   return input.context.originMap.fromHirOrigin({
     owner: { kind: "function", functionInstanceId: input.context.functionInstanceId },
-    sourceOrigin: input.takeStatement.sourceOrigin as never,
+    sourceOrigin: input.takeStatement.sourceOrigin,
   });
-}
-
-function draftObligationReference(input: {
-  readonly obligationId: MonoInstantiatedProofId<ObligationId>;
-  readonly originKey: ProofMirCanonicalKey;
-}): DraftProofMirObligationReference {
-  return {
-    obligationId: input.obligationId,
-    originKey: input.originKey,
-  };
-}
-
-function draftSessionMemberReference(input: {
-  readonly sessionId: MonoInstantiatedProofId<SessionId>;
-  readonly brandId: MonoInstantiatedProofId<BrandId>;
-  readonly obligationId?: MonoInstantiatedProofId<ObligationId>;
-  readonly placeKey?: ProofMirCanonicalKey;
-  readonly originKey: ProofMirCanonicalKey;
-}): DraftProofMirSessionMemberReference {
-  return {
-    sessionId: input.sessionId,
-    brandId: input.brandId,
-    ...(input.obligationId === undefined ? {} : { obligationId: input.obligationId }),
-    ...(input.placeKey === undefined ? {} : { placeKey: input.placeKey }),
-    originKey: input.originKey,
-  };
 }
 
 function closureObligationIdForTakeKind(
@@ -225,6 +151,7 @@ function lowerTakeOperand(input: {
   readonly call?: ProofMirCallLowerer;
   readonly operand: MonoTakeOperand;
   readonly blockKey: ProofMirCanonicalKey;
+  readonly originKey: ProofMirCanonicalKey;
 }): ProofMirLoweringResult<ProofMirDraftOperand> {
   switch (input.operand.kind) {
     case "place":
@@ -247,13 +174,31 @@ function lowerTakeOperand(input: {
           }),
         ]);
       }
-      return input.call.lowerCall({
+      const lowered = input.call.lowerCall({
         context: input.context,
         call: input.operand.call,
         monoExpressionId: input.operand.callExpressionId,
         blockKey: input.blockKey,
         resultType: input.operand.resultType,
         resultResourceKind: input.operand.resultResourceKind,
+      });
+      if (lowered.kind === "error") {
+        return lowered;
+      }
+      if (operandPlaceKey(lowered.value) !== undefined) {
+        return lowered;
+      }
+      const valueKey = operandValueKey(lowered.value);
+      if (valueKey === undefined) {
+        return lowered;
+      }
+      return loweringOk({
+        kind: "valueAndPlace" as const,
+        value: valueKey,
+        place: input.context.effects.placeFromRuntimeTemporary({
+          valueKey,
+          originKey: input.originKey,
+        }),
       });
     }
     case "error":
@@ -286,11 +231,39 @@ function draftTakeOperandForStart(input: {
   return { kind: "observe", placeKey, originKey: input.originKey };
 }
 
+function lowerTakeAliasPlace(input: {
+  readonly context: ProofMirLoweringContext;
+  readonly aliasLocal: MonoLocal;
+  readonly originKey: ProofMirCanonicalKey;
+}): ProofMirLoweringResult<ProofMirCanonicalKey> {
+  const monoPlace = monoPlaceForStatementLocal(input.context, input.aliasLocal);
+  const lowered = input.context.functionScopePlaceLowerer.lowerMonoPlace({
+    monoPlace,
+    originKey: input.originKey,
+  });
+  if (lowered.kind === "error") {
+    return lowered;
+  }
+  const placeKey = input.context.effects.placeFromMono({
+    monoPlace,
+    originKey: input.originKey,
+  });
+  syncLoweredPlaceToFunctionDraft({
+    context: input.context,
+    lowered: lowered.value,
+    monoPlace,
+  });
+  return loweringOk(placeKey);
+}
+
 function lowerTakeImpl(input: {
   readonly context: ProofMirLoweringContext;
   readonly expression: ProofMirExpressionLowerer;
   readonly call?: ProofMirCallLowerer;
   readonly statement?: ProofMirStatementLowerer;
+  readonly controlFlow?: ProofMirControlFlowLowerer;
+  readonly terminal?: ProofMirTerminalLowerer;
+  readonly validation?: ProofMirValidationLowerer;
   readonly recorder: ProofMirTakeBodyRecorder;
   readonly monoStatement?: MonoStatement;
   readonly takeStatement: MonoTakeStatement;
@@ -323,6 +296,7 @@ function lowerTakeImpl(input: {
     call: input.call,
     operand: input.takeStatement.operand,
     blockKey: input.blockKey,
+    originKey,
   });
   if (loweredOperand.kind === "error") {
     return loweredOperand;
@@ -349,6 +323,19 @@ function lowerTakeImpl(input: {
     originKey,
   });
   const operandPlace = operandPlaceKey(loweredOperand.value);
+  let aliasPlaceKey: ProofMirCanonicalKey | undefined;
+  if (input.takeStatement.aliasLocal !== undefined) {
+    const loweredAliasPlace = lowerTakeAliasPlace({
+      context: input.context,
+      aliasLocal: input.takeStatement.aliasLocal,
+      originKey,
+    });
+    if (loweredAliasPlace.kind === "error") {
+      return loweredAliasPlace;
+    }
+    aliasPlaceKey = loweredAliasPlace.value;
+  }
+  const sessionMemberPlaceKey = aliasPlaceKey ?? operandPlace;
 
   input.recorder.recordStatement(input.blockKey, originKey, {
     kind: "openObligation",
@@ -367,7 +354,7 @@ function lowerTakeImpl(input: {
         sessionId: input.takeStatement.takeKind.sessionId,
         brandId: input.takeStatement.takeKind.itemBrandId,
         obligationId: input.takeStatement.takeKind.closureObligationId,
-        ...(operandPlace === undefined ? {} : { placeKey: operandPlace }),
+        ...(sessionMemberPlaceKey === undefined ? {} : { placeKey: sessionMemberPlaceKey }),
         originKey,
       });
       input.recorder.recordStatement(input.blockKey, originKey, {
@@ -379,7 +366,7 @@ function lowerTakeImpl(input: {
         sessionProofKey: proofMetadataIdKey(input.takeStatement.takeKind.sessionId),
         brandProofKey: proofMetadataIdKey(input.takeStatement.takeKind.itemBrandId),
         obligationProofKey: proofMetadataIdKey(input.takeStatement.takeKind.closureObligationId),
-        ...(operandPlace === undefined ? {} : { placeKey: operandPlace }),
+        ...(sessionMemberPlaceKey === undefined ? {} : { placeKey: sessionMemberPlaceKey }),
         originKey,
       });
       break;
@@ -388,7 +375,7 @@ function lowerTakeImpl(input: {
         sessionId: input.takeStatement.takeKind.sessionId,
         brandId: input.takeStatement.takeKind.memberBrandId,
         obligationId: input.takeStatement.takeKind.closureObligationId,
-        ...(operandPlace === undefined ? {} : { placeKey: operandPlace }),
+        ...(sessionMemberPlaceKey === undefined ? {} : { placeKey: sessionMemberPlaceKey }),
         originKey,
       });
       input.recorder.recordStatement(input.blockKey, originKey, {
@@ -400,7 +387,7 @@ function lowerTakeImpl(input: {
         sessionProofKey: proofMetadataIdKey(input.takeStatement.takeKind.sessionId),
         brandProofKey: proofMetadataIdKey(input.takeStatement.takeKind.memberBrandId),
         obligationProofKey: proofMetadataIdKey(input.takeStatement.takeKind.closureObligationId),
-        ...(operandPlace === undefined ? {} : { placeKey: operandPlace }),
+        ...(sessionMemberPlaceKey === undefined ? {} : { placeKey: sessionMemberPlaceKey }),
         originKey,
       });
       break;
@@ -445,24 +432,6 @@ function lowerTakeImpl(input: {
     take: takeStart,
   });
 
-  let _aliasStorage: "scalarSsa" | "placeBacked" | undefined;
-  if (input.takeStatement.aliasLocal !== undefined) {
-    const aliasLocal = input.takeStatement.aliasLocal;
-    input.context.graph.createLocal({
-      monoLocalId: aliasLocal.localId,
-      name: aliasLocal.name,
-      origin: originKey,
-    });
-    const storage = input.context.localClassifier.storageForLocal(aliasLocal.localId);
-    _aliasStorage = storage;
-    if (storage === "placeBacked" && operandPlace !== undefined) {
-      input.context.graph.createPlace({
-        monoPlaceCanonicalKey: `take-alias:${aliasLocal.name}`,
-        origin: originKey,
-      });
-    }
-  }
-
   const takeScopeRole = `take:${String(originKey)}`;
   const parentScopeKey = input.context.graph.block(input.blockKey).scopeKey;
   const takeScopeKey = input.context.graph.createScope({
@@ -478,18 +447,38 @@ function lowerTakeImpl(input: {
   });
   input.context.ssa.registerBlock(takeBodyBlockKey);
 
-  if (input.statement !== undefined) {
-    for (const bodyStatement of input.takeStatement.body.statements) {
-      const loweredBody = input.statement.lowerStatement({
-        context: input.context,
-        statement: bodyStatement,
-        blockKey: takeBodyBlockKey,
-      });
-      if (loweredBody.kind === "error") {
-        return loweredBody;
-      }
-    }
+  let _aliasStorage: "scalarSsa" | "placeBacked" | undefined;
+  if (input.takeStatement.aliasLocal !== undefined) {
+    const aliasLocal = input.takeStatement.aliasLocal;
+    const storage = input.context.localClassifier.storageForLocal(aliasLocal.localId);
+    _aliasStorage = storage;
+    input.context.graph.createLocal({
+      monoLocalId: aliasLocal.localId,
+      name: aliasLocal.name,
+      origin: originKey,
+      scopeKey: takeScopeKey,
+      type: aliasLocal.type,
+      resourceKind: aliasLocal.resourceKind,
+      ...(storage === undefined ? {} : { storage }),
+      ...(storage === "placeBacked" && aliasPlaceKey !== undefined
+        ? { backingPlaceKey: aliasPlaceKey }
+        : {}),
+    });
   }
+
+  const loweredBody = lowerProofMirTakeBodyStatements({
+    context: input.context,
+    takeStatement: input.takeStatement,
+    takeBodyBlockKey,
+    statement: input.statement,
+    controlFlow: input.controlFlow,
+    terminal: input.terminal,
+    validation: input.validation,
+  });
+  if (loweredBody.kind === "error") {
+    return loweredBody;
+  }
+  const finalTakeBodyBlockKey = loweredBody.value;
 
   const exitOriginKey = input.context.originMap.syntheticFrom(originKey, "take.exit");
   const afterTakeBlockKey = input.context.graph.createBlock({
@@ -514,7 +503,7 @@ function lowerTakeImpl(input: {
       ...(sessionMember.obligationId === undefined
         ? {}
         : { obligationProofKey: proofMetadataIdKey(sessionMember.obligationId) }),
-      ...(operandPlace === undefined ? {} : { placeKey: operandPlace }),
+      ...(sessionMemberPlaceKey === undefined ? {} : { placeKey: sessionMemberPlaceKey }),
       originKey: exitOriginKey,
     });
   }
@@ -527,7 +516,7 @@ function lowerTakeImpl(input: {
       obligationId: closureObligationId,
       originKey: exitOriginKey,
     });
-    input.recorder.recordStatement(takeBodyBlockKey, exitOriginKey, {
+    input.recorder.recordStatement(finalTakeBodyBlockKey, exitOriginKey, {
       kind: "dischargeObligation",
       obligation: dischargeObligation,
     });
@@ -543,7 +532,7 @@ function lowerTakeImpl(input: {
     shouldCloseSessionAtTakeExit(monoObligation) &&
     sessionMember !== undefined
   ) {
-    input.recorder.recordStatement(takeBodyBlockKey, exitOriginKey, {
+    input.recorder.recordStatement(finalTakeBodyBlockKey, exitOriginKey, {
       kind: "closeSessionMember",
       member: sessionMember,
     });
@@ -554,28 +543,28 @@ function lowerTakeImpl(input: {
       ...(sessionMember.obligationId === undefined
         ? {}
         : { obligationProofKey: proofMetadataIdKey(sessionMember.obligationId) }),
-      ...(operandPlace === undefined ? {} : { placeKey: operandPlace }),
+      ...(sessionMemberPlaceKey === undefined ? {} : { placeKey: sessionMemberPlaceKey }),
       originKey: exitOriginKey,
     });
   }
 
   const exitBundle = input.context.graph.createScopeExit({
     role: "take.exit",
-    fromBlock: takeBodyBlockKey,
+    fromBlock: finalTakeBodyBlockKey,
     toBlock: afterTakeBlockKey,
-    sourceScope: takeScopeKey,
+    sourceScope: input.context.graph.block(finalTakeBodyBlockKey).scopeKey,
     targetScope: parentScopeKey,
     origin: exitOriginKey,
     crossedScopes,
     closure: {
       kind: "scopeExit",
-      checkedScopes: crossedScopes as never,
+      checkedScopeKeys: crossedScopes,
       evaluateAfterEdgeEffects: true,
-      allowedTransfers: allowedTransfers as never,
+      allowedTransfers,
     },
   });
 
-  const setTerminatorResult = input.context.graph.setTerminator(takeBodyBlockKey, {
+  const setTerminatorResult = input.context.graph.setTerminator(finalTakeBodyBlockKey, {
     kind: "goto",
     target: { edge: exitBundle.edge, block: afterTakeBlockKey },
     origin: exitOriginKey,
@@ -589,9 +578,9 @@ function lowerTakeImpl(input: {
     crossedScopes,
     closure: {
       kind: "scopeExit",
-      checkedScopes: crossedScopes as never,
+      checkedScopeKeys: crossedScopes,
       evaluateAfterEdgeEffects: true,
-      allowedTransfers: allowedTransfers as never,
+      allowedTransfers,
     },
     allowedTransfers,
   });
@@ -626,6 +615,9 @@ export function createProofMirTakeLowerer(
         expression: input.expression,
         call: input.call,
         statement: input.statement,
+        controlFlow: input.controlFlow,
+        terminal: input.terminal,
+        validation: input.validation,
         recorder,
         takeStatement: takeInput.statement,
         blockKey: takeInput.blockKey,

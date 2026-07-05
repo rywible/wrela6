@@ -1,0 +1,3 @@
+uefi image SmokeDirectTargetTyped:
+    fn boot() -> Never:
+        return

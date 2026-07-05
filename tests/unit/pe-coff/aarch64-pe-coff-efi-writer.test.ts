@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { computePeImageChecksum, pe32PlusChecksumFileOffset } from "../../../src/pe-coff";
 import {
   PE_COFF_FILE_HEADER_SIZE_BYTES,
   PE_DATA_DIRECTORY_COUNT,
@@ -35,7 +36,7 @@ describe("AArch64 PE/COFF EFI writer", () => {
     expect(first.artifact.artifactName).toBe("wrela.efi");
     expect(first.artifact.mediaType).toBe("application/vnd.microsoft.portable-executable");
     expect(first.artifact.fileExtension).toBe(".efi");
-    expect(Object.isFrozen(first.artifact.bytes)).toBe(true);
+    expect(first.artifact.bytes).toBeInstanceOf(Uint8Array);
     expect(first.artifact.bytes).toEqual(second.artifact.bytes);
     expect(first.artifact.deterministicMetadata).toEqual(second.artifact.deterministicMetadata);
     expect(first.artifact.deterministicMetadata).toEqual({
@@ -174,13 +175,20 @@ describe("AArch64 PE/COFF EFI writer", () => {
     expect(bytes.slice(2, 0x3c).every((byte) => byte === 0)).toBe(true);
     expect(bytes.slice(0x40, PE_HEADER_OFFSET_BYTES).every((byte) => byte === 0)).toBe(true);
 
-    expect(bytes.slice(PE_HEADER_OFFSET_BYTES, PE_HEADER_OFFSET_BYTES + 4)).toEqual([
+    expect(Array.from(bytes.slice(PE_HEADER_OFFSET_BYTES, PE_HEADER_OFFSET_BYTES + 4))).toEqual([
       0x50, 0x45, 0x00, 0x00,
     ]);
     expect(readU16Le(bytes, COFF_HEADER_OFFSET)).toBe(0xaa64);
     expect(readU16Le(bytes, COFF_HEADER_OFFSET + 2)).toBe(plannedImage.sections.length);
     expect(readU16Le(bytes, COFF_HEADER_OFFSET + 16)).toBe(0xf0);
     expect(readU16Le(bytes, OPTIONAL_HEADER_OFFSET)).toBe(0x20b);
+    const checksumOffset = pe32PlusChecksumFileOffset(PE_HEADER_OFFSET_BYTES);
+    const checksum = readU32Le(bytes, checksumOffset);
+    expect(checksum).not.toBe(0);
+    expect(checksum).toBe(result.value.checksum);
+    expect(checksum).toBe(computePeImageChecksum(bytes, checksumOffset));
+    expect(result.value.headers.optionalHeader.checksum).toBe(checksum);
+    expect(plannedImage.headers.optionalHeader.checksum).toBe(0);
     expect(readU32Le(bytes, OPTIONAL_HEADER_OFFSET + 108)).toBe(PE_DATA_DIRECTORY_COUNT);
     expect(readU32Le(bytes, OPTIONAL_HEADER_OFFSET + 112 + 3 * 8)).toBe(0x2000);
     expect(readU32Le(bytes, OPTIONAL_HEADER_OFFSET + 112 + 3 * 8 + 4)).toBe(0x0c);
@@ -198,17 +206,19 @@ describe("AArch64 PE/COFF EFI writer", () => {
 
     for (const [index, section] of plannedImage.sections.entries()) {
       const headerOffset = SECTION_TABLE_OFFSET + index * PE_SECTION_HEADER_SIZE_BYTES;
-      expect(bytes.slice(headerOffset, headerOffset + 8)).toEqual(
+      expect(Array.from(bytes.slice(headerOffset, headerOffset + 8))).toEqual(
         asciiNullPadded(section.serializedName, 8),
       );
       expect(readU32Le(bytes, headerOffset + 16)).toBe(section.rawDataSizeBytes);
       expect(readU32Le(bytes, headerOffset + 20)).toBe(section.rawDataPointerBytes);
       expect(
-        bytes.slice(
-          section.rawDataPointerBytes,
-          section.rawDataPointerBytes + section.bytes.length,
+        Array.from(
+          bytes.slice(
+            section.rawDataPointerBytes,
+            section.rawDataPointerBytes + section.bytes.length,
+          ),
         ),
-      ).toEqual([...section.bytes]);
+      ).toEqual(Array.from(section.bytes));
       expect(
         bytes
           .slice(
@@ -263,11 +273,11 @@ describe("AArch64 PE/COFF EFI writer", () => {
   });
 });
 
-function readU16Le(bytes: readonly number[], offset: number): number {
+function readU16Le(bytes: ArrayLike<number>, offset: number): number {
   return bytes[offset]! | (bytes[offset + 1]! << 8);
 }
 
-function readU32Le(bytes: readonly number[], offset: number): number {
+function readU32Le(bytes: ArrayLike<number>, offset: number): number {
   return (
     bytes[offset]! |
     (bytes[offset + 1]! << 8) |

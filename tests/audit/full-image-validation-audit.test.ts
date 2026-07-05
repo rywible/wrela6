@@ -34,8 +34,16 @@ const REQUIRED_CASES = [
   ["packet-counter", "toolchain-stdlib"],
   ["packet-counter", "ejected-stdlib"],
   ["packet-counter", "direct-platform"],
+  ["packet-counter-real-stream", "toolchain-stdlib"],
+  ["packet-counter-real-stream", "ejected-stdlib"],
+  ["packet-counter-real-stream", "direct-platform"],
+  ["two-branch-control-flow", "toolchain-stdlib"],
+  ["two-branch-control-flow", "ejected-stdlib"],
+  ["two-branch-control-flow", "direct-platform"],
   ["status-error", "toolchain-stdlib"],
   ["watchdog-or-boot-policy", "toolchain-stdlib"],
+  ["stdlib-core-option-result", "toolchain-stdlib"],
+  ["stdlib-bits", "toolchain-stdlib"],
 ] as const;
 
 const REQUIRED_FULL_IMAGE_FILES = [
@@ -191,7 +199,9 @@ describe("full-image validation audit", () => {
       { targetKey: "wrela-uefi-aarch64-rpi5-v1", qemuSmoke: { kind: "disabled" } },
       { filesystem: fixtures.nodeFixtureProjectFilesystem },
     );
-    const knownScenarios = new Set(REQUIRED_CASES.map(([scenario]) => scenario));
+    const knownScenarios: ReadonlySet<string> = new Set(
+      REQUIRED_CASES.map(([scenario]) => scenario),
+    );
     const knownCheckerKeys: ReadonlySet<string> = new Set(KNOWN_REPORT_CHECKER_KEYS);
 
     expect(report.status).toBe("passed");

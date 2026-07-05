@@ -40,6 +40,7 @@ describe("OptIR operation schema ids", () => {
   test("operation schema ids expose exact ordered operation kind catalog", () => {
     expect(OPT_IR_OPERATION_KINDS).toEqual([
       "constant",
+      "constAddr",
       "integerUnary",
       "integerBinary",
       "integerCompare",
@@ -82,6 +83,7 @@ describe("OptIR operation schema ids", () => {
   test("operation schema ids expose exact branded type and effect rule catalogs", () => {
     expect(OPT_IR_TYPE_RULE_IDS.map((ruleId) => ruleId as string)).toEqual([
       "constant-has-declared-type",
+      "const-address-has-declared-type",
       "same-integer-width",
       "integer-compare-to-bool",
       "same-boolean",

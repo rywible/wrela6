@@ -53,6 +53,7 @@ function remapTokenKind(token: GreenToken, kind: SyntaxKind): GreenToken {
     [...token.leadingTrivia],
     [...token.trailingTrivia],
     token.isMissing,
+    token.cookedValue,
   );
 }
 

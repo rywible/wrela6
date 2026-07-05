@@ -18,12 +18,12 @@ const BYTE_WRITER_VERIFICATION: PeCoffWriterVerificationSummary = Object.freeze(
 
 export interface PeByteWriter {
   readonly offset: () => number;
-  readonly bytes: () => readonly number[];
+  readonly bytes: () => Uint8Array;
   readonly writeU8: (value: number) => PeCoffWriterResult<number>;
   readonly writeU16Le: (value: number) => PeCoffWriterResult<number>;
   readonly writeU32Le: (value: number) => PeCoffWriterResult<number>;
   readonly writeU64Le: (value: bigint) => PeCoffWriterResult<number>;
-  readonly writeBytes: (bytes: readonly number[]) => PeCoffWriterResult<number>;
+  readonly writeBytes: (bytes: Uint8Array | readonly number[]) => PeCoffWriterResult<number>;
   readonly writeZeroes: (count: number) => PeCoffWriterResult<number>;
   readonly patchU32Le: (offset: number, value: number) => PeCoffWriterResult<number>;
 }
@@ -65,86 +65,130 @@ function validateUnsignedBigInt(widthName: string, value: bigint, max: bigint): 
   return undefined;
 }
 
-function writeLittleEndianNumber(buffer: number[], value: number, widthBytes: number): void {
+interface PeByteBuffer {
+  readonly length: () => number;
+  readonly snapshot: () => Uint8Array;
+  readonly pushByte: (byte: number) => void;
+  readonly pushBytes: (bytes: Uint8Array | readonly number[]) => void;
+  readonly pushZeroes: (count: number) => void;
+  readonly patchByte: (offset: number, byte: number) => void;
+}
+
+function createPeByteBuffer(): PeByteBuffer {
+  let storage = new Uint8Array(256);
+  let length = 0;
+
+  function ensureCapacity(requiredCapacity: number): void {
+    if (requiredCapacity <= storage.length) return;
+    let nextCapacity = storage.length;
+    while (nextCapacity < requiredCapacity) {
+      nextCapacity *= 2;
+    }
+    const nextStorage = new Uint8Array(nextCapacity);
+    nextStorage.set(storage.subarray(0, length));
+    storage = nextStorage;
+  }
+
+  return Object.freeze({
+    length: () => length,
+    snapshot: () => storage.slice(0, length),
+    pushByte: (byte: number): void => {
+      ensureCapacity(length + 1);
+      storage[length] = byte;
+      length += 1;
+    },
+    pushBytes: (bytes: Uint8Array | readonly number[]): void => {
+      ensureCapacity(length + bytes.length);
+      storage.set(bytes, length);
+      length += bytes.length;
+    },
+    pushZeroes: (count: number): void => {
+      ensureCapacity(length + count);
+      storage.fill(0, length, length + count);
+      length += count;
+    },
+    patchByte: (offset: number, byte: number): void => {
+      storage[offset] = byte;
+    },
+  });
+}
+
+function writeLittleEndianNumber(buffer: PeByteBuffer, value: number, widthBytes: number): void {
   for (let index = 0; index < widthBytes; index += 1) {
-    buffer.push(Math.floor(value / 2 ** (8 * index)) & 0xff);
+    buffer.pushByte(Math.floor(value / 2 ** (8 * index)) & 0xff);
   }
 }
 
-function writeLittleEndianBigInt(buffer: number[], value: bigint, widthBytes: number): void {
+function writeLittleEndianBigInt(buffer: PeByteBuffer, value: bigint, widthBytes: number): void {
   for (let index = 0; index < widthBytes; index += 1) {
-    buffer.push(Number((value >> BigInt(8 * index)) & 0xffn));
+    buffer.pushByte(Number((value >> BigInt(8 * index)) & 0xffn));
   }
 }
 
 function patchLittleEndianNumber(
-  buffer: number[],
+  buffer: PeByteBuffer,
   patchOffset: number,
   value: number,
   widthBytes: number,
 ): void {
   for (let index = 0; index < widthBytes; index += 1) {
-    buffer[patchOffset + index] = Math.floor(value / 2 ** (8 * index)) & 0xff;
+    buffer.patchByte(patchOffset + index, Math.floor(value / 2 ** (8 * index)) & 0xff);
   }
 }
 
 export function createPeByteWriter(): PeByteWriter {
-  const buffer: number[] = [];
+  const buffer = createPeByteBuffer();
 
   return Object.freeze({
-    offset: () => buffer.length,
-    bytes: () => Object.freeze(buffer.slice()),
+    offset: () => buffer.length(),
+    bytes: () => buffer.snapshot(),
     writeU8: (value: number): PeCoffWriterResult<number> => {
       const error = validateUnsignedNumber("u8", value, 0xff);
       if (error !== undefined) return byteWriterError(error);
-      buffer.push(value);
-      return byteWriterOk(buffer.length);
+      buffer.pushByte(value);
+      return byteWriterOk(buffer.length());
     },
     writeU16Le: (value: number): PeCoffWriterResult<number> => {
       const error = validateUnsignedNumber("u16", value, 0xffff);
       if (error !== undefined) return byteWriterError(error);
       writeLittleEndianNumber(buffer, value, 2);
-      return byteWriterOk(buffer.length);
+      return byteWriterOk(buffer.length());
     },
     writeU32Le: (value: number): PeCoffWriterResult<number> => {
       const error = validateUnsignedNumber("u32", value, 0xffff_ffff);
       if (error !== undefined) return byteWriterError(error);
       writeLittleEndianNumber(buffer, value, 4);
-      return byteWriterOk(buffer.length);
+      return byteWriterOk(buffer.length());
     },
     writeU64Le: (value: bigint): PeCoffWriterResult<number> => {
       const error = validateUnsignedBigInt("u64", value, 0xffff_ffff_ffff_ffffn);
       if (error !== undefined) return byteWriterError(error);
       writeLittleEndianBigInt(buffer, value, 8);
-      return byteWriterOk(buffer.length);
+      return byteWriterOk(buffer.length());
     },
-    writeBytes: (bytes: readonly number[]): PeCoffWriterResult<number> => {
+    writeBytes: (bytes: Uint8Array | readonly number[]): PeCoffWriterResult<number> => {
       for (const byte of bytes) {
         const error = validateUnsignedNumber("byte", byte, 0xff);
         if (error !== undefined) return byteWriterError(error);
       }
-      for (const byte of bytes) {
-        buffer.push(byte);
-      }
-      return byteWriterOk(buffer.length);
+      buffer.pushBytes(bytes);
+      return byteWriterOk(buffer.length());
     },
     writeZeroes: (count: number): PeCoffWriterResult<number> => {
       if (!Number.isInteger(count) || count < 0) {
         return byteWriterError(`byte-writer:range:zero-count:${count}`);
       }
-      for (let index = 0; index < count; index += 1) {
-        buffer.push(0);
-      }
-      return byteWriterOk(buffer.length);
+      buffer.pushZeroes(count);
+      return byteWriterOk(buffer.length());
     },
     patchU32Le: (offset: number, value: number): PeCoffWriterResult<number> => {
-      if (!Number.isInteger(offset) || offset < 0 || offset + 4 > buffer.length) {
+      if (!Number.isInteger(offset) || offset < 0 || offset + 4 > buffer.length()) {
         return byteWriterError(`byte-writer:range:patch-u32-offset:${offset}`);
       }
       const error = validateUnsignedNumber("u32", value, 0xffff_ffff);
       if (error !== undefined) return byteWriterError(error);
       patchLittleEndianNumber(buffer, offset, value, 4);
-      return byteWriterOk(buffer.length);
+      return byteWriterOk(buffer.length());
     },
   });
 }

@@ -22,6 +22,25 @@ test("checked type fingerprints are deterministic", () => {
   expect(checkedTypeFingerprint(optionU8)).toBe("applied:source:10:concrete:Copy<core:u8>");
 });
 
+test("checked type fingerprints preserve nested applied type strings", () => {
+  const nested = appliedType({
+    constructor: { kind: "source", typeId: typeId(20) },
+    arguments: [
+      appliedType({
+        constructor: { kind: "source", typeId: typeId(10) },
+        arguments: [coreCheckedType(coreTypeId("u8")), coreCheckedType(coreTypeId("bool"))],
+        resourceKind: concreteKind("Copy"),
+      }),
+      sourceCheckedType({ itemId: itemId(4), typeId: typeId(2) }),
+    ],
+    resourceKind: derivedKind("join", [concreteKind("Copy"), concreteKind("Linear")]),
+  });
+
+  expect(checkedTypeFingerprint(nested)).toBe(
+    "applied:source:20:derived:join:concrete:Copy,concrete:Linear<applied:source:10:concrete:Copy<core:u8,core:bool>,source:4:2>",
+  );
+});
+
 test("source type stores item and type ids", () => {
   expect(sourceCheckedType({ itemId: itemId(4), typeId: typeId(2) })).toEqual({
     kind: "source",

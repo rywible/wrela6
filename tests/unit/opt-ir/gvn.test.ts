@@ -1,8 +1,19 @@
 import { describe, expect, test } from "bun:test";
 
-import { optIrOperationId, optIrOriginId, optIrValueId } from "../../../src/opt-ir/ids";
+import {
+  optIrCallId,
+  optIrEdgeId,
+  optIrOperationId,
+  optIrOriginId,
+  optIrRegionId,
+  optIrValueId,
+} from "../../../src/opt-ir/ids";
 import { computeValueNumbers, valueNumberFor } from "../../../src/opt-ir/analyses/value-numbering";
-import { optIrSemanticChecksumOperation } from "../../../src/opt-ir/operations";
+import {
+  optIrMemoryLoadOperation,
+  optIrRuntimeCallOperation,
+  optIrSemanticChecksumOperation,
+} from "../../../src/opt-ir/operations";
 import { optIrUnsignedIntegerType } from "../../../src/opt-ir/types";
 import { runGvn } from "../../../src/opt-ir/passes/gvn";
 import {
@@ -141,5 +152,81 @@ describe("OptIR GVN", () => {
     });
 
     expect(valueNumberFor(first)).toBe(valueNumberFor(second));
+  });
+
+  test("call target value numbers are stable for reordered structured targets", () => {
+    const resultType = optIrUnsignedIntegerType(32);
+    const first = optIrRuntimeCallOperation({
+      operationId: optIrOperationId(21),
+      callId: optIrCallId(1),
+      target: { kind: "runtime", runtimeKey: "runtime.clock" },
+      argumentIds: [optIrValueId(1)],
+      resultIds: [optIrValueId(2)],
+      resultTypes: [resultType],
+      originId: optIrOriginId(21),
+    });
+    const second = optIrRuntimeCallOperation({
+      operationId: optIrOperationId(22),
+      callId: optIrCallId(2),
+      target: { runtimeKey: "runtime.clock", kind: "runtime" },
+      argumentIds: [optIrValueId(1)],
+      resultIds: [optIrValueId(3)],
+      resultTypes: [resultType],
+      originId: optIrOriginId(22),
+    });
+
+    expect(valueNumberFor(first)).toBe(valueNumberFor(second));
+  });
+
+  test("memory bounds value numbers are stable and support bigint runtime guards", () => {
+    const resultType = optIrUnsignedIntegerType(8);
+    const first = optIrMemoryLoadOperation({
+      operationId: optIrOperationId(31),
+      resultId: optIrValueId(2),
+      region: optIrRegionId(1),
+      byteOffset: 0n,
+      byteWidth: 1,
+      alignment: 1,
+      valueType: resultType,
+      endian: "native",
+      volatility: "nonVolatile",
+      boundsAuthority: {
+        kind: "runtimeGuard",
+        guard: {
+          guardOperation: optIrOperationId(30),
+          successEdge: optIrEdgeId(1),
+          checkedByteRange: { start: 0n, endExclusive: 8n },
+          dominatesAccess: true,
+        },
+      },
+      originId: optIrOriginId(31),
+    });
+    const second = optIrMemoryLoadOperation({
+      operationId: optIrOperationId(32),
+      resultId: optIrValueId(3),
+      region: optIrRegionId(1),
+      byteOffset: 0n,
+      byteWidth: 1,
+      alignment: 1,
+      valueType: resultType,
+      endian: "native",
+      volatility: "nonVolatile",
+      boundsAuthority: {
+        guard: {
+          dominatesAccess: true,
+          checkedByteRange: { endExclusive: 8n, start: 0n },
+          successEdge: optIrEdgeId(1),
+          guardOperation: optIrOperationId(30),
+        },
+        kind: "runtimeGuard",
+      },
+      originId: optIrOriginId(32),
+    });
+
+    if (first.kind !== "ok" || second.kind !== "ok") {
+      throw new Error("expected memory load construction to succeed");
+    }
+
+    expect(valueNumberFor(first.operation)).toBe(valueNumberFor(second.operation));
   });
 });

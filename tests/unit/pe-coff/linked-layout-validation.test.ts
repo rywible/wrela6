@@ -90,7 +90,7 @@ describe("linked image layout validation for PE/COFF writer input", () => {
             rva: -1,
             alignmentBytes: 0,
             virtualSizeBytes: 4,
-            bytes: [],
+            bytes: new Uint8Array(),
             flags: 0x1_0000_0000,
           },
           layout.sections[1]!,

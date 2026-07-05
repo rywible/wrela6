@@ -1,0 +1,9 @@
+{
+  "phase": "parse",
+  "diagnostics": [
+    {
+      "code": "LEX_MALFORMED_INTEGER",
+      "spanText": "0x"
+    }
+  ]
+}

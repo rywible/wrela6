@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { SourceSpan } from "../../src/lexer/source-span";
-import { Token } from "../../src/lexer/token";
-import { TokenKind } from "../../src/lexer/token-kind";
-import { TokenStream } from "../../src/lexer/token-stream";
-import { Trivia } from "../../src/lexer/trivia";
-import { TriviaKind } from "../../src/lexer/trivia-kind";
+import { SourceSpan } from "../../src/frontend/lexer/source-span";
+import { Token } from "../../src/frontend/lexer/token";
+import { TokenKind } from "../../src/frontend/lexer/token-kind";
+import { TokenStream } from "../../src/frontend/lexer/token-stream";
+import { Trivia } from "../../src/frontend/lexer/trivia";
+import { TriviaKind } from "../../src/frontend/lexer/trivia-kind";
 
 function makeToken(
   kind: TokenKind,

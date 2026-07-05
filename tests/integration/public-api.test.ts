@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   CollectingDiagnosticSink,
   DottedModuleResolver,
-  ImportDiscovery,
   KeywordTable,
   Lexer,
   ModuleGraphLexer,
@@ -14,7 +13,7 @@ import {
   TokenStream,
   Trivia,
   TriviaKind,
-} from "../../src/lexer";
+} from "../../src/frontend/lexer";
 import * as wrela from "../../src";
 
 describe("lexer public api", () => {
@@ -30,7 +29,6 @@ describe("lexer public api", () => {
   test("exports all expected public symbols", () => {
     expect(CollectingDiagnosticSink).toBeDefined();
     expect(DottedModuleResolver).toBeDefined();
-    expect(ImportDiscovery).toBeDefined();
     expect(KeywordTable).toBeDefined();
     expect(Lexer).toBeDefined();
     expect(ModuleGraphLexer).toBeDefined();

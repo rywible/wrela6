@@ -16,15 +16,14 @@ function createLexer(): Lexer {
 
 describe("Control statement dispatch (integration)", () => {
   test("if statement round-trips", () => {
-    const source = SourceText.from("test.wr", "if x:\n    y\n");
+    const source = SourceText.from("test.wr", "fn main() -> Never:\n    if x:\n        y\n");
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const root = result.tree.root();
-    const stmt = root.children()[0] as RedNode;
+    const stmt = collectByKind(result.tree.root(), SyntaxKind.IfStatement)[0]!;
     expect(stmt.kind).toBe(SyntaxKind.IfStatement);
 
     const children = stmt.children();
@@ -37,15 +36,17 @@ describe("Control statement dispatch (integration)", () => {
   });
 
   test("if/else block round-trips", () => {
-    const source = SourceText.from("test.wr", "if x:\n    y\nelse:\n    z\n");
+    const source = SourceText.from(
+      "test.wr",
+      "fn main() -> Never:\n    if x:\n        y\n    else:\n        z\n",
+    );
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const root = result.tree.root();
-    const stmt = root.children()[0] as RedNode;
+    const stmt = collectByKind(result.tree.root(), SyntaxKind.IfStatement)[0]!;
     expect(stmt.kind).toBe(SyntaxKind.IfStatement);
 
     const children = stmt.children();
@@ -59,15 +60,14 @@ describe("Control statement dispatch (integration)", () => {
   });
 
   test("while statement round-trips", () => {
-    const source = SourceText.from("test.wr", "while x:\n    y\n");
+    const source = SourceText.from("test.wr", "fn main() -> Never:\n    while x:\n        y\n");
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const root = result.tree.root();
-    const stmt = root.children()[0] as RedNode;
+    const stmt = collectByKind(result.tree.root(), SyntaxKind.WhileStatement)[0]!;
     expect(stmt.kind).toBe(SyntaxKind.WhileStatement);
 
     const children = stmt.children();
@@ -80,15 +80,17 @@ describe("Control statement dispatch (integration)", () => {
   });
 
   test("for statement round-trips", () => {
-    const source = SourceText.from("test.wr", "for x in items:\n    y\n");
+    const source = SourceText.from(
+      "test.wr",
+      "fn main() -> Never:\n    for x in items:\n        y\n",
+    );
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const root = result.tree.root();
-    const stmt = root.children()[0] as RedNode;
+    const stmt = collectByKind(result.tree.root(), SyntaxKind.ForStatement)[0]!;
     expect(stmt.kind).toBe(SyntaxKind.ForStatement);
 
     const children = stmt.children();
@@ -103,15 +105,17 @@ describe("Control statement dispatch (integration)", () => {
   });
 
   test("take with as clause round-trips", () => {
-    const source = SourceText.from("test.wr", "take value as x:\n    y\n");
+    const source = SourceText.from(
+      "test.wr",
+      "fn main() -> Never:\n    take value as x:\n        y\n",
+    );
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const root = result.tree.root();
-    const stmt = root.children()[0] as RedNode;
+    const stmt = collectByKind(result.tree.root(), SyntaxKind.TakeStatement)[0]!;
     expect(stmt.kind).toBe(SyntaxKind.TakeStatement);
 
     const children = stmt.children();
@@ -126,15 +130,14 @@ describe("Control statement dispatch (integration)", () => {
   });
 
   test("take without as clause round-trips", () => {
-    const source = SourceText.from("test.wr", "take value:\n    y\n");
+    const source = SourceText.from("test.wr", "fn main() -> Never:\n    take value:\n        y\n");
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const root = result.tree.root();
-    const stmt = root.children()[0] as RedNode;
+    const stmt = collectByKind(result.tree.root(), SyntaxKind.TakeStatement)[0]!;
     expect(stmt.kind).toBe(SyntaxKind.TakeStatement);
 
     const children = stmt.children();
@@ -147,17 +150,18 @@ describe("Control statement dispatch (integration)", () => {
   });
 
   test("multiple control statements in source file", () => {
-    const source = SourceText.from("test.wr", "if x:\n    y\nwhile z:\n    w\n");
+    const source = SourceText.from(
+      "test.wr",
+      "fn main() -> Never:\n    if x:\n        y\n    while z:\n        w\n",
+    );
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const root = result.tree.root();
-    expect(root.children()[0]!.kind).toBe(SyntaxKind.IfStatement);
-    expect(root.children()[1]!.kind).toBe(SyntaxKind.WhileStatement);
-    expect(root.children()[2]!.kind).toBe(SyntaxKind.EndOfFileToken);
+    expect(collectByKind(result.tree.root(), SyntaxKind.IfStatement)).toHaveLength(1);
+    expect(collectByKind(result.tree.root(), SyntaxKind.WhileStatement)).toHaveLength(1);
 
     expect(result.parserDiagnostics).toHaveLength(0);
   });

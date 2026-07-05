@@ -1,6 +1,5 @@
 import { buildOptIrMemorySsa } from "../analyses/memory-ssa";
 import { computeOptIrEscapeAnalysis } from "../analyses/escape-analysis";
-import { hasMemoryAccess } from "../operation-access";
 import { optIrFunctionTable, optIrProgram } from "../program";
 import { optIrDefaultVectorPolicy } from "../policy/vector-policy";
 import type { OptIrTargetSurface } from "../target-surface";
@@ -13,6 +12,7 @@ import {
 } from "./egraph-materialization";
 import { runGvn } from "./gvn";
 import { runLicm } from "./licm";
+import { licmLoopOperationIdsInProgramOrder } from "./licm-loop-candidates";
 import { runLoopVectorization } from "./loop-vectorization";
 import { runMandatoryInlining } from "./mandatory-inlining";
 import { runMemoryOptimization } from "./memory-optimization";
@@ -45,8 +45,6 @@ import {
   mergeDecisionLogs,
   nextFactIdCounter,
   operationMap,
-  operationsInProgramOrder,
-  optimizationRegionsForProgram,
   removeOperationsFromProgram,
   removedOperationIdsBetween,
   replaceFunction,
@@ -232,7 +230,7 @@ export function runDeadCodeEliminationStep(state: PipelineState): PipelineState 
 export function runMemorySsaAnalysisStep(state: PipelineState): PipelineStepResult {
   const result = buildOptIrMemorySsa({
     program: state.program,
-    regions: optimizationRegionsForProgram(state.program),
+    regions: state.optimizationRegions,
     operationForId(operationId) {
       return operationMap(state.operations).get(operationId);
     },
@@ -256,7 +254,7 @@ export function runMemorySsaAnalysisStep(state: PipelineState): PipelineStepResu
 export function runMemoryOptimizationStep(state: PipelineState, passId: string): PipelineState {
   const result = runMemoryOptimization({
     program: state.program,
-    regions: optimizationRegionsForProgram(state.program),
+    regions: state.optimizationRegions,
     operations: state.operations,
     operationForId(operationId) {
       return operationMap(state.operations).get(operationId);
@@ -309,15 +307,18 @@ export function runMemoryOptimizationStep(state: PipelineState, passId: string):
 }
 
 export function runScalarReplacementStep(state: PipelineState): PipelineState {
-  const regions = optimizationRegionsForProgram(state.program);
+  const regions = state.optimizationRegions;
   const result = runScalarReplacement({
     program: state.program,
+    operations: state.operations,
     regions,
     candidates: discoverScalarReplacementCandidates(state.operations, regions),
   });
   return {
     ...state,
     program: result.program,
+    operations: result.operations,
+    optimizationRegions: result.optimizationRegions,
     diagnostics: [
       ...state.diagnostics,
       ...result.rewriteRecords.map((record) =>
@@ -336,7 +337,7 @@ export function runScalarReplacementStep(state: PipelineState): PipelineState {
 }
 
 export function runStackPromotionStep(state: PipelineState): PipelineState {
-  const regions = optimizationRegionsForProgram(state.program);
+  const regions = state.optimizationRegions;
   const escape = computeOptIrEscapeAnalysis({ regions });
   const result = runStackPromotion({
     program: state.program,
@@ -350,6 +351,7 @@ export function runStackPromotionStep(state: PipelineState): PipelineState {
   return {
     ...state,
     program: result.program,
+    optimizationRegions: result.optimizationRegions,
     diagnostics: [
       ...state.diagnostics,
       ...result.rewriteRecords.map((record) =>
@@ -368,22 +370,13 @@ export function runStackPromotionStep(state: PipelineState): PipelineState {
 }
 
 export function runLicmStep(state: PipelineState): PipelineState {
-  const memoryOperationIds = new Set(
-    state.operations
-      .filter(hasMemoryAccess)
-      .filter((operation) => operation.kind === "memoryLoad")
-      .map((operation) => operation.operationId),
-  );
   const result = runLicm({
     program: state.program,
     operations: state.operations,
-    loopOperationIds: operationsInProgramOrder(state.program, state.operations).map(
-      (operation) => operation.operationId,
-    ),
+    loopOperationIds: licmLoopOperationIdsInProgramOrder(state),
     effectBoundaryOperationIds: state.operations
       .filter((operation) => !operation.effects.isRuntimePure)
       .map((operation) => operation.operationId),
-    regionSafeOperationIds: [...memoryOperationIds],
   });
   return {
     ...state,
@@ -405,7 +398,7 @@ export function runLicmStep(state: PipelineState): PipelineState {
   };
 }
 
-export function runWrelaCluster(state: PipelineState): PipelineState {
+export function runWrelaCluster(state: PipelineState, target: OptIrTargetSurface): PipelineState {
   const bounds = runWrelaBoundsZeroCopy({
     operations: state.operations,
     candidates: discoverBoundsCandidates(state.operations),
@@ -415,10 +408,7 @@ export function runWrelaCluster(state: PipelineState): PipelineState {
     operations: bounds.operations,
     endianFoldCandidates: discoverEndianFoldCandidates(bounds.operations),
     parserCollapseCandidates: discoverParserCollapseCandidates(bounds.operations),
-    targetContract: {
-      permitsFirmwareEndianFold: false,
-      permitsVolatileEndianFold: false,
-    },
+    targetContract: target.endianFoldContract,
   });
   const moveCopy = runWrelaMoveCopyWrapperElision({
     operations: endian.operations,

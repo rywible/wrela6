@@ -25,6 +25,7 @@ export function rewriteOptIrOperationValues(
 
   switch (operation.kind) {
     case "constant":
+    case "constAddr":
     case "memoryLoad":
     case "proofErasedMarker":
       return Object.freeze(base);

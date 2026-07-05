@@ -1,5 +1,5 @@
 import type { OptIrFactSet } from "../../opt-ir/facts/fact-index";
-import type { OptIrOperationId } from "../../opt-ir/ids";
+import type { OptIrConstantId, OptIrOperationId } from "../../opt-ir/ids";
 import type { OptIrOperation } from "../../opt-ir/operations";
 import type { OptIrProgram } from "../../opt-ir/program";
 import type { AArch64LoweringDiagnostic } from "./machine-ir/diagnostics";
@@ -10,6 +10,7 @@ import type { AArch64TargetSurface } from "./target-surface/target-surface";
 import type { AArch64SemanticPlugin } from "./select/semantic-superselector";
 import type { AArch64LoweringDebugOutput } from "./lower/pipeline-stages";
 import type { AArch64FirmwareLoweringOptions } from "./lower/firmware-platform-call-contract";
+import type { AArch64StaticReadonlyPointer } from "./lower/operation-materializer-const-addr";
 import { lowerOptIrToAArch64Program } from "./lower/lower-program";
 export {
   AARCH64_BACKEND_STAGE_KEYS,
@@ -35,6 +36,7 @@ export interface AArch64LoweringOptions {
   readonly deterministicDump?: boolean;
   readonly semanticPlugins?: readonly AArch64SemanticPlugin[];
   readonly firmware?: AArch64FirmwareLoweringOptions;
+  readonly staticReadonlyPointers?: ReadonlyMap<OptIrConstantId, AArch64StaticReadonlyPointer>;
 }
 
 export type LowerOptIrToAArch64Result =

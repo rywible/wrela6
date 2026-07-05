@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { SourceSpan } from "../../src/lexer/source-span";
-import { SourceText } from "../../src/lexer/source-text";
+import { SourceSpan } from "../../src/frontend/lexer/source-span";
+import { SourceText } from "../../src/frontend/lexer/source-text";
 
 describe("SourceSpan", () => {
   test("creates a half-open range", () => {

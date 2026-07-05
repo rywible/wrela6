@@ -8,7 +8,10 @@ import {
   SourceSpan,
 } from "../../../../src/frontend/lexer";
 import type { LexDiagnostic } from "../../../../src/frontend/lexer/diagnostics";
+import { ModuleGraphLexer } from "../../../../src/frontend/lexer/module-graph-lexer";
 import { ModulePath } from "../../../../src/frontend/lexer/module-path";
+import { DottedModuleResolver } from "../../../../src/frontend/lexer/module-resolver";
+import { FakeFileRepository } from "../../../support/frontend/lexer-fakes";
 
 test("module graph parser parses all modules", () => {
   const diagnostics = new CollectingDiagnosticSink();
@@ -60,6 +63,8 @@ test("lexer diagnostics are not duplicated across modules", () => {
       message: "Invalid character.",
       source: SourceText.from("test.wr", ""),
       span: SourceSpan.from(0, 1),
+      ownerKey: "lexer:character",
+      stableDetail: "character:test",
     },
   ];
 
@@ -98,4 +103,24 @@ test("lexer diagnostics are not duplicated across modules", () => {
     (diagnostic) => diagnostic.code === "LEX_INVALID_CHARACTER",
   );
   expect(lexInvalidCodes.length).toBe(1);
+});
+
+test("parser diagnostics discovered during module graph lexing are not duplicated", async () => {
+  const diagnostics = new CollectingDiagnosticSink();
+  const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
+  const graphLexer = new ModuleGraphLexer({
+    lexer,
+    files: new FakeFileRepository(new Map([["main.wr", "banana\n"]])),
+    resolver: new DottedModuleResolver(),
+    diagnostics,
+  });
+
+  const graph = await graphLexer.lexImage({ entry: ModulePath.from("main.wr") });
+  expect("parseResult" in graph.modules[0]!).toBe(false);
+
+  const result = parseModuleGraph({ graph, lexerDiagnostics: diagnostics.diagnostics });
+
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+    "PARSE_EXPECTED_TOP_LEVEL_DECLARATION",
+  ]);
 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { CollectingDiagnosticSink, type LexDiagnostic } from "../../src/lexer/diagnostics";
-import { SourceText } from "../../src/lexer/source-text";
+import { CollectingDiagnosticSink, type LexDiagnostic } from "../../src/frontend/lexer/diagnostics";
+import { SourceText } from "../../src/frontend/lexer/source-text";
 
 describe("CollectingDiagnosticSink", () => {
   test("captures diagnostics in report order", () => {
@@ -13,6 +13,8 @@ describe("CollectingDiagnosticSink", () => {
       message: "Invalid character '@'.",
       source,
       span: source.span(0, 1),
+      ownerKey: "lexer:character",
+      stableDetail: "character:@",
     });
 
     expect(diagnostics.diagnostics).toHaveLength(1);
@@ -35,6 +37,8 @@ describe("CollectingDiagnosticSink", () => {
       message: "Invalid character '@'.",
       source,
       span: source.span(0, 1),
+      ownerKey: "lexer:character",
+      stableDetail: "character:@",
     });
 
     diagnostics.report({
@@ -43,6 +47,8 @@ describe("CollectingDiagnosticSink", () => {
       message: "Unterminated string literal.",
       source,
       span: source.span(2, 14),
+      ownerKey: "lexer:string",
+      stableDetail: "unterminated:test",
     });
 
     expect(diagnostics.diagnostics).toHaveLength(2);

@@ -9,14 +9,21 @@ export class LiteralExpressionView extends AstView {
   }
 
   literalToken(): RedToken | undefined {
-    const tokens = childTokens(this.node, SyntaxKind.IntegerLiteralToken).concat(
-      childTokens(this.node, SyntaxKind.StringLiteralToken),
-    );
+    const tokens = childTokens(this.node, SyntaxKind.IntegerLiteralToken)
+      .concat(childTokens(this.node, SyntaxKind.StringLiteralToken))
+      .concat(childTokens(this.node, SyntaxKind.TrueKeyword))
+      .concat(childTokens(this.node, SyntaxKind.FalseKeyword));
     return tokens.find((token) => !token.isMissing);
   }
 
   literalText(): string | undefined {
     return presentTokenText(this.literalToken());
+  }
+
+  cookedStringValue(): string | undefined {
+    const token = this.literalToken();
+    if (token?.kind !== SyntaxKind.StringLiteralToken || token.isMissing) return undefined;
+    return token.green.cookedValue;
   }
 }
 
@@ -147,6 +154,7 @@ export class UnaryExpressionView extends AstView {
   operatorToken(): RedToken | undefined {
     const operators = childTokens(this.node, SyntaxKind.MinusToken)
       .concat(childTokens(this.node, SyntaxKind.NotKeyword))
+      .concat(childTokens(this.node, SyntaxKind.TildeToken))
       .concat(childTokens(this.node, SyntaxKind.StarToken));
     return operators.find((token) => !token.isMissing);
   }
@@ -174,7 +182,14 @@ export class BinaryExpressionView extends AstView {
       .concat(childTokens(this.node, SyntaxKind.MinusToken))
       .concat(childTokens(this.node, SyntaxKind.StarToken))
       .concat(childTokens(this.node, SyntaxKind.SlashToken))
-      .concat(childTokens(this.node, SyntaxKind.PercentToken));
+      .concat(childTokens(this.node, SyntaxKind.PercentToken))
+      .concat(childTokens(this.node, SyntaxKind.AmpersandToken))
+      .concat(childTokens(this.node, SyntaxKind.PipeToken))
+      .concat(childTokens(this.node, SyntaxKind.CaretToken))
+      .concat(childTokens(this.node, SyntaxKind.LeftShiftToken))
+      .concat(childTokens(this.node, SyntaxKind.RightShiftToken))
+      .concat(childTokens(this.node, SyntaxKind.AndKeyword))
+      .concat(childTokens(this.node, SyntaxKind.OrKeyword));
     return operators.find((token) => !token.isMissing);
   }
 

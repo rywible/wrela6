@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { Cursor } from "../../src/lexer/cursor";
-import { SourceText } from "../../src/lexer/source-text";
+import { Cursor } from "../../src/frontend/lexer/cursor";
+import { SourceText } from "../../src/frontend/lexer/source-text";
 
 describe("Cursor", () => {
   test("peeks and advances through source", () => {

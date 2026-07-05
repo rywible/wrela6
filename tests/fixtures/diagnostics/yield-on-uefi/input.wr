@@ -1,0 +1,6 @@
+fn producer() -> Never:
+    yield 0
+
+uefi image Boot:
+    fn boot() -> Never:
+        return

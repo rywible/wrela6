@@ -63,6 +63,7 @@ export type OptimizeOptIrResult =
 export interface PipelineState {
   readonly program: OptIrProgram;
   readonly operations: readonly OptIrOperation[];
+  readonly optimizationRegions: readonly OptIrRegion[];
   readonly facts: OptIrFactSet;
   readonly diagnostics: readonly OptIrDiagnostic[];
   readonly decisionLog: OptIrDecisionLog | undefined;

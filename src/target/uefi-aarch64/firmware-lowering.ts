@@ -17,6 +17,7 @@ import type { UefiAArch64ValidationFixturePacketSource } from "./package-input";
 import {
   UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_OPERATION_KEY,
   UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID,
+  UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_STREAM_PRIMITIVE_ID,
 } from "./validation-fixture-packet-rule";
 import { uefiAArch64ValidationFixturePacketPointer } from "./validation-fixture-packet-objects";
 
@@ -76,7 +77,8 @@ export function uefiLoweringRuleToAArch64FirmwarePlatformCallLowering(input: {
       });
     case "inline": {
       if (
-        input.primitiveId === UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID &&
+        (input.primitiveId === UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID ||
+          input.primitiveId === UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_STREAM_PRIMITIVE_ID) &&
         input.rule.operationKey === UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_OPERATION_KEY
       ) {
         const source = input.validationFixturePacketSources?.[0];

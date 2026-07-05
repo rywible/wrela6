@@ -17,7 +17,9 @@ import {
 import { expressionIdFor } from "./lower-harness/iterator-lowerer-harness-bindings";
 import { platformCallProofMirFixture } from "./proof-mir-layout-fixtures";
 import { monoInstanceId } from "../../../src/mono/ids";
+import { buildMonoTable, proofMetadataIdKey } from "../../../src/mono/proof-metadata-tables";
 import { monoResolvedCallTargetTableFromEntries } from "../../../src/mono/resolved-call-targets";
+import { functionId } from "../../../src/semantic/ids";
 
 export function ordinaryIteratorProofMirFixture(): ProofMirBuildInput {
   const closed = closedProofMirFixture();
@@ -139,6 +141,36 @@ export function streamForLoopProofMirFixture(): ProofMirBuildInput {
             .some((existing) => existing.functionInstanceId === fact.functionInstanceId),
       ),
   ];
+  const streamFunctionInstanceId = monoInstanceId("fn:iterator-protocol");
+  const streamForStatement =
+    stream.program.functions.get(streamFunctionInstanceId)?.body?.statements[0];
+  if (
+    streamForStatement?.kind.kind !== "for" ||
+    streamForStatement.kind.statement.iteration.kind !== "stream"
+  ) {
+    throw new Error("expected stream for statement in proof-mir fixture");
+  }
+  const streamIteration = streamForStatement.kind.statement.iteration;
+  const nextFunctionInstanceId = monoInstanceId("fn:iterator-next");
+  const iterableFunctionInstanceId = monoInstanceId("fn:packet-bytes");
+  const resolvedCallTargetEntries = [
+    {
+      callerInstanceId: streamFunctionInstanceId,
+      callExpressionId: expressionIdFor(streamFunctionInstanceId, 2),
+      resolvedTarget: {
+        kind: "sourceFunction" as const,
+        targetFunctionInstanceId: iterableFunctionInstanceId,
+      },
+    },
+    {
+      callerInstanceId: streamFunctionInstanceId,
+      callExpressionId: expressionIdFor(streamFunctionInstanceId, 100),
+      resolvedTarget: {
+        kind: "sourceFunction" as const,
+        targetFunctionInstanceId: nextFunctionInstanceId,
+      },
+    },
+  ];
   const externalRoots = [
     ...closed.program.externalRoots,
     ...stream.program.externalRoots.filter(
@@ -160,9 +192,54 @@ export function streamForLoopProofMirFixture(): ProofMirBuildInput {
       reachableFunctions: buildReachableFunctionsForProofMirTest({
         externalRoots,
         functions: mergedFunctions,
+        resolvedCallTargetEntries,
         seedReachableFunctions: closed.program.reachableFunctions.entries(),
       }),
-      proofMetadata: stream.program.proofMetadata,
+      proofMetadata: {
+        ...closed.program.proofMetadata,
+        obligations: buildMonoTable(
+          [
+            ...stream.program.proofMetadata.obligations.entries(),
+            {
+              obligationId: streamIteration.closureObligationId,
+              kind: "callRequirement" as const,
+              sourceOrigin: "source:stream-closure-obligation",
+            },
+          ],
+          (entry) => proofMetadataIdKey(entry.obligationId),
+          proofMetadataIdKey,
+        ),
+        sessions: buildMonoTable(
+          [
+            {
+              sessionId: streamIteration.sessionId,
+              kind: "streamFor" as const,
+              sourceOrigin: "source:stream-session",
+              place: streamForStatement.kind.statement.iterable.place,
+            },
+          ],
+          (entry) => proofMetadataIdKey(entry.sessionId),
+          proofMetadataIdKey,
+        ),
+        brands: buildMonoTable(
+          [
+            {
+              brandId: streamIteration.itemBrandId,
+              canonicalKey: "function:1:session:1" as const,
+              origin: {
+                kind: "functionSession" as const,
+                functionId: functionId(1),
+                ordinal: 1,
+              },
+              sourceOrigin: "source:stream-brand",
+            },
+          ],
+          (entry) => proofMetadataIdKey(entry.brandId),
+          proofMetadataIdKey,
+        ),
+        callSiteRequirements: stream.program.proofMetadata.callSiteRequirements,
+      },
+      resolvedCallTargets: monoResolvedCallTargetTableFromEntries(resolvedCallTargetEntries),
     },
     layout: {
       ...closed.layout,

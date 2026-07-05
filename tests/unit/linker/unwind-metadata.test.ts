@@ -53,12 +53,12 @@ describe("materializeLinkedUnwindRecords", () => {
         sizeBytes: 12,
       },
     ]);
-    expect(input.sections.find((section) => section.stableKey === ".pdata")?.bytes).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
-    ]);
-    expect(input.sections.find((section) => section.stableKey === ".xdata")?.bytes).toEqual([
-      13, 14, 15, 16,
-    ]);
+    expect(
+      Array.from(input.sections.find((section) => section.stableKey === ".pdata")?.bytes ?? []),
+    ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(
+      Array.from(input.sections.find((section) => section.stableKey === ".xdata")?.bytes ?? []),
+    ).toEqual([13, 14, 15, 16]);
   });
 
   test("materializes synthetic unwind records that reference functions by external linkage name", () => {

@@ -1,0 +1,7 @@
+fn accept(value: u32) -> Never:
+    return
+
+uefi image Boot:
+    fn boot() -> Never:
+        accept(Boot)
+        return

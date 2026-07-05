@@ -511,14 +511,15 @@ function compareString(
 function compareSectionBytes(
   diagnostics: PeCoffWriterDiagnostic[],
   stableDetail: string,
-  parsed: readonly number[],
-  planned: readonly number[],
+  parsed: ArrayLike<number>,
+  planned: ArrayLike<number>,
 ): void {
   if (parsed.length < planned.length) {
     diagnostics.push(verificationDiagnostic(stableDetail));
     return;
   }
-  for (const [index, plannedByte] of planned.entries()) {
+  for (let index = 0; index < planned.length; index += 1) {
+    const plannedByte = planned[index];
     if (parsed[index] !== plannedByte) {
       diagnostics.push(verificationDiagnostic(stableDetail));
       return;
@@ -532,11 +533,11 @@ function compareSectionBytes(
   }
 }
 
-function readU16Le(bytes: readonly number[], offset: number): number {
+function readU16Le(bytes: ArrayLike<number>, offset: number): number {
   return bytes[offset]! | (bytes[offset + 1]! << 8);
 }
 
-function readU32Le(bytes: readonly number[], offset: number): number {
+function readU32Le(bytes: ArrayLike<number>, offset: number): number {
   return (
     (bytes[offset]! |
       (bytes[offset + 1]! << 8) |

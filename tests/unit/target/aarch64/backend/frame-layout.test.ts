@@ -4,6 +4,19 @@ import { layoutAArch64StackFrame } from "../../../../../src/target/aarch64/backe
 import { verifyAArch64FrameLayout } from "../../../../../src/target/aarch64/backend/verify/frame-verifier";
 
 describe("AArch64 frame layout", () => {
+  test("rejects frames that are too large before instruction encoding", () => {
+    const result = layoutAArch64StackFrame({
+      functionKey: "fixture.huge",
+      localSlots: [{ slotKey: "huge", sizeBytes: 20 * 1024 * 1024, alignmentBytes: 16 }],
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("expected frame layout error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      "AARCH64_FRAME_TOO_LARGE",
+    ]);
+  });
+
   test("keeps SP aligned and orders wipe slots before spills", () => {
     const result = layoutAArch64StackFrame({
       functionKey: "fixture.function",

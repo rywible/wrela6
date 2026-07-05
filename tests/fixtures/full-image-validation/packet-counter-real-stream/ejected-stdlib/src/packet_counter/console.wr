@@ -1,0 +1,10 @@
+use Unit from wrela_std.core.unit
+use write_console_string from wrela_std.target.uefi.console
+
+fn write_packet_counter_marker(count: u8) -> Unit:
+    if count == 0:
+        write_console_string(utf16_static("WRELA_PACKET_COUNTER_DROPPED\r\n"))
+        return {}
+
+    write_console_string(utf16_static("WRELA_PACKET_COUNTER_OK\r\n"))
+    return {}

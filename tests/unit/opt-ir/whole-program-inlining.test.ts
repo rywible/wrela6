@@ -5,6 +5,7 @@ import { optIrCfgEdgeTable, type OptIrBlock } from "../../../src/opt-ir/cfg";
 import {
   optIrBlockId,
   optIrCallId,
+  optIrEdgeId,
   optIrFunctionId,
   optIrOperationId,
   optIrOriginId,
@@ -27,13 +28,17 @@ import { optIrBlockParameter } from "../../../src/opt-ir/values";
 import {
   optIrIntegerBinaryOperation,
   optIrPlatformCallOperation,
+  optIrRuntimeCallOperation,
   optIrSourceCallOperation,
   type OptIrOperation,
 } from "../../../src/opt-ir/operations";
 import {
   runWholeProgramInliningForTest,
   type OptIrWholeProgramInliningWorkItem,
+  type RunWholeProgramInliningResult,
 } from "../../../src/opt-ir/passes/whole-program-inlining";
+import { emptyOptIrFactSet } from "../../../src/opt-ir/facts/fact-index";
+import { verifyPipelineState } from "../../../src/opt-ir/passes/pipeline-state";
 import { optIrConstantTable } from "../../../src/opt-ir/program";
 import { optIrSignedIntegerType } from "../../../src/opt-ir/types";
 import { coreTypeId, functionId, itemId, targetId } from "../../../src/semantic/ids";
@@ -65,19 +70,30 @@ describe("budgeted whole-program inlining", () => {
       budget: budgetForTest(10),
     });
 
-    expect(result.program.functions.get(optIrFunctionId(1))?.blocks[0]?.operations).toEqual([
-      call.operationId,
+    const callerFunction = result.program.functions.get(optIrFunctionId(1));
+    const inlinedAdd = result.operations.find(
+      (operation) =>
+        operation.kind === "integerBinary" && operation.operationId !== add.operationId,
+    );
+    expect(inlinedAdd).toBeDefined();
+    if (inlinedAdd === undefined) return;
+    expect(callerFunction?.blocks.flatMap((block) => block.operations)).toEqual([
+      inlinedAdd.operationId,
     ]);
     expect(result.program.functions.get(optIrFunctionId(2))).toBeUndefined();
-    expect(result.operations.map((operation) => operation.operationId)).toEqual([call.operationId]);
-    expect(
-      result.operations.find((operation) => operation.operationId === call.operationId),
-    ).toMatchObject({
+    expect(result.operations.some((operation) => operation.operationId === call.operationId)).toBe(
+      false,
+    );
+    expect(inlinedAdd).toMatchObject({
       operandIds: [optIrValueId(1), optIrValueId(2)],
-      resultIds: [optIrValueId(20)],
       left: optIrValueId(1),
       right: optIrValueId(2),
     });
+    expect(
+      callerFunction?.blocks.some((block) =>
+        block.parameters.some((parameter) => parameter.valueId === optIrValueId(20)),
+      ),
+    ).toBe(true);
     expect(result.decisionLog.entries()).toEqual([
       expect.objectContaining({
         candidateKey: "inline:caller=1:callee=2:site=10",
@@ -206,17 +222,20 @@ describe("budgeted whole-program inlining", () => {
       budget: budgetForTest(10),
     });
 
-    expect(result.program.functions.get(optIrFunctionId(1))?.blocks[0]?.operations).toEqual([
-      call.operationId,
+    const callerFunction = result.program.functions.get(optIrFunctionId(1));
+    const inlinedPlatformCall = result.operations.find(
+      (operation) =>
+        operation.kind === "platformCall" && operation.operationId !== platformCall.operationId,
+    );
+    expect(inlinedPlatformCall).toBeDefined();
+    if (inlinedPlatformCall === undefined) return;
+    expect(callerFunction?.blocks.flatMap((block) => block.operations)).toEqual([
+      inlinedPlatformCall.operationId,
     ]);
     expect(result.program.functions.get(optIrFunctionId(2))).toBeUndefined();
-    expect(
-      result.operations.find((operation) => operation.operationId === call.operationId),
-    ).toMatchObject({
+    expect(inlinedPlatformCall).toMatchObject({
       kind: "platformCall",
-      callId: optIrCallId(10),
       argumentIds: [optIrValueId(1)],
-      resultIds: [optIrValueId(20)],
     });
     expect(result.decisionLog.entries()[0]).toMatchObject({
       policyResult: "accepted",
@@ -224,9 +243,129 @@ describe("budgeted whole-program inlining", () => {
     });
   });
 
+  test("inlines a multi-block callee with branch returns verifier-clean", () => {
+    const call = sourceCall(10, "branching.callee", [1, 2], [20]);
+    const callerUse = addOperation(11, 21, 20, 3);
+    const trueAdd = addOperation(30, 40, 100, 101);
+    const falseAdd = addOperation(31, 41, 101, 100);
+    const entryToTrue = optIrEdgeId(1);
+    const entryToFalse = optIrEdgeId(2);
+    const entryBlock: OptIrBlock = {
+      blockId: optIrBlockId(20),
+      parameters: [optIrValueId(100), optIrValueId(101)].map((valueId) =>
+        optIrBlockParameter({
+          valueId,
+          type: integer32,
+          incomingRole: "entry",
+          originId: optIrOriginId(20),
+        }),
+      ),
+      operations: [],
+      terminator: {
+        kind: "branch",
+        operationId: optIrOperationId(200),
+        condition: optIrValueId(100),
+        trueEdge: entryToTrue,
+        falseEdge: entryToFalse,
+        originId: optIrOriginId(20),
+      },
+      originId: optIrOriginId(20),
+    };
+    const trueBlock: OptIrBlock = {
+      blockId: optIrBlockId(21),
+      parameters: [],
+      operations: [trueAdd.operationId],
+      terminator: {
+        kind: "return",
+        operationId: optIrOperationId(201),
+        values: [optIrValueId(40)],
+        originId: optIrOriginId(21),
+      },
+      originId: optIrOriginId(21),
+    };
+    const falseBlock: OptIrBlock = {
+      blockId: optIrBlockId(22),
+      parameters: [],
+      operations: [falseAdd.operationId],
+      terminator: {
+        kind: "return",
+        operationId: optIrOperationId(202),
+        values: [optIrValueId(41)],
+        originId: optIrOriginId(22),
+      },
+      originId: optIrOriginId(22),
+    };
+    const program = programForTest([
+      functionWithOperations({
+        functionId: 1,
+        instance: "caller",
+        parameters: [optIrValueId(1), optIrValueId(2), optIrValueId(3)],
+        operations: [call.operationId, callerUse.operationId],
+        terminatorValues: [optIrValueId(21)],
+      }),
+      {
+        functionId: optIrFunctionId(2),
+        monoInstanceId: monoInstanceId("branching.callee"),
+        signature: signatureForTest(2),
+        blocks: [entryBlock, trueBlock, falseBlock],
+        edges: optIrCfgEdgeTable([
+          {
+            edgeId: entryToTrue,
+            from: entryBlock.blockId,
+            toBlock: trueBlock.blockId,
+            ordinal: 0,
+            kind: "branchTrue",
+            arguments: [],
+            condition: optIrValueId(100),
+            originId: optIrOriginId(20),
+          },
+          {
+            edgeId: entryToFalse,
+            from: entryBlock.blockId,
+            toBlock: falseBlock.blockId,
+            ordinal: 1,
+            kind: "branchFalse",
+            arguments: [],
+            condition: optIrValueId(100),
+            originId: optIrOriginId(20),
+          },
+        ]),
+        entryBlock: entryBlock.blockId,
+        originId: optIrOriginId(20),
+      },
+    ]);
+
+    const result = runWholeProgramInliningForTest({
+      program,
+      operations: [call, callerUse, trueAdd, falseAdd],
+      budget: budgetForTest(10),
+    });
+    const callerFunction = result.program.functions.get(optIrFunctionId(1));
+
+    expect(result.program.functions.get(optIrFunctionId(2))).toBeUndefined();
+    expect(result.operations.some((operation) => operation.operationId === call.operationId)).toBe(
+      false,
+    );
+    expect(callerFunction?.blocks.some((block) => block.terminator?.kind === "branch")).toBe(true);
+    expect(
+      callerFunction?.blocks.some((block) =>
+        block.parameters.some((parameter) => parameter.valueId === optIrValueId(20)),
+      ),
+    ).toBe(true);
+    expect(verifyResult(result)).toEqual([]);
+  });
+
   test("releases a successful reservation when rewrite legality rejects the candidate", () => {
     const call = sourceCall(10, "small.callee", [1], [20]);
-    const sideEffect = sourceCall(30, "unknown.effect", [100], []);
+    const sideEffect = optIrRuntimeCallOperation({
+      operationId: optIrOperationId(30),
+      callId: optIrCallId(30),
+      target: { kind: "runtime", runtimeKey: "unknown.effect" },
+      argumentIds: [optIrValueId(100)],
+      resultIds: [],
+      resultTypes: [],
+      originId: optIrOriginId(30),
+    });
     const program = programForTest([
       functionWithOperations({ functionId: 1, instance: "caller", operations: [call.operationId] }),
       functionWithOperations({
@@ -254,7 +393,7 @@ describe("budgeted whole-program inlining", () => {
     });
   });
 
-  test("rejects candidates whose callee operation ids collide with caller operation ids", () => {
+  test("freshens candidates whose callee operation ids collide with caller operation ids", () => {
     const call = sourceCall(10, "small.callee", [1], [20]);
     const callerOperation = addOperation(30, 50, 1, 2);
     const collidingCalleeOperation = addOperation(30, 40, 100, 2);
@@ -279,14 +418,22 @@ describe("budgeted whole-program inlining", () => {
       budget: budgetForTest(2),
     });
 
-    expect(result.program.functions.get(optIrFunctionId(1))?.blocks[0]?.operations).toEqual([
-      call.operationId,
-      callerOperation.operationId,
-    ]);
-    expect(result.remainingImageBudget.amount).toBe(2);
+    const callerOperationIds = result.program.functions
+      .get(optIrFunctionId(1))
+      ?.blocks.flatMap((block) => block.operations);
+    const inlinedOperation = result.operations.find(
+      (operation) =>
+        operation.kind === "integerBinary" &&
+        operation.operationId !== callerOperation.operationId &&
+        operation.operationId !== collidingCalleeOperation.operationId,
+    );
+    expect(callerOperationIds).toContain(callerOperation.operationId);
+    expect(callerOperationIds).toContain(inlinedOperation?.operationId);
+    expect(result.program.functions.get(optIrFunctionId(2))).toBeUndefined();
+    expect(result.remainingImageBudget.amount).toBe(1);
     expect(result.decisionLog.entries()[0]).toMatchObject({
-      policyResult: "denied",
-      stableReason: "inline:denied:rewrite-legality",
+      policyResult: "accepted",
+      stableReason: "inline:accepted",
     });
   });
 });
@@ -306,6 +453,24 @@ function workItem(
   reason: string,
 ): OptIrWholeProgramInliningWorkItem {
   return { kind, functionId: optIrFunctionId(functionIdValue), reason };
+}
+
+function verifyResult(result: RunWholeProgramInliningResult): readonly string[] {
+  const verified = verifyPipelineState(
+    {
+      program: result.program,
+      operations: result.operations,
+      optimizationRegions: [],
+      facts: emptyOptIrFactSet(),
+      diagnostics: [],
+      decisionLog: result.decisionLog,
+      verificationCheckpoints: [],
+    },
+    { kind: "after-scope-expansion-mutation", passId: "whole-program-inlining" },
+  );
+  return "kind" in verified && verified.kind === "error"
+    ? verified.diagnostics.map((diagnostic) => diagnostic.code)
+    : [];
 }
 
 function sourceCall(

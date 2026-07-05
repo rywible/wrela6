@@ -1,0 +1,10 @@
+use Bits from wrela_std.core.bits
+use UefiStatus from wrela_std.target.uefi.status
+
+class BitsApiProbe:
+    byte_bits: Bits[u8]
+    wide_bits: Bits[u64]
+
+uefi image StdlibBitsImage:
+    fn boot() -> UefiStatus:
+        UefiStatus.success

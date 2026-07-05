@@ -25,7 +25,7 @@ export interface LinkedImageLayoutForTestInput {
   readonly symbols?: readonly ResolvedImageSymbol[];
 }
 
-const entryCodeBytes = Object.freeze([0x00, 0x00, 0x00, 0x94]);
+const entryCodeBytes = Uint8Array.of(0x00, 0x00, 0x00, 0x94);
 const targetSurface = targetSurfaceForTest();
 
 export function targetSurfaceForTest(): AArch64LinkerTargetSurface {

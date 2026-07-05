@@ -21,7 +21,12 @@ import {
 } from "./target-driver-surface";
 import { fingerprintUefiAArch64StatusPolicy } from "./status-conversion";
 import { fingerprintUefiAArch64WatchdogPolicy } from "./watchdog-policy";
-import type { UefiAArch64SmokeRequest } from "./qemu-smoke";
+import {
+  runUefiAArch64QemuSmoke,
+  type UefiAArch64InlineSmokeRequest,
+  type UefiAArch64QemuSmokeRequest,
+  type UefiAArch64SmokeRequest,
+} from "./qemu-smoke";
 
 export interface CompileUefiAArch64ImageInput {
   readonly packageInput: CompilerPackageInput;
@@ -31,6 +36,10 @@ export interface CompileUefiAArch64ImageInput {
   readonly smoke?: UefiAArch64SmokeRequest;
   readonly packagePipelineDependencies?: UefiAArch64PackagePipelineDependencies;
 }
+
+export type CompileUefiAArch64ImageAsyncInput = Omit<CompileUefiAArch64ImageInput, "smoke"> & {
+  readonly smoke?: UefiAArch64SmokeRequest | UefiAArch64InlineSmokeRequest;
+};
 
 export type CompileUefiAArch64ImageResult =
   | {
@@ -85,10 +94,35 @@ export function compileUefiAArch64Image(
   });
 }
 
+export async function compileUefiAArch64ImageAsync(
+  input: CompileUefiAArch64ImageAsyncInput,
+): Promise<CompileUefiAArch64ImageResult> {
+  const result = await compileUefiAArch64ImageInternalAsync(input);
+  if (result.kind === "ok") {
+    return Object.freeze({
+      kind: "ok" as const,
+      artifact: result.artifact,
+      diagnostics: result.diagnostics,
+      verification: result.verification,
+    });
+  }
+  return Object.freeze({
+    kind: "error" as const,
+    diagnostics: result.diagnostics,
+    verification: result.verification,
+  });
+}
+
 export function compileUefiAArch64ImageWithTrace(
   input: CompileUefiAArch64ImageInput,
 ): CompileUefiAArch64ImageWithTraceResult {
   return compileUefiAArch64ImageInternal(input);
+}
+
+export async function compileUefiAArch64ImageWithTraceAsync(
+  input: CompileUefiAArch64ImageAsyncInput,
+): Promise<CompileUefiAArch64ImageWithTraceResult> {
+  return compileUefiAArch64ImageInternalAsync(input);
 }
 
 function compileUefiAArch64ImageInternal(
@@ -161,6 +195,55 @@ function compileUefiAArch64ImageInternal(
   return result;
 }
 
+async function compileUefiAArch64ImageInternalAsync(
+  input: CompileUefiAArch64ImageAsyncInput,
+): Promise<CompileUefiAArch64ImageWithTraceResult> {
+  if (input.smoke?.kind !== "run") {
+    return compileUefiAArch64ImageInternal(input as CompileUefiAArch64ImageInput);
+  }
+
+  const inlineSmoke = input.smoke;
+  const compiled = compileUefiAArch64ImageInternal({
+    ...input,
+    output: undefined,
+    smoke: { kind: "disabled" },
+  });
+  if (compiled.kind === "error") return compiled;
+
+  const smoke = await runUefiAArch64QemuSmoke({
+    artifact: compiled.artifact,
+    request: qemuRequestForInlineSmoke(inlineSmoke),
+    config: inlineSmoke.config,
+    hostEffects: inlineSmoke.hostEffects,
+  });
+  let verification = appendCompileVerificationRun(
+    compiled.verification,
+    "qemu-smoke",
+    smokeVerificationStatus(smoke.status),
+  );
+  const artifact = Object.freeze({
+    ...compiled.artifact,
+    smoke,
+  });
+
+  if (input.output !== undefined) {
+    const sinkResult = writeUefiAArch64ArtifactSink(input.output, artifact);
+    if (sinkResult.kind === "error") {
+      verification = appendCompileVerificationRun(verification, "artifact-sink", "failed");
+      return compileError(sinkResult.diagnostics, verification, compiled.trace);
+    }
+    verification = appendCompileVerificationRun(verification, "artifact-sink", "passed");
+  }
+
+  return Object.freeze({
+    kind: "ok" as const,
+    artifact,
+    diagnostics: Object.freeze([]),
+    verification,
+    trace: compiled.trace,
+  });
+}
+
 type MutableCompileUefiAArch64ImageTrace = {
   -readonly [Key in keyof CompileUefiAArch64ImageTrace]?: CompileUefiAArch64ImageTrace[Key];
 };
@@ -189,9 +272,35 @@ export function createUefiAArch64TargetMetadata(input: {
   });
 }
 
-export function fingerprintUefiAArch64ImageBytes(bytes: readonly number[]): string {
-  const hex = bytes.map((byte) => byte.toString(16).padStart(2, "0")).join("");
+export function fingerprintUefiAArch64ImageBytes(bytes: Uint8Array | readonly number[]): string {
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   return `uefi-aarch64-image-bytes:${stableHash(hex)}`;
+}
+
+function qemuRequestForInlineSmoke(
+  request: UefiAArch64InlineSmokeRequest,
+): UefiAArch64QemuSmokeRequest {
+  const { config: _config, hostEffects: _hostEffects, kind: _kind, ...options } = request;
+  return Object.freeze({
+    ...options,
+    kind: "qemu" as const,
+  });
+}
+
+function smokeVerificationStatus(
+  status: "disabled" | "skipped" | "passed" | "failed",
+): UefiAArch64TargetVerifierRun["status"] {
+  return status === "disabled" ? "skipped" : status;
+}
+
+function appendCompileVerificationRun(
+  verification: UefiAArch64TargetVerificationSummary,
+  runKey: string,
+  status: UefiAArch64TargetVerifierRun["status"],
+): UefiAArch64TargetVerificationSummary {
+  return Object.freeze({
+    runs: Object.freeze([...verification.runs, compileRun(runKey, status)]),
+  });
 }
 
 function createUefiAArch64ImageArtifact(input: {

@@ -94,17 +94,17 @@ tests/
 tests the lexer module through its public API. `tests/system` is reserved for
 future composed compiler workflows such as lexing plus parsing.
 
-> **Migration note:** The old `src/lexer` path is now a compatibility barrel
-> (`export * from "../frontend/lexer"`). It remains temporarily so existing
-> imports continue to work, but new code should import from `src/frontend/lexer`
-> or the `src/frontend` barrel.
+> **Migration note:** Lexer implementation APIs now live under
+> `src/frontend/lexer`. Frontend callers should import through
+> `src/frontend/lexer`, the `src/frontend` barrel, or root public barrels as
+> appropriate.
 
 ## Public API
 
 Each compiler module should expose its public API through its own `index.ts`.
 The lexer module root is `Lexer`. The target module path is
-`src/frontend/lexer`; temporary compatibility exports from `src/lexer` are
-acceptable during migration only.
+`src/frontend/lexer`; public callers may also use the frontend or root barrels
+when those barrels intentionally expose the lexer API.
 
 ```ts
 // src/frontend/lexer/index.ts

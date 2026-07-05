@@ -16,6 +16,8 @@ import { optIrCfgEdgeTable, optIrConstructionIdAllocator } from "../../../src/op
 import { optIrDiagnosticCode } from "../../../src/opt-ir/diagnostics";
 import type { OptIrCfgEdit } from "../../../src/opt-ir/cfg-edits";
 import { optIrBranchTerminator, optIrSwitchTerminator } from "../../../src/opt-ir/terminators";
+import { checkedFunctionSummaryCertificateId } from "../../../src/proof-check/model/certificates";
+import type { CheckedFunctionSummary } from "../../../src/proof-check/model/function-summary";
 import {
   edgeForTest,
   optIrBlockForTest,
@@ -125,7 +127,7 @@ describe("OptIR program and function tables", () => {
       from: optIrBlockId(7),
       toBlock: optIrBlockId(9),
     });
-    const summary = { returns: "u16" };
+    const summary = checkedFunctionSummaryForOptIrTest(monoInstanceId("image::entry"));
     const func = optIrFunctionForTest({
       functionId: optIrFunctionId(3),
       monoInstanceId: monoInstanceId("image::entry"),
@@ -159,6 +161,26 @@ describe("OptIR program and function tables", () => {
     expect(edit.removedEdges).toEqual([optIrEdgeId(5)]);
   });
 });
+
+function checkedFunctionSummaryForOptIrTest(
+  functionInstanceId: ReturnType<typeof monoInstanceId>,
+): CheckedFunctionSummary {
+  return {
+    functionInstanceId,
+    requiredFacts: [],
+    observedInputs: [],
+    consumedInputs: [],
+    mutatedInputs: [],
+    producedPlaces: [],
+    returnedFacts: [],
+    invalidatedFacts: [],
+    privateStateEffects: [],
+    producedCapabilities: [],
+    terminalEffects: [],
+    divergence: [],
+    certificateId: checkedFunctionSummaryCertificateId(1),
+  };
+}
 
 describe("OptIR construction ID allocation", () => {
   test("allocator follows checked MIR traversal order instead of map insertion order", () => {

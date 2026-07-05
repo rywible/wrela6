@@ -4,6 +4,7 @@ import type {
   ProofMirExitEdge,
   ProofMirFunction,
 } from "../../proof-mir/model/graph";
+import { instantiatedHirIdKey } from "../../mono/ids";
 import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
 import {
   equivalentProofMirPlaceKeys,
@@ -81,6 +82,83 @@ function crossedValidationCleanupScopeIds(input: {
   return validationArmScopeIds;
 }
 
+function crossedNonFunctionCleanupScopeIds(input: {
+  readonly functionGraph: ProofMirFunction;
+  readonly exit: ProofMirExitEdge;
+}): ReadonlySet<ProofMirScopeId> {
+  if (input.exit.boundary.kind !== "function") {
+    return new Set();
+  }
+
+  return nonFunctionCleanupScopeIds({
+    functionGraph: input.functionGraph,
+    crossedScopes: input.exit.crossedScopes,
+  });
+}
+
+function nonFunctionCleanupScopeIds(input: {
+  readonly functionGraph: ProofMirFunction;
+  readonly crossedScopes: readonly ProofMirScopeId[];
+}): ReadonlySet<ProofMirScopeId> {
+  return new Set(
+    input.crossedScopes.filter(
+      (scopeId) => input.functionGraph.scopes.get(scopeId)?.kind !== "function",
+    ),
+  );
+}
+
+function scopeOwnedLocalPlaceKeys(input: {
+  readonly functionGraph: ProofMirFunction;
+  readonly crossedScopeIds: ReadonlySet<ProofMirScopeId>;
+  readonly placeResolver?: ProofCheckPlaceResolver;
+}): readonly string[] {
+  const ownedLocalKeys = new Set<string>();
+  for (const scopeId of input.crossedScopeIds) {
+    const scope = input.functionGraph.scopes.get(scopeId);
+    if (scope === undefined) {
+      continue;
+    }
+    for (const localId of scope.ownedLocals) {
+      ownedLocalKeys.add(instantiatedHirIdKey(localId));
+    }
+  }
+  if (ownedLocalKeys.size === 0) {
+    return [];
+  }
+
+  const placeKeys = new Set<string>();
+  for (const place of input.functionGraph.places.entries()) {
+    if (
+      place.root.kind !== "local" ||
+      !ownedLocalKeys.has(instantiatedHirIdKey(place.root.localId))
+    ) {
+      continue;
+    }
+    for (const placeKey of equivalentProofMirPlaceKeys({
+      functionGraph: input.functionGraph,
+      placeId: place.placeId,
+      placeResolver: input.placeResolver,
+    })) {
+      placeKeys.add(placeKey);
+    }
+  }
+
+  return [...placeKeys].sort((left, right) => {
+    const depthDelta =
+      projectionDepthForPlaceKey({
+        functionGraph: input.functionGraph,
+        placeKey: right,
+        placeResolver: input.placeResolver,
+      }) -
+      projectionDepthForPlaceKey({
+        functionGraph: input.functionGraph,
+        placeKey: left,
+        placeResolver: input.placeResolver,
+      });
+    return depthDelta === 0 ? compareCodeUnitStrings(left, right) : depthDelta;
+  });
+}
+
 function scopeDescendsFromAny(input: {
   readonly functionGraph: ProofMirFunction;
   readonly scopeId: ProofMirScopeId;
@@ -140,6 +218,13 @@ export function validationArmCleanupPlaceKeys(input: {
   }
 
   const placeKeys = new Set<string>();
+  for (const placeKey of scopeOwnedLocalPlaceKeys({
+    functionGraph: input.functionGraph,
+    crossedScopeIds,
+    placeResolver: input.placeResolver,
+  })) {
+    placeKeys.add(placeKey);
+  }
   for (const edge of input.functionGraph.edges.entries()) {
     if (
       edge.kind !== "validationOk" ||
@@ -174,4 +259,100 @@ export function validationArmCleanupPlaceKeys(input: {
       });
     return depthDelta === 0 ? compareCodeUnitStrings(left, right) : depthDelta;
   });
+}
+
+export function exitScopeIntroducedPlaceCleanupKeys(input: {
+  readonly functionGraph: ProofMirFunction;
+  readonly exit: ProofMirExitEdge;
+  readonly placeResolver?: ProofCheckPlaceResolver;
+}): readonly string[] {
+  const crossedScopeIds = crossedNonFunctionCleanupScopeIds(input);
+  if (crossedScopeIds.size === 0) {
+    return [];
+  }
+
+  const placeKeys = new Set<string>();
+  for (const placeKey of scopeOwnedLocalPlaceKeys({
+    functionGraph: input.functionGraph,
+    crossedScopeIds,
+    placeResolver: input.placeResolver,
+  })) {
+    placeKeys.add(placeKey);
+  }
+  for (const edge of input.functionGraph.edges.entries()) {
+    if (
+      !edgeTargetsCrossedScope({
+        functionGraph: input.functionGraph,
+        edge,
+        crossedScopeIds,
+      })
+    ) {
+      continue;
+    }
+    for (const placeKey of introducedValidationArmPlaceKeysFromEdge({
+      functionGraph: input.functionGraph,
+      edge,
+      placeResolver: input.placeResolver,
+    })) {
+      placeKeys.add(placeKey);
+    }
+  }
+
+  return [...placeKeys].sort((left, right) => {
+    const depthDelta =
+      projectionDepthForPlaceKey({
+        functionGraph: input.functionGraph,
+        placeKey: right,
+        placeResolver: input.placeResolver,
+      }) -
+      projectionDepthForPlaceKey({
+        functionGraph: input.functionGraph,
+        placeKey: left,
+        placeResolver: input.placeResolver,
+      });
+    return depthDelta === 0 ? compareCodeUnitStrings(left, right) : depthDelta;
+  });
+}
+
+export function edgeScopeIntroducedPlaceCleanupKeys(input: {
+  readonly functionGraph: ProofMirFunction;
+  readonly edge: ProofMirControlEdge;
+  readonly placeResolver?: ProofCheckPlaceResolver;
+}): readonly string[] {
+  const crossedScopeIds = nonFunctionCleanupScopeIds({
+    functionGraph: input.functionGraph,
+    crossedScopes: input.edge.crossedScopes,
+  });
+  if (crossedScopeIds.size === 0) {
+    return [];
+  }
+
+  const placeKeys = new Set<string>();
+  for (const placeKey of scopeOwnedLocalPlaceKeys({
+    functionGraph: input.functionGraph,
+    crossedScopeIds,
+    placeResolver: input.placeResolver,
+  })) {
+    placeKeys.add(placeKey);
+  }
+  for (const edge of input.functionGraph.edges.entries()) {
+    if (
+      !edgeTargetsCrossedScope({
+        functionGraph: input.functionGraph,
+        edge,
+        crossedScopeIds,
+      })
+    ) {
+      continue;
+    }
+    for (const placeKey of introducedValidationArmPlaceKeysFromEdge({
+      functionGraph: input.functionGraph,
+      edge,
+      placeResolver: input.placeResolver,
+    })) {
+      placeKeys.add(placeKey);
+    }
+  }
+
+  return [...placeKeys].sort(compareCodeUnitStrings);
 }

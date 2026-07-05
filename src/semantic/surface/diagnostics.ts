@@ -1,6 +1,10 @@
 import type { SourceSpan, SourceText } from "../../frontend";
 import type { ModuleId } from "../ids";
 import { compareCodeUnitStrings } from "./deterministic-sort";
+export {
+  platformPrimitiveSignatureMismatch,
+  type PlatformPrimitiveSignatureMismatchInput,
+} from "./platform-diagnostics";
 
 export type SemanticSurfaceDiagnosticCode =
   | "SURFACE_INVALID_TYPE_REFERENCE"
@@ -33,7 +37,10 @@ export type SemanticSurfaceDiagnosticCode =
   | "SURFACE_UNRESOLVED_DEFERRED_MEMBER"
   | "SURFACE_AMBIGUOUS_DEFERRED_MEMBER"
   | "SURFACE_INVALID_WIRE_ENCODING"
-  | "SURFACE_INVALID_COMPILER_INTRINSIC_CALL";
+  | "SURFACE_INVALID_COMPILER_INTRINSIC_CALL"
+  | "SURFACE_RECURSIVE_FUNCTION_CYCLE"
+  | "SURFACE_RECURSIVE_TYPE_CYCLE"
+  | "SEMANTIC_DATACLASS_AFFINE_FIELD";
 
 export interface DiagnosticRelatedInformation {
   readonly message: string;
@@ -54,6 +61,7 @@ export interface SemanticSurfaceDiagnostic {
   readonly source?: SourceText;
   readonly span?: SourceSpan;
   readonly relatedInformation?: readonly DiagnosticRelatedInformation[];
+  readonly stableDetail?: string;
   readonly order: SemanticSurfaceDiagnosticOrder;
 }
 
@@ -110,27 +118,6 @@ export function invalidTypeReference(input: InvalidTypeReferenceInput): Semantic
     ...(input.relatedInformation !== undefined
       ? { relatedInformation: input.relatedInformation }
       : {}),
-  };
-}
-
-export interface PlatformPrimitiveSignatureMismatchInput {
-  readonly source: SourceText | undefined;
-  readonly span: SourceSpan;
-  readonly order: SemanticSurfaceDiagnosticOrder;
-  readonly functionName: string;
-  readonly reason: string;
-}
-
-export function platformPrimitiveSignatureMismatch(
-  input: PlatformPrimitiveSignatureMismatchInput,
-): SemanticSurfaceDiagnostic {
-  return {
-    code: "SURFACE_PLATFORM_SIGNATURE_MISMATCH",
-    message: `Platform primitive signature mismatch for '${input.functionName}': ${input.reason}.`,
-    severity: "error",
-    source: input.source,
-    span: input.span,
-    order: input.order,
   };
 }
 

@@ -148,7 +148,7 @@ function linkedSection(
     alignmentBytes: SECTION_ALIGNMENT_BYTES,
     rva,
     virtualSizeBytes: byteLength,
-    bytes: Array.from({ length: byteLength }, (_unusedValue, index) => index & 0xff),
+    bytes: Uint8Array.from({ length: byteLength }, (_unusedValue, index) => index & 0xff),
     contributions: [
       {
         stableKey: `contribution:${stableKey}`,
@@ -165,7 +165,7 @@ function linkedSection(
 }
 
 function parseBaseRelocationBlocksForTest(
-  bytes: readonly number[],
+  bytes: ArrayLike<number>,
 ): { readonly kind: "ok"; readonly value: readonly number[] } | { readonly kind: "error" } {
   const relocationRvas: number[] = [];
   let cursor = 0;
@@ -187,11 +187,11 @@ function parseBaseRelocationBlocksForTest(
   return { kind: "ok", value: relocationRvas };
 }
 
-function readU16Le(bytes: readonly number[], offset: number): number {
+function readU16Le(bytes: ArrayLike<number>, offset: number): number {
   return (bytes[offset] ?? 0) | ((bytes[offset + 1] ?? 0) << 8);
 }
 
-function readU32Le(bytes: readonly number[], offset: number): number {
+function readU32Le(bytes: ArrayLike<number>, offset: number): number {
   return (
     ((bytes[offset] ?? 0) |
       ((bytes[offset + 1] ?? 0) << 8) |

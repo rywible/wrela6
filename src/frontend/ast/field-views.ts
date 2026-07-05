@@ -24,7 +24,7 @@ export class FieldDeclarationView extends AstView {
     return presentTokenText(this.nameToken());
   }
 
-  nameSpan(): import("../../lexer").SourceSpan | undefined {
+  nameSpan(): import("../lexer").SourceSpan | undefined {
     return presentTokenSpan(this.nameToken());
   }
 
@@ -47,7 +47,7 @@ export class LayoutFieldView extends AstView {
     return presentTokenText(this.nameToken());
   }
 
-  nameSpan(): import("../../lexer").SourceSpan | undefined {
+  nameSpan(): import("../lexer").SourceSpan | undefined {
     return presentTokenSpan(this.nameToken());
   }
 
@@ -108,7 +108,7 @@ export class DerivedFieldView extends AstView {
     return presentTokenText(this.nameToken());
   }
 
-  nameSpan(): import("../../lexer").SourceSpan | undefined {
+  nameSpan(): import("../lexer").SourceSpan | undefined {
     return presentTokenSpan(this.nameToken());
   }
 

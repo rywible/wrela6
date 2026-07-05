@@ -8,7 +8,7 @@ export function originForStatement(
 ): ProofMirCanonicalKey {
   return context.originMap.fromMonoStatement({
     owner: { kind: "function", functionInstanceId: context.functionInstanceId },
-    sourceOrigin: statement.sourceOrigin as never,
+    sourceOrigin: statement.sourceOrigin,
     monoStatementId: statement.statementId,
   });
 }

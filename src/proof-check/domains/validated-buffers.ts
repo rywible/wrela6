@@ -447,10 +447,8 @@ export function validatedBufferPacketEntriesForRead(input: {
 }): readonly CheckedFactPacketEntry<CheckedFactKindId, CheckedFactSubject>[] {
   const layoutKey = String(input.validatedBufferInstanceId);
   const subjectKey = `validated-buffer:${layoutKey}:${String(input.placeId)}`;
-  return input.certificates.map((certificate, index) => ({
-    factId: proofCheckPacketFactId(
-      stableNumericSeed(`validatedBuffer:${subjectKey}:${certificate.normalizedTermKey}:${index}`),
-    ),
+  return input.certificates.map((certificate) => ({
+    factId: proofCheckPacketFactId(stableNumericSeed(`validatedBuffer:${subjectKey}`)),
     kind: checkedFactKindId("validatedBuffer"),
     subject: { kind: "place", placeId: input.placeId },
     scope: defaultScope(),

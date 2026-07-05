@@ -29,6 +29,7 @@ export function lowerTypedHirForTest(
     readonly platformNames?: readonly string[];
     readonly targetSurface?: SemanticTargetSurface;
     readonly imageRoot?: ImageRootSelection;
+    readonly enabledTargetFeatures?: readonly string[];
   },
 ): LowerTypedHirResult {
   const targetSurface = options?.targetSurface ?? semanticTargetSurfaceFake();
@@ -50,6 +51,7 @@ export function lowerTypedHirForTest(
     coreTypes: fixture.coreTypes,
     program: surface.program,
     image: surface.image,
+    enabledTargetFeatures: options?.enabledTargetFeatures,
   });
 }
 
@@ -59,6 +61,7 @@ export function createHirUnitContext(
     readonly platformNames?: readonly string[];
     readonly targetSurface?: SemanticTargetSurface;
     readonly imageRoot?: ImageRootSelection;
+    readonly enabledTargetFeatures?: readonly string[];
   },
 ): HirLoweringContext {
   const targetSurface = options?.targetSurface ?? semanticTargetSurfaceFake();
@@ -82,6 +85,7 @@ export function createHirUnitContext(
     coreTypes: fixture.coreTypes,
     program: surface.program,
     image: surface.image,
+    enabledTargetFeatures: options?.enabledTargetFeatures,
   });
 }
 

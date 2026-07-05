@@ -61,7 +61,7 @@ export interface AArch64ObjectSection {
   readonly stableKey: AArch64ObjectSectionId;
   readonly classKey: AArch64ObjectSectionClassKey;
   readonly alignmentBytes: number;
-  readonly bytes: readonly number[];
+  readonly bytes: Uint8Array;
   readonly fragments: readonly AArch64ObjectFragment[];
 }
 
@@ -96,7 +96,7 @@ export interface AArch64ObjectLiteralPoolEntry {
   readonly stableKey: AArch64LiteralPoolId;
   readonly sectionKey: AArch64ObjectSectionId;
   readonly offsetBytes: number;
-  readonly data: readonly number[];
+  readonly data: Uint8Array;
   readonly users: readonly AArch64ObjectLiteralPoolUser[];
 }
 
@@ -375,7 +375,7 @@ export function aarch64ObjectSection(input: {
   readonly stableKey: string;
   readonly classKey: string;
   readonly alignmentBytes?: number;
-  readonly bytes?: readonly number[];
+  readonly bytes?: Uint8Array | readonly number[];
   readonly fragments?: readonly {
     readonly stableKey: string;
     readonly startOffsetBytes: number;
@@ -511,7 +511,7 @@ export function aarch64ObjectLiteralPoolEntry(input: {
   readonly stableKey: string;
   readonly sectionKey: string;
   readonly offsetBytes: number;
-  readonly data: readonly number[];
+  readonly data: Uint8Array | readonly number[];
   readonly users?: readonly {
     readonly stableKey: string;
     readonly useOffsetBytes: number;
@@ -946,15 +946,14 @@ function defaultByteProvenanceFromSections(
   );
 }
 
-function freezeBytes(values: readonly number[]): readonly number[] {
-  return Object.freeze(
-    values.map((byteValue) => {
-      if (!Number.isInteger(byteValue) || byteValue < 0 || byteValue > 0xff) {
-        throw new RangeError("byte values must be integers in the range 0..255.");
-      }
-      return byteValue;
-    }),
-  );
+function freezeBytes(values: Uint8Array | readonly number[]): Uint8Array {
+  const bytes = Uint8Array.from(values);
+  for (const byteValue of bytes) {
+    if (!Number.isInteger(byteValue) || byteValue < 0 || byteValue > 0xff) {
+      throw new RangeError("byte values must be integers in the range 0..255.");
+    }
+  }
+  return bytes;
 }
 
 export function objectModuleSortDiagnostics(input: {

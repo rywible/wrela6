@@ -1,15 +1,19 @@
 import type { OptIrValueId } from "../ids";
+import { optIrTypesEqual } from "../types";
 import type {
   ProofMirBlock,
   ProofMirControlEdge,
   ProofMirFunction,
   ProofMirPlace,
+  ProofMirStatement,
+  ProofMirValue,
 } from "../../proof-mir/model/graph";
 import { checkedTypeFingerprint } from "../../semantic/surface/type-model";
 import type { ProofMirLoweringContext } from "./lower-checked-mir";
 import { compareStableKeys, proofMirScopedValueKey } from "./proof-mir-lowering-support";
 import {
   functionSignatureParameterValueKey,
+  optIrTypeFromMono,
   proofMirValueErasureReason,
   proofMirValueIdFor,
   proofMirValueIsRuntime,
@@ -35,6 +39,7 @@ export function basePlaceValueAliasesForBlock(
     }
     seedValidationEdgePlaceAliases(function_, edge, context, aliases);
     seedAttemptEdgePlaceAliases(function_, edge, context, aliases);
+    seedSwitchCaseEdgePlaceAliases(function_, edge, context, aliases);
   }
   return aliases;
 }
@@ -163,6 +168,33 @@ export function aliasProofMirValue(input: {
   });
 }
 
+export function valueAliasForTakeOperand(input: {
+  readonly function_: ProofMirFunction;
+  readonly operand: Extract<
+    ProofMirStatement["kind"],
+    { readonly kind: "take" }
+  >["take"]["operand"];
+  readonly context: ProofMirLoweringContext;
+  readonly aliases: ProofMirPlaceValueAliases;
+}): OptIrValueId | undefined {
+  if (input.operand.kind === "value" || input.operand.kind === "valueAndPlace") {
+    return proofMirValueIdFor(input.function_, input.operand.value, input.context);
+  }
+  const place = input.function_.places.get(input.operand.place);
+  if (place === undefined) {
+    return undefined;
+  }
+  return (
+    input.aliases.exactPlaceValues.get(String(place.placeId)) ??
+    rootValueAliasForPlace({
+      function_: input.function_,
+      place,
+      context: input.context,
+      aliases: input.aliases,
+    })
+  );
+}
+
 function emptyPlaceValueAliases(): ProofMirPlaceValueAliases {
   return {
     exactPlaceValues: new Map(),
@@ -199,6 +231,25 @@ function aliasesAfterBlockStatements(
           valueId: proofMirValueIdFor(function_, statement.kind.value, context),
         });
         break;
+      case "take": {
+        if (statement.kind.take.sessionMember?.placeId !== undefined) {
+          const valueAlias = valueAliasForTakeOperand({
+            function_,
+            operand: statement.kind.take.operand,
+            context,
+            aliases,
+          });
+          if (valueAlias !== undefined) {
+            bindPlaceValueAlias({
+              function_,
+              aliases,
+              placeId: statement.kind.take.sessionMember.placeId,
+              valueId: valueAlias,
+            });
+          }
+        }
+        break;
+      }
       case "consumePlace":
         unbindPlaceValueAlias(function_, aliases, statement.kind.place);
         break;
@@ -303,6 +354,57 @@ function seedAttemptEdgePlaceAliases(
   seedIntroducedEdgePlaceAliases(function_, edge, context, aliases);
 }
 
+function seedSwitchCaseEdgePlaceAliases(
+  function_: ProofMirFunction,
+  edge: ProofMirControlEdge,
+  context: ProofMirLoweringContext,
+  aliases: ProofMirPlaceValueAliases,
+): void {
+  if (edge.kind !== "switchCase") {
+    return;
+  }
+  const sourceBlock = function_.blocks.get(edge.fromBlockId);
+  if (sourceBlock?.terminator.kind.kind !== "switch") {
+    return;
+  }
+  const label = switchCaseLabelForEdge(sourceBlock, edge);
+  if (label === undefined) {
+    return;
+  }
+  const scrutinee = function_.values.get(sourceBlock.terminator.kind.scrutinee);
+  if (scrutinee === undefined) {
+    return;
+  }
+  const scrutineeValueId = proofMirValueIdFor(
+    function_,
+    sourceBlock.terminator.kind.scrutinee,
+    context,
+  );
+  for (const placeId of introducedEdgePlaceIds(edge)) {
+    const place = function_.places.get(placeId);
+    if (place === undefined || place.projection.length > 0) {
+      continue;
+    }
+    const payload = context.target.sourceTypeAbi?.lowerSwitchCasePayload?.({
+      type: scrutinee.type,
+      label,
+      payloadType: place.type,
+    });
+    if (payload?.kind !== "scrutinee") {
+      continue;
+    }
+    if (
+      !optIrTypesEqual(
+        lowerProofMirTypeForTarget(scrutinee.type, context),
+        lowerProofMirTypeForTarget(place.type, context),
+      )
+    ) {
+      continue;
+    }
+    bindPlaceValueAlias({ function_, aliases, placeId, valueId: scrutineeValueId });
+  }
+}
+
 function seedIntroducedEdgePlaceAliases(
   function_: ProofMirFunction,
   edge: ProofMirControlEdge,
@@ -310,13 +412,7 @@ function seedIntroducedEdgePlaceAliases(
   aliases: ProofMirPlaceValueAliases,
 ): void {
   const usedArgumentIndexes = new Set<number>();
-  const introducedPlaceIds = edge.effects
-    .filter(
-      (effect): effect is Extract<typeof effect, { readonly kind: "introducePlace" }> =>
-        effect.kind === "introducePlace",
-    )
-    .map((effect) => effect.placeId)
-    .sort((left, right) => compareStableKeys(String(left), String(right)));
+  const introducedPlaceIds = introducedEdgePlaceIds(edge);
 
   for (const placeId of introducedPlaceIds) {
     const place = function_.places.get(placeId);
@@ -344,6 +440,31 @@ function seedIntroducedEdgePlaceAliases(
       valueId: proofMirValueIdFor(function_, edge.arguments[argumentIndex]!, context),
     });
   }
+}
+
+function introducedEdgePlaceIds(edge: ProofMirControlEdge): readonly ProofMirPlace["placeId"][] {
+  return edge.effects
+    .filter(
+      (effect): effect is Extract<typeof effect, { readonly kind: "introducePlace" }> =>
+        effect.kind === "introducePlace",
+    )
+    .map((effect) => effect.placeId)
+    .sort((left, right) => compareStableKeys(String(left), String(right)));
+}
+
+function switchCaseLabelForEdge(
+  block: ProofMirBlock,
+  edge: ProofMirControlEdge,
+): string | undefined {
+  if (block.terminator.kind.kind !== "switch") {
+    return undefined;
+  }
+  return block.terminator.kind.cases.find((switchCase) => switchCase.target.edgeId === edge.edgeId)
+    ?.label;
+}
+
+function lowerProofMirTypeForTarget(type: ProofMirValue["type"], context: ProofMirLoweringContext) {
+  return context.target.sourceTypeAbi?.lowerType(type) ?? optIrTypeFromMono(type);
 }
 
 function unbindPlaceValueAlias(

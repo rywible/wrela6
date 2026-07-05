@@ -21,4 +21,4 @@ const parseResult = parser.parseLexResult({
 console.log(parseResult.tree.reconstruct()); // equals source.text
 ```
 
-Legacy compatibility imports from `./src/lexer` remain available during migration but new code should import from `./src/frontend`.
+Frontend lexer and parser APIs are exported from `./src/frontend`.

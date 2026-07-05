@@ -10,7 +10,10 @@ import type { DraftProofMirCallArgument, DraftProofMirCallReceiver } from "./dra
 import type { ProofMirDraftOperand } from "../lower/lowering-operands";
 import type { DraftGraphEdgeState, DraftGraphTerminator } from "./draft-graph-builder";
 import type { ConcreteResourceKind } from "../../semantic/surface/resource-kind";
-import type { ProofMirLocalStorageKind } from "../domains/effects-resources";
+import type {
+  DraftProofMirEdgeEffect,
+  ProofMirLocalStorageKind,
+} from "../domains/effects-resources";
 import type { ProofMirValueRepresentation } from "../model/graph";
 import type { PlatformPrimitiveId } from "../../semantic/ids";
 import type { ProofMirCanonicalKey } from "../canonicalization/canonical-keys";
@@ -37,7 +40,9 @@ import type { ProofMirDiagnostic } from "../diagnostics";
 import type {
   DraftProofMirPlaceProjection,
   DraftProofMirPlaceRoot,
+  DraftProofMirResourceBoundarySet,
 } from "../domains/effects-resources";
+import { stableJson } from "../../shared/stable-json";
 import type { ProofMirExitClosurePolicy } from "../model/graph";
 import type { DraftProofMirGraphStatementSnapshot } from "./draft-statement";
 
@@ -60,13 +65,22 @@ export interface DraftProofMirOriginRecord {
   readonly note?: string;
 }
 
+export type DraftProofMirExitClosurePolicy =
+  | Exclude<ProofMirExitClosurePolicy, { readonly kind: "scopeExit" }>
+  | {
+      readonly kind: "scopeExit";
+      readonly checkedScopeKeys: readonly ProofMirCanonicalKey[];
+      readonly evaluateAfterEdgeEffects: true;
+      readonly allowedTransfers: readonly DraftProofMirEdgeEffect[];
+    };
+
 export interface DraftProofMirGraphExitSnapshot {
   readonly key: ProofMirCanonicalKey;
   readonly role: string;
   readonly fromBlockKey: ProofMirCanonicalKey;
   readonly originKey: ProofMirCanonicalKey;
   readonly exitKind: "ordinaryReturn" | "terminalReturn" | "panic" | "scopeBreak";
-  readonly closure: ProofMirExitClosurePolicy;
+  readonly closure: DraftProofMirExitClosurePolicy;
   readonly crossedScopeKeys?: readonly ProofMirCanonicalKey[];
   readonly targetScopeKey?: ProofMirCanonicalKey;
 }
@@ -83,6 +97,14 @@ export interface DraftProofMirGraphBlockSnapshot {
   readonly terminator?: DraftGraphTerminator;
   readonly statements: readonly DraftProofMirGraphStatementSnapshot[];
   readonly parameters?: readonly DraftProofMirGraphBlockParameterSnapshot[];
+  readonly stateMerge?: DraftProofMirGraphBlockStateMergeSnapshot;
+}
+
+export interface DraftProofMirGraphBlockStateMergeSnapshot {
+  readonly kind: "loopHeader";
+  readonly loopScopeKey: ProofMirCanonicalKey;
+  readonly boundaryResources: DraftProofMirResourceBoundarySet;
+  readonly originKey: ProofMirCanonicalKey;
 }
 
 export interface DraftProofMirGraphSnapshot {
@@ -181,6 +203,7 @@ export interface DraftProofMirLocalRecord {
   readonly functionInstanceId: MonoInstanceId;
   readonly name: string;
   readonly originKey: ProofMirCanonicalKey;
+  readonly scopeKey?: ProofMirCanonicalKey;
   readonly type?: MonoCheckedType;
   readonly resourceKind?: ConcreteResourceKind;
   readonly storage?: ProofMirLocalStorageKind;
@@ -355,9 +378,9 @@ function valueRecordPayload(record: DraftProofMirValueRecord): string {
   return [
     record.role,
     String(record.originKey),
-    record.type === undefined ? "" : JSON.stringify(record.type),
+    record.type === undefined ? "" : stableJson(record.type),
     record.resourceKind ?? "",
-    record.representation === undefined ? "" : JSON.stringify(record.representation),
+    record.representation === undefined ? "" : stableJson(record.representation),
   ].join("|");
 }
 
@@ -365,7 +388,8 @@ function localRecordPayload(record: DraftProofMirLocalRecord): string {
   return [
     record.name,
     String(record.originKey),
-    record.type === undefined ? "" : JSON.stringify(record.type),
+    record.scopeKey === undefined ? "" : String(record.scopeKey),
+    record.type === undefined ? "" : stableJson(record.type),
     record.resourceKind ?? "",
     record.storage ?? "",
     record.backingPlaceKey === undefined ? "" : String(record.backingPlaceKey),
@@ -375,9 +399,9 @@ function localRecordPayload(record: DraftProofMirLocalRecord): string {
 function placeRecordPayload(record: DraftProofMirPlaceRecord): string {
   return [
     record.monoPlaceCanonicalKey,
-    record.root === undefined ? "" : JSON.stringify(record.root),
-    record.projection === undefined ? "" : JSON.stringify(record.projection),
-    record.type === undefined ? "" : JSON.stringify(record.type),
+    record.root === undefined ? "" : stableJson(record.root),
+    record.projection === undefined ? "" : stableJson(record.projection),
+    record.type === undefined ? "" : stableJson(record.type),
     record.resourceKind ?? "",
   ].join("|");
 }
@@ -409,9 +433,9 @@ function draftCallArgumentPayload(argument: DraftProofMirCallArgument): string {
 function callRecordPayload(record: DraftProofMirCallRecord): string {
   return [
     String(record.originKey),
-    JSON.stringify(record.callId),
-    JSON.stringify(record.target),
-    record.receiver === undefined ? "" : JSON.stringify(record.receiver),
+    stableJson(record.callId),
+    stableJson(record.target),
+    record.receiver === undefined ? "" : stableJson(record.receiver),
     record.arguments.map(draftCallArgumentPayload).join(","),
     record.requirements.map((requirement) => String(requirement)).join(","),
     record.result === undefined ? "" : draftOperandPayload(record.result),
@@ -447,9 +471,7 @@ function privateStateGenerationRecordPayload(
 }
 
 function callGraphEdgeRecordPayload(record: DraftProofMirCallGraphEdgeRecord): string {
-  return [String(record.callKey), String(record.originKey), JSON.stringify(record.target)].join(
-    "|",
-  );
+  return [String(record.callKey), String(record.originKey), stableJson(record.target)].join("|");
 }
 
 function platformEdgeRecordPayload(record: DraftProofMirPlatformEdgeRecord): string {

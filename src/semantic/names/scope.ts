@@ -4,6 +4,7 @@ import type { TypeParameterOwner } from "../item-index/item-records";
 import type { ItemRecord } from "../item-index/item-records";
 import type { ResolvedReference } from "./reference";
 import type { CandidateDisplay } from "./diagnostics";
+import type { SourceSpan } from "../../frontend";
 
 export type ScopeNamespace = "type" | "value";
 
@@ -28,6 +29,56 @@ export interface Scope {
   lookup(namespace: ScopeNamespace, name: string): ScopeLookupResult;
   lookupType(name: string): ScopeLookupResult;
   lookupValue(name: string): ScopeLookupResult;
+}
+
+export interface LocalBinding {
+  readonly name: string;
+  readonly span: SourceSpan;
+  readonly ordinal: number;
+}
+
+export interface LocalBindingInput {
+  readonly name: string;
+  readonly span: SourceSpan;
+}
+
+export interface LocalScope {
+  lookup(name: string): LocalBinding | undefined;
+  has(name: string): boolean;
+  add(bindings: readonly LocalBindingInput[]): LocalScope;
+}
+
+class ImmutableLocalScope implements LocalScope {
+  constructor(
+    private readonly bindings: readonly LocalBinding[],
+    private readonly nextOrdinal: number,
+  ) {}
+
+  lookup(name: string): LocalBinding | undefined {
+    for (let index = this.bindings.length - 1; index >= 0; index--) {
+      const binding = this.bindings[index]!;
+      if (binding.name === name) return binding;
+    }
+    return undefined;
+  }
+
+  has(name: string): boolean {
+    return this.lookup(name) !== undefined;
+  }
+
+  add(bindings: readonly LocalBindingInput[]): LocalScope {
+    let nextOrdinal = this.nextOrdinal;
+    const nextBindings = [...this.bindings];
+    for (const binding of bindings) {
+      nextBindings.push({
+        name: binding.name,
+        span: binding.span,
+        ordinal: nextOrdinal,
+      });
+      nextOrdinal += 1;
+    }
+    return new ImmutableLocalScope(Object.freeze(nextBindings), nextOrdinal);
+  }
 }
 
 export class ScopeBuilder {
@@ -67,6 +118,21 @@ export class ScopeBuilder {
 
 export function scopeBuilder(): ScopeBuilder {
   return new ScopeBuilder();
+}
+
+export function localScope(bindings: readonly LocalBinding[] = []): LocalScope {
+  const nextOrdinal =
+    bindings.reduce((maximum, binding) => Math.max(maximum, binding.ordinal), -1) + 1;
+  return new ImmutableLocalScope(Object.freeze([...bindings]), nextOrdinal);
+}
+
+export function localReference(binding: LocalBinding): ResolvedReference {
+  return {
+    kind: "local",
+    name: binding.name,
+    bindingSpan: binding.span,
+    ordinal: binding.ordinal,
+  };
 }
 
 export function resolvedReferenceForItem(index: ItemIndex, item: ItemRecord): ResolvedReference {

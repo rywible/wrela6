@@ -1,10 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { factOriginId } from "../../../src/hir/ids";
 import { monoInstanceId } from "../../../src/mono/ids";
-import type { MonoInstantiatedProofId } from "../../../src/mono/mono-hir";
+import type {
+  MonoCheckedType,
+  MonoInstantiatedProofId,
+  MonoTypeInstance,
+} from "../../../src/mono/mono-hir";
 import { proofMirDiagnosticCode } from "../../../src/proof-mir/diagnostics";
 import { crossedScopesForDraftEdge } from "../../../src/proof-mir/domains/effects-resources";
 import { lowerProofMirMatchForTest } from "../../support/proof-mir/lower-harness/match-lowerer-harness";
+import { coreTypeId, itemId, typeId } from "../../../src/semantic/ids";
+
+function monoU8Type(): MonoCheckedType {
+  return { kind: "core", coreTypeId: coreTypeId("u8") } as MonoCheckedType;
+}
 
 describe("ProofMirMatchLowerer", () => {
   test("non-exhaustive switch without mono evidence is rejected", () => {
@@ -43,6 +52,50 @@ describe("ProofMirMatchLowerer", () => {
       "switchCase",
       "switchCase",
     ]);
+  });
+
+  test("applied Validation Ok and Err arms are exhaustive without an override", () => {
+    const validationTypeId = typeId(88);
+    const payloadType = monoU8Type();
+    const validationType = {
+      kind: "applied",
+      constructor: { kind: "source", typeId: validationTypeId },
+      arguments: [payloadType, payloadType],
+      resourceKind: { kind: "concrete", value: "Copy" },
+    } as unknown as MonoCheckedType;
+    const validationTypeInstance: MonoTypeInstance = {
+      instanceId: monoInstanceId("type:Validation"),
+      sourceTypeId: validationTypeId,
+      sourceItemId: itemId(88),
+      sourceName: "Validation",
+      sourceKind: "class",
+      typeArguments: [payloadType, payloadType],
+      fields: [],
+      enumCases: [],
+      resourceKind: "Copy",
+      sourceOrigin: "source:type:Validation",
+    };
+
+    const lowered = lowerProofMirMatchForTest({
+      scrutinee: "result",
+      scrutineeType: validationType,
+      cases: [
+        { pattern: "Ok", bindingLocals: ["payload"] },
+        { pattern: "Err", bindingLocals: ["status"] },
+      ],
+      scalarLocals: ["result", "payload", "status"],
+      programTypes: [validationTypeInstance],
+    });
+
+    expect(lowered.kind).toBe("ok");
+    if (lowered.kind !== "ok") return;
+    expect(lowered.switch?.terminator?.kind).toBe("switch");
+    if (lowered.switch?.terminator?.kind !== "switch") return;
+    expect(lowered.switch.terminator.cases.map((caseEntry) => caseEntry.label)).toEqual([
+      "Ok",
+      "Err",
+    ]);
+    expect(lowered.switch.terminator.fallback).toBeUndefined();
   });
 
   test("wildcard arm lowers as switch fallback", () => {

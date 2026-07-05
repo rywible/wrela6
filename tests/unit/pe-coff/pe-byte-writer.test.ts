@@ -37,10 +37,21 @@ describe("PE byte writer", () => {
     expect(writer.writeBytes([0xaa, 0xbb]).kind).toBe("ok");
 
     expect(writer.offset()).toBe(17);
-    expect(writer.bytes()).toEqual([
+    expect(writer.bytes()).toBeInstanceOf(Uint8Array);
+    expect([...writer.bytes()]).toEqual([
       0x12, 0x56, 0x34, 0xde, 0xbc, 0x9a, 0x78, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,
       0xaa, 0xbb,
     ]);
+  });
+
+  test("copies typed byte inputs into writer-owned storage", () => {
+    const writer = createPeByteWriter();
+    const input = Uint8Array.of(0x11, 0x22, 0x33);
+
+    expect(writer.writeBytes(input).kind).toBe("ok");
+    input[1] = 0xff;
+
+    expect([...writer.bytes()]).toEqual([0x11, 0x22, 0x33]);
   });
 
   test("rejects overflow without truncating", () => {
@@ -49,7 +60,7 @@ describe("PE byte writer", () => {
     const result = writer.writeU32Le(0x1_0000_0000);
 
     expect(result.kind).toBe("error");
-    expect(writer.bytes()).toEqual([]);
+    expect([...writer.bytes()]).toEqual([]);
     expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
       "byte-writer:range:u32:4294967296",
     );
@@ -62,7 +73,7 @@ describe("PE byte writer", () => {
     expect(writer.writeU16Le(1.5).kind).toBe("error");
     expect(writer.writeU64Le(1 as unknown as bigint).kind).toBe("error");
     expect(writer.writeZeroes(-1).kind).toBe("error");
-    expect(writer.bytes()).toEqual([]);
+    expect([...writer.bytes()]).toEqual([]);
   });
 
   test("writes zeroes and patches existing u32 values", () => {
@@ -70,11 +81,11 @@ describe("PE byte writer", () => {
 
     expect(writer.writeZeroes(4).kind).toBe("ok");
     expect(writer.patchU32Le(0, 0x12345678).kind).toBe("ok");
-    expect(writer.bytes()).toEqual([0x78, 0x56, 0x34, 0x12]);
+    expect([...writer.bytes()]).toEqual([0x78, 0x56, 0x34, 0x12]);
 
     const result = writer.patchU32Le(1, 0);
     expect(result.kind).toBe("error");
-    expect(writer.bytes()).toEqual([0x78, 0x56, 0x34, 0x12]);
+    expect([...writer.bytes()]).toEqual([0x78, 0x56, 0x34, 0x12]);
   });
 
   test("appends large byte and zero runs without spreading into call arguments", () => {
@@ -92,15 +103,12 @@ describe("PE byte writer", () => {
     expect(bytes[399_999]).toBe(0);
   });
 
-  test("bytes returns a frozen copy", () => {
+  test("bytes returns an isolated copy", () => {
     const writer = createPeByteWriter();
     expect(writer.writeU8(1).kind).toBe("ok");
 
     const bytes = writer.bytes();
-    expect(Object.isFrozen(bytes)).toBe(true);
-    expect(() => {
-      (bytes as number[])[0] = 99;
-    }).toThrow();
-    expect(writer.bytes()).toEqual([1]);
+    bytes[0] = 99;
+    expect([...writer.bytes()]).toEqual([1]);
   });
 });

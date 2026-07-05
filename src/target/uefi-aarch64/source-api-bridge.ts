@@ -30,12 +30,19 @@ export interface UefiAArch64SourceApiType {
 }
 
 const SOURCE_API_PATHS = Object.freeze({
-  result: Object.freeze(["wrela_std/core/result.wr", "wrela_abi/core/result.wr"]),
+  result: Object.freeze([
+    "wrela-std/core/result.wr",
+    "wrela_std/core/result.wr",
+    "wrela_abi/core/result.wr",
+  ]),
   firmware: Object.freeze([
+    "wrela-std/target/uefi/firmware.wr",
     "wrela_std/target/uefi/firmware.wr",
     "wrela_abi/target/uefi/firmware.wr",
   ]),
   bootError: Object.freeze([
+    "wrela-std/target/uefi/boot.wr",
+    "wrela-std/target/uefi/firmware.wr",
     "wrela_std/target/uefi/boot.wr",
     "wrela_std/target/uefi/firmware.wr",
     "wrela_abi/target/uefi/boot.wr",

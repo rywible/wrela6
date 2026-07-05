@@ -12,14 +12,29 @@ const UEFI_AARCH64_DEFAULT_BOOT_IMAGE_PATH = Object.freeze(["EFI", "BOOT", "BOOT
 const UEFI_AARCH64_SHELL_SMOKE_IMAGE_PATH = Object.freeze(["EFI", "WRELA", "SMOKEAA64.EFI"]);
 const UEFI_AARCH64_SHELL_SMOKE_IMAGE_COMMAND = "\\EFI\\WRELA\\SMOKEAA64.EFI";
 
-export interface UefiAArch64SmokeRequest {
-  readonly kind: "disabled" | "qemu";
+interface UefiAArch64QemuSmokeRequestOptions {
   readonly allowSkip?: boolean;
   readonly timeoutMs?: number;
   readonly expectedConsoleMarkers?: readonly string[];
   readonly uefiShellSuccessMarker?: UefiAArch64ShellSuccessMarker;
   readonly termination?: "kill-after-marker" | "wait-for-firmware-exit";
 }
+
+export type UefiAArch64DisabledSmokeRequest = UefiAArch64QemuSmokeRequestOptions & {
+  readonly kind: "disabled";
+};
+
+export type UefiAArch64QemuSmokeRequest = UefiAArch64QemuSmokeRequestOptions & {
+  readonly kind: "qemu";
+};
+
+export type UefiAArch64InlineSmokeRequest = UefiAArch64QemuSmokeRequestOptions & {
+  readonly kind: "run";
+  readonly config: UefiAArch64QemuSmokeConfig;
+  readonly hostEffects: UefiAArch64QemuHostEffects;
+};
+
+export type UefiAArch64SmokeRequest = UefiAArch64DisabledSmokeRequest | UefiAArch64QemuSmokeRequest;
 
 export interface UefiAArch64ShellSuccessMarker {
   readonly marker: string;
@@ -36,11 +51,9 @@ export interface UefiAArch64QemuSmokeConfig {
   readonly accel: "tcg" | "hvf" | "kvm";
 }
 
-export type UefiAArch64QemuSmokeRequest = UefiAArch64SmokeRequest & { readonly kind: "qemu" };
-
 export interface PlanUefiAArch64QemuSmokeCommandInput {
   readonly artifactName: string;
-  readonly artifactBytes: readonly number[];
+  readonly artifactBytes: Uint8Array | readonly number[];
   readonly tempDirectory: string;
   readonly request: UefiAArch64QemuSmokeRequest;
   readonly config: UefiAArch64QemuSmokeConfig;
@@ -50,7 +63,7 @@ export interface UefiAArch64QemuSmokeCommandPlan {
   readonly artifactName: string;
   readonly espImagePath: string;
   readonly startupScriptPath?: string;
-  readonly startupScriptBytes?: readonly number[];
+  readonly startupScriptBytes?: Uint8Array | readonly number[];
   readonly firmwareVarsPath?: string;
   readonly executable: string;
   readonly args: readonly string[];
@@ -75,7 +88,7 @@ export interface UefiAArch64QemuRunnerOutput {
 
 export interface UefiAArch64QemuHostEffects {
   readonly createTempDirectory: (prefix: string) => Promise<string>;
-  readonly writeFile: (path: string, bytes: readonly number[]) => Promise<void>;
+  readonly writeFile: (path: string, bytes: Uint8Array | readonly number[]) => Promise<void>;
   readonly copyFile: (sourcePath: string, targetPath: string) => Promise<void>;
   readonly runProcess: (
     command: UefiAArch64QemuSmokeCommandPlan,
@@ -312,7 +325,7 @@ export async function runUefiAArch64QemuSmoke(input: {
 
 export async function runUefiAArch64QemuSmokeImage(input: {
   readonly artifactName: string;
-  readonly artifactBytes: readonly number[];
+  readonly artifactBytes: Uint8Array | readonly number[];
   readonly targetDriverFingerprint?: string;
   readonly request: UefiAArch64QemuSmokeRequest;
   readonly config: UefiAArch64QemuSmokeConfig;
@@ -475,7 +488,7 @@ function shellMarkerPlanForSmokeRequest(
 function startupScriptForShellSuccessMarker(
   request: UefiAArch64QemuSmokeRequest,
   shellMarkerPlan: UefiAArch64ShellMarkerPlan | undefined,
-): readonly number[] | undefined {
+): Uint8Array | undefined {
   if (request.uefiShellSuccessMarker === undefined || shellMarkerPlan === undefined) {
     return undefined;
   }
@@ -503,8 +516,8 @@ function shellMarkerNonce(tempDirectory: string): string {
   return safeTail.length === 0 ? "run" : safeTail;
 }
 
-function asciiBytes(value: string): readonly number[] {
-  return Object.freeze([...value].map((character) => character.charCodeAt(0) & 0x7f));
+function asciiBytes(value: string): Uint8Array {
+  return Uint8Array.from([...value], (character) => character.charCodeAt(0) & 0x7f);
 }
 
 function isSafeUefiShellEchoArgument(value: string): boolean {

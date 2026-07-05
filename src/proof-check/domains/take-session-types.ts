@@ -27,6 +27,7 @@ export interface TakeSessionTransferInput {
   readonly producerEdgePathKey?: string;
   readonly bufferPlaceKey?: string;
   readonly validatedPlaceKey?: string;
+  readonly memberPlaceKey?: string;
   readonly member?: ProofCheckStreamMember;
   readonly operationOriginKey?: string;
 }
@@ -37,6 +38,7 @@ export interface OpenTakeStreamInput {
   readonly brandKey: string;
   readonly closureObligationKey: string;
   readonly producerEdgePathKey: string;
+  readonly memberPlaceKey?: string;
   readonly operationOriginKey?: string;
 }
 

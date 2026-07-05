@@ -42,6 +42,7 @@ import {
   UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_FEATURE,
   UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_OPERATION_KEY,
   UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID,
+  UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_STREAM_PRIMITIVE_ID,
 } from "./validation-fixture-packet-rule";
 
 export const FULL_IMAGE_VALIDATION_FEATURE = UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_FEATURE;
@@ -184,6 +185,10 @@ export function uefiAArch64PlatformPrimitiveNameCatalog() {
     {
       name: "validation_fixture_packet_source",
       primitiveId: platformPrimitiveId(UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID),
+    },
+    {
+      name: "validation_fixture_packet_stream",
+      primitiveId: platformPrimitiveId(UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_STREAM_PRIMITIVE_ID),
     },
     ...UEFI_AARCH64_SOURCE_API_PLATFORM_PRIMITIVES.map((primitive) => ({
       name: primitive.sourceName,
@@ -409,7 +414,8 @@ function availabilityForPrimitive(name: CanonicalUefiPrimitiveName) {
     targetId: targetId("wrela-uefi-aarch64-rpi5-v1"),
     profiles: Object.freeze([imageProfileId("uefi")]),
     features: Object.freeze(
-      name === UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID
+      name === UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID ||
+        name === UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_STREAM_PRIMITIVE_ID
         ? [FULL_IMAGE_VALIDATION_FEATURE]
         : [],
     ),
@@ -434,7 +440,8 @@ type CanonicalUefiPrimitiveName =
   | "uefi.boot.exit"
   | "uefi.protocol.locate"
   | UefiAArch64SourceApiPrimitiveName
-  | typeof UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID;
+  | typeof UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID
+  | typeof UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_STREAM_PRIMITIVE_ID;
 
 function signatureForPrimitive(name: CanonicalUefiPrimitiveName): TargetFunctionSignature {
   if (isSourceApiPrimitiveName(name)) {
@@ -487,6 +494,7 @@ function signatureForPrimitive(name: CanonicalUefiPrimitiveName): TargetFunction
         "uefi.Status",
       );
     case UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID:
+    case UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_STREAM_PRIMITIVE_ID:
       return targetSignature([], "uefi.Ptr");
   }
 }
@@ -591,6 +599,13 @@ const CANONICAL_UEFI_PLATFORM_LOWERING_RULES: readonly {
   ]),
   Object.freeze({
     primitiveId: UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_PRIMITIVE_ID,
+    lowering: Object.freeze({
+      kind: "inline" as const,
+      operationKey: UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_OPERATION_KEY,
+    }),
+  }),
+  Object.freeze({
+    primitiveId: UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_STREAM_PRIMITIVE_ID,
     lowering: Object.freeze({
       kind: "inline" as const,
       operationKey: UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_SOURCE_OPERATION_KEY,

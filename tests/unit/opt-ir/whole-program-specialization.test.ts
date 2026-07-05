@@ -38,6 +38,8 @@ import {
 } from "../../../src/opt-ir/program";
 import { optIrSignedIntegerType } from "../../../src/opt-ir/types";
 import { optIrBlockParameter } from "../../../src/opt-ir/values";
+import { checkedFunctionSummaryCertificateId } from "../../../src/proof-check/model/certificates";
+import type { CheckedFunctionSummary } from "../../../src/proof-check/model/function-summary";
 import type { MonoCheckedType, MonoFunctionSignature } from "../../../src/mono/mono-hir";
 import { coreTypeId, functionId, itemId, targetId } from "../../../src/semantic/ids";
 import { coreCheckedType } from "../../../src/semantic/surface/type-model";
@@ -108,7 +110,10 @@ describe("whole-program specialization", () => {
         functionId: 4,
         instance: "cold",
         operations: [],
-        summary: { isCold: true },
+        summary: {
+          ...checkedFunctionSummaryForOptIrTest(monoInstanceId("cold")),
+          isCold: true,
+        },
       }),
       functionForTest({ functionId: 5, instance: "cloneable", operations: [] }),
     ]);
@@ -186,6 +191,10 @@ describe("whole-program specialization", () => {
     expect(retargetedCalls.map((operation) => operation.argumentIds)).toEqual([[], []]);
     expect(clone.blocks[0]?.parameters).toEqual([]);
     expect(clone.blocks[0]?.operations.length).toBe(2);
+    expect(result.program.functions.get(optIrFunctionId(2))).toBeUndefined();
+    expect(
+      result.operations.some((operation) => operation.operationId === calleeAdd.operationId),
+    ).toBe(false);
     expect(result.decisionLog.entries().map((entry) => entry.stableReason)).toEqual([
       "specialize:clone:materialized",
       "specialize:clone:deduplicated",
@@ -269,7 +278,7 @@ function functionForTest(input: {
   readonly instance: string;
   readonly operations: readonly number[];
   readonly externalRoot?: boolean;
-  readonly summary?: unknown;
+  readonly summary?: CheckedFunctionSummary & { readonly isCold?: boolean };
 }): OptIrFunction {
   const block: OptIrBlock = {
     blockId: optIrBlockId(input.functionId),
@@ -296,6 +305,26 @@ function functionForTest(input: {
     }),
     ...(input.summary === undefined ? {} : { summary: input.summary }),
     originId: optIrOriginId(input.functionId),
+  };
+}
+
+function checkedFunctionSummaryForOptIrTest(
+  functionInstanceId: ReturnType<typeof monoInstanceId>,
+): CheckedFunctionSummary {
+  return {
+    functionInstanceId,
+    requiredFacts: [],
+    observedInputs: [],
+    consumedInputs: [],
+    mutatedInputs: [],
+    producedPlaces: [],
+    returnedFacts: [],
+    invalidatedFacts: [],
+    privateStateEffects: [],
+    producedCapabilities: [],
+    terminalEffects: [],
+    divergence: [],
+    certificateId: checkedFunctionSummaryCertificateId(1),
   };
 }
 

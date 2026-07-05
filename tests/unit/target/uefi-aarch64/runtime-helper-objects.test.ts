@@ -89,7 +89,7 @@ describe("UEFI AArch64 runtime helper objects", () => {
         successStatusWrite.startOffsetBytes,
         successStatusWrite.startOffsetBytes + successStatusWrite.byteLength,
       ),
-    ).toEqual([0x00, 0x00, 0x80, 0xd2]);
+    ).toEqual(Uint8Array.of(0x00, 0x00, 0x80, 0xd2));
   });
 
   test("exit boot services helper emits bounded fresh-map retry loop", () => {
@@ -204,6 +204,27 @@ describe("UEFI AArch64 runtime helper objects", () => {
       "uefi-runtime-helper:entry-initialize-context",
       "uefi-runtime-helper:exit-boot-services-with-fresh-map",
       "uefi-runtime-helper:status-from-boot-result",
+    ]);
+  });
+
+  test("reports deterministic primitive coverage for every emitted helper object", () => {
+    const result = materializeUefiAArch64RuntimeHelperObjects({
+      backendTarget: backendTargetForRuntimeHelperObjectsTest(),
+      firmwareTables: canonicalUefiAArch64FirmwareTableSurface(),
+      statusPolicy: canonicalUefiAArch64StatusPolicy(),
+      watchdogPolicy: { kind: "disable-before-source" },
+      exitBootServicesPolicy: canonicalUefiAArch64ExitBootServicesPolicy(),
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error("expected helper modules");
+    expect(result.value.coverage.map((record) => record.moduleKey)).toEqual(
+      result.value.modules.map((module) => module.moduleKey),
+    );
+    expect(result.value.coveredPrimitiveIds.map(String)).toEqual([
+      "uefi.boot.exitBootServices",
+      "uefi.boot.setWatchdogTimer",
+      "uefi.source.exitBootServices",
     ]);
   });
 });

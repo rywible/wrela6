@@ -16,6 +16,7 @@ import {
 
 export type OptIrCoreOperationKind =
   | "constant"
+  | "constAddr"
   | "integerUnary"
   | "integerBinary"
   | "integerCompare"
@@ -62,6 +63,7 @@ export interface OptIrOperationSchema {
 
 const [
   CONSTANT_LITERAL_SEMANTICS,
+  CONST_ADDRESS_SEMANTICS,
   INTEGER_UNARY_SEMANTICS,
   INTEGER_BINARY_SEMANTICS,
   INTEGER_COMPARE_SEMANTICS,
@@ -75,6 +77,7 @@ const [
   LAYOUT_ENDIAN_DECODE_SEMANTICS,
 ] = defineOptIrSemanticsRuleCatalog([
   "constant-literal",
+  "const-address",
   "integer-unary",
   "integer-binary",
   "integer-compare",
@@ -90,6 +93,7 @@ const [
 
 const [
   CONSTANT_LITERAL_INTERPRETER,
+  CONST_ADDRESS_INTERPRETER,
   INTEGER_UNARY_INTERPRETER,
   INTEGER_BINARY_INTERPRETER,
   INTEGER_COMPARE_INTERPRETER,
@@ -103,6 +107,7 @@ const [
   LAYOUT_ENDIAN_DECODE_INTERPRETER,
 ] = defineOptIrInterpreterRuleCatalog([
   "constant-literal",
+  "const-address",
   "integer-unary",
   "integer-binary",
   "integer-compare",
@@ -129,11 +134,16 @@ const CONSTANT_HAS_DECLARED_TYPE = catalogEntry(
   0,
   "constant-has-declared-type",
 );
-const SAME_INTEGER_WIDTH = catalogEntry(OPT_IR_TYPE_RULE_IDS, 1, "same-integer-width");
-const INTEGER_COMPARE_TO_BOOL = catalogEntry(OPT_IR_TYPE_RULE_IDS, 2, "integer-compare-to-bool");
-const SAME_BOOLEAN = catalogEntry(OPT_IR_TYPE_RULE_IDS, 3, "same-boolean");
-const AGGREGATE_FIELD_TYPE = catalogEntry(OPT_IR_TYPE_RULE_IDS, 4, "aggregate-field-type");
-const LAYOUT_VALUE = catalogEntry(OPT_IR_TYPE_RULE_IDS, 5, "layout-value");
+const CONST_ADDRESS_HAS_DECLARED_TYPE = catalogEntry(
+  OPT_IR_TYPE_RULE_IDS,
+  1,
+  "const-address-has-declared-type",
+);
+const SAME_INTEGER_WIDTH = catalogEntry(OPT_IR_TYPE_RULE_IDS, 2, "same-integer-width");
+const INTEGER_COMPARE_TO_BOOL = catalogEntry(OPT_IR_TYPE_RULE_IDS, 3, "integer-compare-to-bool");
+const SAME_BOOLEAN = catalogEntry(OPT_IR_TYPE_RULE_IDS, 4, "same-boolean");
+const AGGREGATE_FIELD_TYPE = catalogEntry(OPT_IR_TYPE_RULE_IDS, 5, "aggregate-field-type");
+const LAYOUT_VALUE = catalogEntry(OPT_IR_TYPE_RULE_IDS, 6, "layout-value");
 const PURE_EFFECT = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 0, "pure");
 const CORE_LOWERING_REQUIREMENT = Object.freeze({ kind: "core" } as const);
 
@@ -159,6 +169,17 @@ export const OPT_IR_CORE_OPERATION_SCHEMAS = Object.freeze([
     loweringRequirement: CORE_LOWERING_REQUIREMENT,
   }),
   freezeSchema({
+    operationKind: "constAddr",
+    operandSchema: [],
+    resultSchema: [{ role: "address", cardinality: "one" }],
+    typeRule: CONST_ADDRESS_HAS_DECLARED_TYPE,
+    semanticsRule: CONST_ADDRESS_SEMANTICS,
+    effectRule: PURE_EFFECT,
+    interpreterRule: CONST_ADDRESS_INTERPRETER,
+    canonicalForm: optIrCanonicalFormId(1),
+    loweringRequirement: CORE_LOWERING_REQUIREMENT,
+  }),
+  freezeSchema({
     operationKind: "integerUnary",
     operandSchema: [{ role: "operand", typeFamily: "integer", cardinality: "one" }],
     resultSchema: [{ role: "result", typeFamily: "integer", cardinality: "one" }],
@@ -166,7 +187,7 @@ export const OPT_IR_CORE_OPERATION_SCHEMAS = Object.freeze([
     semanticsRule: INTEGER_UNARY_SEMANTICS,
     effectRule: PURE_EFFECT,
     interpreterRule: INTEGER_UNARY_INTERPRETER,
-    canonicalForm: optIrCanonicalFormId(1),
+    canonicalForm: optIrCanonicalFormId(2),
     loweringRequirement: CORE_LOWERING_REQUIREMENT,
   }),
   freezeSchema({
@@ -180,7 +201,7 @@ export const OPT_IR_CORE_OPERATION_SCHEMAS = Object.freeze([
     semanticsRule: INTEGER_BINARY_SEMANTICS,
     effectRule: PURE_EFFECT,
     interpreterRule: INTEGER_BINARY_INTERPRETER,
-    canonicalForm: optIrCanonicalFormId(2),
+    canonicalForm: optIrCanonicalFormId(3),
     loweringRequirement: CORE_LOWERING_REQUIREMENT,
   }),
   freezeSchema({
@@ -194,7 +215,7 @@ export const OPT_IR_CORE_OPERATION_SCHEMAS = Object.freeze([
     semanticsRule: INTEGER_COMPARE_SEMANTICS,
     effectRule: PURE_EFFECT,
     interpreterRule: INTEGER_COMPARE_INTERPRETER,
-    canonicalForm: optIrCanonicalFormId(3),
+    canonicalForm: optIrCanonicalFormId(4),
     loweringRequirement: CORE_LOWERING_REQUIREMENT,
   }),
   freezeSchema({
@@ -205,7 +226,7 @@ export const OPT_IR_CORE_OPERATION_SCHEMAS = Object.freeze([
     semanticsRule: BOOLEAN_NOT_SEMANTICS,
     effectRule: PURE_EFFECT,
     interpreterRule: BOOLEAN_NOT_INTERPRETER,
-    canonicalForm: optIrCanonicalFormId(4),
+    canonicalForm: optIrCanonicalFormId(5),
     loweringRequirement: CORE_LOWERING_REQUIREMENT,
   }),
   freezeSchema({
@@ -219,7 +240,7 @@ export const OPT_IR_CORE_OPERATION_SCHEMAS = Object.freeze([
     semanticsRule: BOOLEAN_BINARY_SEMANTICS,
     effectRule: PURE_EFFECT,
     interpreterRule: BOOLEAN_BINARY_INTERPRETER,
-    canonicalForm: optIrCanonicalFormId(5),
+    canonicalForm: optIrCanonicalFormId(6),
     loweringRequirement: CORE_LOWERING_REQUIREMENT,
   }),
   freezeSchema({
@@ -230,7 +251,7 @@ export const OPT_IR_CORE_OPERATION_SCHEMAS = Object.freeze([
     semanticsRule: AGGREGATE_CONSTRUCT_SEMANTICS,
     effectRule: PURE_EFFECT,
     interpreterRule: AGGREGATE_CONSTRUCT_INTERPRETER,
-    canonicalForm: optIrCanonicalFormId(6),
+    canonicalForm: optIrCanonicalFormId(7),
     loweringRequirement: CORE_LOWERING_REQUIREMENT,
   }),
   freezeSchema({
@@ -241,7 +262,7 @@ export const OPT_IR_CORE_OPERATION_SCHEMAS = Object.freeze([
     semanticsRule: AGGREGATE_EXTRACT_SEMANTICS,
     effectRule: PURE_EFFECT,
     interpreterRule: AGGREGATE_EXTRACT_INTERPRETER,
-    canonicalForm: optIrCanonicalFormId(7),
+    canonicalForm: optIrCanonicalFormId(8),
     loweringRequirement: CORE_LOWERING_REQUIREMENT,
   }),
   freezeSchema({
@@ -255,7 +276,7 @@ export const OPT_IR_CORE_OPERATION_SCHEMAS = Object.freeze([
     semanticsRule: AGGREGATE_INSERT_SEMANTICS,
     effectRule: PURE_EFFECT,
     interpreterRule: AGGREGATE_INSERT_INTERPRETER,
-    canonicalForm: optIrCanonicalFormId(8),
+    canonicalForm: optIrCanonicalFormId(9),
     loweringRequirement: CORE_LOWERING_REQUIREMENT,
   }),
   freezeSchema({
@@ -266,7 +287,7 @@ export const OPT_IR_CORE_OPERATION_SCHEMAS = Object.freeze([
     semanticsRule: LAYOUT_OFFSET_SEMANTICS,
     effectRule: PURE_EFFECT,
     interpreterRule: LAYOUT_OFFSET_INTERPRETER,
-    canonicalForm: optIrCanonicalFormId(9),
+    canonicalForm: optIrCanonicalFormId(10),
     loweringRequirement: CORE_LOWERING_REQUIREMENT,
   }),
   freezeSchema({
@@ -277,7 +298,7 @@ export const OPT_IR_CORE_OPERATION_SCHEMAS = Object.freeze([
     semanticsRule: LAYOUT_BYTE_RANGE_SEMANTICS,
     effectRule: PURE_EFFECT,
     interpreterRule: LAYOUT_BYTE_RANGE_INTERPRETER,
-    canonicalForm: optIrCanonicalFormId(10),
+    canonicalForm: optIrCanonicalFormId(11),
     loweringRequirement: CORE_LOWERING_REQUIREMENT,
   }),
   freezeSchema({
@@ -288,7 +309,7 @@ export const OPT_IR_CORE_OPERATION_SCHEMAS = Object.freeze([
     semanticsRule: LAYOUT_ENDIAN_DECODE_SEMANTICS,
     effectRule: PURE_EFFECT,
     interpreterRule: LAYOUT_ENDIAN_DECODE_INTERPRETER,
-    canonicalForm: optIrCanonicalFormId(11),
+    canonicalForm: optIrCanonicalFormId(12),
     loweringRequirement: CORE_LOWERING_REQUIREMENT,
   }),
 ] satisfies readonly OptIrOperationSchema[]);

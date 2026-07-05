@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import {
   canonicalUefiAArch64FirmwareAbiSurface,
   canonicalUefiAArch64FirmwareTableSurface,
@@ -93,4 +93,5 @@ export const nodeFixtureProjectFilesystem: FixtureProjectFilesystem = Object.fre
   readDirectory: (path: string) => readdirSync(path),
   isDirectory: (path: string) => statSync(path).isDirectory(),
   readTextFile: (path: string) => readFileSync(path, "utf8"),
+  realPath: (path: string) => realpathSync(path),
 });

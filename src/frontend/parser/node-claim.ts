@@ -16,6 +16,8 @@ export interface DraftParseDiagnostic {
   message: string;
   absoluteStart: number;
   absoluteEnd: number;
+  ownerKey?: string;
+  stableDetail?: string;
   claimed: boolean;
 }
 
@@ -58,6 +60,8 @@ export function nodeFromMark(params: {
       message: draft.message,
       relativeStart: draft.absoluteStart - adjustedStart,
       relativeEnd: draft.absoluteEnd - adjustedStart,
+      ownerKey: draft.ownerKey,
+      stableDetail: draft.stableDetail,
     });
   }
 

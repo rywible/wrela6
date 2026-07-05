@@ -11,6 +11,7 @@ import {
 
 export const OPT_IR_OPERATION_KINDS = [
   "constant",
+  "constAddr",
   "integerUnary",
   "integerBinary",
   "integerCompare",
@@ -51,6 +52,7 @@ export type OptIrOperationKind = (typeof OPT_IR_OPERATION_KINDS)[number];
 
 const OPT_IR_TYPE_RULE_ID_NAMES = [
   "constant-has-declared-type",
+  "const-address-has-declared-type",
   "same-integer-width",
   "integer-compare-to-bool",
   "same-boolean",

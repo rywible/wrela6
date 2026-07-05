@@ -398,7 +398,7 @@ describe("UEFI AArch64 QEMU smoke", () => {
 
   test("runs through injected host effects without mutating artifact bytes or metadata", async () => {
     const artifact = smokeArtifactFixture();
-    const writes: Array<{ readonly path: string; readonly bytes: readonly number[] }> = [];
+    const writes: Array<{ readonly path: string; readonly bytes: Uint8Array }> = [];
     const copies: Array<{ readonly sourcePath: string; readonly targetPath: string }> = [];
     const removed: string[] = [];
     let processTimeoutMs = 0;
@@ -406,7 +406,7 @@ describe("UEFI AArch64 QEMU smoke", () => {
     const hostEffects: UefiAArch64QemuHostEffects = {
       createTempDirectory: async (prefix) => `${prefix}abc`,
       writeFile: async (path, bytes) => {
-        writes.push({ path, bytes });
+        writes.push({ path, bytes: Uint8Array.from(bytes) });
       },
       copyFile: async (sourcePath, targetPath) => {
         copies.push({ sourcePath, targetPath });
@@ -444,7 +444,7 @@ describe("UEFI AArch64 QEMU smoke", () => {
 
     expect(report.status).toBe("passed");
     expect(report.targetDriverFingerprint).toBe("target-driver");
-    expect(writes).toEqual([
+    expect(writes.map((write) => ({ path: write.path, bytes: Array.from(write.bytes) }))).toEqual([
       { path: "wrela-uefi-aarch64-abc/EFI/BOOT/BOOTAA64.EFI", bytes: [0x4d, 0x5a] },
     ]);
     expect(copies).toEqual([
@@ -452,12 +452,12 @@ describe("UEFI AArch64 QEMU smoke", () => {
     ]);
     expect(processTimeoutMs).toBe(1234);
     expect(removed).toEqual(["wrela-uefi-aarch64-abc"]);
-    expect(artifact.peCoffArtifact.bytes).toEqual([0x4d, 0x5a]);
+    expect(Array.from(artifact.peCoffArtifact.bytes)).toEqual([0x4d, 0x5a]);
     expect(artifact.targetMetadata.targetDriverFingerprint).toBe("target-driver");
   });
 
   test("writes UEFI Shell startup script through injected host effects", async () => {
-    const writes: Array<{ readonly path: string; readonly bytes: readonly number[] }> = [];
+    const writes: Array<{ readonly path: string; readonly bytes: Uint8Array }> = [];
 
     const report = await runUefiAArch64QemuSmokeImage({
       artifactName: "smoke.efi",
@@ -478,7 +478,7 @@ describe("UEFI AArch64 QEMU smoke", () => {
       hostEffects: {
         createTempDirectory: async (prefix) => `${prefix}abc`,
         writeFile: async (path, bytes) => {
-          writes.push({ path, bytes });
+          writes.push({ path, bytes: Uint8Array.from(bytes) });
         },
         copyFile: async () => {},
         runProcess: async () =>
@@ -502,7 +502,7 @@ describe("UEFI AArch64 QEMU smoke", () => {
   });
 
   test("runs prebuilt EFI bytes through injected host effects", async () => {
-    const writes: Array<{ readonly path: string; readonly bytes: readonly number[] }> = [];
+    const writes: Array<{ readonly path: string; readonly bytes: Uint8Array }> = [];
     let observedArtifactName = "";
 
     const report = await runUefiAArch64QemuSmokeImage({
@@ -523,7 +523,7 @@ describe("UEFI AArch64 QEMU smoke", () => {
       hostEffects: {
         createTempDirectory: async (prefix) => `${prefix}abc`,
         writeFile: async (path, bytes) => {
-          writes.push({ path, bytes });
+          writes.push({ path, bytes: Uint8Array.from(bytes) });
         },
         copyFile: async () => {},
         runProcess: async (command) => {
@@ -539,7 +539,7 @@ describe("UEFI AArch64 QEMU smoke", () => {
 
     expect(report.status).toBe("passed");
     expect(observedArtifactName).toBe("prebuilt.efi");
-    expect(writes).toEqual([
+    expect(writes.map((write) => ({ path: write.path, bytes: Array.from(write.bytes) }))).toEqual([
       { path: "wrela-uefi-aarch64-abc/EFI/BOOT/BOOTAA64.EFI", bytes: [0x4d, 0x5a, 0x90] },
     ]);
   });
@@ -586,7 +586,7 @@ function smokeArtifactFixture(): UefiAArch64ImageArtifact {
       artifactName: "smoke.efi",
       mediaType: "application/vnd.microsoft.portable-executable",
       fileExtension: ".efi",
-      bytes: Object.freeze([0x4d, 0x5a]),
+      bytes: Uint8Array.of(0x4d, 0x5a),
       deterministicMetadata: Object.freeze({
         schema: "wrela.pe-coff-efi-image",
         schemaVersion: 1,

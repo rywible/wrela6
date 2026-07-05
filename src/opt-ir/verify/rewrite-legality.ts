@@ -38,6 +38,7 @@ export interface RewriteLegalityRecord {
   readonly replacement: OptIrRewriteRegionId;
   readonly invariant: RewriteInvariant;
   readonly factsUsed: readonly OptIrFactId[];
+  readonly consumedFactFamilies?: readonly string[];
   readonly cfgEdits: readonly OptIrCfgEditId[];
   readonly memoryEdits: readonly OptIrMemoryEditId[];
   readonly callEdits: readonly OptIrCallEditId[];
@@ -50,6 +51,7 @@ export interface RewriteLegalityValidationInput {
   readonly obligations: readonly RewriteLegalityObligation[];
   readonly schemas: PassInvariantSchemaRegistry;
   readonly factKinds: ReadonlyMap<OptIrFactId, CheckedPacketFactKind | PassDerivedFactKind>;
+  readonly certifiedFactFamilies?: ReadonlySet<string>;
 }
 
 export type RewriteLegalityValidationResult =
@@ -141,6 +143,13 @@ function validateRecordAgainstObligation(
       `rewrite-fact-kind-mismatch:record:${record.recordId}:fact:${factId}:kind:${factKind}`,
     );
   }
+  if (input.certifiedFactFamilies !== undefined) {
+    for (const family of uniqueSortedStrings(record.consumedFactFamilies ?? [])) {
+      if (!input.certifiedFactFamilies.has(family)) {
+        diagnostics.push(uncertifiedFactConsumptionDiagnostic(record, family));
+      }
+    }
+  }
 
   validatePassSpecificInvariant(record.invariant, record, input, diagnostics);
 }
@@ -203,6 +212,10 @@ function factSetKey(facts: readonly OptIrFactId[]): string {
   return [...new Set(facts)].sort((left, right) => left - right).join(",");
 }
 
+function uniqueSortedStrings(values: readonly string[]): readonly string[] {
+  return Object.freeze([...new Set(values)].sort());
+}
+
 function addIf(
   diagnostics: OptIrDiagnostic[],
   condition: boolean,
@@ -234,6 +247,32 @@ function rewriteLegalityDiagnostic(
       code,
       ownerKey: `rewrite-legality:${record.recordId}`,
       rootCauseKey: stableDetail,
+      stableDetail,
+    }),
+  };
+}
+
+function uncertifiedFactConsumptionDiagnostic(
+  record: RewriteLegalityRecord,
+  family: string,
+): OptIrDiagnostic {
+  const code = optIrDiagnosticCode("OPT_IR_UNCERTIFIED_FACT_CONSUMPTION");
+  const stableDetail = `uncertified-fact-consumption:record:${record.recordId}:family:${family}`;
+  return {
+    severity: "error",
+    code,
+    messageTemplate: "OptIR rewrite consumed a fact family that was not certified: {family}.",
+    arguments: { family },
+    ownerKey: `rewrite-legality:${record.recordId}`,
+    rootCauseKey: `fact-family:${family}`,
+    stableDetail,
+    originId: record.origin,
+    orderKey: optIrDiagnosticOrderKey({
+      originKey: String(record.origin),
+      functionKey: "none",
+      code,
+      ownerKey: `rewrite-legality:${record.recordId}`,
+      rootCauseKey: `fact-family:${family}`,
       stableDetail,
     }),
   };

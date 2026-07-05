@@ -1,7 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { optIrDiagnosticCode } from "../../../src/opt-ir/diagnostics";
-import { optIrValueId } from "../../../src/opt-ir/ids";
+import {
+  optIrConstantId,
+  optIrProgramId,
+  optIrRegionId,
+  optIrValueId,
+} from "../../../src/opt-ir/ids";
+import {
+  optIrDataConstantFingerprint,
+  type OptIrDataConstant,
+} from "../../../src/opt-ir/constants";
 import type { OptIrOperation } from "../../../src/opt-ir/operations";
+import { optIrConstantTable, optIrProgram, optIrRegionTable } from "../../../src/opt-ir/program";
 import {
   cfgEditWithMissingReferencesForTest,
   optIrProgramWithBlockArgumentMismatchForTest,
@@ -17,6 +27,7 @@ import {
   validVerifierProgramForTest,
   verifyOptIrProgramForTest,
 } from "../../support/opt-ir/verifier-fixtures";
+import { targetIdForTest } from "../../support/opt-ir/cfg-fakes";
 
 describe("OptIR verifier suite", () => {
   test("accepts a structurally valid SSA program", () => {
@@ -140,4 +151,101 @@ describe("OptIR verifier suite", () => {
       optIrDiagnosticCode("OPT_IR_CFG_EDGE_MISSING"),
     );
   });
+
+  test("constant-pool verifier accepts a valid data constant", () => {
+    const result = verifyOptIrProgramForTest(
+      optIrVerifierInputForTest({
+        program: programWithConstantsForTest([
+          dataConstantForTest({ constantId: optIrConstantId(1), stableKey: "utf16:hello" }),
+        ]),
+      }),
+    );
+
+    expect(result).toEqual({ kind: "ok", diagnostics: [] });
+  });
+
+  test("constant-pool verifier rejects duplicate constant ids", () => {
+    const result = verifyOptIrProgramForTest(
+      optIrVerifierInputForTest({
+        program: programWithConstantsForTest([
+          dataConstantForTest({ constantId: optIrConstantId(1), stableKey: "utf16:first" }),
+          dataConstantForTest({ constantId: optIrConstantId(1), stableKey: "utf16:second" }),
+        ]),
+      }),
+    );
+
+    expect(result.kind).toBe("error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+      "duplicate-constant-id:1",
+    );
+  });
+
+  test("constant-pool verifier rejects duplicate data stable keys", () => {
+    const result = verifyOptIrProgramForTest(
+      optIrVerifierInputForTest({
+        program: programWithConstantsForTest([
+          dataConstantForTest({ constantId: optIrConstantId(1), stableKey: "utf16:shared" }),
+          dataConstantForTest({ constantId: optIrConstantId(2), stableKey: "utf16:shared" }),
+        ]),
+      }),
+    );
+
+    expect(result.kind).toBe("error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+      "duplicate-data-stable-key:utf16:shared",
+    );
+  });
+
+  test("constant-pool verifier rejects fingerprint mismatches", () => {
+    const valid = dataConstantForTest({ constantId: optIrConstantId(1), stableKey: "utf16:hello" });
+    const tampered = { ...valid, bytes: [0x68, 0x00, 0x69, 0x00, 0x00, 0x00] };
+    const result = verifyOptIrProgramForTest(
+      optIrVerifierInputForTest({
+        program: programWithConstantsForTest([tampered]),
+      }),
+    );
+
+    expect(result.kind).toBe("error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toContain(
+      "data-constant-fingerprint-mismatch:1",
+    );
+  });
 });
+
+function dataConstantForTest(input: {
+  readonly constantId: ReturnType<typeof optIrConstantId>;
+  readonly stableKey: string;
+}): OptIrDataConstant {
+  const bytes = [0x68, 0x00, 0x00, 0x00];
+  const alignment = 2;
+  const section = "rodata";
+  return {
+    kind: "data",
+    constantId: input.constantId,
+    type: { kind: "address" },
+    normalizedValue: 0n,
+    bytes,
+    alignment,
+    section,
+    stableKey: input.stableKey,
+    fingerprint: optIrDataConstantFingerprint({
+      bytes,
+      alignment,
+      section,
+      stableKey: input.stableKey,
+    }),
+  };
+}
+
+function programWithConstantsForTest(constants: readonly OptIrDataConstant[]) {
+  const fixture = validVerifierProgramForTest();
+  return optIrProgram({
+    ...fixture.program,
+    programId: optIrProgramId(700),
+    targetId: targetIdForTest("test-target"),
+    regions: optIrRegionTable([
+      { regionId: optIrRegionId(1), originId: fixture.program.provenance.originIds[0]! },
+    ]),
+    constants: optIrConstantTable(constants),
+  });
+}

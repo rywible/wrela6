@@ -207,7 +207,7 @@ function textSectionForTest(): LinkedImageSection {
     alignmentBytes: 4096,
     rva: 0x1000,
     virtualSizeBytes: 0x20,
-    bytes: [0x00, 0x00, 0x00, 0x94, 0xc0, 0x03, 0x5f, 0xd6],
+    bytes: Uint8Array.of(0x00, 0x00, 0x00, 0x94, 0xc0, 0x03, 0x5f, 0xd6),
     contributions: [
       {
         stableKey: "module:test:entry:section:.text",
@@ -241,7 +241,7 @@ function dataSectionForTest(): LinkedImageSection {
     alignmentBytes: 4096,
     rva: 0x2000,
     virtualSizeBytes: 4,
-    bytes: [0, 0, 0, 0],
+    bytes: Uint8Array.of(0, 0, 0, 0),
     contributions: [
       {
         stableKey: "module:test:entry:section:.data",

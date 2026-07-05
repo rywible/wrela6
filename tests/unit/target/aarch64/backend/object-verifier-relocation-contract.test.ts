@@ -196,6 +196,115 @@ describe("AArch64 object verifier relocation contract", () => {
     ]);
   });
 
+  test("rejects non-reciprocal paired relocation keys", () => {
+    const objectModule = aarch64ObjectModuleForTest({
+      sections: [
+        sectionForTest({
+          stableKey: ".text",
+          bytes: [0x00, 0x00, 0x00, 0x90, 0x00, 0x00, 0x00, 0x91, 0x00, 0x00, 0x00, 0x90],
+        }),
+      ],
+      symbols: [symbolForTest({ stableKey: "target", sectionKey: ".text" })],
+      relocations: [
+        relocationForTest({
+          stableKey: "reloc:page:one",
+          sectionKey: ".text",
+          offsetBytes: 0,
+          family: "pagebase-rel21",
+          targetSymbol: "target",
+          bitRange: [5, 30],
+          pairedRelocationKey: "reloc:low12",
+        }),
+        relocationForTest({
+          stableKey: "reloc:low12",
+          sectionKey: ".text",
+          offsetBytes: 4,
+          family: "pageoffset-12a",
+          targetSymbol: "target",
+          bitRange: [10, 21],
+          pairedRelocationKey: "reloc:page:two",
+        }),
+        relocationForTest({
+          stableKey: "reloc:page:two",
+          sectionKey: ".text",
+          offsetBytes: 8,
+          family: "pagebase-rel21",
+          targetSymbol: "target",
+          bitRange: [5, 30],
+          pairedRelocationKey: "reloc:low12",
+        }),
+      ],
+      byteProvenance: [
+        byteProvenanceForTest({
+          stableKey: "bytes",
+          sectionKey: ".text",
+          startOffsetBytes: 0,
+          byteLength: 12,
+        }),
+      ],
+    });
+
+    const result = verifyAArch64ObjectModule({ objectModule });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("expected reciprocal pair error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual([
+      "object-verifier:relocation-pair-reciprocal-mismatch:reloc:page:one:reloc:low12:reloc:page:two",
+    ]);
+  });
+
+  test("rejects paired relocations that target different symbols", () => {
+    const objectModule = aarch64ObjectModuleForTest({
+      sections: [
+        sectionForTest({
+          stableKey: ".text",
+          bytes: [0x00, 0x00, 0x00, 0x90, 0x00, 0x00, 0x00, 0x91],
+        }),
+      ],
+      symbols: [
+        symbolForTest({ stableKey: "target:a", sectionKey: ".text" }),
+        symbolForTest({ stableKey: "target:b", sectionKey: ".text" }),
+      ],
+      relocations: [
+        relocationForTest({
+          stableKey: "reloc:page",
+          sectionKey: ".text",
+          offsetBytes: 0,
+          family: "pagebase-rel21",
+          targetSymbol: "target:a",
+          bitRange: [5, 30],
+          pairedRelocationKey: "reloc:low12",
+        }),
+        relocationForTest({
+          stableKey: "reloc:low12",
+          sectionKey: ".text",
+          offsetBytes: 4,
+          family: "pageoffset-12a",
+          targetSymbol: "target:b",
+          bitRange: [10, 21],
+          pairedRelocationKey: "reloc:page",
+        }),
+      ],
+      byteProvenance: [
+        byteProvenanceForTest({
+          stableKey: "bytes",
+          sectionKey: ".text",
+          startOffsetBytes: 0,
+          byteLength: 8,
+        }),
+      ],
+    });
+
+    const result = verifyAArch64ObjectModule({ objectModule });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("expected pair target error");
+    expect(result.diagnostics.map((diagnostic) => diagnostic.stableDetail)).toEqual([
+      "object-verifier:relocation-pair-target-mismatch:reloc:low12:reloc:page",
+      "object-verifier:relocation-pair-target-mismatch:reloc:page:reloc:low12",
+    ]);
+  });
+
   test("rejects malformed relocation ownership metadata", () => {
     const valid = aarch64ObjectModuleForTest({
       sections: [sectionForTest({ stableKey: ".text", bytes: [0x00, 0x00, 0x00, 0x94] })],

@@ -1,4 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { hirExpressionId } from "../../../src/hir/ids";
+import { instantiatedHirId, monoInstanceId, type MonoInstanceId } from "../../../src/mono/ids";
+import type {
+  MonoCallExpression,
+  MonoCheckedType,
+  MonoExpression,
+  MonomorphizedHirProgram,
+} from "../../../src/mono/mono-hir";
 import { proofMirDiagnosticCode } from "../../../src/proof-mir/diagnostics";
 import { createProofMirCallTargetIndex } from "../../../src/proof-mir/domains/call-targets";
 import { createProofMirEffectsResources } from "../../../src/proof-mir/domains/effects-resources";
@@ -15,6 +23,8 @@ import {
 } from "../../support/proof-mir/lower-harness/expression-lowerer-harness";
 import {
   createProofMirLoweringContext,
+  type ProofMirBlockTrackingRefs,
+  type ProofMirCallLowerer,
   emptyCollectLoopCarriedLocalsForLoop,
   emptyPlaceBackedLocals,
   type ProofMirScopePlaceLowerer,
@@ -28,6 +38,9 @@ import {
   validatedBufferReadLowererFixture,
   validatedBufferTagMemberExpressionForFixture,
 } from "./validated-buffer-read-lowerer.test";
+import type { LayoutFactProgram } from "../../../src/layout/layout-program";
+import { targetId } from "../../../src/semantic/ids";
+import type { ProofMirRuntimeCatalog } from "../../../src/runtime/runtime-catalog-types";
 
 function scalarLocal(name: string): ExpressionLowererTestLocal {
   return { name, type: "u8", storage: "scalarSsa" };
@@ -52,6 +65,262 @@ function scopePlaceLowererAdapter(input: {
       }
       return { kind: "ok", value: lowered.value.placeKey };
     },
+  };
+}
+
+function boolMonoType(): MonoCheckedType {
+  return { kind: "core", coreTypeId: "bool" } as MonoCheckedType;
+}
+
+function boolLiteralExpression(input: {
+  readonly functionInstanceId: MonoInstanceId;
+  readonly expressionIndex: number;
+  readonly value: boolean;
+}): MonoExpression {
+  return {
+    expressionId: instantiatedHirId(
+      input.functionInstanceId,
+      hirExpressionId(input.expressionIndex),
+    ),
+    kind: { kind: "literal", literal: { kind: "bool", value: input.value } },
+    type: boolMonoType(),
+    resourceKind: "Copy",
+    sourceOrigin: `source:expr:bool:${input.value}`,
+  };
+}
+
+function sideEffectCallExpression(input: {
+  readonly functionInstanceId: MonoInstanceId;
+  readonly expressionIndex: number;
+}): MonoExpression {
+  const callee: MonoExpression = {
+    expressionId: instantiatedHirId(
+      input.functionInstanceId,
+      hirExpressionId(input.expressionIndex + 1),
+    ),
+    kind: { kind: "name", name: "side_effect" },
+    type: boolMonoType(),
+    resourceKind: "Copy",
+    sourceOrigin: "source:expr:callee",
+  };
+  const call: MonoCallExpression = {
+    callee,
+    ownerTypeArguments: [],
+    ownerTypeArgumentSource: "none",
+    arguments: [],
+    typeArguments: [],
+    sourceOrigin: "source:expr:side-effect-call",
+  };
+  return {
+    expressionId: instantiatedHirId(
+      input.functionInstanceId,
+      hirExpressionId(input.expressionIndex),
+    ),
+    kind: { kind: "call", call },
+    type: boolMonoType(),
+    resourceKind: "Copy",
+    sourceOrigin: "source:expr:side-effect-call",
+  };
+}
+
+function logicalExpression(input: {
+  readonly functionInstanceId: MonoInstanceId;
+  readonly operator: "and" | "or";
+  readonly leftValue: boolean;
+}): MonoExpression {
+  return {
+    expressionId: instantiatedHirId(input.functionInstanceId, hirExpressionId(1)),
+    kind: {
+      kind: "binary",
+      operator: input.operator,
+      left: boolLiteralExpression({
+        functionInstanceId: input.functionInstanceId,
+        expressionIndex: 2,
+        value: input.leftValue,
+      }),
+      right: sideEffectCallExpression({
+        functionInstanceId: input.functionInstanceId,
+        expressionIndex: 3,
+      }),
+    },
+    type: boolMonoType(),
+    resourceKind: "Copy",
+    sourceOrigin: `source:expr:${input.operator}`,
+  };
+}
+
+function emptyProgramForShortCircuitTest(): MonomorphizedHirProgram {
+  return {
+    functions: {
+      entries: () => [],
+      get: () => undefined,
+    },
+    proofMetadata: {
+      validations: { entries: () => [], get: () => undefined },
+      attempts: { entries: () => [], get: () => undefined },
+      brands: { entries: () => [], get: () => undefined },
+      obligations: { entries: () => [], get: () => undefined },
+      sessions: { entries: () => [], get: () => undefined },
+      privateStateTransitions: { entries: () => [], get: () => undefined },
+      callSiteRequirements: { entries: () => [], get: () => undefined },
+      platformContractEdges: { entries: () => [], get: () => undefined },
+      resourcePlaces: { entries: () => [], get: () => undefined },
+    },
+  } as unknown as MonomorphizedHirProgram;
+}
+
+function shortCircuitTargetForTest(): {
+  readonly targetId: ReturnType<typeof targetId>;
+  readonly features: readonly string[];
+  readonly runtimeCatalog: ProofMirRuntimeCatalog;
+} {
+  const id = targetId("x64-test");
+  return {
+    targetId: id,
+    features: [],
+    runtimeCatalog: {
+      targetId: id,
+      features: [],
+      entries: () => [],
+      get: () => undefined,
+    },
+  };
+}
+
+function lowerLogicalExpressionForShortCircuitTest(input: {
+  readonly operator: "and" | "or";
+  readonly leftValue: boolean;
+}) {
+  const functionInstanceId = monoInstanceId(
+    `fn:short-circuit-${input.operator}-${input.leftValue}`,
+  );
+  const program = emptyProgramForShortCircuitTest();
+  const layout = {} as LayoutFactProgram;
+  const target = shortCircuitTargetForTest();
+  const originMap = createProofMirOriginMap();
+  const effects = createProofMirEffectsResources({ functionInstanceId });
+  const scopePlaceLowererResult = createProofMirScopePlaceLowerer({
+    functionInstanceId,
+    body: { statements: [], sourceOrigin: "source:test" },
+    originMap,
+    effectsResources: effects,
+  });
+  if (scopePlaceLowererResult.kind === "error") {
+    throw new Error("short-circuit test scope lowerer failed");
+  }
+  const graph = createDraftGraphBuilder({ functionInstanceId });
+  const origin = graph.allocateSyntheticOrigin("entry");
+  const entryBlock = graph.createBlock({
+    role: "entry",
+    scope: graph.rootScopeKey(),
+    origin,
+  });
+  const ssa = createProofMirGraphSsa({
+    functionInstanceId,
+    ownerKey: `function:${String(functionInstanceId)}`,
+  });
+  ssa.registerBlock(entryBlock, { sealed: true });
+  const blockTracking: ProofMirBlockTrackingRefs = {
+    currentBlockRef: { blockKey: entryBlock },
+    continuationBlockRef: {},
+  };
+  const context = createProofMirLoweringContext({
+    program,
+    layout,
+    target,
+    buildContext: createDraftProofMirBuildContext({ program, layout, target }),
+    functionInstanceId,
+    originMap,
+    layoutBindingIndex: createProofMirLayoutBindingIndex({ layout }),
+    callTargetIndex: createProofMirCallTargetIndex({
+      program,
+      layout,
+      target,
+      callerFunctionInstanceId: functionInstanceId,
+    }),
+    factRecorder: createProofMirFactRecorder(),
+    localClassifier: {
+      functionInstanceId,
+      storageForLocal: () => undefined,
+      storageForParameter: () => undefined,
+      collectLoopCarriedLocalsForLoop: emptyCollectLoopCarriedLocalsForLoop,
+      placeBackedLocals: emptyPlaceBackedLocals,
+    },
+    scopePlaceLowerer: {
+      functionInstanceId,
+      lowerMonoPlace(placeInput) {
+        const lowered = scopePlaceLowererResult.value.lowerMonoPlace({
+          monoPlace: placeInput.monoPlace,
+          originKey: placeInput.originKey,
+        });
+        if (lowered.kind !== "ok") {
+          return lowered;
+        }
+        return { kind: "ok", value: lowered.value.placeKey };
+      },
+    },
+    functionScopePlaceLowerer: scopePlaceLowererResult.value,
+    graph,
+    ssa,
+    effects,
+    blockTracking,
+  });
+  const callBlocks: string[] = [];
+  const callLowerer: ProofMirCallLowerer = {
+    lowerCall(callInput) {
+      callBlocks.push(String(callInput.blockKey));
+      const callOrigin = callInput.context.graph.allocateSyntheticOrigin("test:call-result");
+      return {
+        kind: "ok",
+        value: {
+          kind: "value",
+          value: callInput.context.graph.createValue({
+            role: `call-result:${String(callInput.monoExpressionId)}`,
+            origin: callOrigin,
+            type: callInput.resultType,
+            resourceKind: callInput.resultResourceKind,
+          }),
+        },
+      };
+    },
+    lowerCompilerRuntimeCall(callInput) {
+      const callOrigin = callInput.context.graph.allocateSyntheticOrigin(
+        "test:runtime-call-result",
+      );
+      return {
+        kind: "ok",
+        value: {
+          kind: "value",
+          value: callInput.context.graph.createValue({
+            role: `runtime-call-result:${String(callInput.monoExpressionId)}`,
+            origin: callOrigin,
+            type: callInput.resultType,
+            resourceKind: callInput.resultResourceKind,
+          }),
+        },
+      };
+    },
+  };
+  const expressionLowerer = createProofMirExpressionLowerer({
+    call: callLowerer,
+    currentBlockRef: blockTracking.currentBlockRef,
+  });
+  const expression = logicalExpression({
+    functionInstanceId,
+    operator: input.operator,
+    leftValue: input.leftValue,
+  });
+  const lowered = expressionLowerer.lowerExpression({
+    context,
+    expression,
+    blockKey: entryBlock,
+  });
+  return {
+    lowered,
+    graph,
+    entryBlock,
+    callBlocks,
+    blockTracking,
   };
 }
 
@@ -202,6 +471,47 @@ describe("ProofMirExpressionLowerer", () => {
       proofMirDiagnosticCode("PROOF_MIR_INVALID_STATEMENT_OPERATOR"),
     );
   });
+
+  test.each([
+    { operator: "and" as const, leftValue: false, rightBranch: "whenTrue" as const },
+    { operator: "or" as const, leftValue: true, rightBranch: "whenFalse" as const },
+  ])(
+    "$operator lowers through a short-circuit branch and join parameter",
+    ({ operator, leftValue, rightBranch }) => {
+      const lowered = lowerLogicalExpressionForShortCircuitTest({ operator, leftValue });
+
+      expect(lowered.lowered.kind).toBe("ok");
+      if (lowered.lowered.kind !== "ok") return;
+      expect(lowered.lowered.value.kind).toBe("value");
+      if (lowered.lowered.value.kind !== "value") return;
+
+      const snapshot = lowered.graph.exportGraphSnapshot();
+      const entry = snapshot.blocks.find((block) => block.key === lowered.entryBlock);
+      expect(entry?.terminator?.kind).toBe("branch");
+      if (entry?.terminator?.kind !== "branch") return;
+
+      const rightBlockKey =
+        rightBranch === "whenTrue"
+          ? entry.terminator.whenTrue.block
+          : entry.terminator.whenFalse.block;
+      const joinBlockKey =
+        rightBranch === "whenTrue"
+          ? entry.terminator.whenFalse.block
+          : entry.terminator.whenTrue.block;
+      expect(lowered.callBlocks).toEqual([String(rightBlockKey)]);
+
+      const rightBlock = snapshot.blocks.find((block) => block.key === rightBlockKey);
+      expect(rightBlock?.terminator?.kind).toBe("goto");
+      if (rightBlock?.terminator?.kind !== "goto") return;
+      expect(rightBlock.terminator.target.block).toBe(joinBlockKey);
+
+      const joinBlock = snapshot.blocks.find((block) => block.key === joinBlockKey);
+      expect(joinBlock?.parameters?.map((parameter) => parameter.valueKey)).toEqual([
+        lowered.lowered.value.value,
+      ]);
+      expect(lowered.blockTracking.currentBlockRef.blockKey).toBe(joinBlockKey);
+    },
+  );
 
   test("object expressions allocate a place for proof-relevant values", () => {
     const lowered = lowerProofMirExpressionForTest("{ handle: source }", {

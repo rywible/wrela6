@@ -7,11 +7,12 @@ import {
 import type { OptIrBlockId, OptIrEdgeId, OptIrOperationId, OptIrValueId } from "../ids";
 import type { OptIrOperation } from "../operations";
 import type { OptIrFunction } from "../program";
-import {
-  isOptIrSourceValueOperation,
-  rewriteOptIrSourceValueOperationOperands,
-} from "../source-value-operations";
 import { optIrTerminatorSuccessorEdges, type OptIrTerminator } from "../terminators";
+import {
+  rewriteEdgeValues,
+  rewriteOperation,
+  rewriteTerminatorValues,
+} from "./cfg-simplification-rewrite";
 
 export interface CfgSimplificationInput {
   readonly function: OptIrFunction;
@@ -28,7 +29,6 @@ export interface CfgSimplificationResult {
   readonly removedEdgeIds: readonly OptIrEdgeId[];
   readonly subjectRemap: OptIrSubjectRemapTable;
 }
-
 interface SimplificationState {
   readonly function: OptIrFunction;
   readonly valueRemaps: readonly (readonly [OptIrValueId, OptIrValueId])[];
@@ -104,15 +104,17 @@ function simplifyOnce(
     reachable,
     input.operations,
   );
-  const afterMerge = mergeOneTrivialBlock(withoutUnreachable.function);
+  const afterCoalesce = coalesceOneLinearJumpBlock(withoutUnreachable.function);
+  const afterMerge = mergeOneTrivialBlock(afterCoalesce.function);
 
   return {
     function: afterMerge.function,
-    valueRemaps: [...state.valueRemaps, ...afterMerge.valueRemaps],
-    edgeRemaps: [...state.edgeRemaps, ...afterMerge.edgeRemaps],
+    valueRemaps: [...state.valueRemaps, ...afterCoalesce.valueRemaps, ...afterMerge.valueRemaps],
+    edgeRemaps: [...state.edgeRemaps, ...afterCoalesce.edgeRemaps, ...afterMerge.edgeRemaps],
     droppedSubjects: [
       ...state.droppedSubjects,
       ...withoutUnreachable.droppedSubjects,
+      ...afterCoalesce.droppedSubjects,
       ...afterMerge.droppedSubjects,
     ],
   };
@@ -274,13 +276,10 @@ function mergeOneTrivialBlock(functionInput: OptIrFunction): {
       continue;
     }
 
-    const parameterValues = new Map<OptIrValueId, OptIrValueId>();
-    block.parameters.forEach((parameter, index) => {
-      const incomingArgument = incomingEdge.arguments[index];
-      if (incomingArgument !== undefined && incomingArgument !== parameter.valueId) {
-        parameterValues.set(parameter.valueId, incomingArgument);
-      }
-    });
+    const parameterValues = parameterReplacementValues(block.parameters, incomingEdge.arguments);
+    if (parameterValues === undefined) {
+      continue;
+    }
     const mergedEdge: OptIrEdge = {
       ...incomingEdge,
       toBlock: outgoingEdge.toBlock,
@@ -313,6 +312,125 @@ function mergeOneTrivialBlock(functionInput: OptIrFunction): {
     edgeRemaps: [],
     droppedSubjects: [],
   };
+}
+
+function coalesceOneLinearJumpBlock(functionInput: OptIrFunction): {
+  readonly function: OptIrFunction;
+  readonly valueRemaps: readonly (readonly [OptIrValueId, OptIrValueId])[];
+  readonly edgeRemaps: readonly (readonly [OptIrEdgeId, OptIrEdgeId])[];
+  readonly droppedSubjects: readonly OptIrFactSubject[];
+} {
+  const edges = functionInput.edges.entries();
+  const incomingByBlock = incomingEdgesByBlock(edges);
+  const blocksById = new Map(functionInput.blocks.map((block) => [block.blockId, block]));
+  const blockIndexById = new Map(
+    functionInput.blocks.map((block, index) => [block.blockId, index]),
+  );
+
+  for (const block of functionInput.blocks) {
+    if (block.terminator?.kind !== "jump") {
+      continue;
+    }
+    const outgoingEdge = functionInput.edges.get(block.terminator.edge);
+    const successor =
+      outgoingEdge?.toBlock === undefined ? undefined : blocksById.get(outgoingEdge.toBlock);
+    if (outgoingEdge === undefined || successor === undefined) {
+      continue;
+    }
+    const blockIndex = blockIndexById.get(block.blockId);
+    const successorIndex = blockIndexById.get(successor.blockId);
+    if (
+      outgoingEdge.from !== block.blockId ||
+      successor.blockId === functionInput.entryBlock ||
+      successor.blockId === block.blockId ||
+      blockIndex === undefined ||
+      successorIndex === undefined ||
+      successorIndex <= blockIndex ||
+      !hasOnlyForwardIncomingEdges({
+        block,
+        entryBlock: functionInput.entryBlock,
+        blockIndex,
+        blockIndexById,
+        incomingByBlock,
+      })
+    ) {
+      continue;
+    }
+    const incomingEdges = incomingByBlock.get(successor.blockId) ?? [];
+    if (incomingEdges.length !== 1 || incomingEdges[0]?.edgeId !== outgoingEdge.edgeId) {
+      continue;
+    }
+    const parameterValues = parameterReplacementValues(
+      successor.parameters,
+      outgoingEdge.arguments,
+    );
+    if (parameterValues === undefined) {
+      continue;
+    }
+    const coalescedBlock: OptIrBlock = {
+      ...block,
+      operations: [...block.operations, ...successor.operations],
+      ...(successor.terminator === undefined ? {} : { terminator: successor.terminator }),
+    };
+    const nextBlocks = functionInput.blocks
+      .filter((candidate) => candidate.blockId !== successor.blockId)
+      .map((candidate) => (candidate.blockId === block.blockId ? coalescedBlock : candidate));
+    const nextEdges = edges
+      .filter((edge) => edge.edgeId !== outgoingEdge.edgeId)
+      .map((edge) => (edge.from === successor.blockId ? { ...edge, from: block.blockId } : edge));
+
+    return {
+      function: {
+        ...functionInput,
+        blocks: nextBlocks,
+        edges: optIrCfgEdgeTable(nextEdges),
+      },
+      valueRemaps: [...parameterValues.entries()].sort((left, right) => left[0] - right[0]),
+      edgeRemaps: [],
+      droppedSubjects: [
+        { kind: "block", blockId: successor.blockId },
+        { kind: "edge", edgeId: outgoingEdge.edgeId },
+      ],
+    };
+  }
+
+  return {
+    function: functionInput,
+    valueRemaps: [],
+    edgeRemaps: [],
+    droppedSubjects: [],
+  };
+}
+
+function hasOnlyForwardIncomingEdges(input: {
+  readonly block: OptIrBlock;
+  readonly entryBlock: OptIrBlockId;
+  readonly blockIndex: number;
+  readonly blockIndexById: ReadonlyMap<OptIrBlockId, number>;
+  readonly incomingByBlock: ReadonlyMap<OptIrBlockId, readonly OptIrEdge[]>;
+}): boolean {
+  if (input.block.blockId === input.entryBlock) {
+    return true;
+  }
+  return (input.incomingByBlock.get(input.block.blockId) ?? []).every((edge) => {
+    const predecessorIndex = input.blockIndexById.get(edge.from);
+    return predecessorIndex !== undefined && predecessorIndex < input.blockIndex;
+  });
+}
+
+function parameterReplacementValues(
+  parameters: OptIrBlock["parameters"],
+  arguments_: readonly OptIrValueId[],
+): ReadonlyMap<OptIrValueId, OptIrValueId> | undefined {
+  const parameterValues = new Map<OptIrValueId, OptIrValueId>();
+  for (const [index, parameter] of parameters.entries()) {
+    const incomingArgument = arguments_[index];
+    if (incomingArgument === undefined || incomingArgument === parameter.valueId) {
+      return undefined;
+    }
+    parameterValues.set(parameter.valueId, incomingArgument);
+  }
+  return parameterValues;
 }
 
 function reachableBlocks(functionInput: OptIrFunction): ReadonlySet<OptIrBlockId> {
@@ -416,156 +534,6 @@ function resolveValue(
     }
     seen.add(current);
     current = next;
-  }
-}
-
-function rewriteEdgeValues(
-  edge: OptIrEdge,
-  substitutions: ReadonlyMap<OptIrValueId, OptIrValueId>,
-): OptIrEdge {
-  const argumentsAfterRewrite = edge.arguments.map(
-    (argumentId) => substitutions.get(argumentId) ?? argumentId,
-  );
-  const condition =
-    edge.condition === undefined
-      ? undefined
-      : (substitutions.get(edge.condition) ?? edge.condition);
-  if (arraysEqual(argumentsAfterRewrite, edge.arguments) && condition === edge.condition) {
-    return edge;
-  }
-  return {
-    ...edge,
-    arguments: argumentsAfterRewrite,
-    ...(condition === undefined ? {} : { condition }),
-  };
-}
-
-function rewriteTerminatorValues(
-  terminator: OptIrTerminator,
-  substitutions: ReadonlyMap<OptIrValueId, OptIrValueId>,
-): OptIrTerminator {
-  switch (terminator.kind) {
-    case "branch":
-      return {
-        ...terminator,
-        condition: substitutions.get(terminator.condition) ?? terminator.condition,
-      };
-    case "switch":
-      return {
-        ...terminator,
-        scrutinee: substitutions.get(terminator.scrutinee) ?? terminator.scrutinee,
-      };
-    case "return":
-      return {
-        ...terminator,
-        values: terminator.values.map((valueId) => substitutions.get(valueId) ?? valueId),
-      };
-    case "jump":
-    case "unreachable":
-      return terminator;
-  }
-}
-
-function rewriteOperation(
-  operation: OptIrOperation,
-  substitutions: ReadonlyMap<OptIrValueId, OptIrValueId>,
-): OptIrOperation {
-  const operandIds = operation.operandIds.map((valueId) => substitutions.get(valueId) ?? valueId);
-  if (arraysEqual(operandIds, operation.operandIds)) {
-    return operation;
-  }
-
-  if (isOptIrSourceValueOperation(operation)) {
-    return rewriteOptIrSourceValueOperationOperands(operation, operandIds);
-  }
-
-  switch (operation.kind) {
-    case "constant":
-    case "memoryLoad":
-    case "proofErasedMarker":
-      return operation;
-    case "integerUnary":
-      return {
-        ...operation,
-        operandIds,
-        operand: operandIds[0] ?? operation.operand,
-      };
-    case "integerBinary":
-    case "integerCompare":
-    case "booleanBinary":
-      return {
-        ...operation,
-        operandIds,
-        left: operandIds[0] ?? operation.left,
-        right: operandIds[1] ?? operation.right,
-      };
-    case "booleanNot":
-      return {
-        ...operation,
-        operandIds,
-        operand: operandIds[0] ?? operation.operand,
-      };
-    case "aggregateConstruct":
-      return { ...operation, operandIds, fieldIds: operandIds };
-    case "aggregateExtract":
-      return {
-        ...operation,
-        operandIds,
-        aggregate: operandIds[0] ?? operation.aggregate,
-      };
-    case "aggregateInsert":
-      return {
-        ...operation,
-        operandIds,
-        aggregate: operandIds[0] ?? operation.aggregate,
-        field: operandIds[1] ?? operation.field,
-      };
-    case "layoutOffset":
-    case "layoutByteRange":
-      return {
-        ...operation,
-        operandIds,
-        base: operandIds[0] ?? operation.base,
-      };
-    case "layoutEndianDecode":
-      return {
-        ...operation,
-        operandIds,
-        bytes: operandIds[0] ?? operation.bytes,
-      };
-    case "memoryStore":
-      return {
-        ...operation,
-        operandIds,
-        storeValue: operandIds[0] ?? operation.storeValue,
-      };
-    case "sourceCall":
-    case "runtimeCall":
-    case "platformCall":
-    case "intrinsicCall":
-      return { ...operation, operandIds, argumentIds: operandIds };
-    case "vectorLoad":
-    case "vectorMaskedLoad":
-      return {
-        ...operation,
-        operandIds,
-        mask: operation.mask === undefined ? undefined : operandIds[0],
-      };
-    case "vectorStore":
-    case "vectorMaskedStore":
-      return {
-        ...operation,
-        operandIds,
-        vector: operandIds[0] ?? operation.vector,
-        storeValue: operandIds[1] ?? operation.storeValue,
-        mask: operation.mask === undefined ? undefined : operandIds[2],
-      };
-    case "vectorByteSwap":
-      return {
-        ...operation,
-        operandIds,
-        vector: operandIds[0] ?? operation.vector,
-      };
   }
 }
 

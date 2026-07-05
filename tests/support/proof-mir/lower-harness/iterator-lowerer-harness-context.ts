@@ -20,11 +20,13 @@ import { proofMirRuntimeOperationId } from "../../../../src/proof-mir/ids";
 import { targetId } from "../../../../src/semantic/ids";
 import type { ProofMirLoweringTargetContext } from "../../../../src/proof-mir/lower/lowering-context";
 
-function iteratorFinishTargetForLoweringHarness(): ProofMirLoweringTargetContext {
+function iteratorFinishTargetForLoweringHarness(input?: {
+  readonly features?: readonly string[];
+}): ProofMirLoweringTargetContext {
   const finishRuntimeOperationId = proofMirRuntimeOperationId(1);
   return {
     targetId: targetId("x64-test"),
-    features: [],
+    features: input?.features ?? [],
     runtimeCatalog: runtimeCatalogForFixture([
       runtimeOperationForFixture({
         runtimeId: finishRuntimeOperationId,
@@ -42,6 +44,7 @@ export function buildIteratorLoweringTestContext(input: {
   readonly locals: readonly MonoLocal[];
   readonly body: MonoBlock;
   readonly placeBackedLocalNames: ReadonlySet<string>;
+  readonly targetFeatures?: readonly string[];
 }): ProofMirLoweringResult<{
   readonly context: ProofMirLoweringContext;
   readonly entryBlockKey: ProofMirCanonicalKey;
@@ -60,7 +63,7 @@ export function buildIteratorLoweringTestContext(input: {
     locals: input.locals,
     program: input.program,
     layout: input.layout,
-    target: iteratorFinishTargetForLoweringHarness(),
+    target: iteratorFinishTargetForLoweringHarness({ features: input.targetFeatures }),
     placeBackedLocalNames: input.placeBackedLocalNames,
     collectLoopCarriedLocalsForLoop: emptyCollectLoopCarriedLocalsForLoop,
     placeBackedLocals: emptyPlaceBackedLocals,

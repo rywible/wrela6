@@ -42,12 +42,44 @@ test("every v1 case resolves to exactly one fixture project path", () => {
       "tests/fixtures/full-image-validation/packet-counter/direct-platform",
     ],
     [
+      "packet-counter-real-stream/toolchain-stdlib",
+      "tests/fixtures/full-image-validation/packet-counter-real-stream/toolchain-stdlib",
+    ],
+    [
+      "packet-counter-real-stream/ejected-stdlib",
+      "tests/fixtures/full-image-validation/packet-counter-real-stream/ejected-stdlib",
+    ],
+    [
+      "packet-counter-real-stream/direct-platform",
+      "tests/fixtures/full-image-validation/packet-counter-real-stream/direct-platform",
+    ],
+    [
+      "two-branch-control-flow/toolchain-stdlib",
+      "tests/fixtures/full-image-validation/two-branch-control-flow/toolchain-stdlib",
+    ],
+    [
+      "two-branch-control-flow/ejected-stdlib",
+      "tests/fixtures/full-image-validation/two-branch-control-flow/ejected-stdlib",
+    ],
+    [
+      "two-branch-control-flow/direct-platform",
+      "tests/fixtures/full-image-validation/two-branch-control-flow/direct-platform",
+    ],
+    [
       "status-error/toolchain-stdlib",
       "tests/fixtures/full-image-validation/status-error/toolchain-stdlib",
     ],
     [
       "watchdog-or-boot-policy/toolchain-stdlib",
       "tests/fixtures/full-image-validation/watchdog-or-boot-policy/toolchain-stdlib",
+    ],
+    [
+      "stdlib-core-option-result/toolchain-stdlib",
+      "tests/fixtures/full-image-validation/stdlib-core-option-result/toolchain-stdlib",
+    ],
+    [
+      "stdlib-bits/toolchain-stdlib",
+      "tests/fixtures/full-image-validation/stdlib-bits/toolchain-stdlib",
     ],
   ]);
 });
@@ -74,6 +106,35 @@ test("fixture specs map stdlib modes, package keys, artifacts, markers, and feat
       bytes: [0x01, 0x02, 0x03, 0x41, 0x42],
     },
     expectedConsoleMarkers: ["WRELA_PACKET_COUNTER_OK"],
+  });
+
+  expect(
+    fixtureSpecForFullImageCase({
+      scenario: "packet-counter-real-stream",
+      stdlibMode: "toolchain-stdlib",
+    }),
+  ).toMatchObject({
+    scenario: "packet-counter-real-stream",
+    stdlibMode: "toolchain-stdlib",
+    fixtureProjectPath:
+      "tests/fixtures/full-image-validation/packet-counter-real-stream/toolchain-stdlib",
+    packageKey: "full-image-validation:packet-counter-real-stream:toolchain-stdlib",
+    artifactName: "packet-counter-real-stream-toolchain-stdlib.efi",
+    packageStdlibMode: "toolchain",
+    enabledTargetFeatures: ["full-image-validation-fixture"],
+    expectedConsoleMarkers: ["WRELA_PACKET_COUNTER_OK"],
+  });
+  expect(
+    fixtureSpecForFullImageCase({
+      scenario: "packet-counter-real-stream",
+      stdlibMode: "toolchain-stdlib",
+    }).validationFixturePacketSource,
+  ).toEqual({
+    primitiveId: "uefi.validation.fixturePacketSource",
+    feature: "full-image-validation-fixture",
+    stableKey:
+      "full-image-validation:packet-counter-real-stream:toolchain-stdlib:fixture-packet-source",
+    bytes: [0x01, 0x02, 0x03, 0x41, 0x42],
   });
 
   expect(
@@ -152,6 +213,7 @@ test("package input loader uses the fixture project helper with injected filesys
         if (typeof entry !== "string") throw new Error(`missing text fixture ${path}`);
         return entry;
       },
+      realPath: (path) => path,
     };
   }
 });
@@ -193,5 +255,6 @@ function emptyFilesystem(): Parameters<typeof packageInputForFullImageFixture>[1
     readDirectory: () => [],
     isDirectory: () => false,
     readTextFile: () => "",
+    realPath: (path) => path,
   };
 }

@@ -81,6 +81,34 @@ describe("ProofMirLoopLowerer", () => {
     expect(breakEdge!.crossedScopes.length).toBeGreaterThan(0);
   });
 
+  test("same-role break edges in one function lower with deterministic distinct keys", () => {
+    const lowered = lowerProofMirLoopForTest({
+      source: [
+        "let flag = 0",
+        "loop:",
+        "    if flag == 0:",
+        "        break",
+        "    else:",
+        "        break",
+        "return flag",
+      ],
+      scalarLocals: ["flag"],
+    });
+
+    expect(lowered.kind).toBe("ok");
+    if (lowered.kind !== "ok") return;
+
+    const breakEdges = lowered
+      .edgesTo(lowered.exit!.blockKey)
+      .filter((edge) => edge.kind === "scopeBreak");
+    const breakEdgeKeys = breakEdges.map((edge) => String(edge.edgeKey));
+    const sortedBreakEdgeKeys = [...breakEdgeKeys].sort();
+
+    expect(breakEdges).toHaveLength(2);
+    expect(new Set(breakEdgeKeys).size).toBe(2);
+    expect(breakEdgeKeys).toEqual(sortedBreakEdgeKeys);
+  });
+
   test("continue emits scopeContinue edge with loop-carried arguments", () => {
     const lowered = lowerProofMirLoopForTest({
       source: ["let i = 0", "while i < 3:", "    i = i + 1", "    continue", "return i"],

@@ -134,27 +134,29 @@ function collectCompilerIntrinsicCall(args: {
     return;
   }
 
+  const literalValue = argumentExpression.cookedStringValue();
+  if (literalValue === undefined) {
+    args.diagnostics.push(
+      invalidCompilerIntrinsicCallDiagnostic({
+        sourceName: intrinsic.sourceName,
+        message: `Compiler intrinsic '${intrinsic.sourceName}' requires argument 1 to be a valid string literal.`,
+        source: args.source,
+        span: argumentExpression.node.span,
+        moduleId: args.moduleId,
+      }),
+    );
+    return;
+  }
+
   args.builder.addCompilerIntrinsicCall({
     key: lookup.entry.key as SyntaxReferenceKey,
     sourceName: intrinsic.sourceName,
     intrinsicKey: intrinsic.intrinsicKey,
-    literalValue: decodedStringLiteralValue(argumentExpression.literalText() ?? ""),
+    literalValue,
     returnTypeKey: intrinsic.returnTargetType,
     returnType: targetCheckedType(targetTypeId(intrinsic.returnTargetType)),
     sourceSpan: args.call.node.span,
   });
-}
-
-function decodedStringLiteralValue(text: string): string {
-  if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
-    try {
-      const parsed = JSON.parse(text) as unknown;
-      if (typeof parsed === "string") return parsed;
-    } catch {
-      return text.slice(1, -1);
-    }
-  }
-  return text;
 }
 
 function invalidCompilerIntrinsicCallDiagnostic(input: {

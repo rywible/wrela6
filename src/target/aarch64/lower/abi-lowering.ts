@@ -1,4 +1,8 @@
 import type { OptIrCallId, OptIrValueId } from "../../../opt-ir/ids";
+import {
+  AAPCS64_CALLER_SAVED_GPRS,
+  AAPCS64_PUBLIC_CALL_VECTOR_CLOBBERS,
+} from "../aapcs64-registers";
 import { aarch64AbiBinding, type AArch64AbiLocation } from "../machine-ir/abi-location";
 import type { AArch64CallClobberRecord } from "../machine-ir/machine-function";
 import type { AArch64RegisterClass } from "../machine-ir/machine-types";
@@ -14,53 +18,8 @@ import {
 import type { AArch64LoweringState } from "./pipeline-stages";
 import { recordAArch64StagePlanning } from "./stage-helpers";
 
-export const AAPCS64_CALLER_SAVED_GPRS = Object.freeze([
-  "x0",
-  "x1",
-  "x2",
-  "x3",
-  "x4",
-  "x5",
-  "x6",
-  "x7",
-  "x8",
-  "x9",
-  "x10",
-  "x11",
-  "x12",
-  "x13",
-  "x14",
-  "x15",
-  "x16",
-  "x17",
-]);
-
-export const AAPCS64_CALLER_SAVED_VECTORS = Object.freeze([
-  "v0",
-  "v1",
-  "v2",
-  "v3",
-  "v4",
-  "v5",
-  "v6",
-  "v7",
-  "v16",
-  "v17",
-  "v18",
-  "v19",
-  "v20",
-  "v21",
-  "v22",
-  "v23",
-  "v24",
-  "v25",
-  "v26",
-  "v27",
-  "v28",
-  "v29",
-  "v30",
-  "v31",
-]);
+export { AAPCS64_CALLER_SAVED_GPRS };
+export const AAPCS64_CALLER_SAVED_VECTORS = AAPCS64_PUBLIC_CALL_VECTOR_CLOBBERS;
 
 export interface AArch64CallAbiLoweringInput {
   readonly abi?: AArch64AbiTargetSurface;

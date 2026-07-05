@@ -172,13 +172,13 @@ describe("strict PE/COFF parser", () => {
   });
 });
 
-function stableDetails(bytes: readonly number[]): readonly string[] {
+function stableDetails(bytes: ArrayLike<number>): readonly string[] {
   const result = parsePeCoffImage(bytes);
   expect(result.kind).toBe("error");
   return result.diagnostics.map((diagnostic) => diagnostic.stableDetail);
 }
 
-function serializedImageWithBaseRelocations(): readonly number[] {
+function serializedImageWithBaseRelocations(): Uint8Array {
   const target = writerTargetForTest();
   const layout = linkedImageLayoutForPeCoffTest({
     baseRelocations: [dir64RelocationForTest({ rva: 0x4000 })],
@@ -213,7 +213,7 @@ function serializedImageWithBaseRelocations(): readonly number[] {
   return serialized.value.bytes;
 }
 
-function relocationRawOffset(bytes: readonly number[]): number {
+function relocationRawOffset(bytes: ArrayLike<number>): number {
   const result = parsePeCoffImage(bytes);
   if (result.kind !== "ok") throw new Error("expected parsed image");
   const reloc = result.value.sectionHeaders.find((section) => section.name === ".reloc");
@@ -221,7 +221,7 @@ function relocationRawOffset(bytes: readonly number[]): number {
   return reloc.rawDataPointerBytes;
 }
 
-function relocSectionHeaderOffset(bytes: readonly number[]): number {
+function relocSectionHeaderOffset(bytes: ArrayLike<number>): number {
   const result = parsePeCoffImage(bytes);
   if (result.kind !== "ok") throw new Error("expected parsed image");
   const relocIndex = result.value.sectionHeaders.findIndex((section) => section.name === ".reloc");
@@ -230,20 +230,20 @@ function relocSectionHeaderOffset(bytes: readonly number[]): number {
 }
 
 function patchedBytes(
-  source: readonly number[],
+  source: ArrayLike<number>,
   offset: number,
   replacement: readonly number[],
 ): readonly number[] {
-  const result = [...source];
+  const result = Array.from(source);
   for (const [index, byte] of replacement.entries()) result[offset + index] = byte;
   return result;
 }
 
-function patchedU16Le(source: readonly number[], offset: number, value: number): readonly number[] {
+function patchedU16Le(source: ArrayLike<number>, offset: number, value: number): readonly number[] {
   return patchedBytes(source, offset, [value & 0xff, (value >> 8) & 0xff]);
 }
 
-function patchedU32Le(source: readonly number[], offset: number, value: number): readonly number[] {
+function patchedU32Le(source: ArrayLike<number>, offset: number, value: number): readonly number[] {
   return patchedBytes(source, offset, [
     value & 0xff,
     (value >> 8) & 0xff,

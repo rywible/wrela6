@@ -3,7 +3,6 @@ import type {
   MonoExpression,
   MonoLiteralValue,
   MonoLocalId,
-  MonoObjectField,
   MonoResourcePlace,
 } from "../../mono/mono-hir";
 import type { ProofMirCanonicalKey } from "../canonicalization/canonical-keys";
@@ -25,13 +24,21 @@ import {
 } from "./lowering-context";
 import { syncLoweredPlaceToFunctionDraft } from "./lowering-place-sync";
 import { shouldLowerMemberAsValidatedBufferRead } from "../domains/validated-buffer-read-detection";
-import { objectConstructFields, recordObjectFieldConsumes } from "./object-construction-lowerer";
+import {
+  lowerObjectAsPlace as lowerObjectExpressionAsPlace,
+  lowerObjectAsValue as lowerObjectExpressionAsValue,
+} from "./object-expression-lowerer";
+import {
+  isShortCircuitLogicalExpression,
+  lowerShortCircuitLogical,
+} from "./short-circuit-logical-lowerer";
 
 export type { ProofMirLoweringResult };
 
 export interface CreateProofMirExpressionLowererInput {
   readonly validatedBufferRead?: ProofMirValidatedBufferReadLowerer;
   readonly call?: ProofMirCallLowerer;
+  readonly currentBlockRef?: ProofMirExpressionLowererBlockKeyRef;
 }
 
 import {
@@ -43,6 +50,7 @@ import {
   mapUnaryOperator,
   monoPlaceForLocal,
   originForExpression,
+  type ProofMirExpressionLowererBlockKeyRef,
   type RecordedProofMirStatement,
   loweringError,
   loweringOk,
@@ -53,12 +61,24 @@ function createExpressionLowererImpl(implInput: {
   readonly statements: RecordedProofMirStatement[];
   readonly validatedBufferRead?: ProofMirValidatedBufferReadLowerer;
   readonly call?: ProofMirCallLowerer;
+  readonly currentBlockRef?: ProofMirExpressionLowererBlockKeyRef;
 }): ProofMirExpressionLowerer {
-  const { statements: recordedStatements, validatedBufferRead, call } = implInput;
+  const { statements: recordedStatements, validatedBufferRead, call, currentBlockRef } = implInput;
   const loweredValueOperands = new Map<string, ProofMirDraftOperand>();
 
+  function activeBlockKey(fallbackBlockKey: ProofMirCanonicalKey): ProofMirCanonicalKey {
+    return currentBlockRef?.blockKey ?? fallbackBlockKey;
+  }
+
+  function withActiveBlock(
+    loweringInput: ProofMirExpressionLoweringInput,
+  ): ProofMirExpressionLoweringInput {
+    const blockKey = activeBlockKey(loweringInput.blockKey);
+    return blockKey === loweringInput.blockKey ? loweringInput : { ...loweringInput, blockKey };
+  }
+
   function loweredValueOperandKey(input: ProofMirExpressionLoweringInput): string | undefined {
-    if (input.expectedType !== undefined) {
+    if (input.expectedType !== undefined || isShortCircuitLogicalExpression(input.expression)) {
       return undefined;
     }
     return `${String(input.blockKey)}|${instantiatedHirIdKey(input.expression.expressionId)}`;
@@ -542,8 +562,9 @@ function createExpressionLowererImpl(implInput: {
             }),
           ]);
     }
-    const originKey = originForExpression(loweringInput.context, expression);
-    const resultKey = loweringInput.context.graph.createValue({
+    const resultLoweringInput = withActiveBlock(loweringInput);
+    const originKey = originForExpression(resultLoweringInput.context, expression);
+    const resultKey = resultLoweringInput.context.graph.createValue({
       role: `unary:${mapped}:${instantiatedHirIdKey(expression.expressionId)}`,
       origin: originKey,
       type: expression.type,
@@ -557,7 +578,7 @@ function createExpressionLowererImpl(implInput: {
         resultKey,
       },
       originKey,
-      loweringInput,
+      resultLoweringInput,
       expression,
     );
     return loweringOk(valueOperand(resultKey));
@@ -576,6 +597,24 @@ function createExpressionLowererImpl(implInput: {
         }),
       ]);
     }
+    if (expression.kind.kind === "comparison" && validatedBufferRead !== undefined) {
+      const derivedComparison = validatedBufferRead.lowerDerivedFieldComparison({
+        context: loweringInput.context,
+        expression,
+        blockKey: loweringInput.blockKey,
+      });
+      if (derivedComparison !== undefined) {
+        return derivedComparison;
+      }
+    }
+    if (isShortCircuitLogicalExpression(expression)) {
+      return lowerShortCircuitLogical({
+        loweringInput: withActiveBlock(loweringInput),
+        expression,
+        currentBlockRef,
+        lowerExpressionValue,
+      });
+    }
     const left = lowerExpressionValue({
       loweringInput,
       expression: expression.kind.left,
@@ -591,8 +630,9 @@ function createExpressionLowererImpl(implInput: {
             }),
           ]);
     }
+    const rightLoweringInput = withActiveBlock(loweringInput);
     const right = lowerExpressionValue({
-      loweringInput,
+      loweringInput: rightLoweringInput,
       expression: expression.kind.right,
     });
     if (right.kind !== "ok" || right.value.kind !== "value") {
@@ -606,8 +646,9 @@ function createExpressionLowererImpl(implInput: {
             }),
           ]);
     }
-    const originKey = originForExpression(loweringInput.context, expression);
-    const resultKey = loweringInput.context.graph.createValue({
+    const resultLoweringInput = withActiveBlock(loweringInput);
+    const originKey = originForExpression(resultLoweringInput.context, expression);
+    const resultKey = resultLoweringInput.context.graph.createValue({
       role: `${expression.kind.kind}:${expression.kind.operator.trim()}:${instantiatedHirIdKey(
         expression.expressionId,
       )}`,
@@ -620,7 +661,7 @@ function createExpressionLowererImpl(implInput: {
       if (operator === undefined) {
         return loweringError([
           invalidStatementOperatorDiagnostic({
-            functionInstanceId: loweringInput.context.functionInstanceId,
+            functionInstanceId: resultLoweringInput.context.functionInstanceId,
             operator: expression.kind.operator,
             sourceOrigin: expression.sourceOrigin,
           }),
@@ -635,7 +676,7 @@ function createExpressionLowererImpl(implInput: {
           resultKey,
         },
         originKey,
-        loweringInput,
+        resultLoweringInput,
         expression,
       );
       return loweringOk(valueOperand(resultKey));
@@ -644,7 +685,7 @@ function createExpressionLowererImpl(implInput: {
     if (operator === undefined) {
       return loweringError([
         invalidStatementOperatorDiagnostic({
-          functionInstanceId: loweringInput.context.functionInstanceId,
+          functionInstanceId: resultLoweringInput.context.functionInstanceId,
           operator: expression.kind.operator,
           sourceOrigin: expression.sourceOrigin,
         }),
@@ -659,155 +700,22 @@ function createExpressionLowererImpl(implInput: {
         resultKey,
       },
       originKey,
-      loweringInput,
+      resultLoweringInput,
       expression,
     );
     return loweringOk(valueOperand(resultKey));
-  }
-
-  function objectNeedsPlace(expression: MonoExpression): boolean {
-    if (expression.kind.kind !== "object") {
-      return false;
-    }
-    if (expression.place !== undefined) {
-      return true;
-    }
-    if (expression.resourceKind !== "Copy") {
-      return true;
-    }
-    for (const field of expression.kind.fields) {
-      if (field.value.resourceKind !== "Copy") {
-        return true;
-      }
-      if (field.value.place !== undefined) {
-        return true;
-      }
-      if (field.value.kind.kind === "name") {
-        const localId = field.value.kind.localId;
-        if (localId !== undefined) {
-          // Field values that are already place-backed force aggregate storage.
-          void localId;
-        }
-      }
-    }
-    return expression.kind.fields.some((field) => field.value.resourceKind !== "Copy");
   }
 
   function lowerObjectAsValue(
     loweringInput: ProofMirExpressionLoweringInput,
     expression: MonoExpression,
   ): ProofMirLoweringResult<ProofMirDraftOperand> {
-    if (expression.kind.kind !== "object") {
-      return loweringError([
-        unlowerableExpressionDiagnostic({
-          functionInstanceId: loweringInput.context.functionInstanceId,
-          stableDetail: "object:shape",
-          sourceOrigin: expression.sourceOrigin,
-        }),
-      ]);
-    }
-    const fieldValues: {
-      readonly field: MonoObjectField;
-      readonly operand: ProofMirDraftOperand;
-    }[] = [];
-    for (const field of expression.kind.fields) {
-      const lowered = lowerExpressionValue({
-        loweringInput,
-        expression: field.value,
-      });
-      if (lowered.kind !== "ok") {
-        return lowered;
-      }
-      fieldValues.push({ field, operand: lowered.value });
-    }
-    const needsPlace =
-      objectNeedsPlace(expression) ||
-      fieldValues.some(
-        (entry) => entry.operand.kind === "place" || entry.operand.kind === "valueAndPlace",
-      );
-    const originKey = originForExpression(loweringInput.context, expression);
-    const constructFields = objectConstructFields({
-      loweringInput,
-      fieldValues,
-    });
-    if (constructFields.kind !== "ok") {
-      return constructFields;
-    }
-    if (!needsPlace) {
-      const valueKey = loweringInput.context.graph.createValue({
-        role: `object:copy-scalar:${instantiatedHirIdKey(expression.expressionId)}`,
-        origin: originKey,
-        type: expression.type,
-        resourceKind: expression.resourceKind,
-      });
-      recordStatement(
-        {
-          kind: "constructObject",
-          resultKey: valueKey,
-          fields: constructFields.value,
-        },
-        originKey,
-        loweringInput,
-        expression,
-      );
-      recordObjectFieldConsumes({
-        loweringInput,
-        fieldValues,
-        recordStatement,
-      });
-      return loweringOk(valueOperand(valueKey));
-    }
-    const aggregateValueKey = loweringInput.context.graph.createValue({
-      role: `object:aggregate:${instantiatedHirIdKey(expression.expressionId)}`,
-      origin: originKey,
-      type: expression.type,
-      resourceKind: expression.resourceKind,
-    });
-    recordStatement(
-      {
-        kind: "constructObject",
-        resultKey: aggregateValueKey,
-        fields: constructFields.value,
-      },
-      originKey,
+    return lowerObjectExpressionAsValue({
       loweringInput,
       expression,
-    );
-    recordObjectFieldConsumes({
-      loweringInput,
-      fieldValues,
+      lowerExpressionValue,
+      lowerPlaceFromMono,
       recordStatement,
-    });
-    const placeKey =
-      expression.place === undefined
-        ? loweringOk(
-            loweringInput.context.effects.placeFromRuntimeTemporary({
-              valueKey: aggregateValueKey,
-              originKey,
-            }),
-          )
-        : lowerPlaceFromMono({
-            loweringInput,
-            monoPlace: expression.place,
-            originKey,
-          });
-    if (placeKey.kind !== "ok") {
-      return placeKey;
-    }
-    recordStatement(
-      {
-        kind: "store",
-        placeKey: placeKey.value,
-        valueKey: aggregateValueKey,
-      },
-      originKey,
-      loweringInput,
-      expression,
-    );
-    return loweringOk({
-      kind: "valueAndPlace",
-      value: aggregateValueKey,
-      place: placeKey.value,
     });
   }
 
@@ -815,36 +723,27 @@ function createExpressionLowererImpl(implInput: {
     loweringInput: ProofMirExpressionLoweringInput,
     expression: MonoExpression,
   ): ProofMirLoweringResult<ProofMirDraftPlaceOperand> {
-    const valueResult = lowerObjectAsValue(loweringInput, expression);
-    if (valueResult.kind !== "ok") {
-      return valueResult;
-    }
-    if (valueResult.value.kind === "place") {
-      return loweringOk(valueResult.value);
-    }
-    if (valueResult.value.kind === "valueAndPlace") {
-      return loweringOk({ kind: "place", place: valueResult.value.place });
-    }
-    return loweringError([
-      invalidValueResourceKindDiagnostic({
-        functionInstanceId: loweringInput.context.functionInstanceId,
-        stableDetail: "object:scalar-as-place",
-        sourceOrigin: expression.sourceOrigin,
-      }),
-    ]);
+    return lowerObjectExpressionAsPlace({
+      loweringInput,
+      expression,
+      lowerObjectValue(input) {
+        return lowerObjectAsValue(input.loweringInput, input.expression);
+      },
+    });
   }
 
   function lowerExpressionValue(input: {
     readonly loweringInput: ProofMirExpressionLoweringInput;
     readonly expression: MonoExpression;
   }): ProofMirLoweringResult<ProofMirDraftOperand> {
+    const loweringInput = withActiveBlock(input.loweringInput);
     return lowerExpression({
-      context: input.loweringInput.context,
+      context: loweringInput.context,
       expression: input.expression,
-      blockKey: input.loweringInput.blockKey,
-      ...(input.loweringInput.expectedType === undefined
+      blockKey: loweringInput.blockKey,
+      ...(loweringInput.expectedType === undefined
         ? {}
-        : { expectedType: input.loweringInput.expectedType }),
+        : { expectedType: loweringInput.expectedType }),
     });
   }
 
@@ -909,6 +808,9 @@ function createExpressionLowererImpl(implInput: {
   function lowerExpression(
     loweringInput: ProofMirExpressionLoweringInput,
   ): ProofMirLoweringResult<ProofMirDraftOperand> {
+    if (currentBlockRef !== undefined) {
+      currentBlockRef.blockKey = loweringInput.blockKey;
+    }
     const cacheKey = loweredValueOperandKey(loweringInput);
     if (cacheKey !== undefined) {
       const cached = loweredValueOperands.get(cacheKey);
@@ -926,6 +828,9 @@ function createExpressionLowererImpl(implInput: {
   function lowerExpressionAsPlace(
     loweringInput: ProofMirExpressionLoweringInput,
   ): ProofMirLoweringResult<ProofMirDraftPlaceOperand> {
+    if (currentBlockRef !== undefined) {
+      currentBlockRef.blockKey = loweringInput.blockKey;
+    }
     const expression = loweringInput.expression;
     switch (expression.kind.kind) {
       case "name":
@@ -964,6 +869,7 @@ export function createProofMirExpressionLowerer(
     statements: recorded,
     validatedBufferRead: input.validatedBufferRead,
     call: input.call,
+    currentBlockRef: input.currentBlockRef,
   });
 
   return {

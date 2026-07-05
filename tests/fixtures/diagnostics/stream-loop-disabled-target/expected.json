@@ -1,0 +1,12 @@
+{
+  "phase": "pipeline",
+  "enabledTargetFeatures": ["full-image-validation-fixture"],
+  "proofMirTargetFeatures": [],
+  "diagnostics": [
+    {
+      "code": "PROOF_MIR_MISSING_SEMANTICS_GATE",
+      "spanText": "for",
+      "count": 1
+    }
+  ]
+}

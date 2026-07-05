@@ -231,7 +231,7 @@ function source(
 }
 
 function artifactForTest(
-  bytes: readonly number[],
+  bytes: Uint8Array | readonly number[],
   finalImageFingerprint: string,
 ): UefiAArch64ImageArtifact {
   return {
@@ -240,7 +240,7 @@ function artifactForTest(
       artifactName: "test.efi",
       mediaType: "application/vnd.microsoft.portable-executable",
       fileExtension: ".efi",
-      bytes,
+      bytes: Uint8Array.from(bytes),
       deterministicMetadata: {
         schema: "wrela.pe-coff-efi-image",
         schemaVersion: 1,

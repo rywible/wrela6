@@ -38,6 +38,8 @@ export function createProofMirExtensionLowerer(): ProofMirExtensionLowerer {
         construct: input.construct,
         targetFeatures: input.context.target.features,
         origin,
+        sourceOrigin: input.statement.sourceOrigin,
+        functionInstanceId: input.context.functionInstanceId,
       });
       if (gate.kind === "error") {
         return gate;

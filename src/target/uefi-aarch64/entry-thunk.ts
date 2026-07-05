@@ -106,14 +106,16 @@ export type UefiAArch64EntryThunkInstructionPlan =
 
 export interface UefiAArch64EntryThunkRelocationPlan {
   readonly stableKey: string;
-  readonly operationKey:
-    | "call-entry-initialize-context"
-    | "call-boot-function"
-    | "call-status-conversion";
+  readonly operationKey: UefiAArch64EntryThunkRelocationOperationKey;
   readonly offsetBytes: number;
   readonly targetLinkageName: string;
   readonly family: "branch26";
 }
+
+type UefiAArch64EntryThunkRelocationOperationKey =
+  | "call-entry-initialize-context"
+  | "call-boot-function"
+  | "call-status-conversion";
 
 export interface UefiAArch64EntryThunkUnwindPlan {
   readonly stableKey: "unwind:symbol:__wrela_uefi_entry";
@@ -123,7 +125,7 @@ export interface UefiAArch64EntryThunkUnwindPlan {
 
 interface EncodedThunkInstruction {
   readonly operationKey: UefiAArch64EntryThunkInstructionPlan["operationKey"];
-  readonly bytes: readonly number[];
+  readonly bytes: Uint8Array;
   readonly relocationTargetLinkageName?: string;
 }
 
@@ -149,6 +151,16 @@ export function planUefiAArch64EntryThunk(
     });
   }
 
+  const encoded = encodeThunkInstructions(input, input.entryProfile.bootFunctionSymbol);
+  if (encoded.kind === "error") {
+    return uefiAArch64Error({
+      diagnostics: encoded.diagnostics.map((diagnostic) =>
+        entryThunkDiagnostic(diagnostic.stableDetail),
+      ),
+      verification: failedVerification(ENTRY_THUNK_VERIFIER_KEY, ENTRY_THUNK_RUN_KEY),
+    });
+  }
+
   const planWithoutFingerprint = {
     strategy: "framed-call" as const,
     entrySymbol: input.entryProfile.peEntryLinkageName,
@@ -157,7 +169,7 @@ export function planUefiAArch64EntryThunk(
     frameSizeBytes: FRAME_SIZE_BYTES,
     frameSlots: entryThunkFrameSlots(),
     instructions: entryThunkInstructions(input.entryProfile),
-    relocations: entryThunkRelocationPlans(input.entryProfile),
+    relocations: entryThunkRelocationPlans(encoded.instructions),
     unwind: entryThunkUnwindPlan(),
   };
 
@@ -203,28 +215,18 @@ function createUefiAArch64EntryObject(
   const encoded = encodeThunkInstructions(input, factoryInput.wrelaBootLinkageName);
   if (encoded.kind === "error") return encoded;
 
-  let offsetBytes = 0;
-  const relocations = [];
-  for (const instruction of encoded.instructions) {
-    if (instruction.relocationTargetLinkageName !== undefined) {
-      relocations.push({
-        stableKey: `reloc:entry:${instruction.operationKey}`,
-        offsetBytes,
-        widthBytes: 4,
-        family: "branch26",
-        targetLinkageName: instruction.relocationTargetLinkageName,
-        instructionPatch: {
-          bitRange: [0, 25] as const,
-          encodingOwner: { opcode: "bl", catalogEntryKey: "encoding:bl" },
-        },
-      });
-    }
-    offsetBytes += instruction.bytes.length;
-  }
+  const relocations = entryThunkRelocationPlans(encoded.instructions).map((relocation) => ({
+    ...relocation,
+    widthBytes: 4,
+    instructionPatch: {
+      bitRange: [0, 25] as const,
+      encodingOwner: { opcode: "bl", catalogEntryKey: "encoding:bl" },
+    },
+  }));
 
   return {
     kind: "ok",
-    codeBytes: Object.freeze(encoded.instructions.flatMap((instruction) => [...instruction.bytes])),
+    codeBytes: concatInstructionBytes(encoded.instructions),
     relocations: Object.freeze(relocations),
     unwindRecords: Object.freeze([entryThunkObjectUnwindRecord()]),
   };
@@ -303,7 +305,7 @@ function encodeThunkInstructions(
     }
     encoded.push({
       operationKey,
-      bytes: [...result.value.bytes],
+      bytes: Uint8Array.from(result.value.bytes),
       ...(relocationTargetLinkageName === undefined ? {} : { relocationTargetLinkageName }),
     });
     return true;
@@ -394,25 +396,36 @@ function byteOffsetOf(instructions: readonly EncodedThunkInstruction[], endIndex
     .reduce((sum, instruction) => sum + instruction.bytes.length, 0);
 }
 
-function patchBranch19(bytes: readonly number[], distanceBytes: number): readonly number[] {
+function patchBranch19(bytes: Uint8Array, distanceBytes: number): Uint8Array {
   const word = ((bytes[3]! << 24) | (bytes[2]! << 16) | (bytes[1]! << 8) | bytes[0]!) >>> 0;
   const immediate = (distanceBytes / 4) & 0x7ffff;
   const patched = (word & ~0x00ffffe0) | (immediate << 5);
-  return Object.freeze([
+  return Uint8Array.of(
     patched & 0xff,
     (patched >>> 8) & 0xff,
     (patched >>> 16) & 0xff,
     (patched >>> 24) & 0xff,
-  ]);
+  );
 }
 
-function entryThunkPdataBytes(index: number): readonly number[] {
-  return Object.freeze([0, 0, 0, 0, 1 + (index & 0xff), 0, 0, 0]);
+function entryThunkPdataBytes(index: number): Uint8Array {
+  return Uint8Array.of(0, 0, 0, 0, 1 + (index & 0xff), 0, 0, 0);
 }
 
-function entryThunkXdataBytes(frameShape: string): readonly number[] {
+function entryThunkXdataBytes(frameShape: string): Uint8Array {
   const frameShapeByte = stableHash(frameShape).charCodeAt(0) & 0xff;
-  return Object.freeze([1, FRAME_SIZE_BYTES, frameShapeByte, 0xe4]);
+  return Uint8Array.of(1, FRAME_SIZE_BYTES, frameShapeByte, 0xe4);
+}
+
+function concatInstructionBytes(instructions: readonly EncodedThunkInstruction[]): Uint8Array {
+  const byteLength = instructions.reduce((sum, instruction) => sum + instruction.bytes.length, 0);
+  const output = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const instruction of instructions) {
+    output.set(instruction.bytes, offset);
+    offset += instruction.bytes.length;
+  }
+  return output;
 }
 
 function entryThunkFrameSlots(): readonly UefiAArch64EntryThunkFrameSlot[] {
@@ -481,31 +494,38 @@ function entryThunkInstructions(
 }
 
 function entryThunkRelocationPlans(
-  profile: UefiAArch64EntryProfile,
+  instructions: readonly EncodedThunkInstruction[],
 ): readonly UefiAArch64EntryThunkRelocationPlan[] {
-  return Object.freeze([
-    Object.freeze({
-      stableKey: "reloc:entry:call-entry-initialize-context",
-      operationKey: "call-entry-initialize-context" as const,
-      offsetBytes: 20,
-      targetLinkageName: UEFI_AARCH64_ENTRY_INITIALIZE_CONTEXT_LINKAGE_NAME,
-      family: "branch26" as const,
-    }),
-    Object.freeze({
-      stableKey: "reloc:entry:call-boot-function",
-      operationKey: "call-boot-function" as const,
-      offsetBytes: 36,
-      targetLinkageName: profile.bootFunctionSymbol,
-      family: "branch26" as const,
-    }),
-    Object.freeze({
-      stableKey: "reloc:entry:call-status-conversion",
-      operationKey: "call-status-conversion" as const,
-      offsetBytes: 48,
-      targetLinkageName: UEFI_AARCH64_STATUS_FROM_BOOT_RESULT_LINKAGE_NAME,
-      family: "branch26" as const,
-    }),
-  ]);
+  const relocations: UefiAArch64EntryThunkRelocationPlan[] = [];
+  let offsetBytes = 0;
+  for (const instruction of instructions) {
+    if (
+      instruction.relocationTargetLinkageName !== undefined &&
+      isEntryThunkRelocationOperationKey(instruction.operationKey)
+    ) {
+      relocations.push(
+        Object.freeze({
+          stableKey: `reloc:entry:${instruction.operationKey}`,
+          operationKey: instruction.operationKey,
+          offsetBytes,
+          targetLinkageName: instruction.relocationTargetLinkageName,
+          family: "branch26" as const,
+        }),
+      );
+    }
+    offsetBytes += instruction.bytes.length;
+  }
+  return Object.freeze(relocations);
+}
+
+function isEntryThunkRelocationOperationKey(
+  operationKey: UefiAArch64EntryThunkInstructionPlan["operationKey"],
+): operationKey is UefiAArch64EntryThunkRelocationOperationKey {
+  return (
+    operationKey === "call-entry-initialize-context" ||
+    operationKey === "call-boot-function" ||
+    operationKey === "call-status-conversion"
+  );
 }
 
 function entryThunkUnwindPlan(): UefiAArch64EntryThunkUnwindPlan {

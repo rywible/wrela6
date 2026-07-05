@@ -125,6 +125,7 @@ describe("Proof MIR program model types", () => {
     const compilerIntrinsic: ProofMirCallTarget = {
       kind: "compilerIntrinsic",
       intrinsicKey: "uefi.utf16_static",
+      literalValue: "hello",
       sourceValueKey: "hir.expression:1",
       returnTypeKey: "uefi.Utf16Static",
     };

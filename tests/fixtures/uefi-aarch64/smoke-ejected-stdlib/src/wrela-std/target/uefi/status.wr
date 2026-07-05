@@ -1,5 +1,5 @@
 // Ejected ordinary project source copy; target authority comes from certified platform contracts.
-pub enum UefiStatus:
+enum UefiStatus:
     success
     load_error
     invalid_parameter

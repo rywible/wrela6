@@ -143,7 +143,6 @@ export type ProofMirLayoutTermRoot =
     };
 
 export type ProofMirLayoutTermChild = "left" | "right";
-
 export type ProofMirCallTarget =
   | {
       readonly kind: "sourceFunction";
@@ -159,6 +158,7 @@ export type ProofMirCallTarget =
   | {
       readonly kind: "compilerIntrinsic";
       readonly intrinsicKey: string;
+      readonly literalValue: string;
       readonly sourceValueKey: string;
       readonly returnTypeKey: string;
     }

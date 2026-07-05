@@ -84,15 +84,10 @@ const PACKET_COUNTER_REQUIREMENTS: readonly ProofFactRequirement[] = Object.free
       fact.family === "limit-check" && includesAny(fact, ["source.len <= limits.max_frame_bytes"]),
   ),
   requirement(
-    "validation-error-source-closed",
+    "validation-success-packet-authority",
     (fact) =>
-      fact.family === "validation-error" &&
-      includesAny(fact, ["source-preserved-and-closed", "source-closed"]),
-  ),
-  requirement(
-    "validation-success-source-consumed",
-    (fact) =>
-      fact.family === "validation-success" && includesAny(fact, ["source-consumed-into-packet"]),
+      fact.family === "validation-success" &&
+      includesAny(fact, ["validated-buffer-authority", "source-consumed-into-packet"]),
   ),
 ]);
 
@@ -137,8 +132,12 @@ const WATCHDOG_REQUIREMENTS: readonly ProofFactRequirement[] = Object.freeze([
 const REQUIREMENTS_BY_SCENARIO = Object.freeze({
   "smoke-console": SMOKE_CONSOLE_REQUIREMENTS,
   "packet-counter": PACKET_COUNTER_REQUIREMENTS,
+  "packet-counter-real-stream": PACKET_COUNTER_REQUIREMENTS,
+  "two-branch-control-flow": SMOKE_CONSOLE_REQUIREMENTS,
   "status-error": STATUS_ERROR_REQUIREMENTS,
   "watchdog-or-boot-policy": WATCHDOG_REQUIREMENTS,
+  "stdlib-core-option-result": STATUS_ERROR_REQUIREMENTS,
+  "stdlib-bits": STATUS_ERROR_REQUIREMENTS,
 } satisfies Record<FullImageValidationScenarioKey, readonly ProofFactRequirement[]>);
 
 export function proofFactReferenceChecker(): FullImageReferenceChecker {
@@ -438,6 +437,11 @@ function checkedDomainFacts(
       family: "limit-check",
       subject: "CounterPacket",
       detail: "source.len <= limits.max_frame_bytes|checked-validated-buffer",
+    })),
+    ...validatedBuffers.map(() => ({
+      family: "validation-success",
+      subject: "CounterPacket",
+      detail: "validated-buffer-authority|source-consumed-into-packet",
     })),
     ...(validationErrEdges.length > 0 && exitClosures.length > 0
       ? [

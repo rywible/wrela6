@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   CollectingDiagnosticSink,
   DottedModuleResolver,
-  ImportDiscovery,
   KeywordTable,
   Lexer,
   ModuleGraphLexer,
@@ -24,7 +23,6 @@ describe("front-end smoke", () => {
         ]),
       ),
       resolver: new DottedModuleResolver(),
-      imports: new ImportDiscovery({ diagnostics }),
       diagnostics,
     });
 
@@ -53,13 +51,10 @@ describe("front-end smoke", () => {
 
     const diagnostics = new CollectingDiagnosticSink();
     const lexer = new Lexer({ keywords: KeywordTable.default(), diagnostics });
-    const imports = new ImportDiscovery({ diagnostics });
-
     const graphLexer = new ModuleGraphLexer({
       lexer,
       files: fileRepository,
       resolver: moduleResolver,
-      imports,
       diagnostics,
     });
 

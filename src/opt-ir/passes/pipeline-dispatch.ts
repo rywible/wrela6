@@ -106,7 +106,7 @@ export function runPipelineEntry(
       next = runLicmStep(next);
       break;
     case "wrela-fact-rounds":
-      next = runWrelaCluster(next);
+      next = runWrelaCluster(next, input.target);
       break;
     case "fact-gated-egraph":
       next = input.policy.enableFactGatedRewrites

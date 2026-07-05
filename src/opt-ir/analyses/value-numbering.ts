@@ -1,3 +1,4 @@
+import { stableJson } from "../../shared/stable-json";
 import { optIrConstantStableKey } from "../constants";
 import type { OptIrOperationId, OptIrValueId } from "../ids";
 import type { OptIrMemoryAccessDescriptor, OptIrOperation } from "../operations";
@@ -129,6 +130,8 @@ function attributesKey(operation: OptIrOperation): string {
   switch (operation.kind) {
     case "constant":
       return `constant:${optIrConstantStableKey(operation.constant)}`;
+    case "constAddr":
+      return `constAddr:${String(operation.constantId)}`;
     case "integerUnary":
     case "integerBinary":
     case "integerCompare":
@@ -154,7 +157,7 @@ function attributesKey(operation: OptIrOperation): string {
     case "runtimeCall":
     case "platformCall":
     case "intrinsicCall":
-      return `target:${JSON.stringify(operation.target)}`;
+      return `target:${stableJson(operation.target)}`;
     case "vectorShuffle":
       return `shuffle:${operation.shuffleIndices.join(",")}`;
     case "semanticAtomic":
@@ -186,6 +189,6 @@ function memoryAccessKey(memoryAccess: OptIrMemoryAccessDescriptor): string {
     `type:${optIrTypeStableKey(memoryAccess.valueType)}`,
     `endian:${memoryAccess.endian}`,
     `volatility:${memoryAccess.volatility}`,
-    `bounds:${JSON.stringify(memoryAccess.boundsAuthority)}`,
+    `bounds:${stableJson(memoryAccess.boundsAuthority)}`,
   ].join(",");
 }

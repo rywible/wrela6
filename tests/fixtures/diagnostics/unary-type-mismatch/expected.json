@@ -1,0 +1,9 @@
+{
+  "phase": "semantic",
+  "diagnostics": [
+    {
+      "code": "HIR_ARITHMETIC_REQUIRES_INTEGER",
+      "count": 1
+    }
+  ]
+}

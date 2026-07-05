@@ -82,6 +82,7 @@ function verifyOperationRuntimeShape(
 
   switch (operation.kind) {
     case "constant":
+    case "constAddr":
       expectOperands([], "none");
       expectResultCount(1);
       break;

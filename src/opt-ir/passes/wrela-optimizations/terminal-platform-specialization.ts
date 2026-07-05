@@ -41,6 +41,7 @@ export interface WrelaTerminalPlatformResult {
     readonly kind: "terminalCleanupPruned" | "platformCallSpecialized";
     readonly operationId: OptIrOperationId;
     readonly factChain: readonly string[];
+    readonly consumedFactFamilies: readonly string[];
   }[];
 }
 
@@ -74,6 +75,7 @@ export function runWrelaTerminalPlatformSpecialization(
       kind: "terminalCleanupPruned",
       operationId: candidate.operationId,
       factChain: candidate.factChain,
+      consumedFactFamilies: ["terminalClosure"],
     });
   }
 
@@ -95,6 +97,7 @@ export function runWrelaTerminalPlatformSpecialization(
         ...candidate.abiFactIds,
         "target-catalog-equivalence",
       ],
+      consumedFactFamilies: ["passDerived", "layoutAbi"],
     });
   }
 

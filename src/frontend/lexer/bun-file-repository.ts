@@ -1,4 +1,4 @@
-import { resolve, relative } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { realpath } from "node:fs/promises";
 
 import type { FileReadResult, FileRepository } from "./file-repository";
@@ -12,7 +12,7 @@ export class BunFileRepository implements FileRepository {
     const root = resolve(this.options.root);
     const resolved = resolve(root, path.key);
 
-    if (!resolved.startsWith(root) || relative(root, resolved).startsWith("..")) {
+    if (!isContainedPath(root, resolved)) {
       return {
         kind: "unreadable",
         path,
@@ -30,7 +30,7 @@ export class BunFileRepository implements FileRepository {
 
     const realRoot = await realpath(root);
 
-    if (!realResolved.startsWith(realRoot)) {
+    if (!isContainedPath(realRoot, realResolved)) {
       return {
         kind: "unreadable",
         path,
@@ -60,4 +60,9 @@ export class BunFileRepository implements FileRepository {
       };
     }
   }
+}
+
+function isContainedPath(root: string, target: string): boolean {
+  const result = relative(root, target);
+  return result === "" || (!result.startsWith("..") && !isAbsolute(result));
 }

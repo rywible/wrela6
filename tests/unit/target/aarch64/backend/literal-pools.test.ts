@@ -28,6 +28,7 @@ describe("AArch64 literal pool planning", () => {
     expect(placed.value[0]?.entries[0]?.users).toEqual([
       { stableKey: "use:after-code", useOffsetBytes: 0, maxReachBytes: 128 },
     ]);
+    expect(placed.value[0]?.entries[0]?.valueBytes).toBeInstanceOf(Uint8Array);
 
     const exhausted = planAArch64LiteralPools({
       users: [literalUser("use:too-far", 0, { maxReachBytes: 4 })],

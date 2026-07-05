@@ -21,6 +21,7 @@ import {
   PE_SECTION_HEADER_SIZE_BYTES,
   PE32_PLUS_OPTIONAL_HEADER_SIZE_BYTES,
 } from "./headers";
+import { PE_CHECKSUM_PLACEHOLDER_UNTIL_SERIALIZATION } from "./pe-checksum";
 
 const IMAGE_SCN_MEM_EXECUTE = 0x20000000;
 const IMAGE_SCN_CNT_INITIALIZED_DATA = 0x00000040;
@@ -30,7 +31,6 @@ const PE_BASE_RELOCATION_DIRECTORY_INDEX = 5;
 const PE_EXCEPTION_DIRECTORY_SECTION_KEY = ".pdata";
 const PE_COFF_EXECUTABLE_IMAGE_CHARACTERISTIC = 0x0002;
 const PE_COFF_LARGE_ADDRESS_AWARE_CHARACTERISTIC = 0x0020;
-
 const LINKED_LAYOUT_VALIDATION_VERIFICATION: PeCoffWriterVerificationSummary = Object.freeze({
   runs: Object.freeze([
     Object.freeze({
@@ -368,7 +368,7 @@ const HEADER_PLANNING_VERIFICATION: PeCoffWriterVerificationSummary = Object.fre
 export interface PlanPeCoffSectionsInput {
   readonly target: AArch64PeCoffEfiWriterTargetSurface;
   readonly layout: AArch64LinkedImageLayout;
-  readonly baseRelocationTableBytes: readonly number[];
+  readonly baseRelocationTableBytes: Uint8Array | readonly number[];
 }
 
 export interface PlannedPeCoffSection {
@@ -379,7 +379,7 @@ export interface PlannedPeCoffSection {
   readonly rawDataPointerBytes: number;
   readonly rawDataSizeBytes: number;
   readonly characteristics: number;
-  readonly bytes: readonly number[];
+  readonly bytes: Uint8Array;
   readonly generated: boolean;
 }
 
@@ -546,7 +546,7 @@ export function planPeCoffSections(
         rawDataPointerBytes,
         rawDataSizeBytes,
         characteristics: section.flags,
-        bytes: Object.freeze([...section.bytes]),
+        bytes: Uint8Array.from(section.bytes),
         generated: false,
       }),
     );
@@ -579,7 +579,7 @@ export function planPeCoffSections(
         rawDataPointerBytes,
         rawDataSizeBytes,
         characteristics: PE_RELOC_SECTION_CHARACTERISTICS,
-        bytes: Object.freeze([...input.baseRelocationTableBytes]),
+        bytes: Uint8Array.from(input.baseRelocationTableBytes),
         generated: true,
       }),
     );
@@ -793,7 +793,7 @@ export function planPeHeaders(input: PlanPeHeadersInput): PeCoffWriterResult<Pla
     win32VersionValue: 0,
     sizeOfImageBytes,
     sizeOfHeadersBytes,
-    checksum: 0,
+    checksum: PE_CHECKSUM_PLACEHOLDER_UNTIL_SERIALIZATION,
     subsystem: input.target.subsystem,
     dllCharacteristics: input.target.dllCharacteristics,
     sizeOfStackReserveBytes: input.target.sizeOfStackReserveBytes,

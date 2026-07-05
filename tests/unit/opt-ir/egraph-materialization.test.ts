@@ -117,6 +117,7 @@ describe("OptIR e-graph materialization", () => {
     const initialState = {
       program: fixture.program,
       operations: fixture.operations,
+      optimizationRegions: [],
       facts: emptyOptIrFactSet(),
       diagnostics: [],
       decisionLog: undefined,

@@ -12,7 +12,7 @@ export interface AArch64LiteralPoolUser {
   readonly sectionKey: string;
   readonly literalClass: string;
   readonly valueKey: string;
-  readonly valueBytes: readonly number[];
+  readonly valueBytes: Uint8Array | readonly number[];
   readonly alignmentBytes: number;
   readonly useOffsetBytes: number;
   readonly maxReachBytes: number;
@@ -33,7 +33,7 @@ export interface AArch64LiteralPoolIsland {
 export interface AArch64LiteralPoolIslandEntry {
   readonly stableKey: string;
   readonly valueKey: string;
-  readonly valueBytes: readonly number[];
+  readonly valueBytes: Uint8Array;
   readonly users: readonly AArch64LiteralPoolIslandUser[];
 }
 
@@ -106,7 +106,7 @@ export function planAArch64LiteralPools(input: {
       ({
         stableKey: `literal:${user.sectionKey}:${user.valueKey}`,
         valueKey: user.valueKey,
-        valueBytes: Object.freeze([...user.valueBytes]),
+        valueBytes: Uint8Array.from(user.valueBytes),
         users: [],
       } satisfies MutableIslandEntry);
     entry.users.push({
@@ -134,7 +134,7 @@ interface MutableIsland {
 interface MutableIslandEntry {
   readonly stableKey: string;
   readonly valueKey: string;
-  readonly valueBytes: readonly number[];
+  readonly valueBytes: Uint8Array;
   readonly users: AArch64LiteralPoolIslandUser[];
 }
 
@@ -151,7 +151,7 @@ function freezeMutableIsland(input: MutableIsland): AArch64LiteralPoolIsland {
           Object.freeze({
             stableKey: entry.stableKey,
             valueKey: entry.valueKey,
-            valueBytes: entry.valueBytes,
+            valueBytes: Uint8Array.from(entry.valueBytes),
             users: Object.freeze(
               [...entry.users].sort((left, right) =>
                 compareCodeUnitStrings(left.stableKey, right.stableKey),

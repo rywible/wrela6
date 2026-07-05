@@ -35,9 +35,20 @@ describe("PE/COFF file layout planning", () => {
       dataDirectorySources: [],
       includeDataSection: false,
     });
-    const baseRelocationTableBytes = [
-      0x00, 0x10, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x08, 0xa0, 0x00, 0x00,
-    ];
+    const baseRelocationTableBytes = Uint8Array.of(
+      0x00,
+      0x10,
+      0x00,
+      0x00,
+      0x0c,
+      0x00,
+      0x00,
+      0x00,
+      0x08,
+      0xa0,
+      0x00,
+      0x00,
+    );
 
     const result = planPeCoffSections({
       target: writerTargetForTest(),
@@ -59,7 +70,7 @@ describe("PE/COFF file layout planning", () => {
       rawDataPointerBytes: expectedSizeOfHeaders,
       rawDataSizeBytes: 512,
       characteristics: 0x60000020,
-      bytes: [1, 2, 3, 4],
+      bytes: Uint8Array.of(1, 2, 3, 4),
       generated: false,
     });
     expect(result.value.sections[1]).toEqual({
@@ -70,7 +81,7 @@ describe("PE/COFF file layout planning", () => {
       rawDataPointerBytes: expectedSizeOfHeaders + 512,
       rawDataSizeBytes: 512,
       characteristics: 0x42000040,
-      bytes: [5, 6, 7],
+      bytes: Uint8Array.of(5, 6, 7),
       generated: false,
     });
     expect(result.value.sections[2]).toEqual({
@@ -91,7 +102,7 @@ describe("PE/COFF file layout planning", () => {
     const result = planPeCoffSections({
       target: writerTargetForTest(),
       layout: linkedImageLayoutForPeCoffTest({ baseRelocations: [] }),
-      baseRelocationTableBytes: [],
+      baseRelocationTableBytes: new Uint8Array(),
     });
 
     expect(result.kind).toBe("ok");
@@ -107,7 +118,7 @@ describe("PE/COFF file layout planning", () => {
         dataDirectorySources: [],
         includeDataSection: false,
       }),
-      baseRelocationTableBytes: [],
+      baseRelocationTableBytes: new Uint8Array(),
     });
 
     expect(result.kind).toBe("error");
@@ -323,7 +334,7 @@ function linkedSection(
   rva: number,
   virtualSizeBytes: number,
   flags: number,
-  bytes: readonly number[],
+  bytes: Uint8Array | readonly number[],
 ) {
   return {
     stableKey,
@@ -332,7 +343,7 @@ function linkedSection(
     alignmentBytes: 4096,
     rva,
     virtualSizeBytes,
-    bytes,
+    bytes: Uint8Array.from(bytes),
     contributions: [],
   };
 }
@@ -346,7 +357,7 @@ function plannedSection(input: Partial<PlannedPeCoffSection>): PlannedPeCoffSect
     rawDataPointerBytes: 512,
     rawDataSizeBytes: 512,
     characteristics: 0x40000040,
-    bytes: [0],
+    bytes: Uint8Array.of(0),
     generated: false,
     ...input,
   };

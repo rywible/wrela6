@@ -41,7 +41,6 @@ export interface JoinPredecessorCandidate {
   readonly state: ProofCheckState;
   readonly stateKey: string;
   readonly pathFrameKey: string;
-  readonly unreachable: boolean;
 }
 
 export function createJoinCoordinator(context: {
@@ -117,10 +116,6 @@ export function createJoinCoordinator(context: {
     }
 
     const candidates = incomingEdgeIds.map((edgeId) => slot.get(String(edgeId))!);
-    if (candidates.some((candidate) => candidate.unreachable)) {
-      return false;
-    }
-
     const incomingStates = candidates.map((candidate) => candidate.state);
     const meet = computeProofCheckCoreMeet(incomingStates);
     if (meet === undefined) {
@@ -301,7 +296,6 @@ export function createJoinCoordinator(context: {
       state: recordInput.state,
       stateKey: proofCheckStateKey(recordInput.state),
       pathFrameKey: recordInput.pathFrameKey,
-      unreachable: false,
     });
     joinSlots.set(joinKey, slot);
     processMerge(recordInput.toBlockId);

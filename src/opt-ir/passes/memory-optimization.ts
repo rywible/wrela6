@@ -4,6 +4,7 @@ import type { OptIrOperationId, OptIrRegionId, OptIrValueId } from "../ids";
 import type { OptIrOperation } from "../operations";
 import { optIrFunctionTable, type OptIrProgram } from "../program";
 import type { OptIrRegion } from "../regions";
+import { optIrTypeStableKey } from "../types";
 import {
   isObservableStoreTarget,
   mayRemoveObservableStore,
@@ -211,7 +212,7 @@ function memoryRangeKey(operation: OptIrMemoryOperation): string {
 }
 
 function memoryValueTypeKey(operation: OptIrMemoryOperation): string {
-  return JSON.stringify(operation.memoryAccess.valueType);
+  return optIrTypeStableKey(operation.memoryAccess.valueType);
 }
 
 function removeOperationsFromProgram(

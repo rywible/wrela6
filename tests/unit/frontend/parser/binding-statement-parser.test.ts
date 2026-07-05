@@ -100,6 +100,23 @@ describe("parseLetStatement", () => {
     expect(context.draftDiagnostics()).toHaveLength(0);
   });
 
+  test("let rejects true as a binding pattern", () => {
+    const tokens = [
+      makeToken(TokenKind.Let, "let", 0, 3),
+      makeToken(TokenKind.True, "true", 4, 8),
+      makeToken(TokenKind.Equals, "=", 9, 10),
+      makeToken(TokenKind.IntegerLiteral, "1", 11, 12),
+      makeToken(TokenKind.Eof, "", 12, 12),
+    ];
+    const context = makeContext(tokens);
+    const node = parseLetStatement(context);
+
+    expect(node.kind).toBe(SyntaxKind.LetStatement);
+    expect(context.draftDiagnostics().map((diagnostic) => diagnostic.code)).toContain(
+      "PARSE_EXPECTED_TOKEN",
+    );
+  });
+
   test("reconstructs exact source", () => {
     const tokens = [
       makeToken(TokenKind.Let, "let", 0, 3),

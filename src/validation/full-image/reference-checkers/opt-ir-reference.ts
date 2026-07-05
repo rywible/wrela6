@@ -7,6 +7,7 @@ const CHECKER_KEY = "opt-ir-reference";
 const INPUT_AUTHORITY = Object.freeze(["compiler-trace"] as const);
 const UEFI_CONSOLE_OUTPUT_STRING = "uefi.console.outputString";
 const UEFI_SET_WATCHDOG_TIMER = "uefi.boot.setWatchdogTimer";
+const UEFI_STATUS_SUCCESS_VALUE = "0";
 const UEFI_STATUS_BAD_BUFFER_SIZE_VALUE = "4";
 const PACKET_COUNTER_UEFI_SOURCE_CALLS = Object.freeze([
   Object.freeze({
@@ -121,11 +122,42 @@ const SMOKE_CONSOLE_REQUIREMENTS: readonly OptIrRequirement[] = Object.freeze([
   ),
 ]);
 
+const TWO_BRANCH_CONTROL_FLOW_REQUIREMENTS: readonly OptIrRequirement[] = Object.freeze([
+  requirement(
+    "static-char16-marker:WRELA_TWO_BRANCH_OK",
+    (context) => staticMarkerDetail(context, "WRELA_TWO_BRANCH_OK"),
+    (context) => staticMarker(context, "WRELA_TWO_BRANCH_OK") !== undefined,
+  ),
+  requirement(
+    "uefi-console-platform-call",
+    () => UEFI_CONSOLE_OUTPUT_STRING,
+    (context) => hasConsolePlatformCall(context),
+  ),
+  requirement(
+    "unsupported-operation-diagnostics",
+    (context) => countDetail(unsupportedDiagnostics(context).length),
+    (context) => unsupportedDiagnostics(context).length === 0,
+  ),
+]);
+
 const STATUS_ERROR_REQUIREMENTS: readonly OptIrRequirement[] = Object.freeze([
   requirement(
     "status-constant:bad_buffer_size",
     (context) => statusConstantDetail(context, UEFI_STATUS_BAD_BUFFER_SIZE_VALUE),
     (context) => hasStatusConstant(context, UEFI_STATUS_BAD_BUFFER_SIZE_VALUE),
+  ),
+  requirement(
+    "unsupported-operation-diagnostics",
+    (context) => countDetail(unsupportedDiagnostics(context).length),
+    (context) => unsupportedDiagnostics(context).length === 0,
+  ),
+]);
+
+const SUCCESS_STATUS_REQUIREMENTS: readonly OptIrRequirement[] = Object.freeze([
+  requirement(
+    "status-constant:success",
+    (context) => statusConstantDetail(context, UEFI_STATUS_SUCCESS_VALUE),
+    (context) => hasStatusConstant(context, UEFI_STATUS_SUCCESS_VALUE),
   ),
   requirement(
     "unsupported-operation-diagnostics",
@@ -149,8 +181,12 @@ const WATCHDOG_REQUIREMENTS: readonly OptIrRequirement[] = Object.freeze([
 const REQUIREMENTS_BY_SCENARIO = Object.freeze({
   "smoke-console": SMOKE_CONSOLE_REQUIREMENTS,
   "packet-counter": PACKET_COUNTER_REQUIREMENTS,
+  "packet-counter-real-stream": PACKET_COUNTER_REQUIREMENTS,
+  "two-branch-control-flow": TWO_BRANCH_CONTROL_FLOW_REQUIREMENTS,
   "status-error": STATUS_ERROR_REQUIREMENTS,
   "watchdog-or-boot-policy": WATCHDOG_REQUIREMENTS,
+  "stdlib-core-option-result": SUCCESS_STATUS_REQUIREMENTS,
+  "stdlib-bits": SUCCESS_STATUS_REQUIREMENTS,
 } satisfies Record<FullImageValidationScenarioKey, readonly OptIrRequirement[]>);
 
 export function optIrReferenceChecker(): FullImageReferenceChecker {
@@ -208,7 +244,12 @@ function requirementsForInput(input: FullImageReferenceCheckerInput): readonly O
 function optIrCoverageContext(input: FullImageReferenceCheckerInput): OptIrCoverageContext {
   const optIr = (input.trace?.packagePipeline as Record<string, unknown> | undefined)?.optIr;
   return Object.freeze({
-    operations: Object.freeze(recordsAtPath(optIr, ["operations"]).map(normalizeOperation)),
+    operations: Object.freeze(
+      [
+        ...recordsAtPath(optIr, ["operations"]),
+        ...recordsAtPath(optIr, ["unoptimizedOperations"]),
+      ].map(normalizeOperation),
+    ),
     staticChar16Strings: Object.freeze(
       [
         ...recordsAtPath(optIr, ["staticChar16Strings"]),

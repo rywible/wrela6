@@ -45,6 +45,34 @@ describe("full image validation fixture matrix", () => {
     });
   });
 
+  test("Task 26 CLI accepts canonical matrix-only case selectors", () => {
+    const result = Bun.spawnSync({
+      cmd: [
+        "bun",
+        "run",
+        "scripts/validate-full-image.ts",
+        "--case",
+        "stdlib-bits/toolchain-stdlib",
+        "--json",
+      ],
+      cwd: process.cwd(),
+      env: { ...process.env, FORCE_COLOR: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.toString()).toBe("");
+    const report = JSON.parse(result.stdout.toString()) as {
+      readonly status: string;
+      readonly cases: readonly { readonly caseKey: string }[];
+    };
+    expect(report.status).toBe("passed");
+    expect(report.cases.map((caseReport) => caseReport.caseKey)).toEqual([
+      "stdlib-bits/toolchain-stdlib",
+    ]);
+  });
+
   test("Task 26 CLI wires QEMU host effects when QEMU smoke is requested", () => {
     const result = Bun.spawnSync({
       cmd: [

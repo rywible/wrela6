@@ -2,8 +2,11 @@ import { GreenNode } from "./green-node";
 import { RedNode } from "./red-node";
 import type { SourceText } from "../lexer/source-text";
 import { SourceSpan } from "../lexer/source-span";
-import type { DiagnosticSeverity } from "../../shared/diagnostics";
-import { compareCodeUnitStrings } from "../../semantic/surface/deterministic-sort";
+import {
+  compareDiagnostics,
+  stableDiagnosticDetail,
+  type Diagnostic,
+} from "../../shared/diagnostics";
 
 export class SyntaxTree {
   readonly source: SourceText;
@@ -29,22 +32,28 @@ export class SyntaxTree {
   get diagnostics(): readonly ParserDiagnostic[] {
     const result: ParserDiagnostic[] = [];
     this.collectDiagnostics(this.greenRoot, 0, result);
-    result.sort((left, right) => {
-      if (left.span.start !== right.span.start) return left.span.start - right.span.start;
-      if (left.span.end !== right.span.end) return left.span.end - right.span.end;
-      return compareCodeUnitStrings(left.code, right.code);
-    });
+    result.sort((left, right) => compareDiagnostics(left, right));
     return result;
   }
 
   private collectDiagnostics(node: GreenNode, offset: number, result: ParserDiagnostic[]): void {
     for (const diagnostic of node.diagnostics) {
+      const span = SourceSpan.from(
+        offset + diagnostic.relativeStart,
+        offset + diagnostic.relativeEnd,
+      );
       result.push({
         code: diagnostic.code,
         severity: diagnostic.severity,
         message: diagnostic.message,
         source: this.source,
-        span: SourceSpan.from(offset + diagnostic.relativeStart, offset + diagnostic.relativeEnd),
+        span,
+        ownerKey: diagnostic.ownerKey ?? `parser:${diagnostic.code}`,
+        stableDetail: stableDiagnosticDetail({
+          code: diagnostic.code,
+          source: this.source,
+          span,
+        }),
       });
     }
     let childOffset = offset;
@@ -57,10 +66,4 @@ export class SyntaxTree {
   }
 }
 
-export interface ParserDiagnostic {
-  readonly code: string;
-  readonly severity: DiagnosticSeverity;
-  readonly message: string;
-  readonly source: SourceText;
-  readonly span: SourceSpan;
-}
+export type ParserDiagnostic = Diagnostic;

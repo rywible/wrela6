@@ -158,11 +158,11 @@ function schema(input: EffectfulOptIrOperationSchema): EffectfulOptIrOperationSc
   return input;
 }
 
-const MEMORY_LOAD_RESULT = catalogEntry(OPT_IR_TYPE_RULE_IDS, 6, "memory-load-result");
-const MEMORY_STORE_UNIT = catalogEntry(OPT_IR_TYPE_RULE_IDS, 7, "memory-store-unit");
-const CALL_SIGNATURE_RESULTS = catalogEntry(OPT_IR_TYPE_RULE_IDS, 8, "call-signature-results");
-const VECTOR_LANE_RESULT = catalogEntry(OPT_IR_TYPE_RULE_IDS, 9, "vector-lane-result");
-const PROOF_ERASED_NO_RESULT = catalogEntry(OPT_IR_TYPE_RULE_IDS, 10, "proof-erased-no-result");
+const MEMORY_LOAD_RESULT = catalogEntry(OPT_IR_TYPE_RULE_IDS, 7, "memory-load-result");
+const MEMORY_STORE_UNIT = catalogEntry(OPT_IR_TYPE_RULE_IDS, 8, "memory-store-unit");
+const CALL_SIGNATURE_RESULTS = catalogEntry(OPT_IR_TYPE_RULE_IDS, 9, "call-signature-results");
+const VECTOR_LANE_RESULT = catalogEntry(OPT_IR_TYPE_RULE_IDS, 10, "vector-lane-result");
+const PROOF_ERASED_NO_RESULT = catalogEntry(OPT_IR_TYPE_RULE_IDS, 11, "proof-erased-no-result");
 const PURE_EFFECT = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 0, "pure");
 const READ_REGION_VERSION = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 1, "read-region-version");
 const WRITE_REGION_VERSION = catalogEntry(OPT_IR_EFFECT_RULE_IDS, 2, "write-region-version");

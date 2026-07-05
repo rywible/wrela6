@@ -19,6 +19,7 @@ export interface OptIrStackPromotionInput {
 
 export interface OptIrStackPromotionResult {
   readonly program: OptIrProgram;
+  readonly optimizationRegions: readonly OptIrRegion[];
   readonly promotedRegionIds: readonly OptIrRegionId[];
   readonly rejectedRegions: readonly {
     readonly regionId: OptIrRegionId;
@@ -55,7 +56,16 @@ export function runStackPromotion(input: OptIrStackPromotionInput): OptIrStackPr
     });
   }
 
-  return { program: input.program, promotedRegionIds, rejectedRegions, rewriteRecords };
+  return {
+    program: input.program,
+    optimizationRegions:
+      promotedRegionIds.length === 0
+        ? input.regions
+        : promoteOptimizationRegions(input.regions, new Set(promotedRegionIds)),
+    promotedRegionIds,
+    rejectedRegions,
+    rewriteRecords,
+  };
 }
 
 function stackPromotionRejectReason(
@@ -63,14 +73,38 @@ function stackPromotionRejectReason(
   escaped: ReadonlySet<OptIrRegionId>,
   lifetimeByRegion: ReadonlyMap<OptIrRegionId, boolean>,
 ): OptIrStackPromotionRejectReason | undefined {
-  if (region.kind !== "stackLocal") {
-    return "notStackLocal";
-  }
   if (escaped.has(region.regionId)) {
     return "escaped";
   }
   if (lifetimeByRegion.get(region.regionId) !== true || region.lifetime !== "activation") {
     return "invalidLifetime";
   }
+  if (!isStackPromotableKind(region)) {
+    return "notStackLocal";
+  }
   return undefined;
+}
+
+function isStackPromotableKind(region: OptIrRegion): boolean {
+  return region.kind === "stackLocal" || region.kind === "sourceAggregate";
+}
+
+function promoteOptimizationRegions(
+  regions: readonly OptIrRegion[],
+  promotedRegionIds: ReadonlySet<OptIrRegionId>,
+): readonly OptIrRegion[] {
+  const promoted = regions.map((region) => {
+    if (!promotedRegionIds.has(region.regionId)) {
+      return region;
+    }
+    return Object.freeze({
+      ...region,
+      kind: "stackLocal",
+      optimization: {
+        kind: "stackPromoted" as const,
+        sourceKind: region.kind,
+      },
+    }) satisfies OptIrRegion;
+  });
+  return Object.freeze(promoted.sort((left, right) => left.regionId - right.regionId));
 }

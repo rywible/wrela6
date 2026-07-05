@@ -4,13 +4,13 @@ import type {
   MonoLocal,
   MonoStatement,
 } from "../../mono/mono-hir";
+import { instantiatedHirIdKey } from "../../mono/ids";
 import type { ProofMirCanonicalKey } from "../canonicalization/canonical-keys";
 import {
   proofMirDiagnostic,
   sortProofMirDiagnostics,
   type ProofMirDiagnostic,
 } from "../diagnostics";
-import { complementProofMirComparisonOperator } from "../domains/fact-recording";
 import {
   proofMirSsaKeyString,
   proofMirSsaLocalKey,
@@ -18,15 +18,12 @@ import {
 } from "../domains/graph-ssa";
 import { draftLocalKey } from "../draft/draft-keys";
 import type { ProofMirComparisonOperator } from "../model/facts";
-import type {
-  DraftProofMirFactDependency,
-  DraftProofMirFactOperand,
-} from "../draft/draft-fact-operands";
 import { originForStatement } from "./lowering-origins";
 import { operandValueKey } from "./lowering-operands";
 import { blockHasExitTerminator } from "./control-flow-terminators";
 import type { ProofMirLoweringIdAllocator } from "./expression-lowerer-helpers";
 import { createLoweringIdAllocator } from "./expression-lowerer-helpers";
+import { activeBlockKey } from "./active-block-key";
 import {
   type ProofMirControlFlowLowerer,
   type ProofMirControlFlowLoweringInput,
@@ -37,6 +34,11 @@ import {
   type ProofMirTailReturnPolicy,
   type ProofMirTerminalLowerer,
 } from "./lowering-context";
+import {
+  buildBooleanBranchFactKeys,
+  buildComparisonBranchFactKeys,
+  derivedFieldStandaloneReadFallback,
+} from "./branch-fact-lowering";
 import { lowerProofMirTailReturnStatement } from "./tail-return";
 
 export { createLoweringIdAllocator } from "./expression-lowerer-helpers";
@@ -69,6 +71,10 @@ function loweringError(diagnostics: readonly ProofMirDiagnostic[]): ProofMirLowe
   return { kind: "error", diagnostics: sortProofMirDiagnostics([...diagnostics]) };
 }
 
+function statementRolePrefix(statement: MonoStatement): string {
+  return `stmt:${instantiatedHirIdKey(statement.statementId)}`;
+}
+
 function mapComparisonOperator(operator: string): ProofMirComparisonOperator | undefined {
   switch (operator.trim()) {
     case "==":
@@ -86,14 +92,6 @@ function mapComparisonOperator(operator: string): ProofMirComparisonOperator | u
     default:
       return undefined;
   }
-}
-
-function draftValueOperand(valueKey: ProofMirCanonicalKey): DraftProofMirFactOperand {
-  return { kind: "value", valueKey };
-}
-
-function draftValueDependency(valueKey: ProofMirCanonicalKey): DraftProofMirFactDependency {
-  return { kind: "value", valueKey };
 }
 
 function copyScalarSsaKeysForLocals(
@@ -114,24 +112,6 @@ function copyScalarSsaKeysForLocals(
         monoLocalId: local.localId,
       }),
     }));
-}
-
-function buildBooleanBranchFactKeys(input: {
-  readonly context: ProofMirLoweringContext;
-  readonly conditionValueKey: ProofMirCanonicalKey;
-  readonly originKey: ProofMirCanonicalKey;
-  readonly edge: "true" | "false";
-  readonly idAllocator: ProofMirLoweringIdAllocator;
-}): readonly ProofMirCanonicalKey[] {
-  const factKey = input.context.factRecorder.recordComparisonFact({
-    role: "candidate",
-    left: draftValueOperand(input.conditionValueKey),
-    operator: "eq",
-    right: { kind: "bool", value: input.edge === "true" },
-    dependsOn: [draftValueDependency(input.conditionValueKey)],
-    origin: input.originKey,
-  });
-  return factKey === undefined ? [] : [factKey];
 }
 
 function readScalarValuesAtBlock(
@@ -163,33 +143,6 @@ function scalarValuesDiffer(
     }
   }
   return false;
-}
-
-function buildComparisonBranchFactKeys(input: {
-  readonly context: ProofMirLoweringContext;
-  readonly operator: ProofMirComparisonOperator;
-  readonly leftValueKey: ProofMirCanonicalKey;
-  readonly rightValueKey: ProofMirCanonicalKey;
-  readonly conditionValueKey: ProofMirCanonicalKey;
-  readonly originKey: ProofMirCanonicalKey;
-  readonly edge: "true" | "false";
-  readonly idAllocator: ProofMirLoweringIdAllocator;
-}): readonly ProofMirCanonicalKey[] {
-  const operator =
-    input.edge === "true" ? input.operator : complementProofMirComparisonOperator(input.operator);
-  const factKey = input.context.factRecorder.recordComparisonFact({
-    role: "candidate",
-    left: draftValueOperand(input.leftValueKey),
-    operator,
-    right: draftValueOperand(input.rightValueKey),
-    dependsOn: [
-      draftValueDependency(input.conditionValueKey),
-      draftValueDependency(input.leftValueKey),
-      draftValueDependency(input.rightValueKey),
-    ],
-    origin: input.originKey,
-  });
-  return factKey === undefined ? [] : [factKey];
 }
 
 function buildBranchFactKeys(input: {
@@ -224,6 +177,14 @@ function buildBranchFactKeys(input: {
       blockKey: input.blockKey,
     });
     if (leftLowered.kind === "error") {
+      const fallback = derivedFieldStandaloneReadFallback({
+        diagnostics: leftLowered.diagnostics,
+        context: input.context,
+        conditionValueKey: input.conditionValueKey,
+        originKey: input.originKey,
+        edge: input.edge,
+      });
+      if (fallback !== undefined) return fallback;
       return leftLowered;
     }
     const rightLowered = input.expression.lowerExpression({
@@ -232,6 +193,14 @@ function buildBranchFactKeys(input: {
       blockKey: input.blockKey,
     });
     if (rightLowered.kind === "error") {
+      const fallback = derivedFieldStandaloneReadFallback({
+        diagnostics: rightLowered.diagnostics,
+        context: input.context,
+        conditionValueKey: input.conditionValueKey,
+        originKey: input.originKey,
+        edge: input.edge,
+      });
+      if (fallback !== undefined) return fallback;
       return rightLowered;
     }
     const leftValueKey = operandValueKey(leftLowered.value);
@@ -258,7 +227,6 @@ function buildBranchFactKeys(input: {
         conditionValueKey: input.conditionValueKey,
         originKey: input.originKey,
         edge: input.edge,
-        idAllocator: input.idAllocator,
       }),
     );
   }
@@ -269,7 +237,6 @@ function buildBranchFactKeys(input: {
       conditionValueKey: input.conditionValueKey,
       originKey: input.originKey,
       edge: input.edge,
-      idAllocator: input.idAllocator,
     }),
   );
 }
@@ -376,17 +343,21 @@ function lowerArmStatements(input: {
   readonly blockKey: ProofMirCanonicalKey;
   readonly statements: readonly MonoStatement[];
   readonly tailReturn?: ProofMirTailReturnPolicy;
-}): ProofMirLoweringResult<void> {
+}): ProofMirLoweringResult<{ readonly afterBlockKey: ProofMirCanonicalKey }> {
   input.context.ssa.registerBlock(input.blockKey);
+  if (input.context.blockTracking !== undefined) {
+    input.context.blockTracking.currentBlockRef.blockKey = input.blockKey;
+  }
+  let currentBlockKey = input.blockKey;
   for (const [statementIndex, statement] of input.statements.entries()) {
-    if (blockHasExitTerminator(input.context, input.blockKey)) {
-      return loweringOk(undefined);
+    if (blockHasExitTerminator(input.context, currentBlockKey)) {
+      return loweringOk({ afterBlockKey: currentBlockKey });
     }
     const tailReturn = lowerProofMirTailReturnStatement({
       context: input.context,
       terminalLowerer: input.terminalLowerer,
       statement,
-      blockKey: input.blockKey,
+      blockKey: currentBlockKey,
       lastStatement: statementIndex === input.statements.length - 1,
       tailReturn: input.tailReturn,
     });
@@ -394,30 +365,33 @@ function lowerArmStatements(input: {
       if (tailReturn.result.kind === "error") {
         return tailReturn.result;
       }
+      currentBlockKey = activeBlockKey(input.context, currentBlockKey);
       continue;
     }
     if (statement.kind.kind === "return") {
       const lowered = input.terminalLowerer.lowerReturn({
         context: input.context,
         expression: statement.kind.expression,
-        blockKey: input.blockKey,
+        blockKey: currentBlockKey,
         terminal: false,
       });
       if (lowered.kind === "error") {
         return lowered;
       }
+      currentBlockKey = activeBlockKey(input.context, currentBlockKey);
       continue;
     }
     const lowered = input.statementLowerer.lowerStatement({
       context: input.context,
       statement,
-      blockKey: input.blockKey,
+      blockKey: currentBlockKey,
     });
     if (lowered.kind === "error") {
       return lowered;
     }
+    currentBlockKey = activeBlockKey(input.context, currentBlockKey);
   }
-  return loweringOk(undefined);
+  return loweringOk({ afterBlockKey: currentBlockKey });
 }
 
 export function lowerIfStatement(input: {
@@ -468,13 +442,14 @@ export function lowerIfStatement(input: {
       }),
     ]);
   }
+  const branchBlockKey = activeBlockKey(input.context, input.blockKey);
 
   const trueFacts = buildBranchFactKeys({
     context: input.context,
     conditionExpression: input.ifStatement.condition,
     conditionValueKey,
     originKey,
-    blockKey: input.blockKey,
+    blockKey: branchBlockKey,
     edge: "true",
     expression: input.expression,
     idAllocator: input.idAllocator,
@@ -487,7 +462,7 @@ export function lowerIfStatement(input: {
     conditionExpression: input.ifStatement.condition,
     conditionValueKey,
     originKey,
-    blockKey: input.blockKey,
+    blockKey: branchBlockKey,
     edge: "false",
     expression: input.expression,
     idAllocator: input.idAllocator,
@@ -496,47 +471,61 @@ export function lowerIfStatement(input: {
     return falseFacts;
   }
 
-  const currentScope = input.context.graph.block(input.blockKey).scopeKey;
+  const currentScope = input.context.graph.block(branchBlockKey).scopeKey;
+  const rolePrefix = statementRolePrefix(input.statement);
+  const thenScope = input.context.graph.createScope({
+    role: `block:${rolePrefix}:then`,
+    parentScopeKey: currentScope,
+    origin: originKey,
+  });
   const thenBlockKey = input.context.graph.createBlock({
     role: "if.then",
-    scope: currentScope,
+    scope: thenScope,
     origin: originKey,
     sourceOrigin: `${input.statement.sourceOrigin}:then`,
   });
-  const elseBlockKey =
+  const elseScope =
     input.ifStatement.elseBlock === undefined
+      ? undefined
+      : input.context.graph.createScope({
+          role: `block:${rolePrefix}:else`,
+          parentScopeKey: currentScope,
+          origin: originKey,
+        });
+  const elseBlockKey =
+    elseScope === undefined
       ? undefined
       : input.context.graph.createBlock({
           role: "if.else",
-          scope: currentScope,
+          scope: elseScope,
           origin: originKey,
           sourceOrigin: `${input.statement.sourceOrigin}:else`,
         });
 
   const scalarKeys = copyScalarSsaKeysForLocals(input.context, input.scalarLocals);
-  const branchPointScalars = readScalarValuesAtBlock(input.context, input.blockKey, scalarKeys);
+  const branchPointScalars = readScalarValuesAtBlock(input.context, branchBlockKey, scalarKeys);
 
   const trueEdgeKey = input.context.graph.createBranchEdge({
     kind: "branchTrue",
-    fromBlock: input.blockKey,
+    fromBlock: branchBlockKey,
     toBlock: thenBlockKey,
     sourceScope: currentScope,
-    targetScope: currentScope,
+    targetScope: thenScope,
     origin: originKey,
     factKeys: trueFacts.value,
   });
   const falseTargetBlockKey = elseBlockKey ?? input.continuationBlockKey;
   const falseEdgeKey = input.context.graph.createBranchEdge({
     kind: "branchFalse",
-    fromBlock: input.blockKey,
+    fromBlock: branchBlockKey,
     toBlock: falseTargetBlockKey,
     sourceScope: currentScope,
-    targetScope: input.context.graph.block(falseTargetBlockKey).scopeKey,
+    targetScope: elseScope ?? input.context.graph.block(falseTargetBlockKey).scopeKey,
     origin: originKey,
     factKeys: falseFacts.value,
   });
 
-  const setBranchResult = input.context.graph.setTerminator(input.blockKey, {
+  const setBranchResult = input.context.graph.setTerminator(branchBlockKey, {
     kind: "branch",
     condition: conditionValueKey,
     whenTrue: { edge: trueEdgeKey, block: thenBlockKey },
@@ -559,9 +548,11 @@ export function lowerIfStatement(input: {
   if (loweredThen.kind === "error") {
     return loweredThen;
   }
-  const thenExits = blockHasExitTerminator(input.context, thenBlockKey);
+  const thenExitBlockKey = loweredThen.value.afterBlockKey;
+  const thenExits = blockHasExitTerminator(input.context, thenExitBlockKey);
 
   let elseExits = false;
+  let elseExitBlockKey = elseBlockKey;
   if (elseBlockKey !== undefined && input.ifStatement.elseBlock !== undefined) {
     const loweredElse = lowerArmStatements({
       context: input.context,
@@ -575,18 +566,19 @@ export function lowerIfStatement(input: {
     if (loweredElse.kind === "error") {
       return loweredElse;
     }
-    elseExits = blockHasExitTerminator(input.context, elseBlockKey);
+    elseExitBlockKey = loweredElse.value.afterBlockKey;
+    elseExits = blockHasExitTerminator(input.context, elseExitBlockKey);
   }
 
   let afterBlockKey = input.continuationBlockKey;
   let joinBlockKey: ProofMirCanonicalKey | undefined;
 
   if (!thenExits && !elseExits) {
-    const thenScalars = readScalarValuesAtBlock(input.context, thenBlockKey, scalarKeys);
+    const thenScalars = readScalarValuesAtBlock(input.context, thenExitBlockKey, scalarKeys);
     const falseBranchScalars =
-      elseBlockKey === undefined
+      elseExitBlockKey === undefined
         ? branchPointScalars
-        : readScalarValuesAtBlock(input.context, elseBlockKey, scalarKeys);
+        : readScalarValuesAtBlock(input.context, elseExitBlockKey, scalarKeys);
 
     if (scalarValuesDiffer(thenScalars, falseBranchScalars)) {
       const joinScalarKeys = differingScalarKeys(thenScalars, falseBranchScalars, scalarKeys);
@@ -602,7 +594,7 @@ export function lowerIfStatement(input: {
       const thenArguments = argumentMapForScalars(thenScalars, joinScalarKeys);
       const wiredThen = wireFallThroughEdge({
         context: input.context,
-        fromBlockKey: thenBlockKey,
+        fromBlockKey: thenExitBlockKey,
         toBlockKey: joinBlockKey,
         originKey,
         argumentKeysBySsaKey: thenArguments,
@@ -618,7 +610,7 @@ export function lowerIfStatement(input: {
         input.context.ssa.registerPredecessorEdge({
           blockKey: joinBlockKey,
           edgeKey: falseEdgeKey,
-          fromBlockKey: input.blockKey,
+          fromBlockKey: branchBlockKey,
           argumentKeysBySsaKey: falseArguments,
         });
         input.context.ssa.setEdgeArguments({
@@ -628,7 +620,7 @@ export function lowerIfStatement(input: {
       } else {
         const wiredElse = wireFallThroughEdge({
           context: input.context,
-          fromBlockKey: elseBlockKey,
+          fromBlockKey: elseExitBlockKey ?? elseBlockKey,
           toBlockKey: joinBlockKey,
           originKey,
           argumentKeysBySsaKey: falseArguments,
@@ -658,7 +650,7 @@ export function lowerIfStatement(input: {
     } else {
       const wiredThen = wireFallThroughEdge({
         context: input.context,
-        fromBlockKey: thenBlockKey,
+        fromBlockKey: thenExitBlockKey,
         toBlockKey: input.continuationBlockKey,
         originKey,
         argumentKeysBySsaKey: Object.fromEntries(thenScalars.entries()),
@@ -671,7 +663,7 @@ export function lowerIfStatement(input: {
       if (elseBlockKey !== undefined) {
         const wiredElse = wireFallThroughEdge({
           context: input.context,
-          fromBlockKey: elseBlockKey,
+          fromBlockKey: elseExitBlockKey ?? elseBlockKey,
           toBlockKey: input.continuationBlockKey,
           originKey,
           argumentKeysBySsaKey: Object.fromEntries(falseBranchScalars.entries()),
@@ -685,7 +677,7 @@ export function lowerIfStatement(input: {
         input.context.ssa.registerPredecessorEdge({
           blockKey: input.continuationBlockKey,
           edgeKey: falseEdgeKey,
-          fromBlockKey: input.blockKey,
+          fromBlockKey: branchBlockKey,
           argumentKeysBySsaKey: Object.fromEntries(falseBranchScalars.entries()),
         });
         input.context.ssa.setEdgeArguments({
@@ -700,7 +692,7 @@ export function lowerIfStatement(input: {
   } else if (!thenExits) {
     const wiredThen = wireFallThroughEdge({
       context: input.context,
-      fromBlockKey: thenBlockKey,
+      fromBlockKey: thenExitBlockKey,
       toBlockKey: input.continuationBlockKey,
       originKey,
       argumentKeysBySsaKey: {},
@@ -711,10 +703,10 @@ export function lowerIfStatement(input: {
       return wiredThen;
     }
   } else if (!elseExits) {
-    if (elseBlockKey !== undefined) {
+    if (elseExitBlockKey !== undefined) {
       const wiredElse = wireFallThroughEdge({
         context: input.context,
-        fromBlockKey: elseBlockKey,
+        fromBlockKey: elseExitBlockKey,
         toBlockKey: input.continuationBlockKey,
         originKey,
         argumentKeysBySsaKey: {},

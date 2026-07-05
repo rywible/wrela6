@@ -8,6 +8,7 @@ import type {
   MonoCheckedType,
 } from "../../mono/mono-hir";
 import { proofMetadataIdKey } from "../../mono/proof-metadata-tables";
+import { stableJson } from "../../shared/stable-json";
 import { proofMirDiagnostic, type ProofMirDiagnostic } from "../diagnostics";
 import type {
   DraftProofMirBlockRecord,
@@ -62,9 +63,9 @@ export function controlEdgeRecordPayload(record: DraftProofMirControlEdgeRecord)
 export function placeRecordPayload(record: DraftProofMirPlaceRecord): string {
   return [
     record.monoPlaceCanonicalKey,
-    record.root === undefined ? "" : JSON.stringify(record.root),
-    record.projection === undefined ? "" : JSON.stringify(record.projection),
-    record.type === undefined ? "" : JSON.stringify(record.type),
+    record.root === undefined ? "" : stableJson(record.root),
+    record.projection === undefined ? "" : stableJson(record.projection),
+    record.type === undefined ? "" : stableJson(record.type),
     record.resourceKind ?? "",
   ].join("|");
 }
@@ -73,9 +74,9 @@ export function valueRecordPayload(record: DraftProofMirValueRecord): string {
   return [
     record.role,
     String(record.originKey),
-    record.type === undefined ? "" : JSON.stringify(record.type),
+    record.type === undefined ? "" : stableJson(record.type),
     record.resourceKind ?? "",
-    record.representation === undefined ? "" : JSON.stringify(record.representation),
+    record.representation === undefined ? "" : stableJson(record.representation),
   ].join("|");
 }
 
@@ -83,7 +84,8 @@ export function localRecordPayload(record: DraftProofMirLocalRecord): string {
   return [
     record.name,
     String(record.originKey),
-    record.type === undefined ? "" : JSON.stringify(record.type),
+    record.scopeKey === undefined ? "" : String(record.scopeKey),
+    record.type === undefined ? "" : stableJson(record.type),
     record.resourceKind ?? "",
     record.storage ?? "",
     record.backingPlaceKey === undefined ? "" : String(record.backingPlaceKey),
@@ -227,7 +229,7 @@ export function emptyDeterministicTable<LookupId, Entry>(
 ): ProofMirDeterministicTable<LookupId, Entry> {
   const result = proofMirDeterministicTable<LookupId, Entry>({
     entries: [],
-    keyOf: (entry) => proofMirCanonicalKey(`${prefix}:${JSON.stringify(entry)}`),
+    keyOf: (entry) => proofMirCanonicalKey(`${prefix}:${stableJson(entry)}`),
     lookupKeyOf: (id) => proofMirCanonicalKey(`${prefix}:${String(id)}`),
     normalizePayload: () => "",
   });

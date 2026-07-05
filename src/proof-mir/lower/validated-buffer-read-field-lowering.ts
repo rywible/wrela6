@@ -5,6 +5,7 @@ import { proofMirDiagnostic, type ProofMirDiagnostic } from "../diagnostics";
 import { findLayoutValidatedBufferForPlace } from "../domains/validated-buffer-layout-lookup";
 import {
   classifyValidatedBufferMemberRead,
+  containerPlaceForMemberPlace,
   splitMemberPlace,
 } from "../domains/validated-buffer-read-detection";
 import type { DraftProofMirOriginKey } from "../domains/origin-map";
@@ -52,7 +53,7 @@ function originForExpression(
 ): ProofMirCanonicalKey {
   return context.originMap.fromMonoExpression({
     owner: { kind: "function", functionInstanceId: context.functionInstanceId },
-    sourceOrigin: expression.sourceOrigin as never,
+    sourceOrigin: expression.sourceOrigin,
     monoExpressionId: expression.expressionId,
   });
 }
@@ -69,10 +70,12 @@ function lowerPlaceFromMono(input: {
   });
 }
 
-function lowerLayoutFieldRead(input: {
+export function lowerLayoutFieldRead(input: {
   readonly loweringInput: ProofMirValidatedBufferReadLoweringInput;
   readonly expression: MonoExpression;
   readonly memberPlace: MonoResourcePlace;
+  readonly resultType?: MonoExpression["type"];
+  readonly resultResourceKind?: MonoExpression["resourceKind"];
   readonly recorded: RecordedProofMirStatement[];
 }): ProofMirLoweringResult<ProofMirDraftOperand> {
   const split = splitMemberPlace(input.memberPlace);
@@ -85,11 +88,24 @@ function lowerLayoutFieldRead(input: {
       }),
     ]);
   }
+  const containerPlace = containerPlaceForMemberPlace({
+    program: input.loweringInput.context.program,
+    memberPlace: input.memberPlace,
+  });
+  if (containerPlace === undefined) {
+    return loweringError([
+      unlowerableExpressionDiagnostic({
+        functionInstanceId: input.loweringInput.context.functionInstanceId,
+        stableDetail: "member:missing-container-place",
+        sourceOrigin: input.expression.sourceOrigin,
+      }),
+    ]);
+  }
 
   const layoutBuffer = findLayoutValidatedBufferForPlace({
     program: input.loweringInput.context.program,
     layout: input.loweringInput.context.layout,
-    place: split.containerPlace,
+    place: containerPlace,
   });
   if (layoutBuffer === undefined) {
     return loweringError([
@@ -128,7 +144,7 @@ function lowerLayoutFieldRead(input: {
   };
   const containerPlaceKey = lowerPlaceFromMono({
     context: input.loweringInput.context,
-    monoPlace: split.containerPlace,
+    monoPlace: containerPlace,
     originKey,
   });
   if (containerPlaceKey.kind !== "ok") {
@@ -223,8 +239,8 @@ function lowerLayoutFieldRead(input: {
   const resultKey = input.loweringInput.context.graph.createValue({
     role: `validatedBufferRead:${String(readKind.fieldId)}`,
     origin: originKey,
-    type: input.expression.type,
-    resourceKind: input.expression.resourceKind,
+    type: input.resultType ?? input.expression.type,
+    resourceKind: input.resultResourceKind ?? input.expression.resourceKind,
   });
   const read: DraftProofMirValidatedBufferRead = {
     sourcePlaceKey: containerPlaceKey.value,
@@ -266,11 +282,24 @@ function lowerSourceLengthRead(input: {
       }),
     ]);
   }
+  const containerPlace = containerPlaceForMemberPlace({
+    program: input.loweringInput.context.program,
+    memberPlace: input.memberPlace,
+  });
+  if (containerPlace === undefined) {
+    return loweringError([
+      unlowerableExpressionDiagnostic({
+        functionInstanceId: input.loweringInput.context.functionInstanceId,
+        stableDetail: "sourceLength:missing-container-place",
+        sourceOrigin: input.expression.sourceOrigin,
+      }),
+    ]);
+  }
 
   const layoutBuffer = findLayoutValidatedBufferForPlace({
     program: input.loweringInput.context.program,
     layout: input.loweringInput.context.layout,
-    place: split.containerPlace,
+    place: containerPlace,
   });
   if (layoutBuffer === undefined) {
     return loweringError([
@@ -290,7 +319,7 @@ function lowerSourceLengthRead(input: {
   const originKey = originForExpression(input.loweringInput.context, input.expression);
   const containerPlaceKey = lowerPlaceFromMono({
     context: input.loweringInput.context,
-    monoPlace: split.containerPlace,
+    monoPlace: containerPlace,
     originKey,
   });
   if (containerPlaceKey.kind !== "ok") {
@@ -353,11 +382,24 @@ export function lowerValidatedBufferMemberRead(input: {
       }),
     ]);
   }
+  const containerPlace = containerPlaceForMemberPlace({
+    program: input.loweringInput.context.program,
+    memberPlace: input.memberPlace,
+  });
+  if (containerPlace === undefined) {
+    return loweringError([
+      unlowerableExpressionDiagnostic({
+        functionInstanceId: input.loweringInput.context.functionInstanceId,
+        stableDetail: "member:missing-container-place",
+        sourceOrigin: input.expression.sourceOrigin,
+      }),
+    ]);
+  }
 
   const layoutBuffer = findLayoutValidatedBufferForPlace({
     program: input.loweringInput.context.program,
     layout: input.loweringInput.context.layout,
-    place: split.containerPlace,
+    place: containerPlace,
   });
   if (layoutBuffer === undefined) {
     return loweringError([
@@ -393,6 +435,14 @@ export function lowerValidatedBufferMemberRead(input: {
       return lowerSourceLengthRead(input);
     case "layoutField":
       return lowerLayoutFieldRead(input);
+    case "derivedField":
+      return loweringError([
+        unlowerableExpressionDiagnostic({
+          functionInstanceId: input.loweringInput.context.functionInstanceId,
+          stableDetail: `derived-field:${String(readKind.fieldId)}`,
+          sourceOrigin: input.expression.sourceOrigin,
+        }),
+      ]);
     default: {
       const unreachable: never = readKind;
       return unreachable;

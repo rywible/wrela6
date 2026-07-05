@@ -15,6 +15,7 @@ export {
   type MaterializeAArch64SyntheticObjectsForLinkInput,
   type MaterializedAArch64LinkInputModules,
 } from "./aarch64/aarch64-linker";
+export { createDefaultAArch64LinkerVeneerProvider } from "./aarch64/default-veneer-provider";
 export {
   createAArch64LinkedImageLayout,
   type AArch64LinkedImageDeterministicMetadata,

@@ -16,6 +16,8 @@ describe("CollectingDiagnosticSink", () => {
       message: "Invalid character '@'.",
       source,
       span: source.span(0, 1),
+      ownerKey: "lexer:character",
+      stableDetail: "character:@",
     });
 
     expect(diagnostics.diagnostics).toHaveLength(1);
@@ -38,6 +40,8 @@ describe("CollectingDiagnosticSink", () => {
       message: "Invalid character '@'.",
       source,
       span: source.span(0, 1),
+      ownerKey: "lexer:character",
+      stableDetail: "character:@",
     });
 
     diagnostics.report({
@@ -46,6 +50,8 @@ describe("CollectingDiagnosticSink", () => {
       message: "Unterminated string literal.",
       source,
       span: source.span(2, 14),
+      ownerKey: "lexer:string",
+      stableDetail: "unterminated:test",
     });
 
     expect(diagnostics.diagnostics).toHaveLength(2);

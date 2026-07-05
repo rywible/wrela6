@@ -119,6 +119,7 @@ export interface AArch64PhysicalRegisterModel {
   readonly publicResultGprs: readonly AArch64PhysicalRegisterStableKey[];
   readonly publicCallerSavedGprs: readonly AArch64PhysicalRegisterStableKey[];
   readonly publicCalleeSavedGprs: readonly AArch64PhysicalRegisterStableKey[];
+  readonly publicCalleeSavedSimd: readonly AArch64PhysicalRegisterStableKey[];
   readonly privateConventionCandidateGprs: readonly AArch64PhysicalRegisterStableKey[];
   readonly veneerScratchGprs: readonly AArch64PhysicalRegisterStableKey[];
   readonly encodingNumberOf: (register: AArch64PhysicalRegisterStableKey) => number;

@@ -13,7 +13,7 @@ import {
   dir64RelocationForTest,
   linkedImageLayoutForPeCoffTest,
   plannedImageForWriterTest,
-  serializedBytesForPlannedImage,
+  serializedPlannedImageForTest,
   writerTargetForTest,
 } from "../../support/pe-coff/pe-coff-fixtures";
 import { serializePeBaseRelocations } from "../../../src/pe-coff/pe-relocations";
@@ -83,10 +83,10 @@ function parsedImageForVerifierTest(planned: PlannedPeCoffImage = plannedImageFo
       numberOfLineNumbers: 0,
       characteristics: section.characteristics,
       bytes: section.bytes,
-      rawBytes: [
+      rawBytes: Uint8Array.from([
         ...section.bytes,
         ...Array.from({ length: section.rawDataSizeBytes - section.bytes.length }, () => 0),
-      ],
+      ]),
     })),
     baseRelocationBlocks:
       relocSection === undefined
@@ -139,7 +139,7 @@ function plannedImageWithRelocationForVerifierTest(): PlannedPeCoffImage {
   });
 }
 
-function plannedRelocationEntriesFromSection(bytes: readonly number[]) {
+function plannedRelocationEntriesFromSection(bytes: ArrayLike<number>) {
   if (bytes.length === 0) return [];
   const encodedEntry = bytes[8]! | (bytes[9]! << 8);
   const paddingEntry = bytes[10]! | (bytes[11]! << 8);
@@ -157,7 +157,7 @@ function plannedRelocationEntriesFromSection(bytes: readonly number[]) {
   ];
 }
 
-function readU32Le(bytes: readonly number[], offset: number): number {
+function readU32Le(bytes: ArrayLike<number>, offset: number): number {
   return (
     bytes[offset]! |
     (bytes[offset + 1]! << 8) |
@@ -178,11 +178,15 @@ describe("PE/COFF parse-back verifier", () => {
 
   test("verifies serialized bytes parsed back through the PE parser", () => {
     const planned = plannedImageForWriterTest();
-    const parsed = parsePeCoffImage(serializedBytesForPlannedImage(planned));
+    const serialized = serializedPlannedImageForTest(planned);
+    const parsed = parsePeCoffImage(serialized.bytes);
     expect(parsed.kind).toBe("ok");
     if (parsed.kind !== "ok") throw new Error("expected parsed image");
 
-    const result = verifyParsedPeCoffImage({ planned, parsed: parsed.value });
+    const result = verifyParsedPeCoffImage({
+      planned: { headers: serialized.headers, sections: planned.sections },
+      parsed: parsed.value,
+    });
 
     expect(result.kind).toBe("ok");
   });
@@ -250,8 +254,8 @@ describe("PE/COFF parse-back verifier", () => {
             numberOfRelocations: 3,
             numberOfLineNumbers: 4,
             characteristics: 0,
-            bytes: [0xff],
-            rawBytes: [0xff],
+            bytes: Uint8Array.of(0xff),
+            rawBytes: Uint8Array.of(0xff),
           },
           ...parsed.sectionHeaders.slice(1),
         ],

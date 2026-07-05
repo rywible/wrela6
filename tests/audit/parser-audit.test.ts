@@ -52,6 +52,22 @@ describe("parser audit", () => {
     expect(result.parserDiagnostics.length).toBeLessThanOrEqual(10);
   });
 
+  test("1b. happy.md records non-executable language rulings kept by the plan", () => {
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const happyPath = join(dir, "../../docs/language/happy.md");
+    const fileContent = readFileSync(happyPath, "utf-8");
+
+    expect(fileContent).toContain("Valid escapes are");
+    expect(fileContent).toContain("`pub` is not a language keyword");
+    expect(fileContent).toContain("Block locals and pattern bindings shadow outer values");
+    expect(fileContent).toContain(
+      "wrela does not allow recursive functions; use loops or streams instead.",
+    );
+    expect(fileContent).toContain("Bounded recursion is out of this plan.");
+    expect(fileContent).toContain("Bitwise operators use Rust-style precedence");
+    expect(fileContent).toContain("Signed integers are deferred to a future RFC");
+  });
+
   test("2. comment-first block bodies: comment should not shred the body", () => {
     const source = `dataclass D:\n    // c\n    error: X\n`;
     const { result } = lexAndParse(source);

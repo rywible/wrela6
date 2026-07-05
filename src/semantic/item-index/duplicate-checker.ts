@@ -1,4 +1,5 @@
 import { SourceSpan, SourceText } from "../../frontend";
+import { stableDiagnosticDetail } from "../../shared/diagnostics";
 import type { ItemIndexDiagnostic } from "./diagnostics";
 import type {
   FieldRecord,
@@ -19,7 +20,15 @@ function duplicateError(
   source: SourceText,
   span: SourceSpan,
 ): ItemIndexDiagnostic {
-  return { code, severity: "error", message, source, span };
+  return {
+    code,
+    severity: "error",
+    message,
+    source,
+    span,
+    ownerKey: `item-index:${code}`,
+    stableDetail: stableDiagnosticDetail({ code, source, span }),
+  };
 }
 
 function reportDuplicatesByKey<TRecord>(

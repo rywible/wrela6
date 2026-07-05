@@ -21,7 +21,10 @@ const FILE_SINK_VERIFICATION: PeCoffWriterVerificationSummary = Object.freeze({
 });
 
 export interface CreatePeCoffEfiFileSinkInput {
-  readonly writeBytes: (artifactName: string, bytes: readonly number[]) => PeCoffWriterResult<void>;
+  readonly writeBytes: (
+    artifactName: string,
+    bytes: Uint8Array | readonly number[],
+  ) => PeCoffWriterResult<void>;
 }
 
 export interface PeCoffEfiFileSink {
@@ -58,7 +61,7 @@ export function createPeCoffEfiFileSink(input: CreatePeCoffEfiFileSinkInput): Pe
       }
 
       try {
-        const writeResult = input.writeBytes(artifactName, Object.freeze([...artifact.bytes]));
+        const writeResult = input.writeBytes(artifactName, Uint8Array.from(artifact.bytes));
         if (writeResult.kind === "error") return writeResult;
         return peCoffOk({
           value: undefined,

@@ -1,5 +1,5 @@
 // Ejected ordinary project source copy; target authority comes from certified platform contracts.
 platform fn output_string(message: Utf16Static) -> UefiStatus
 
-pub fn write_smoke_marker() -> UefiStatus:
+fn write_smoke_marker() -> UefiStatus:
     output_string(utf16_static("WRELA_UEFI_SMOKE_OK\r\n"))

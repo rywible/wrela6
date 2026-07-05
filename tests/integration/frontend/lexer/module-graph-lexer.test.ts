@@ -4,7 +4,6 @@ import { CollectingDiagnosticSink } from "../../../../src/frontend/lexer/diagnos
 import { DottedModuleResolver } from "../../../../src/frontend/lexer/module-resolver";
 import { KeywordTable } from "../../../../src/frontend/lexer/keyword-table";
 import { Lexer } from "../../../../src/frontend/lexer/lexer";
-import { ImportDiscovery } from "../../../../src/frontend/lexer/import-discovery";
 import { ModuleGraphLexer } from "../../../../src/frontend/lexer/module-graph-lexer";
 import { ModulePath } from "../../../../src/frontend/lexer/module-path";
 
@@ -23,7 +22,6 @@ describe("ModuleGraphLexer", () => {
       lexer,
       files,
       resolver: new DottedModuleResolver(),
-      imports: new ImportDiscovery({ diagnostics }),
       diagnostics,
     });
 
@@ -50,7 +48,6 @@ describe("ModuleGraphLexer", () => {
       lexer,
       files,
       resolver: new DottedModuleResolver(),
-      imports: new ImportDiscovery({ diagnostics }),
       diagnostics,
     });
 
@@ -58,7 +55,7 @@ describe("ModuleGraphLexer", () => {
 
     expect(result.modules.map((module) => module.path.key)).toEqual(["app/main.wr", "core/ok.wr"]);
     expect(diagnostics.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
-      "LEX_MODULE_MISSING",
+      "LEX_MODULE_READ_FAILED",
     );
   });
 
@@ -76,7 +73,6 @@ describe("ModuleGraphLexer", () => {
       lexer,
       files,
       resolver: new DottedModuleResolver(),
-      imports: new ImportDiscovery({ diagnostics }),
       diagnostics,
     });
 
@@ -103,7 +99,6 @@ describe("ModuleGraphLexer", () => {
       lexer,
       files,
       resolver: new DottedModuleResolver(),
-      imports: new ImportDiscovery({ diagnostics }),
       diagnostics,
     });
 
@@ -127,7 +122,6 @@ describe("ModuleGraphLexer", () => {
       lexer,
       files,
       resolver: new DottedModuleResolver(),
-      imports: new ImportDiscovery({ diagnostics }),
       diagnostics,
     });
 

@@ -1,6 +1,7 @@
 export * from "./diagnostics";
 export * from "./efi-file-sink";
 export * from "./headers";
+export * from "./pe-checksum";
 export * from "./pe-byte-writer";
 export * from "./pe-file-layout";
 export * from "./pe-parser";

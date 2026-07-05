@@ -6,6 +6,7 @@ export type UefiAArch64TargetDiagnosticCode =
   | "UEFI_AARCH64_FIRMWARE_ABI_FAILED"
   | "UEFI_AARCH64_STATUS_CONVERSION_FAILED"
   | "UEFI_AARCH64_PIPELINE_FAILED"
+  | "UEFI_AARCH64_PRIMITIVE_COVERAGE_MISMATCH"
   | "UEFI_AARCH64_ARTIFACT_SINK_FAILED"
   | "UEFI_AARCH64_SMOKE_FAILED";
 
@@ -13,12 +14,26 @@ export interface UefiAArch64TargetDiagnostic {
   readonly code: UefiAArch64TargetDiagnosticCode;
   readonly ownerKey: string;
   readonly stableDetail: string;
+  readonly source?: UefiAArch64TargetDiagnosticSource;
+}
+
+export interface UefiAArch64TargetDiagnosticSource {
+  readonly originalCode: string;
+  readonly message: string;
+  readonly sourceName: string;
+  readonly startOffset: number;
+  readonly endOffset: number;
+  readonly startLine?: number;
+  readonly startColumn?: number;
+  readonly endLine?: number;
+  readonly endColumn?: number;
 }
 
 export interface UefiAArch64TargetDiagnosticInput {
   readonly code: UefiAArch64TargetDiagnosticCode;
   readonly ownerKey: string;
   readonly stableDetail: string;
+  readonly source?: UefiAArch64TargetDiagnosticSource;
 }
 
 export function uefiAArch64TargetDiagnostic(
@@ -28,6 +43,23 @@ export function uefiAArch64TargetDiagnostic(
     code: input.code,
     ownerKey: input.ownerKey,
     stableDetail: input.stableDetail,
+    ...(input.source === undefined ? {} : { source: freezeTargetDiagnosticSource(input.source) }),
+  });
+}
+
+function freezeTargetDiagnosticSource(
+  source: UefiAArch64TargetDiagnosticSource,
+): UefiAArch64TargetDiagnosticSource {
+  return Object.freeze({
+    originalCode: source.originalCode,
+    message: source.message,
+    sourceName: source.sourceName,
+    startOffset: source.startOffset,
+    endOffset: source.endOffset,
+    ...(source.startLine === undefined ? {} : { startLine: source.startLine }),
+    ...(source.startColumn === undefined ? {} : { startColumn: source.startColumn }),
+    ...(source.endLine === undefined ? {} : { endLine: source.endLine }),
+    ...(source.endColumn === undefined ? {} : { endColumn: source.endColumn }),
   });
 }
 
@@ -71,9 +103,11 @@ function diagnosticCodeRank(code: UefiAArch64TargetDiagnosticCode): number {
       return 3;
     case "UEFI_AARCH64_PIPELINE_FAILED":
       return 4;
-    case "UEFI_AARCH64_ARTIFACT_SINK_FAILED":
+    case "UEFI_AARCH64_PRIMITIVE_COVERAGE_MISMATCH":
       return 5;
-    case "UEFI_AARCH64_SMOKE_FAILED":
+    case "UEFI_AARCH64_ARTIFACT_SINK_FAILED":
       return 6;
+    case "UEFI_AARCH64_SMOKE_FAILED":
+      return 7;
   }
 }

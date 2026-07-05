@@ -16,7 +16,7 @@ import {
   YieldStatementView,
 } from "../frontend/ast/statement-views";
 import { PatternView } from "../frontend/ast/pattern-views";
-import { presentTokenSpan } from "../frontend/ast/syntax-query";
+import { childToken, presentTokenSpan } from "../frontend/ast/syntax-query";
 import type { TypeReferenceView } from "../frontend/ast/type-views";
 import { RedNode } from "../frontend/syntax/red-node";
 import { SyntaxKind } from "../frontend/syntax/syntax-kind";
@@ -58,6 +58,27 @@ function originForStatement(node: RedNode, context: HirLoweringContext) {
   });
 }
 
+function originForStatementKeyword(
+  node: RedNode,
+  context: HirLoweringContext,
+  keyword: SyntaxKind,
+  stableDetail: string,
+): HirOriginId {
+  const span = presentTokenSpan(childToken(node, keyword));
+  if (span === undefined) return originForStatement(node, context);
+  return context.origins.forSynthetic({
+    moduleId: currentHirModuleId(context),
+    span,
+    stableDetail,
+    ownerItemId: context.ownerItemId,
+    ownerFunctionId: context.ownerFunctionId,
+  });
+}
+
+function statementOwnerKey(context: HirLoweringContext): string {
+  return `item:${context.ownerItemId ?? "none"}/function:${context.ownerFunctionId ?? "none"}`;
+}
+
 function addStatement(
   context: HirLoweringContext,
   node: RedNode,
@@ -69,10 +90,11 @@ function addStatement(
 function reserveStatement(
   context: HirLoweringContext,
   node: RedNode,
+  sourceOrigin: HirOriginId = originForStatement(node, context),
 ): { readonly statementId: HirStatementId; readonly sourceOrigin: HirOriginId } {
   return {
     statementId: context.bodyIndex.nextStatementId(),
-    sourceOrigin: originForStatement(node, context),
+    sourceOrigin,
   };
 }
 
@@ -124,6 +146,21 @@ function patternBindingName(pattern: PatternView | undefined): string | undefine
   return qualifiedName.text();
 }
 
+function constructorTag(pattern: PatternView | undefined): string | undefined {
+  return pattern?.qualifiedName()?.text()?.split(".").at(-1);
+}
+
+function constructorPayloadType(input: {
+  readonly pattern: PatternView | undefined;
+  readonly scrutinee: import("./hir").HirExpression;
+}): CheckedType | undefined {
+  if (input.scrutinee.type.kind !== "applied") return undefined;
+  const tag = constructorTag(input.pattern);
+  if (tag === "Ok") return input.scrutinee.type.arguments[0];
+  if (tag === "Err") return input.scrutinee.type.arguments[1];
+  return undefined;
+}
+
 function reportUnsupportedPattern(input: {
   readonly context: HirLoweringContext;
   readonly node: RedNode;
@@ -170,11 +207,42 @@ function addSourceLocalForPattern(input: {
   return result.local;
 }
 
+function addMatchArmBindingLocals(input: {
+  readonly context: HirLoweringContext;
+  readonly arm: ReturnType<MatchStatementView["arms"]>[number];
+  readonly scrutinee: import("./hir").HirExpression;
+  readonly sourceOrigin: HirOriginId;
+}): readonly import("./hir").HirLocal[] {
+  const pattern = input.arm.pattern();
+  const payloadType = constructorPayloadType({ pattern, scrutinee: input.scrutinee });
+  if (payloadType === undefined) return [];
+
+  const result: import("./hir").HirLocal[] = [];
+  for (const nestedPattern of pattern?.patternList()?.patterns() ?? []) {
+    const name = patternBindingName(nestedPattern);
+    if (name === undefined || name === "_") continue;
+    const addResult = input.context.locals.addSourceLocal({
+      name,
+      type: payloadType,
+      resourceKind: resourceKindForCheckedType(input.context, payloadType),
+      sourceOrigin: input.sourceOrigin,
+      introducedBy: "pattern",
+    });
+    for (const diagnostic of addResult.diagnostics) {
+      input.context.diagnostics.report(diagnostic);
+    }
+    result.push(addResult.local);
+  }
+  return result;
+}
+
 function matchArm(input: {
   readonly context: HirLoweringContext;
   readonly arm: ReturnType<MatchStatementView["arms"]>[number];
+  readonly scrutinee: import("./hir").HirExpression;
   readonly sourceOrigin: import("./ids").HirOriginId;
 }): HirMatchArm {
+  const bindingLocals = addMatchArmBindingLocals(input);
   return {
     patternText: patternText(input.arm.pattern()),
     body: lowerBlock({
@@ -182,7 +250,7 @@ function matchArm(input: {
       context: input.context,
       sourceOrigin: input.sourceOrigin,
     }),
-    bindingLocals: [],
+    bindingLocals,
     sourceOrigin: input.sourceOrigin,
   };
 }
@@ -463,7 +531,11 @@ export function lowerStatement(input: LowerStatementInput): HirStatement {
   if (forStatement !== undefined) {
     const iterableView = forStatement.iterable();
     if (iterableView !== undefined) {
-      const reserved = reserveStatement(context, node);
+      const reserved = reserveStatement(
+        context,
+        node,
+        originForStatementKeyword(node, context, SyntaxKind.ForKeyword, "for"),
+      );
       const iterable = lowerExpression({ view: iterableView, context });
       const iteration = classifyForIteration({
         iterable,
@@ -539,6 +611,31 @@ export function lowerStatement(input: LowerStatementInput): HirStatement {
 
   const yieldStatement = YieldStatementView.from(node);
   if (yieldStatement !== undefined) {
+    if (!context.enabledTargetFeatures.includes("coroutineYield")) {
+      const span = presentTokenSpan(childToken(node, SyntaxKind.YieldKeyword)) ?? node.span;
+      const moduleId = currentHirModuleId(context);
+      const originId = context.origins.forSynthetic({
+        moduleId,
+        span,
+        stableDetail: "yield",
+        ...(context.ownerItemId !== undefined ? { ownerItemId: context.ownerItemId } : {}),
+        ...(context.ownerFunctionId !== undefined
+          ? { ownerFunctionId: context.ownerFunctionId }
+          : {}),
+      });
+      context.diagnostics.report(
+        hirDiagnostic({
+          code: "HIR_FEATURE_NOT_AVAILABLE_ON_TARGET",
+          message: "Feature 'coroutineYield' is not available on this target.",
+          source: context.graph.modules[moduleId as number]?.source,
+          originId,
+          ownerKey: statementOwnerKey(context),
+          originKey: "yield",
+          stableDetail: "feature:coroutineYield:yield",
+        }),
+      );
+      return addStatement(context, node, { kind: "yield" });
+    }
     const expressionView = yieldStatement.expression();
     const expectedType = expectedFunctionReturnType(context);
     const expectedResourceKind = expectedFunctionReturnKind(context);
@@ -684,7 +781,9 @@ export function lowerStatement(input: LowerStatementInput): HirStatement {
           scrutinee,
           arms: matchStatement
             .arms()
-            .map((arm) => matchArm({ context, arm, sourceOrigin: reserved.sourceOrigin })),
+            .map((arm) =>
+              matchArm({ context, arm, scrutinee, sourceOrigin: reserved.sourceOrigin }),
+            ),
         },
       });
     }

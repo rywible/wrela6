@@ -35,6 +35,15 @@ function itemParser(context: ParserContext): GreenElement | undefined {
   return undefined;
 }
 
+function itemParserWithOwnedNewline(context: ParserContext): GreenElement | undefined {
+  if (context.currentSyntaxKind() !== SyntaxKind.IdentifierToken) return undefined;
+  const children = [context.consume()];
+  if (context.currentSyntaxKind() === SyntaxKind.NewlineToken) {
+    children.push(context.consume());
+  }
+  return context.factory.node(SyntaxKind.ExpressionStatement, children);
+}
+
 const recoveryKinds = new Set([
   SyntaxKind.NewlineToken,
   SyntaxKind.DedentToken,
@@ -247,6 +256,30 @@ describe("parseStatementList", () => {
     expect(node.children).toHaveLength(2);
     expect(node.children[0]!.kind).toBe(SyntaxKind.IdentifierToken);
     expect(node.children[1]!.kind).toBe(SyntaxKind.NewlineToken);
+  });
+
+  test("statement list accepts a newline consumed by the parsed item", () => {
+    const secondIdent = makeToken(TokenKind.Identifier, "next", 11, 15);
+    const finalNewline = makeToken(TokenKind.Newline, "\n", 15, 16);
+    const finalDedent = makeToken(TokenKind.Dedent, "", 16, 16);
+    const finalEof = makeToken(TokenKind.Eof, "", 16, 16);
+    const context = makeContext([
+      identT,
+      newline2T,
+      secondIdent,
+      finalNewline,
+      finalDedent,
+      finalEof,
+    ]);
+
+    const node = parseStatementList(context, itemParserWithOwnedNewline);
+
+    expect(node.children).toHaveLength(2);
+    expect(node.children[0]!.kind).toBe(SyntaxKind.ExpressionStatement);
+    expect(node.children[1]!.kind).toBe(SyntaxKind.ExpressionStatement);
+    expect(node.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+      "PARSE_EXPECTED_STATEMENT_SEPARATOR",
+    );
   });
 
   test("statement list stops at dedent", () => {

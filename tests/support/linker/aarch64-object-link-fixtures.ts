@@ -20,13 +20,13 @@ import type { AArch64LinkInputModule } from "../../../src/linker";
 
 export interface TextSectionForLinkTestInput {
   readonly stableKey?: string;
-  readonly bytes?: readonly number[];
+  readonly bytes?: Uint8Array | readonly number[];
   readonly alignmentBytes?: number;
 }
 
 export interface DataSectionForLinkTestInput {
   readonly stableKey?: string;
-  readonly bytes?: readonly number[];
+  readonly bytes?: Uint8Array | readonly number[];
   readonly alignmentBytes?: number;
 }
 

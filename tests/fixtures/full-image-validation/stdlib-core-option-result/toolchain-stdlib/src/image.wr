@@ -1,0 +1,11 @@
+use Option from wrela_std.core.option
+use Result from wrela_std.core.result
+use UefiStatus from wrela_std.target.uefi.status
+
+class CoreApiProbe:
+    maybe_status: Option[UefiStatus]
+    result_status: Result[UefiStatus, UefiStatus]
+
+uefi image StdlibCoreOptionResultImage:
+    fn boot() -> UefiStatus:
+        UefiStatus.success

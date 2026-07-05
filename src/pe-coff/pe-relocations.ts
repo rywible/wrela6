@@ -49,7 +49,7 @@ export interface PeBaseRelocationPlannedBlock {
 }
 
 export interface SerializedPeBaseRelocations {
-  readonly bytes: readonly number[];
+  readonly bytes: Uint8Array;
   readonly blocks: readonly PeBaseRelocationPlannedBlock[];
 }
 
@@ -191,7 +191,7 @@ function planRelocationBlocks(
 
 function serializeBlocks(
   blocks: readonly PeBaseRelocationPlannedBlock[],
-): PeCoffWriterResult<readonly number[]> {
+): PeCoffWriterResult<Uint8Array> {
   const writer = createPeByteWriter();
   const diagnostics: PeCoffWriterDiagnostic[] = [];
 

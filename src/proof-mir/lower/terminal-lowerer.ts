@@ -60,6 +60,13 @@ function functionExitClosurePolicy(terminal: boolean): ProofMirExitClosurePolicy
   };
 }
 
+function activeBlockKey(
+  context: ProofMirLoweringContext,
+  fallbackBlockKey: ProofMirCanonicalKey,
+): ProofMirCanonicalKey {
+  return context.blockTracking?.currentBlockRef.blockKey ?? fallbackBlockKey;
+}
+
 function lowerReturnImpl(input: {
   readonly context: ProofMirLoweringContext;
   readonly expression: ProofMirExpressionLowerer;
@@ -70,6 +77,7 @@ function lowerReturnImpl(input: {
     input.returnInput.terminal ? "return:terminal" : "return:ordinary",
   );
   let returnValueKey: ProofMirCanonicalKey | undefined;
+  let fromBlockKey = input.returnInput.blockKey;
 
   if (input.returnInput.expression !== undefined) {
     const lowered = input.expression.lowerExpression({
@@ -81,15 +89,16 @@ function lowerReturnImpl(input: {
       return lowered;
     }
     returnValueKey = operandValueKey(lowered.value);
+    fromBlockKey = activeBlockKey(input.context, input.returnInput.blockKey);
   }
 
   const exitBundle = input.context.graph.createReturnExit({
-    fromBlock: input.returnInput.blockKey,
+    fromBlock: fromBlockKey,
     origin: originKey,
     terminal: input.returnInput.terminal,
   });
 
-  const setTerminatorResult = input.context.graph.setTerminator(input.returnInput.blockKey, {
+  const setTerminatorResult = input.context.graph.setTerminator(fromBlockKey, {
     kind: "return",
     value: returnValueKey,
     edge: exitBundle.edge,
@@ -102,7 +111,7 @@ function lowerReturnImpl(input: {
 
   input.recorder.record({
     exitKey: exitBundle.exit,
-    fromBlockKey: input.returnInput.blockKey,
+    fromBlockKey,
     kind: input.returnInput.terminal ? "terminalReturn" : "ordinaryReturn",
     boundary: { kind: "function", unwind: "none" },
     crossedScopes: [],
@@ -119,12 +128,13 @@ function lowerPanicImpl(input: {
   readonly recorder: ProofMirExitRecorder;
 }): ProofMirLoweringResult<void> {
   const originKey = input.context.graph.allocateSyntheticOrigin("panic");
+  const fromBlockKey = activeBlockKey(input.context, input.panicInput.blockKey);
   const exitBundle = input.context.graph.createPanicExit({
-    fromBlock: input.panicInput.blockKey,
+    fromBlock: fromBlockKey,
     origin: originKey,
   });
 
-  const setTerminatorResult = input.context.graph.setTerminator(input.panicInput.blockKey, {
+  const setTerminatorResult = input.context.graph.setTerminator(fromBlockKey, {
     kind: "panic",
     reason: undefined,
     edge: exitBundle.edge,
@@ -137,7 +147,7 @@ function lowerPanicImpl(input: {
 
   input.recorder.record({
     exitKey: exitBundle.exit,
-    fromBlockKey: input.panicInput.blockKey,
+    fromBlockKey,
     kind: "panic",
     boundary: { kind: "function", unwind: "none" },
     crossedScopes: [],

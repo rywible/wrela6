@@ -1,7 +1,7 @@
 use write_console_string from wrela_std.target.uefi.console
 use UefiStatus from wrela_std.target.uefi.status
 
-pub fn write_packet_counter_marker(count: u8) -> UefiStatus:
+fn write_packet_counter_marker(count: u8) -> UefiStatus:
     if count == 0:
         return UefiStatus.bad_buffer_size
     else:

@@ -629,8 +629,8 @@ async function compileUefiAArch64ImageWithTraceDefault(
   return compiler.compileUefiAArch64ImageWithTrace(input);
 }
 
-function fingerprintUefiAArch64ImageBytes(bytes: readonly number[]): string {
-  const hex = bytes.map((byte) => byte.toString(16).padStart(2, "0")).join("");
+function fingerprintUefiAArch64ImageBytes(bytes: ArrayLike<number>): string {
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   return `uefi-aarch64-image-bytes:${stableHash(hex)}`;
 }
 

@@ -32,6 +32,7 @@ export interface LowerProofMirOrdinaryForForTestInput {
   readonly scalarLocals?: readonly string[];
   readonly loopCarriedLocals?: readonly string[];
   readonly placeBackedLocals?: readonly string[];
+  readonly targetFeatures?: readonly string[];
   readonly fallible?: boolean;
 }
 

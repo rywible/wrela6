@@ -29,7 +29,7 @@ describe("ProofMirOriginMap", () => {
     const join = map.syntheticFrom(base, "if.join");
 
     expect(map.draftRecord(join).note).toBe("if.join");
-    expect(map.draftRecord(join).sourceOrigin).toBe(hirOriginId(4));
+    expect(map.draftRecord(join).sourceOrigin).toBe(String(hirOriginId(4)));
   });
 
   test("interns equivalent HIR origins to one draft origin key", () => {
@@ -78,7 +78,7 @@ describe("ProofMirOriginMap", () => {
     for (const note of notes) {
       const synthetic = map.syntheticFrom(base, note);
       expect(map.draftRecord(synthetic).note).toBe(note);
-      expect(map.draftRecord(synthetic).sourceOrigin).toBe(hirOriginId(2));
+      expect(map.draftRecord(synthetic).sourceOrigin).toBe(String(hirOriginId(2)));
     }
   });
 
@@ -107,7 +107,7 @@ describe("ProofMirOriginMap", () => {
     const record = map.draftRecord(key);
     expect(record.layoutKey).toBe("layout-type:Packet");
     expect(record.diagnosticOrigin).toBe("layout.field:payload");
-    expect(record.sourceOrigin).toBe(hirOriginId(11));
+    expect(record.sourceOrigin).toBe(String(hirOriginId(11)));
   });
 
   test("interns mono expression, mono proof, and runtime catalog origins", () => {

@@ -141,7 +141,7 @@ export function originForCall(
 ): ProofMirCanonicalKey {
   return context.originMap.fromMonoExpression({
     owner: { kind: "function", functionInstanceId: context.functionInstanceId },
-    sourceOrigin: sourceOrigin as never,
+    sourceOrigin,
     monoExpressionId,
   });
 }

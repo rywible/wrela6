@@ -113,16 +113,16 @@ const VECTOR_THREE_REGISTER_BASES = new Map<string, number>([
 
 function encodeLoadStoreUnsignedImmediate(
   input: AArch64EncodeInput,
-  baseWordForWidth: (width: number) => number | undefined,
+  baseWordForWidth: (width: number, register: string) => number | undefined,
 ) {
   const [destination, base, offset] = input.instruction.operands;
   const width = input.instruction.accessWidthBytes ?? 8;
-  const baseWord = baseWordForWidth(width);
-  if (baseWord === undefined) {
-    return encodingError(`encoding:unsupported-access-width:${input.instruction.opcode}:${width}`);
-  }
   if (destination?.kind !== "register" || base?.kind !== "memory-base") {
     return encodingError(`encoding:unresolved-operands:${input.instruction.opcode}`);
+  }
+  const baseWord = baseWordForWidth(width, destination.register);
+  if (baseWord === undefined) {
+    return encodingError(`encoding:unsupported-access-width:${input.instruction.opcode}:${width}`);
   }
   const destinationNumber = registerNumber(input, destination.register);
   const baseNumber = memoryBaseRegisterNumber(input, base.register);
@@ -165,7 +165,10 @@ function encodeLoadStoreUnsignedImmediate(
   });
 }
 
-function loadUnsignedImmediateBaseWord(width: number): number | undefined {
+function loadUnsignedImmediateBaseWord(width: number, register: string): number | undefined {
+  if (isFpSimdRegister(register)) {
+    return fpSimdLoadUnsignedImmediateBaseWord(width);
+  }
   switch (width) {
     case 1:
       return 0x39400000;
@@ -180,7 +183,10 @@ function loadUnsignedImmediateBaseWord(width: number): number | undefined {
   }
 }
 
-function storeUnsignedImmediateBaseWord(width: number): number | undefined {
+function storeUnsignedImmediateBaseWord(width: number, register: string): number | undefined {
+  if (isFpSimdRegister(register)) {
+    return fpSimdStoreUnsignedImmediateBaseWord(width);
+  }
   switch (width) {
     case 1:
       return 0x39000000;
@@ -190,6 +196,44 @@ function storeUnsignedImmediateBaseWord(width: number): number | undefined {
       return 0xb9000000;
     case 8:
       return 0xf9000000;
+    default:
+      return undefined;
+  }
+}
+
+function isFpSimdRegister(register: string): boolean {
+  return /^[bhsdqv]\d+$/.test(register);
+}
+
+function fpSimdLoadUnsignedImmediateBaseWord(width: number): number | undefined {
+  switch (width) {
+    case 1:
+      return 0x3d400000;
+    case 2:
+      return 0x7d400000;
+    case 4:
+      return 0xbd400000;
+    case 8:
+      return 0xfd400000;
+    case 16:
+      return 0x3dc00000;
+    default:
+      return undefined;
+  }
+}
+
+function fpSimdStoreUnsignedImmediateBaseWord(width: number): number | undefined {
+  switch (width) {
+    case 1:
+      return 0x3d000000;
+    case 2:
+      return 0x7d000000;
+    case 4:
+      return 0xbd000000;
+    case 8:
+      return 0xfd000000;
+    case 16:
+      return 0x3d800000;
     default:
       return undefined;
   }

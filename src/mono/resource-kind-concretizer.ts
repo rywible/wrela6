@@ -8,7 +8,7 @@ import {
 } from "../semantic/surface/resource-kind";
 import type { TypeConstructorId } from "../semantic/surface/type-model";
 import { type MonoDiagnostic, monoDiagnostic } from "./diagnostics";
-import { normalizeMonoCheckedType } from "./instantiation-key";
+import { monoAppliedArgumentTypes, normalizeMonoCheckedType } from "./instantiation-key";
 import type { MonoCheckedType } from "./mono-hir";
 import { type MonoSubstitution, parameterKeyString } from "./substitution";
 
@@ -54,6 +54,7 @@ export function concretizeResourceKind(
     case "parametric":
       return concretizeParametricKind({
         kind: input.kind,
+        ...(input.appliedType !== undefined ? { appliedType: input.appliedType } : {}),
         context: input.context,
       });
     case "derived":
@@ -81,11 +82,19 @@ export function concretizeResourceKind(
 
 function concretizeParametricKind(input: {
   readonly kind: Extract<CheckedResourceKind, { readonly kind: "parametric" }>;
+  readonly appliedType?: MonoCheckedType;
   readonly context: MonoResourceKindConcretizationContext;
 }): ConcretizeResourceKindResult {
   const key = parameterKeyString(input.kind.parameter);
   const replacement = input.context.substitution.map.get(key);
-  if (replacement === undefined) {
+  const appliedReplacement =
+    replacement ??
+    appliedSourceTypeArgumentForParameter({
+      parameter: input.kind.parameter,
+      appliedType: input.appliedType,
+      context: input.context,
+    });
+  if (appliedReplacement === undefined) {
     return {
       kind: "error",
       diagnostic: monoDiagnostic({
@@ -100,9 +109,22 @@ function concretizeParametricKind(input: {
     };
   }
   return concretizeMonoCheckedType({
-    type: replacement,
+    type: appliedReplacement,
     context: input.context,
   });
+}
+
+function appliedSourceTypeArgumentForParameter(input: {
+  readonly parameter: Extract<CheckedResourceKind, { readonly kind: "parametric" }>["parameter"];
+  readonly appliedType?: MonoCheckedType;
+  readonly context: MonoResourceKindConcretizationContext;
+}): MonoCheckedType | undefined {
+  if (input.parameter.owner.kind !== "item") return undefined;
+  if (input.appliedType?.kind !== "applied") return undefined;
+  if (input.appliedType.constructor.kind !== "source") return undefined;
+  const typeRecord = input.context.program.types.get(input.appliedType.constructor.typeId);
+  if (typeRecord?.itemId !== input.parameter.owner.itemId) return undefined;
+  return monoAppliedArgumentTypes(input.appliedType)[input.parameter.index];
 }
 
 function concretizeMonoCheckedType(input: {

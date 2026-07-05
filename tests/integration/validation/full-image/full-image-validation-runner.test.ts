@@ -93,6 +93,7 @@ test("default request runs v1 cases deterministically through fixture loading an
   expect(report.cases[0]?.equivalenceEvidence.map((evidence) => evidence.groupKey)).toEqual([
     "smoke-console:stdlib-modes",
     "packet-counter:stdlib-modes",
+    "packet-counter-real-stream:stdlib-modes",
     "full-image:determinism",
   ]);
 });
@@ -121,7 +122,7 @@ test("ejected stdlib source-root report counts nested project roots only once", 
         "tests/fixtures/full-image-validation/smoke-console/ejected-stdlib/src/image.wr":
           "uefi image SmokeConsoleImage:\n    fn boot() -> UefiStatus:\n        return UefiStatus.success\n",
         "tests/fixtures/full-image-validation/smoke-console/ejected-stdlib/src/wrela-std/target/uefi/console.wr":
-          "pub fn write_console_string() -> UefiStatus:\n    return UefiStatus.success\n",
+          "fn write_console_string() -> UefiStatus:\n    return UefiStatus.success\n",
         "tests/fixtures/full-image-validation/smoke-console/ejected-stdlib/src/wrela-std/target/uefi/status.wr":
           "enum UefiStatus:\n    success\n",
       }),
@@ -306,6 +307,7 @@ function emptyFixtureFilesystem(): FixtureProjectFilesystem {
     readDirectory: () => [],
     isDirectory: () => false,
     readTextFile: () => "",
+    realPath: (path) => path,
   };
 }
 
@@ -323,6 +325,7 @@ function fakeFixtureFilesystem(
       if (typeof entry !== "string") throw new Error(`missing text fixture ${path}`);
       return entry;
     },
+    realPath: (path) => path,
   };
 }
 

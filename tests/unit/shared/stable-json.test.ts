@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 
-import { stableDigestHex, stableJson } from "../../../src/shared/stable-json";
+import { stableDigestHex, stableHash, stableJson } from "../../../src/shared/stable-json";
 
 describe("stableJson", () => {
   test("stableDigestHex computes real SHA-256 over stable JSON", () => {
@@ -14,5 +14,10 @@ describe("stableJson", () => {
 
   test("stableDigestHex orders object keys by code unit", () => {
     expect(stableJson({ b: 1, a: 2 })).toBe('{"a":2,"b":1}');
+  });
+
+  test("stableHash distinguishes astral Unicode code points", () => {
+    expect(stableHash("abc")).toBe("e71fa2190541574b");
+    expect(stableHash("\u{1f600}")).not.toBe(stableHash("\u{1f601}"));
   });
 });

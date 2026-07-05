@@ -5,7 +5,7 @@ import { Lexer } from "../../../../src/frontend/lexer/lexer";
 import { SourceText } from "../../../../src/frontend/lexer/source-text";
 import { Parser } from "../../../../src/frontend/parser/parser";
 import { SyntaxKind } from "../../../../src/frontend/syntax/syntax-kind";
-import type { RedNode } from "../../../../src/frontend/syntax/red-node";
+import { RedNode } from "../../../../src/frontend/syntax/red-node";
 
 function createLexer(): Lexer {
   return new Lexer({
@@ -16,7 +16,7 @@ function createLexer(): Lexer {
 
 describe("Expression statement dispatch (integration)", () => {
   test("identifier expression statement round-trips", () => {
-    const source = SourceText.from("test.wr", "x\n");
+    const source = SourceText.from("test.wr", "fn main() -> Never:\n    x\n");
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
@@ -26,12 +26,7 @@ describe("Expression statement dispatch (integration)", () => {
     const root = result.tree.root();
     expect(root.kind).toBe(SyntaxKind.SourceFile);
 
-    const children = root.children();
-    expect(children.length).toBe(2);
-    expect(children[0]!.kind).toBe(SyntaxKind.ExpressionStatement);
-    expect(children[1]!.kind).toBe(SyntaxKind.EndOfFileToken);
-
-    const stmt = children[0] as RedNode;
+    const stmt = collectByKind(root, SyntaxKind.ExpressionStatement)[0]!;
     const stmtChildren = stmt.children();
     expect(stmtChildren).toHaveLength(2);
     expect(stmtChildren[0]!.kind).toBe(SyntaxKind.NameExpression);
@@ -40,8 +35,8 @@ describe("Expression statement dispatch (integration)", () => {
     expect(result.parserDiagnostics).toHaveLength(0);
   });
 
-  test("assignment statement in top-level source", () => {
-    const source = SourceText.from("test.wr", "x = 42\n");
+  test("assignment statement in function body", () => {
+    const source = SourceText.from("test.wr", "fn main() -> Never:\n    x = 42\n");
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
@@ -51,10 +46,7 @@ describe("Expression statement dispatch (integration)", () => {
     const root = result.tree.root();
     expect(root.kind).toBe(SyntaxKind.SourceFile);
 
-    const children = root.children();
-    expect(children[0]!.kind).toBe(SyntaxKind.AssignmentStatement);
-
-    const stmt = children[0] as RedNode;
+    const stmt = collectByKind(root, SyntaxKind.AssignmentStatement)[0]!;
     const stmtChildren = stmt.children();
     expect(stmtChildren).toHaveLength(4);
     expect(stmtChildren[0]!.kind).toBe(SyntaxKind.NameExpression);
@@ -65,8 +57,8 @@ describe("Expression statement dispatch (integration)", () => {
     expect(result.parserDiagnostics).toHaveLength(0);
   });
 
-  test("assignment and expression statements at top level", () => {
-    const source = SourceText.from("test.wr", "a = 1\nb\n");
+  test("assignment and expression statements in function body", () => {
+    const source = SourceText.from("test.wr", "fn main() -> Never:\n    a = 1\n    b\n");
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
@@ -76,32 +68,25 @@ describe("Expression statement dispatch (integration)", () => {
     const root = result.tree.root();
     expect(root.kind).toBe(SyntaxKind.SourceFile);
 
-    const children = root.children();
-    expect(children).toHaveLength(3);
-    expect(children[0]!.kind).toBe(SyntaxKind.AssignmentStatement);
-    expect(children[1]!.kind).toBe(SyntaxKind.ExpressionStatement);
-    expect(children[2]!.kind).toBe(SyntaxKind.EndOfFileToken);
-
-    const assign = children[0] as RedNode;
+    const assign = collectByKind(root, SyntaxKind.AssignmentStatement)[0]!;
     expect(assign.children()[0]!.kind).toBe(SyntaxKind.NameExpression);
     expect(assign.children()[2]!.kind).toBe(SyntaxKind.LiteralExpression);
 
-    const expr = children[1] as RedNode;
+    const expr = collectByKind(root, SyntaxKind.ExpressionStatement)[0]!;
     expect(expr.children()[0]!.kind).toBe(SyntaxKind.NameExpression);
 
     expect(result.parserDiagnostics).toHaveLength(0);
   });
 
   test("call expression as statement round-trips", () => {
-    const source = SourceText.from("test.wr", "foo()\n");
+    const source = SourceText.from("test.wr", "fn main() -> Never:\n    foo()\n");
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const root = result.tree.root();
-    const stmt = root.children()[0] as RedNode;
+    const stmt = collectByKind(result.tree.root(), SyntaxKind.ExpressionStatement)[0]!;
     expect(stmt.kind).toBe(SyntaxKind.ExpressionStatement);
 
     const expr = stmt.children()[0] as RedNode;
@@ -111,15 +96,14 @@ describe("Expression statement dispatch (integration)", () => {
   });
 
   test("comparison (==) does not trigger assignment", () => {
-    const source = SourceText.from("test.wr", "x == 5\n");
+    const source = SourceText.from("test.wr", "fn main() -> Never:\n    x == 5\n");
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const root = result.tree.root();
-    const stmt = root.children()[0] as RedNode;
+    const stmt = collectByKind(result.tree.root(), SyntaxKind.ExpressionStatement)[0]!;
     expect(stmt.kind).toBe(SyntaxKind.ExpressionStatement);
 
     const expr = stmt.children()[0] as RedNode;
@@ -129,15 +113,14 @@ describe("Expression statement dispatch (integration)", () => {
   });
 
   test("member assignment round-trips", () => {
-    const source = SourceText.from("test.wr", "obj.field = 42\n");
+    const source = SourceText.from("test.wr", "fn main() -> Never:\n    obj.field = 42\n");
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const root = result.tree.root();
-    const stmt = root.children()[0] as RedNode;
+    const stmt = collectByKind(result.tree.root(), SyntaxKind.AssignmentStatement)[0]!;
     expect(stmt.kind).toBe(SyntaxKind.AssignmentStatement);
 
     const target = stmt.children()[0] as RedNode;
@@ -147,34 +130,48 @@ describe("Expression statement dispatch (integration)", () => {
   });
 
   test("source preservation across multiple expression statements", () => {
-    const source = SourceText.from("test.wr", "x\ny\nz\n");
+    const source = SourceText.from("test.wr", "fn main() -> Never:\n    x\n    y\n    z\n");
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const children = result.tree.root().children();
-    expect(children.length).toBe(4);
-    expect(children[0]!.kind).toBe(SyntaxKind.ExpressionStatement);
-    expect(children[1]!.kind).toBe(SyntaxKind.ExpressionStatement);
-    expect(children[2]!.kind).toBe(SyntaxKind.ExpressionStatement);
-    expect(children[3]!.kind).toBe(SyntaxKind.EndOfFileToken);
+    expect(collectByKind(result.tree.root(), SyntaxKind.ExpressionStatement)).toHaveLength(3);
 
     expect(result.parserDiagnostics).toHaveLength(0);
   });
 
-  test("identifier followed by assignment at top level is not an error", () => {
-    const source = SourceText.from("test.wr", "counter = counter + 1\n");
+  test("identifier followed by assignment in function body is not an error", () => {
+    const source = SourceText.from("test.wr", "fn main() -> Never:\n    counter = counter + 1\n");
     const lexResult = createLexer().lex(source);
     const parser = new Parser();
     const result = parser.parseLexResult({ lexResult });
 
     expect(result.tree.reconstruct()).toBe(source.text);
 
-    const stmt = result.tree.root().children()[0] as RedNode;
+    const stmt = collectByKind(result.tree.root(), SyntaxKind.AssignmentStatement)[0]!;
     expect(stmt.kind).toBe(SyntaxKind.AssignmentStatement);
 
     expect(result.parserDiagnostics).toHaveLength(0);
   });
 });
+
+function collectByKind(root: RedNode, kind: SyntaxKind): RedNode[] {
+  const matches: RedNode[] = [];
+  const stack: RedNode[] = [root];
+
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node.kind === kind) {
+      matches.push(node);
+    }
+    for (const child of node.children()) {
+      if (child instanceof RedNode) {
+        stack.push(child);
+      }
+    }
+  }
+
+  return matches.reverse();
+}

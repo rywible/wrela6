@@ -11,6 +11,7 @@ import {
   type ProofMirRuntimeTargetAvailability,
 } from "../../../src/runtime/runtime-catalog";
 import { selectProofMirRuntimeCatalog } from "../../../src/target/target-runtime-selection";
+import { canonicalUefiAArch64ProofMirRuntimeCatalog } from "../../../src/target/uefi-aarch64/runtime-catalog";
 import { targetId } from "../../../src/semantic/ids";
 
 function runtimeAuthorityFingerprintForRuntimeCatalogTest(
@@ -171,6 +172,12 @@ describe("runtimeCatalog", () => {
     if (result.kind !== "ok") return;
     expect(result.catalog.fingerprint).toBeUndefined();
     expect(result.catalog.entries()[0]?.authorityKey).toBeUndefined();
+  });
+
+  test("canonical UEFI AArch64 runtime catalog enables streamLoop", () => {
+    const catalog = canonicalUefiAArch64ProofMirRuntimeCatalog();
+
+    expect(catalog.features).toContain("streamLoop");
   });
 });
 

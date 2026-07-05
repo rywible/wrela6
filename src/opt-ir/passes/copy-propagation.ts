@@ -273,6 +273,7 @@ function rewriteOperation(
 
   switch (operation.kind) {
     case "constant":
+    case "constAddr":
     case "proofErasedMarker":
       return operation;
     case "memoryLoad":

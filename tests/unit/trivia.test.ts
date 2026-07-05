@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { SourceSpan } from "../../src/lexer/source-span";
-import { Trivia } from "../../src/lexer/trivia";
-import { TriviaKind } from "../../src/lexer/trivia-kind";
+import { SourceSpan } from "../../src/frontend/lexer/source-span";
+import { Trivia } from "../../src/frontend/lexer/trivia";
+import { TriviaKind } from "../../src/frontend/lexer/trivia-kind";
 
 describe("Trivia", () => {
   test("stores kind, lexeme, and span", () => {

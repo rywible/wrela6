@@ -1,16 +1,29 @@
 import type { ModuleImportRequest } from "./module-import-request";
-import type { ModulePath } from "./module-path";
+import type { ModulePath, ModulePathResult } from "./module-path";
 import { ModulePath as ModulePathClass } from "./module-path";
 
 export type ModuleResolveResult =
   | { kind: "resolved"; path: ModulePath }
-  | { kind: "unresolved"; reason: string };
+  | { kind: "unresolved"; reason: string }
+  | {
+      kind: "pathInvalid";
+      path: string;
+      reason: string;
+      ownerKey: string;
+      stableDetail: string;
+    };
 
 export interface ModuleResolver {
   resolve(request: ModuleImportRequest): ModuleResolveResult;
 }
 
+interface DottedModuleResolverDependencies {
+  readonly modulePathFromFilePath?: (filePath: string) => ModulePathResult;
+}
+
 export class DottedModuleResolver implements ModuleResolver {
+  constructor(private readonly dependencies: DottedModuleResolverDependencies = {}) {}
+
   resolve(request: ModuleImportRequest): ModuleResolveResult {
     const { moduleName } = request;
 
@@ -26,15 +39,24 @@ export class DottedModuleResolver implements ModuleResolver {
     }
 
     const filePath = moduleName.replace(/\./g, "/") + ".wr";
+    const result = (this.dependencies.modulePathFromFilePath ?? ModulePathClass.tryFrom)(filePath);
 
-    try {
-      const resolvedPath = ModulePathClass.from(filePath);
-      return { kind: "resolved", path: resolvedPath };
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { kind: "unresolved", reason: message };
+    if (result.kind === "invalid") {
+      return {
+        kind: "pathInvalid",
+        path: result.path,
+        reason: result.reason,
+        ownerKey: modulePathOwnerKey(request),
+        stableDetail: `module-path:invalid:${moduleName}:${result.path}`,
+      };
     }
+
+    return { kind: "resolved", path: result.path };
   }
+}
+
+function modulePathOwnerKey(request: ModuleImportRequest): string {
+  return `module-path:${request.importer.key}:${request.moduleName}:${request.span.start}:${request.span.end}`;
 }
 
 function isValidDottedName(name: string): boolean {

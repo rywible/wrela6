@@ -140,7 +140,7 @@ function canonicalBridgeSourceFiles(input: {
     {
       sourceKey: input.sourceKey,
       moduleName: input.moduleName,
-      text: canonicalUefiStatusSourceForTest("pub enum"),
+      text: canonicalUefiStatusSourceForTest("enum"),
     },
   ];
 }
@@ -176,7 +176,7 @@ function targetSurfaceForTest() {
   return targetResult.value;
 }
 
-function canonicalUefiStatusSourceForTest(enumHeader: "enum" | "pub enum"): string {
+function canonicalUefiStatusSourceForTest(enumHeader: "enum"): string {
   return [
     `${enumHeader} UefiStatus:`,
     "    success",

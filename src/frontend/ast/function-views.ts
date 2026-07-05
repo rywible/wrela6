@@ -37,7 +37,7 @@ export class FunctionDeclarationView extends AstView {
     return presentTokenText(this.nameToken());
   }
 
-  nameSpan(): import("../../lexer").SourceSpan | undefined {
+  nameSpan(): import("../lexer").SourceSpan | undefined {
     return presentTokenSpan(this.nameToken());
   }
 
@@ -116,7 +116,7 @@ export class ParameterView extends AstView {
     return presentTokenText(this.nameToken());
   }
 
-  nameSpan(): import("../../lexer").SourceSpan | undefined {
+  nameSpan(): import("../lexer").SourceSpan | undefined {
     return presentTokenSpan(this.nameToken());
   }
 

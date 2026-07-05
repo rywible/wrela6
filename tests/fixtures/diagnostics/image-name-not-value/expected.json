@@ -1,0 +1,9 @@
+{
+  "phase": "semantic",
+  "diagnostics": [
+    {
+      "code": "HIR_IMAGE_NAME_NOT_A_VALUE",
+      "count": 1
+    }
+  ]
+}

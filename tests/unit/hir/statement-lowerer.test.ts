@@ -5,8 +5,15 @@ import { MatchStatementView } from "../../../src/frontend/ast/statement-views";
 import { createHirUnitContext } from "../../support/hir/typed-hir-fixtures";
 import { lowerStatement } from "../../../src/hir/statement-lowerer";
 import { currentHirModuleId } from "../../../src/hir/lowering-context";
-import { hirStatementId } from "../../../src/hir/ids";
+import { hirOriginId, hirStatementId } from "../../../src/hir/ids";
 import { checkedProofSurface } from "../../../src/semantic/surface/proof-surface";
+import {
+  appliedType,
+  coreCheckedType,
+  sourceCheckedType,
+} from "../../../src/semantic/surface/type-model";
+import { concreteKind } from "../../../src/semantic/surface/resource-kind";
+import { coreTypeId, itemId, typeId } from "../../../src/semantic/ids";
 import {
   CheckedMatchRefinementSurfaceTableBuilder,
   matchRefinementMatchKey,
@@ -31,6 +38,21 @@ test("break lowers to structured HIR statement", () => {
   expect(statement.kind.kind).toBe("loop");
   if (statement.kind.kind !== "loop") throw new Error("expected loop statement");
   expect(statement.kind.body.statements[0]!.kind.kind).toBe("break");
+});
+
+test("yield reports target feature diagnostic when coroutine yield is disabled", () => {
+  const context = createHirUnitContext("fn process() -> Never:\n    yield 0\n", {
+    enabledTargetFeatures: [],
+  });
+  const node = descendants(context.graph.modules[0]!.tree.root(), SyntaxKind.YieldStatement)[0]!;
+
+  lowerStatement({ node, context });
+
+  const diagnostic = context.diagnostics
+    .entries()
+    .find((entry) => entry.code === "HIR_FEATURE_NOT_AVAILABLE_ON_TARGET");
+  expect(diagnostic?.span).toBeDefined();
+  expect(context.graph.modules[0]!.source.slice(diagnostic!.span!)).toBe("yield");
 });
 
 test("compound statements reserve parent statement ids before lowering child blocks", () => {
@@ -236,6 +258,47 @@ test("ordinary match does not apply unrelated global match refinement surface", 
   expect(context.diagnostics.entries().map((diagnostic) => String(diagnostic.code))).not.toContain(
     "HIR_MATCH_REFINEMENT_UNSUPPORTED",
   );
+});
+
+test("ordinary match constructor pattern binds applied result payload locals before lowering the arm body", () => {
+  const { context, node } = firstStatement(
+    SyntaxKind.MatchStatement,
+    [
+      "fn process(result: u32):",
+      "    match result:",
+      "        case Ok(packet):",
+      "            packet",
+      "        case Err(status):",
+      "            status",
+    ].join("\n"),
+  );
+  const packetType = sourceCheckedType({ itemId: itemId(10), typeId: typeId(10) });
+  const statusType = coreCheckedType(coreTypeId("u32"));
+  context.locals.addSourceLocal({
+    name: "result",
+    type: appliedType({
+      constructor: { kind: "source", typeId: typeId(11) },
+      arguments: [packetType, statusType],
+      resourceKind: concreteKind("Copy"),
+    }),
+    resourceKind: concreteKind("Copy"),
+    sourceOrigin: hirOriginId(0),
+    introducedBy: "sourceLet",
+  });
+
+  const statement = lowerStatement({ node, context });
+
+  expect(context.diagnostics.entries().map((diagnostic) => String(diagnostic.code))).not.toContain(
+    "HIR_NAME_REFERENCE_MISSING",
+  );
+  expect(statement.kind.kind).toBe("match");
+  if (statement.kind.kind !== "match") throw new Error("expected match statement");
+  expect(statement.kind.statement.arms[0]?.bindingLocals).toEqual([
+    expect.objectContaining({ name: "packet", type: packetType }),
+  ]);
+  expect(statement.kind.statement.arms[1]?.bindingLocals).toEqual([
+    expect.objectContaining({ name: "status", type: statusType }),
+  ]);
 });
 
 test("match lowers linked checked refinement surface into proof metadata", () => {

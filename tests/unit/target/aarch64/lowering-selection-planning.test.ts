@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { monoInstanceId } from "../../../../src/mono/ids";
 import {
   optIrCallId,
+  optIrConstantId,
   optIrFactId,
   optIrOperationId,
   optIrOriginId,
@@ -13,6 +14,7 @@ import {
   optIrAggregateExtractOperation,
   optIrAggregateInsertOperation,
   optIrBooleanBinaryOperation,
+  optIrConstAddrOperation,
   optIrIntegerBinaryOperation,
   optIrIntegerUnaryOperation,
   optIrLayoutEndianDecodeOperation,
@@ -78,6 +80,8 @@ describe("AArch64 lowering, selection, and planning components", () => {
       convention: "aapcs64",
     });
 
+    expect(result.callClobbers.registers.vector).toContain("v8");
+    expect(result.callClobbers.registers.vector).toContain("v15");
     expect(result.callClobbers.registers.vector).toContain("v16");
     expect(result.callClobbers.registers.vector).toContain("v31");
     expect(result.stackAlignmentBytes).toBe(16);
@@ -449,6 +453,47 @@ describe("AArch64 lowering, selection, and planning components", () => {
       "vector-rev",
     ]);
     expect(result.instructions[0]?.operands[0]?.type).toEqual(machineVectorType);
+  });
+
+  test("constAddr materializes from constantId without static CHAR16 pointer metadata", () => {
+    const result = materializeAArch64OptIrOperation({
+      operation: optIrConstAddrOperation({
+        operationId: optIrOperationId(152),
+        resultId: optIrValueId(1520),
+        resultType: { kind: "address" },
+        constantId: optIrConstantId(9001),
+        originId: optIrOriginId(152),
+      }),
+      valueRegisters: new Map(),
+      context: {
+        staticReadonlyPointers: new Map([
+          [
+            optIrConstantId(9001),
+            {
+              symbolName: "__wrela_rodata_constant_9001",
+              stableKey: "test-rodata-constant",
+              fingerprint: "test-rodata-fingerprint",
+              label: "constant-pool-readonly",
+            },
+          ],
+        ]),
+      },
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error(result.stableDetail);
+    expect(result.instructions.map((instruction) => String(instruction.opcode))).toEqual([
+      "adrp",
+      "add-pageoff",
+      "add-immediate",
+    ]);
+    expect(result.relocationReferences).toEqual([
+      expect.objectContaining({ kind: "PAGE", symbol: "__wrela_rodata_constant_9001" }),
+      expect.objectContaining({ kind: "PAGEOFF12", symbol: "__wrela_rodata_constant_9001" }),
+    ]);
+    expect(result.selectionRecord.explanation).toContain(
+      "const-addr:static-readonly-pointer:9001:test-rodata-constant",
+    );
   });
 
   test("call materialization stores stack arguments before the call", () => {

@@ -3,8 +3,8 @@ use UefiStatus from wrela_std.target.uefi.status
 
 platform fn output_string(message: Utf16Static) -> UefiStatus
 
-pub fn write_console_string(message: Utf16Static) -> UefiStatus:
+fn write_console_string(message: Utf16Static) -> UefiStatus:
     output_string(message)
 
-pub fn write_smoke_marker() -> UefiStatus:
+fn write_smoke_marker() -> UefiStatus:
     write_console_string(utf16_static("WRELA_UEFI_SMOKE_OK\r\n"))

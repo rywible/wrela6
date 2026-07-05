@@ -1,0 +1,23 @@
+use new_packet_counter from packet_counter.counter
+use Result from wrela_std.core.result
+use BootError, Machine, MachineDeviceBindings, NetworkDevice, UefiDeviceName, UefiFirmware from wrela_std.target.uefi.firmware
+
+uefi image PacketCounterImage:
+    devices:
+        net0: NetworkDevice
+
+    private fn bringup(firmware: UefiFirmware) -> Result[Machine, BootError]:
+        let reserved = firmware.reserve_restricted_memory()? BootError.Memory
+        let discovered = reserved.discover_virtio()? BootError.DeviceDiscovery
+        let binding = discovered.binder.bind_virtio_net(device=discovered.discovered_devices.net0, name=UefiDeviceName.net0)? BootError.DeviceUnavailable
+        let device_bindings: MachineDeviceBindings = { net0: binding.net0 }
+        let machine_plan = binding.planner.plan_machine(device_bindings=device_bindings)? BootError.MachinePlanFailed
+        return machine_plan.exit()? BootError.ExitFailed
+
+    fn boot(firmware: UefiFirmware) -> Result[Never, BootError]:
+        let machine = bringup(firmware=firmware)? BootError.Bringup
+        let paths = machine.device_set.net0.split()
+        let app = new_packet_counter(paths=paths)
+        loop:
+            app.tick()
+            app.wait()

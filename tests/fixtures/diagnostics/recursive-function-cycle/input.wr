@@ -1,0 +1,11 @@
+fn a() -> Never:
+    b()
+    return
+
+fn b() -> Never:
+    a()
+    return
+
+uefi image Boot:
+    fn boot() -> Never:
+        return

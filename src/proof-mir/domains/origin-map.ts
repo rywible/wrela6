@@ -10,6 +10,7 @@ import type {
 } from "../../mono/mono-hir";
 import { proofMetadataIdKey } from "../../mono/proof-metadata-tables";
 import type { ProofMirRuntimeOperationId } from "../../runtime/runtime-catalog-types";
+import { stableJson } from "../../shared/stable-json";
 import type { ProofMirCanonicalKey } from "../canonicalization/canonical-keys";
 import { proofMirCanonicalKey } from "../canonicalization/canonical-keys";
 import {
@@ -36,11 +37,13 @@ export type ProofMirOriginOwner =
   | { readonly kind: "program" };
 
 export type DraftProofMirOriginKey = ProofMirCanonicalKey;
+type ProofMirSourceOriginInput = string | HirOriginId;
+type ProofMirSourceOriginText = string;
 
 export interface DraftProofMirOrigin {
   readonly canonicalKey: DraftProofMirOriginKey;
   readonly owner: ProofMirOriginOwner;
-  readonly sourceOrigin?: HirOriginId;
+  readonly sourceOrigin?: ProofMirSourceOriginText;
   readonly diagnosticOrigin?: string;
   readonly monoExpressionId?: MonoExpressionId;
   readonly monoStatementId?: MonoStatementId;
@@ -54,33 +57,33 @@ export interface DraftProofMirOrigin {
 export interface ProofMirOriginMap {
   fromHirOrigin(input: {
     readonly owner: ProofMirOriginOwner;
-    readonly sourceOrigin: HirOriginId;
+    readonly sourceOrigin: ProofMirSourceOriginInput;
   }): DraftProofMirOriginKey;
   fromMonoStatement(input: {
     readonly owner: ProofMirOriginOwner;
-    readonly sourceOrigin?: HirOriginId;
+    readonly sourceOrigin?: ProofMirSourceOriginInput;
     readonly monoStatementId: MonoStatementId;
   }): DraftProofMirOriginKey;
   fromMonoExpression(input: {
     readonly owner: ProofMirOriginOwner;
-    readonly sourceOrigin?: HirOriginId;
+    readonly sourceOrigin?: ProofMirSourceOriginInput;
     readonly monoExpressionId: MonoExpressionId;
   }): DraftProofMirOriginKey;
   fromMonoLocal(input: {
     readonly owner: ProofMirOriginOwner;
-    readonly sourceOrigin?: HirOriginId;
+    readonly sourceOrigin?: ProofMirSourceOriginInput;
     readonly monoLocalId: MonoLocalId;
   }): DraftProofMirOriginKey;
   fromMonoProof(input: {
     readonly owner: ProofMirOriginOwner;
-    readonly sourceOrigin?: HirOriginId;
+    readonly sourceOrigin?: ProofMirSourceOriginInput;
     readonly monoProofId: MonoInstantiatedProofId<unknown>;
   }): DraftProofMirOriginKey;
   fromLayout(input: {
     readonly owner: ProofMirOriginOwner;
     readonly layoutKey: ProofMirLayoutReference;
     readonly diagnosticOrigin?: string;
-    readonly sourceOrigin?: HirOriginId;
+    readonly sourceOrigin?: ProofMirSourceOriginInput;
   }): DraftProofMirOriginKey;
   fromRuntimeCatalog(input: {
     readonly runtimeId: ProofMirRuntimeOperationId;
@@ -94,8 +97,12 @@ export interface ProofMirOriginMap {
 
 interface ProofMirOriginMapImpl extends ProofMirOriginMap {}
 
-function originIdSegment(originId: HirOriginId): string {
-  return String(originId).padStart(12, "0");
+function sourceOriginText(sourceOrigin: ProofMirSourceOriginInput): ProofMirSourceOriginText {
+  return String(sourceOrigin);
+}
+
+function sourceOriginSegment(sourceOrigin: ProofMirSourceOriginInput): string {
+  return sourceOriginText(sourceOrigin).padStart(12, "0");
 }
 
 function runtimeIdSegment(runtimeId: ProofMirRuntimeOperationId): string {
@@ -132,10 +139,10 @@ function ownerKeySegment(owner: ProofMirOriginOwner): string {
 
 function draftOriginHirKey(
   owner: ProofMirOriginOwner,
-  sourceOrigin: HirOriginId,
+  sourceOrigin: ProofMirSourceOriginInput,
 ): DraftProofMirOriginKey {
   return proofMirCanonicalKey(
-    `origin|kind:hir|${ownerKeySegment(owner)}|sourceOrigin:${originIdSegment(sourceOrigin)}`,
+    `origin|kind:hir|${ownerKeySegment(owner)}|sourceOrigin:${sourceOriginSegment(sourceOrigin)}`,
   );
 }
 
@@ -186,9 +193,10 @@ function draftOriginSyntheticKey(
 }
 
 function normalizeDraftOrigin(record: DraftProofMirOrigin): string {
-  return JSON.stringify({
+  return stableJson({
     owner: proofMirOriginOwnerKey(record.owner),
-    sourceOrigin: record.sourceOrigin === undefined ? null : originIdSegment(record.sourceOrigin),
+    sourceOrigin:
+      record.sourceOrigin === undefined ? null : sourceOriginSegment(record.sourceOrigin),
     diagnosticOrigin: record.diagnosticOrigin ?? null,
     monoExpressionId:
       record.monoExpressionId === undefined ? null : instantiatedHirIdKey(record.monoExpressionId),
@@ -222,7 +230,7 @@ export function createProofMirOriginMap(): ProofMirOriginMap {
   const records = new Map<DraftProofMirOriginKey, DraftProofMirOrigin>();
   const diagnostics: ProofMirDiagnostic[] = [];
 
-  function nearestSourceOrigin(key: DraftProofMirOriginKey): HirOriginId | undefined {
+  function nearestSourceOrigin(key: DraftProofMirOriginKey): ProofMirSourceOriginText | undefined {
     const visited = new Set<string>();
     let current: DraftProofMirOriginKey | undefined = key;
     while (current !== undefined) {
@@ -276,7 +284,7 @@ export function createProofMirOriginMap(): ProofMirOriginMap {
       return intern({
         canonicalKey,
         owner: input.owner,
-        sourceOrigin: input.sourceOrigin,
+        sourceOrigin: sourceOriginText(input.sourceOrigin),
       });
     },
 
@@ -291,7 +299,9 @@ export function createProofMirOriginMap(): ProofMirOriginMap {
       return intern({
         canonicalKey,
         owner: input.owner,
-        ...(input.sourceOrigin === undefined ? {} : { sourceOrigin: input.sourceOrigin }),
+        ...(input.sourceOrigin === undefined
+          ? {}
+          : { sourceOrigin: sourceOriginText(input.sourceOrigin) }),
         monoStatementId: input.monoStatementId,
       });
     },
@@ -307,7 +317,9 @@ export function createProofMirOriginMap(): ProofMirOriginMap {
       return intern({
         canonicalKey,
         owner: input.owner,
-        ...(input.sourceOrigin === undefined ? {} : { sourceOrigin: input.sourceOrigin }),
+        ...(input.sourceOrigin === undefined
+          ? {}
+          : { sourceOrigin: sourceOriginText(input.sourceOrigin) }),
         monoExpressionId: input.monoExpressionId,
       });
     },
@@ -323,7 +335,9 @@ export function createProofMirOriginMap(): ProofMirOriginMap {
       return intern({
         canonicalKey,
         owner: input.owner,
-        ...(input.sourceOrigin === undefined ? {} : { sourceOrigin: input.sourceOrigin }),
+        ...(input.sourceOrigin === undefined
+          ? {}
+          : { sourceOrigin: sourceOriginText(input.sourceOrigin) }),
         monoLocalId: input.monoLocalId,
       });
     },
@@ -339,7 +353,9 @@ export function createProofMirOriginMap(): ProofMirOriginMap {
       return intern({
         canonicalKey,
         owner: input.owner,
-        ...(input.sourceOrigin === undefined ? {} : { sourceOrigin: input.sourceOrigin }),
+        ...(input.sourceOrigin === undefined
+          ? {}
+          : { sourceOrigin: sourceOriginText(input.sourceOrigin) }),
         monoProofId: input.monoProofId,
       });
     },
@@ -353,7 +369,9 @@ export function createProofMirOriginMap(): ProofMirOriginMap {
         ...(input.diagnosticOrigin === undefined
           ? {}
           : { diagnosticOrigin: input.diagnosticOrigin }),
-        ...(input.sourceOrigin === undefined ? {} : { sourceOrigin: input.sourceOrigin }),
+        ...(input.sourceOrigin === undefined
+          ? {}
+          : { sourceOrigin: sourceOriginText(input.sourceOrigin) }),
       });
     },
 

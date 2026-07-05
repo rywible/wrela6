@@ -16,14 +16,18 @@ export * as semantic from "./semantic";
 export * as shared from "./shared";
 export * as target from "./target";
 export {
+  compileUefiAArch64ImageAsync,
   compileUefiAArch64Image,
+  compileUefiAArch64ImageWithTraceAsync,
   createUefiAArch64TargetMetadata,
   fingerprintUefiAArch64ImageBytes,
 } from "./target/uefi-aarch64";
 export type {
+  CompileUefiAArch64ImageAsyncInput,
   CompileUefiAArch64ImageInput,
   CompileUefiAArch64ImageResult,
   UefiAArch64ArtifactSink,
   UefiAArch64ImageArtifact,
+  UefiAArch64InlineSmokeRequest,
   UefiAArch64TargetMetadata,
 } from "./target/uefi-aarch64";

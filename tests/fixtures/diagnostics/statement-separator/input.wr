@@ -1,0 +1,2 @@
+fn boot() -> u32:
+    return 0 x1F

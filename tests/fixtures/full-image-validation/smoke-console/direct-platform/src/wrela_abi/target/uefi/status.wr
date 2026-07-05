@@ -1,4 +1,4 @@
-pub enum UefiStatus:
+enum UefiStatus:
     success
     load_error
     invalid_parameter

@@ -1,5 +1,6 @@
 import type { LayoutFactKey } from "../../proof-check/model/fact-packet";
 import type { MonoInstanceId } from "../../mono/ids";
+import { stableJson } from "../../shared/stable-json";
 import type { OptIrEffectRequirement } from "../effects";
 import { optIrAliasClassId, optIrOriginId, optIrRegionId, type OptIrAliasClassId } from "../ids";
 import type { OptIrOrigin } from "../provenance";
@@ -338,10 +339,20 @@ function addRequirement(
   requirements: OptIrEffectRequirement[],
   requirement: OptIrEffectRequirement,
 ): void {
-  if (requirements.some((existing) => JSON.stringify(existing) === JSON.stringify(requirement))) {
+  if (requirements.some((existing) => stableJson(existing) === stableJson(requirement))) {
     return;
   }
   requirements.push(requirement);
+}
+
+export function dedupeOptIrEffectRequirementsForTest(
+  input: readonly OptIrEffectRequirement[],
+): readonly OptIrEffectRequirement[] {
+  const requirements: OptIrEffectRequirement[] = [];
+  for (const requirement of input) {
+    addRequirement(requirements, requirement);
+  }
+  return requirements;
 }
 
 function observationEdges(

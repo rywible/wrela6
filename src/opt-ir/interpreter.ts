@@ -232,19 +232,30 @@ function integerBinary(
   if (left === undefined || right === undefined) {
     return { kind: "trap", reason: "invalid-integer-binary-operands" };
   }
-  if (operation.operator !== "add") {
+  const raw = integerBinaryRawValue(operation.operator, left.value, right.value);
+  if (raw === undefined) {
     return { kind: "trap", reason: `unsupported-integer-binary:${operation.operator}` };
   }
-  const raw = left.value + right.value;
   const width = integerWidth(operation.resultTypes[0]);
   const modulus = 1n << BigInt(width);
-  if (context.overflowMode === "trap" && raw >= modulus) {
-    return { kind: "trap", reason: `integer-overflow:add:u${width}` };
+  if (context.overflowMode === "trap" && (raw < 0n || raw >= modulus)) {
+    return { kind: "trap", reason: `integer-overflow:${operation.operator}:u${width}` };
   }
   return assign(operation, context, {
     type: operation.resultTypes[0]!,
     value: modulo(raw, modulus),
   });
+}
+
+function integerBinaryRawValue(operator: unknown, left: bigint, right: bigint): bigint | undefined {
+  switch (operator) {
+    case "add":
+      return left + right;
+    case "multiply":
+      return left * right;
+    default:
+      return undefined;
+  }
 }
 
 function integerCompare(

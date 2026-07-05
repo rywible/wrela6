@@ -10,9 +10,6 @@ export function operationMayMaterializeAArch64MachineCall(
   if (operation === undefined || !isCallOperation(operation)) {
     return false;
   }
-  if (operation.kind === "intrinsicCall") {
-    return !staticChar16IntrinsicIsMaterializedInline(operation, materializationContext);
-  }
   if (operation.kind === "platformCall") {
     const lowering = materializationContext?.firmware?.platformCalls?.loweringFor(
       platformCallTargetKey(operation.target),
@@ -22,23 +19,4 @@ export function operationMayMaterializeAArch64MachineCall(
     }
   }
   return true;
-}
-
-function staticChar16IntrinsicIsMaterializedInline(
-  operation: OperationOf<"sourceCall" | "runtimeCall" | "platformCall" | "intrinsicCall">,
-  materializationContext: AArch64OperationMaterializationContext | undefined,
-): boolean {
-  if (
-    operation.kind !== "intrinsicCall" ||
-    operation.target.kind !== "intrinsic" ||
-    operation.target.intrinsicKey !== "uefi.utf16_static" ||
-    operation.resultIds.length !== 1
-  ) {
-    return false;
-  }
-  return (
-    materializationContext?.firmware?.staticChar16Pointers?.has(
-      `optir.value:${String(operation.resultIds[0])}`,
-    ) === true
-  );
 }

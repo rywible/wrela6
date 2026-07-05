@@ -16,7 +16,7 @@ export interface LinkedImageSection {
   readonly alignmentBytes: number;
   readonly rva: number;
   readonly virtualSizeBytes: number;
-  readonly bytes: readonly number[];
+  readonly bytes: Uint8Array;
   readonly contributions: readonly SectionContribution[];
 }
 
@@ -53,7 +53,7 @@ export interface AppliedRelocation {
   readonly addend: bigint;
   readonly accessScaleBytes?: number;
   readonly expectedEncodedValue: bigint;
-  readonly patchedBytes: readonly number[];
+  readonly patchedBytes: Uint8Array;
   readonly baseRelocationKey?: string;
 }
 
@@ -147,9 +147,9 @@ export interface CreateAArch64LinkedImageLayoutInput {
   readonly targetFingerprint: string;
   readonly targetPolicyFingerprint: string;
   readonly inputModules: readonly LinkedImageInputModule[];
-  readonly sections: readonly LinkedImageSection[];
+  readonly sections: readonly LinkedImageSectionInput[];
   readonly symbols: readonly ResolvedImageSymbol[];
-  readonly appliedRelocations: readonly AppliedRelocation[];
+  readonly appliedRelocations: readonly AppliedRelocationInput[];
   readonly baseRelocations: readonly ImageBaseRelocation[];
   readonly entry: AArch64LinkedImageEntry;
   readonly unwindRecords: readonly LinkedUnwindRecord[];
@@ -158,6 +158,14 @@ export interface CreateAArch64LinkedImageLayoutInput {
   readonly factSpending: readonly LinkedFactSpendingRecord[];
   readonly verification: LinkerVerificationSummary;
 }
+
+export type LinkedImageSectionInput = Omit<LinkedImageSection, "bytes"> & {
+  readonly bytes: Uint8Array | readonly number[];
+};
+
+export type AppliedRelocationInput = Omit<AppliedRelocation, "patchedBytes"> & {
+  readonly patchedBytes: Uint8Array | readonly number[];
+};
 
 export function createAArch64LinkedImageLayout(
   input: CreateAArch64LinkedImageLayoutInput,
@@ -171,7 +179,7 @@ export function createAArch64LinkedImageLayout(
     input.sections.map((section) =>
       deepFreeze({
         ...section,
-        bytes: [...section.bytes],
+        bytes: Uint8Array.from(section.bytes),
         contributions: sortByStableKey(
           section.contributions.map((contribution) => deepFreeze({ ...contribution })),
           (contribution) => contribution.stableKey,
@@ -191,7 +199,7 @@ export function createAArch64LinkedImageLayout(
     input.appliedRelocations.map((relocation) =>
       deepFreeze({
         ...relocation,
-        patchedBytes: [...relocation.patchedBytes],
+        patchedBytes: Uint8Array.from(relocation.patchedBytes),
       }),
     ),
     (relocation) => relocation.relocationKey,
@@ -440,6 +448,7 @@ function layoutFingerprintFor(payload: LayoutFingerprintPayload): string {
 
 function deepFreeze<Value>(value: Value): Value {
   if (value === null || typeof value !== "object") return value;
+  if (value instanceof Uint8Array) return value;
 
   for (const propertyName of Object.getOwnPropertyNames(value)) {
     const propertyValue = (value as Record<string, unknown>)[propertyName];

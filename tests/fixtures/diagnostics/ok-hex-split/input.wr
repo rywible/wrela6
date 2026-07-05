@@ -1,0 +1,2 @@
+fn boot():
+    let value = 0x10

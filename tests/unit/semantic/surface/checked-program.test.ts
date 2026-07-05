@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { functionId, itemId, moduleId, typeId, coreTypeId } from "../../../../src/semantic/ids";
+import {
+  fieldId,
+  functionId,
+  itemId,
+  moduleId,
+  typeId,
+  coreTypeId,
+} from "../../../../src/semantic/ids";
 import {
   CheckedProgramBuilder,
   completedMemberKeyString,
@@ -48,6 +55,31 @@ test("checked program builder builds empty program", () => {
   expect(program.monoClosureFacts.constructorKindRules.entries()).toEqual([]);
   expect(program.monoClosureFacts.instanceEligibilityRules.entries()).toEqual([]);
   expect(program.monoClosureFacts.externalEntryRoots.entries()).toEqual([]);
+});
+
+test("checked program builder reuses built snapshot until mutation", () => {
+  const builder = new CheckedProgramBuilder();
+  const first = builder.build();
+  const second = builder.build();
+
+  expect(second).toBe(first);
+  expect(second.fields).toBe(first.fields);
+
+  const source = SourceText.from("main.wr", "field");
+  builder.addField({
+    fieldId: fieldId(1),
+    itemId: itemId(1),
+    name: "value",
+    type: coreCheckedType(coreTypeId("u8")),
+    resourceKind: concreteKind("Copy"),
+    sourceSpan: source.span(0, 5),
+    fieldRole: "layoutField",
+  });
+
+  const afterMutation = builder.build();
+  expect(afterMutation).not.toBe(first);
+  expect(afterMutation.fields.entries().map((field) => field.fieldId)).toEqual([fieldId(1)]);
+  expect(builder.build()).toBe(afterMutation);
 });
 
 test("checked mono closure fact tables expose unique get lookups", () => {

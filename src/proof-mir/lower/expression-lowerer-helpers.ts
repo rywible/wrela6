@@ -4,6 +4,7 @@ import type {
   MonoCheckedType,
   MonoExpression,
   MonoExpressionId,
+  MonoLocal,
   MonomorphizedHirProgram,
   MonoLocalId,
   MonoPlaceProjection,
@@ -11,8 +12,9 @@ import type {
   MonoResourcePlace,
   MonoStatementId,
 } from "../../mono/mono-hir";
-import type { ParameterId } from "../../semantic/ids";
-import type { ConcreteResourceKind } from "../../semantic/surface/resource-kind";
+import { typeId, type ParameterId } from "../../semantic/ids";
+import { concreteKind, type ConcreteResourceKind } from "../../semantic/surface/resource-kind";
+import { appliedType } from "../../semantic/surface/type-model";
 import type { ProofMirCanonicalKey } from "../canonicalization/canonical-keys";
 import {
   proofMirDiagnostic,
@@ -39,7 +41,17 @@ import type {
   ProofMirComparisonOperator,
   ProofMirUnaryOperator,
 } from "../model/graph";
-import type { ProofMirExpressionLoweringInput, ProofMirLoweringResult } from "./lowering-context";
+import type {
+  ProofMirExpressionLoweringInput,
+  ProofMirLoweringContext,
+  ProofMirLoweringResult,
+} from "./lowering-context";
+
+const syntheticObjectMonoType = appliedType({
+  constructor: { kind: "source", typeId: typeId(1) },
+  arguments: [],
+  resourceKind: concreteKind("Copy"),
+}) as MonoCheckedType;
 
 export interface ProofMirExpressionLowererBlockKeyRef {
   blockKey?: ProofMirCanonicalKey;
@@ -251,7 +263,7 @@ export function originForExpression(
 ): ProofMirCanonicalKey {
   return context.originMap.fromMonoExpression({
     owner: { kind: "function", functionInstanceId: context.functionInstanceId },
-    sourceOrigin: expression.sourceOrigin as never,
+    sourceOrigin: expression.sourceOrigin,
     monoExpressionId: expression.expressionId,
   });
 }
@@ -316,6 +328,21 @@ export function monoPlaceForLocal(input: {
     kind: root.kind === "parameter" ? "parameter" : "local",
     ...(root.kind === "local" ? { localId: input.localId } : { parameterId: input.parameterId! }),
   };
+}
+
+export function monoPlaceForStatementLocal(
+  context: ProofMirLoweringContext,
+  local: MonoLocal,
+): MonoResourcePlace {
+  return monoPlaceForLocal({
+    program: context.program,
+    functionInstanceId: context.functionInstanceId,
+    localId: local.localId,
+    parameterId: local.parameterId,
+    type: local.type,
+    resourceKind: local.resourceKind,
+    sourceOrigin: local.sourceOrigin,
+  });
 }
 
 function sameMonoPlaceRoot(left: MonoPlaceRoot, right: MonoPlaceRoot): boolean {
@@ -398,12 +425,7 @@ export function monoObjectPlace(input: {
       localId: instantiatedHirId(input.functionInstanceId, hirLocalId(9_999)),
     },
     projection: [],
-    type: {
-      kind: "applied",
-      constructor: { kind: "source", typeId: 1 as never },
-      arguments: [],
-      resourceKind: { kind: "concrete", value: "Copy" },
-    } as never,
+    type: syntheticObjectMonoType,
     resourceKind: "Copy",
     sourceOrigin: input.sourceOrigin,
     kind: "local",

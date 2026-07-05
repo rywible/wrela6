@@ -1,4 +1,5 @@
 import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
+import { ModulePath } from "../../frontend";
 import { uefiAArch64TargetDiagnostic } from "./diagnostics";
 import {
   failedVerification,
@@ -19,6 +20,7 @@ export interface CompilerSourceRoot {
   readonly kind: "project" | "toolchain";
   readonly rootKey: string;
   readonly rootPath: string;
+  readonly filesystemPath?: string;
   readonly trustedForAuthority: false;
 }
 
@@ -64,6 +66,7 @@ export interface FixtureProjectFilesystem {
   readonly readDirectory: (path: string) => readonly string[];
   readonly isDirectory: (path: string) => boolean;
   readonly readTextFile: (path: string) => string;
+  readonly realPath: (path: string) => string;
 }
 
 export interface FixtureProjectPathOperations {
@@ -98,6 +101,7 @@ export function compilerPackageInput(
     ),
   );
   const diagnostics = [
+    ...moduleNameDiagnostics(sourceFiles, input.entryModuleName ?? "image"),
     ...duplicateDiagnostics(sourceFiles, "sourceKey", "duplicate-source-key"),
     ...duplicateDiagnostics(sourceFiles, "moduleName", "duplicate-module-name"),
     ...validationFixturePacketSourceDiagnostics(
@@ -249,67 +253,147 @@ function sourceFilesFromRoot(
   paths: FixtureProjectPathOperations,
 ): readonly CompilerSourceFileInput[] {
   const rootDirectory =
-    sourceRoot.kind === "project"
-      ? paths.join(fixtureProjectPath, sourceRoot.rootPath)
-      : sourceRoot.rootPath;
+    sourceRoot.filesystemPath ?? physicalRootDirectory(fixtureProjectPath, sourceRoot, paths);
+  const realRootDirectory = filesystem.realPath(rootDirectory);
   const nestedSourceRootDirectories = sourceRoots
     .filter((candidate) => candidate.rootKey !== sourceRoot.rootKey)
-    .map((candidate) =>
-      candidate.kind === "project"
-        ? paths.join(fixtureProjectPath, candidate.rootPath)
-        : candidate.rootPath,
+    .map(
+      (candidate) =>
+        candidate.filesystemPath ?? physicalRootDirectory(fixtureProjectPath, candidate, paths),
     )
-    .filter((candidateDirectory) => candidateDirectory.startsWith(`${rootDirectory}/`));
+    .filter((candidateDirectory) =>
+      isNestedLexicalSourceRoot(paths, rootDirectory, candidateDirectory),
+    );
   const files: CompilerSourceFileInput[] = [];
   visitSourceDirectory(
     rootDirectory,
+    realRootDirectory,
     rootDirectory,
     sourceRoot,
     nestedSourceRootDirectories,
     filesystem,
     paths,
+    new Set<string>(),
     files,
   );
   return files;
 }
 
+function physicalRootDirectory(
+  fixtureProjectPath: string,
+  sourceRoot: CompilerSourceRoot,
+  paths: FixtureProjectPathOperations,
+): string {
+  return sourceRoot.kind === "project"
+    ? paths.join(fixtureProjectPath, sourceRoot.rootPath)
+    : sourceRoot.rootPath;
+}
+
 function visitSourceDirectory(
   rootDirectory: string,
+  realRootDirectory: string,
   directory: string,
   sourceRoot: CompilerSourceRoot,
   nestedSourceRootDirectories: readonly string[],
   filesystem: FixtureProjectFilesystem,
   paths: FixtureProjectPathOperations,
+  activeRealDirectories: Set<string>,
   files: CompilerSourceFileInput[],
 ): void {
-  const entries = [...filesystem.readDirectory(directory)].sort(compareCodeUnitStrings);
-  for (const entry of entries) {
-    const path = paths.join(directory, entry);
-    if (filesystem.isDirectory(path)) {
-      if (nestedSourceRootDirectories.includes(path)) continue;
-      visitSourceDirectory(
-        rootDirectory,
-        path,
-        sourceRoot,
-        nestedSourceRootDirectories,
-        filesystem,
-        paths,
-        files,
-      );
-      continue;
-    }
-    if (!entry.endsWith(".wr")) continue;
+  const activeDirectoryKey = pathKeyWithinSourceRoot(
+    filesystem,
+    paths,
+    rootDirectory,
+    realRootDirectory,
+    directory,
+  );
+  if (activeDirectoryKey === undefined || activeRealDirectories.has(activeDirectoryKey)) return;
+  activeRealDirectories.add(activeDirectoryKey);
 
-    const pathWithinRoot = paths.normalize(paths.relative(rootDirectory, path));
-    const sourceKey = `${sourceRoot.rootPath}/${pathWithinRoot}`;
-    files.push(
-      Object.freeze({
-        sourceKey,
-        moduleName: moduleNameFromSourceRoot(sourceRoot, pathWithinRoot),
-        text: filesystem.readTextFile(path),
-      }),
-    );
+  try {
+    const entries = [...filesystem.readDirectory(directory)].sort(compareCodeUnitStrings);
+    for (const entry of entries) {
+      const path = paths.join(directory, entry);
+      if (filesystem.isDirectory(path)) {
+        if (nestedSourceRootDirectories.includes(path)) continue;
+        visitSourceDirectory(
+          rootDirectory,
+          realRootDirectory,
+          path,
+          sourceRoot,
+          nestedSourceRootDirectories,
+          filesystem,
+          paths,
+          activeRealDirectories,
+          files,
+        );
+        continue;
+      }
+      if (!entry.endsWith(".wr")) continue;
+      if (!isWithinSourceRoot(filesystem, paths, rootDirectory, realRootDirectory, path)) continue;
+
+      const pathWithinRoot = paths.normalize(paths.relative(rootDirectory, path));
+      const sourceKey = `${sourceRoot.rootPath}/${pathWithinRoot}`;
+      files.push(
+        Object.freeze({
+          sourceKey,
+          moduleName: moduleNameFromSourceRoot(sourceRoot, pathWithinRoot),
+          text: filesystem.readTextFile(path),
+        }),
+      );
+    }
+  } finally {
+    activeRealDirectories.delete(activeDirectoryKey);
   }
+}
+
+function isNestedLexicalSourceRoot(
+  paths: FixtureProjectPathOperations,
+  rootDirectory: string,
+  path: string,
+): boolean {
+  const pathWithinRoot = paths.normalize(paths.relative(rootDirectory, path));
+  return pathWithinRoot.length > 0 && !isOutsideRelativePath(pathWithinRoot);
+}
+
+function isWithinSourceRoot(
+  filesystem: FixtureProjectFilesystem,
+  paths: FixtureProjectPathOperations,
+  rootDirectory: string,
+  realRootDirectory: string,
+  path: string,
+): boolean {
+  return (
+    pathKeyWithinSourceRoot(filesystem, paths, rootDirectory, realRootDirectory, path) !== undefined
+  );
+}
+
+function pathKeyWithinSourceRoot(
+  filesystem: FixtureProjectFilesystem,
+  paths: FixtureProjectPathOperations,
+  rootDirectory: string,
+  realRootDirectory: string,
+  path: string,
+): string | undefined {
+  const pathWithinRoot = paths.normalize(paths.relative(rootDirectory, path));
+  if (isOutsideRelativePath(pathWithinRoot)) return undefined;
+  const realPath = paths.normalize(filesystem.realPath(path));
+  const realPathWithinRoot = paths.normalize(paths.relative(realRootDirectory, realPath));
+  return isOutsideRelativePath(realPathWithinRoot) ? undefined : realPath;
+}
+
+function isOutsideRelativePath(relativePath: string): boolean {
+  return (
+    (relativePath.startsWith("..") &&
+      (relativePath.length === 2 ||
+        relativePath.startsWith("../") ||
+        relativePath.startsWith("..\\"))) ||
+    isAbsolutePath(relativePath)
+  );
+}
+
+function isAbsolutePath(path: string): boolean {
+  return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
 }
 
 function moduleNameFromSourceRoot(sourceRoot: CompilerSourceRoot, pathWithinRoot: string): string {
@@ -349,6 +433,37 @@ function duplicateDiagnostics(
   );
 }
 
+function moduleNameDiagnostics(
+  sourceFiles: readonly CompilerSourceFileInput[],
+  entryModuleName: string,
+) {
+  const diagnostics: ReturnType<typeof uefiAArch64TargetDiagnostic>[] = [];
+  if (!isValidModuleName(entryModuleName)) {
+    diagnostics.push(packageInputDiagnostic(`invalid-entry-module-name:${entryModuleName}`));
+  }
+  const invalidSourceModuleNames = new Set<string>();
+  for (const sourceFile of sourceFiles) {
+    if (!isValidModuleName(sourceFile.moduleName)) {
+      invalidSourceModuleNames.add(sourceFile.moduleName);
+    }
+  }
+  diagnostics.push(
+    ...[...invalidSourceModuleNames]
+      .sort(compareCodeUnitStrings)
+      .map((moduleName) => packageInputDiagnostic(`invalid-source-module-name:${moduleName}`)),
+  );
+  return diagnostics;
+}
+
+function isValidModuleName(moduleName: string): boolean {
+  return ModulePath.tryFrom(moduleNameToUefiPackageModulePathKey(moduleName)).kind === "valid";
+}
+
+export function moduleNameToUefiPackageModulePathKey(moduleName: string): string {
+  const normalized = moduleName.replace(/\./g, "/");
+  return normalized.endsWith(".wr") ? normalized : `${normalized}.wr`;
+}
+
 function moduleNameFromSourceKey(sourceKey: string): string {
   return sourceKey.slice(0, -".wr".length).replace(/\//g, ".");
 }
@@ -373,6 +488,7 @@ const fixtureProjectPosixPaths: FixtureProjectPathOperations = Object.freeze({
   relative: (source: string, target: string) => {
     const normalizedSource = normalizeSourcePath(source).replace(/\/+$/g, "");
     const normalizedTarget = normalizeSourcePath(target);
+    if (normalizedSource === normalizedTarget) return "";
     const prefix = `${normalizedSource}/`;
     return normalizedTarget.startsWith(prefix)
       ? normalizedTarget.slice(prefix.length)

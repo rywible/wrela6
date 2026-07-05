@@ -207,9 +207,16 @@ export interface ProofMirValidatedBufferReadLoweringInput {
   readonly blockKey: ProofMirCanonicalKey;
 }
 
+export interface ProofMirDerivedFieldComparisonLoweringInput {
+  readonly context: ProofMirLoweringContext;
+  readonly expression: MonoExpression;
+  readonly blockKey: ProofMirCanonicalKey;
+}
+
 export interface ProofMirForLoweringInput {
   readonly context: ProofMirLoweringContext;
   readonly statement: MonoForStatement;
+  readonly sourceStatement: Pick<MonoStatement, "sourceOrigin" | "statementId">;
   readonly blockKey: ProofMirCanonicalKey;
 }
 
@@ -282,6 +289,9 @@ export interface ProofMirValidatedBufferReadLowerer {
   lowerValidatedBufferRead(
     input: ProofMirValidatedBufferReadLoweringInput,
   ): ProofMirLoweringResult<ProofMirDraftOperand>;
+  lowerDerivedFieldComparison(
+    input: ProofMirDerivedFieldComparisonLoweringInput,
+  ): ProofMirLoweringResult<ProofMirDraftOperand> | undefined;
 }
 
 export interface ProofMirIteratorLowerer {

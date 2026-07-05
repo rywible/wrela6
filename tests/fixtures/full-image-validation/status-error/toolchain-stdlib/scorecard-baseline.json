@@ -1,0 +1,14 @@
+{
+  "schema": "wrela.cost-scorecard-baseline",
+  "schemaVersion": 1,
+  "caseKey": "status-error/toolchain-stdlib",
+  "metrics": {
+    "optIrOperationsPre": 1,
+    "optIrOperationsPost": 1,
+    "objectSectionBytes": 12,
+    "executableTextBytes": 920,
+    "finalImageBytes": 2560,
+    "staticInstructionEstimate": 230,
+    "staticCycleEstimate": 247
+  }
+}

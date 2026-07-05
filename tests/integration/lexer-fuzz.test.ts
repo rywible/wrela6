@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import fastCheck from "fast-check";
-import type { LexDiagnostic } from "../../src/lexer/diagnostics";
-import type { TokenStream } from "../../src/lexer/token-stream";
+import type { LexDiagnostic } from "../../src/frontend/lexer/diagnostics";
+import type { TokenStream } from "../../src/frontend/lexer/token-stream";
 import { makeLexerHarness } from "../support/lexer-fakes";
 import { expectValidLexerResult, expectBalancedLayout } from "../support/lexer-invariants";
 

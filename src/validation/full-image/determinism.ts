@@ -71,7 +71,11 @@ export function compareFullImageValidationStdlibModeEquivalence(
   report: FullImageValidationReport,
 ): readonly FullImageValidationEquivalenceEvidence[] {
   const evidence: FullImageValidationEquivalenceEvidence[] = [];
-  for (const scenario of ["smoke-console", "packet-counter"] as const) {
+  for (const scenario of [
+    "smoke-console",
+    "packet-counter",
+    "packet-counter-real-stream",
+  ] as const) {
     const cases = report.cases
       .filter((caseReport) => caseReport.scenario === scenario)
       .sort((left, right) => compareStdlibMode(left.stdlibMode, right.stdlibMode));

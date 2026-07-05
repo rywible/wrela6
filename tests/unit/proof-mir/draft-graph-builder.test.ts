@@ -5,6 +5,7 @@ import { createDraftGraphBuilder } from "../../../src/proof-mir/draft/draft-grap
 import {
   draftBlockKey,
   draftControlEdgeKey,
+  draftSiteDiscriminatedEdgeRole,
   draftScopeKey,
 } from "../../../src/proof-mir/draft/draft-keys";
 import { instantiatedHirId, monoInstanceId } from "../../../src/mono/ids";
@@ -319,6 +320,21 @@ describe("draft graph builder", () => {
     });
 
     expect(edge).toBe(secondEdge);
-    expect(edge).toBe(draftControlEdgeKey({ functionInstanceId, role: "goto:target" }));
+    expect(edge).toBe(
+      draftControlEdgeKey({
+        functionInstanceId,
+        role: draftSiteDiscriminatedEdgeRole({
+          edgeKind: "goto:target",
+          fromBlock: entry,
+        }),
+        fromBlockKey: entry,
+        toBlockKey: draftBlockKey({
+          functionInstanceId,
+          role: "target",
+          sourceOrigin: "synthetic:target",
+        }),
+        originKey: origin,
+      }),
+    );
   });
 });

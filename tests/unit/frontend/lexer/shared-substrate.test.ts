@@ -14,6 +14,8 @@ describe("shared compiler substrate", () => {
       message: "shared diagnostic",
       source,
       span: SourceSpan.from(0, 3),
+      ownerKey: "test:shared-substrate",
+      stableDetail: "TEST_DIAGNOSTIC:shared.wr:0:3",
     });
 
     expect(source.positionAt(4)).toEqual({ offset: 4, line: 2, column: 1 });

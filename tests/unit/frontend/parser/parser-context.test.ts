@@ -203,6 +203,32 @@ describe("ParserContext", () => {
       expect(diagnostic.absoluteStart).toBe(0);
       expect(diagnostic.absoluteEnd).toBe(5);
     });
+
+    test("statement separator diagnostics carry stable owner and detail fields", () => {
+      const context = makeContext([ident1, eof]);
+      context.reportSpan(
+        "PARSE_EXPECTED_STATEMENT_SEPARATOR",
+        "Expected a statement separator.",
+        0,
+        5,
+      );
+      const diagnostic = context.draftDiagnostics()[0]!;
+      expect(diagnostic.ownerKey).toBe("parser:statement-separator");
+      expect(diagnostic.stableDetail).toBe("span:0:5");
+    });
+
+    test("top-level declaration diagnostics carry stable owner and detail fields", () => {
+      const context = makeContext([ident1, eof]);
+      context.reportSpan(
+        "PARSE_EXPECTED_TOP_LEVEL_DECLARATION",
+        "Expected a top-level declaration.",
+        0,
+        5,
+      );
+      const diagnostic = context.draftDiagnostics()[0]!;
+      expect(diagnostic.ownerKey).toBe("parser:top-level-declaration");
+      expect(diagnostic.stableDetail).toBe("span:0:5");
+    });
   });
 
   describe("skipUntil", () => {

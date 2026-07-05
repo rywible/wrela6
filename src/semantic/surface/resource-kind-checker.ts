@@ -5,7 +5,14 @@ import type { ItemIndex } from "../item-index";
 import type { SourceItemKind } from "../item-index/item-records";
 import type { CheckedType } from "./type-model";
 import type { CheckedResourceKind, ConcreteResourceKind } from "./resource-kind";
-import { concreteKind, parametricKind, errorKind, joinResourceKinds } from "./resource-kind";
+import {
+  concreteKind,
+  parametricKind,
+  errorKind,
+  joinResourceKinds,
+  derivedKind,
+} from "./resource-kind";
+import type { TypeConstructorId } from "./type-model";
 
 export interface ResourceKindContext {
   readonly coreTypes: CoreTypeCatalog;
@@ -85,6 +92,11 @@ export function resourceKindForType(input: {
     }
     case "applied": {
       if (input.type.arguments.length === 0) return input.type.resourceKind;
+      const constructorKind = resourceKindForAppliedConstructor({
+        constructor: input.type.constructor,
+        context: input.context,
+      });
+      if (constructorKind !== undefined) return constructorKind;
       return joinResourceKinds(
         input.type.arguments.map((argument) =>
           resourceKindForType({ type: argument, context: input.context }),
@@ -98,6 +110,41 @@ export function resourceKindForType(input: {
     }
     case "error": {
       return errorKind();
+    }
+  }
+}
+
+function resourceKindForAppliedConstructor(input: {
+  readonly constructor: TypeConstructorId;
+  readonly context: ResourceKindContext;
+}): CheckedResourceKind | undefined {
+  switch (input.constructor.kind) {
+    case "core":
+      return undefined;
+    case "source": {
+      const typeRecord = input.context.index.type(input.constructor.typeId);
+      const itemRecord =
+        typeRecord !== undefined ? input.context.index.item(typeRecord.itemId) : undefined;
+      if (itemRecord !== undefined) {
+        const declKind = declarationKindForItem({
+          kind: itemRecord.kind,
+          modifiers: itemRecord.modifiers,
+        });
+        if (declKind !== undefined) {
+          return concreteKind(declKind);
+        }
+        if (itemRecord.kind === "class" || itemRecord.kind === "dataclass") {
+          const cached = input.context.sourceTypeKinds.get(input.constructor.typeId);
+          if (cached !== undefined) return cached;
+          return derivedKind("fieldAggregation", []);
+        }
+      }
+      return undefined;
+    }
+    case "target": {
+      const cached = input.context.targetTypeKinds.get(input.constructor.targetTypeId);
+      if (cached !== undefined) return cached;
+      return derivedKind("targetDeclared", []);
     }
   }
 }

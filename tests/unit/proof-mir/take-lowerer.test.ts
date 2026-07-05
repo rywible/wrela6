@@ -31,6 +31,7 @@ import type { ObligationId, SessionId, BrandId } from "../../../src/hir/ids";
 import type { ProofMirExpressionLowerer } from "../../../src/proof-mir/lower/lowering-context";
 import {
   lowerProofMirTakeForTest,
+  lowerProofMirTakeSequenceForTest,
   type TakeLowererFixture,
 } from "../../support/proof-mir/lower-harness/take-lowerer-harness";
 
@@ -368,6 +369,39 @@ describe("ProofMirTakeLowerer", () => {
     });
     expect(lowered.exits[0]?.crossedScopes.length).toBeGreaterThan(0);
     expect(lowered.exits[0]?.allowedTransfers.length).toBeGreaterThan(0);
+  });
+
+  test("repeated take exits use site-discriminated exit keys", () => {
+    const firstTake = streamTakeStatement({ statementOrdinal: 5 });
+    const secondTake = streamTakeStatement({ statementOrdinal: 6 });
+    const lowered = lowerProofMirTakeSequenceForTest({
+      functionInstanceId,
+      takeStatements: [firstTake, secondTake],
+      monoStatements: [
+        {
+          statementId: statementId(5),
+          kind: { kind: "take", statement: firstTake },
+          sourceOrigin: firstTake.sourceOrigin,
+        },
+        {
+          statementId: statementId(6),
+          kind: { kind: "take", statement: secondTake },
+          sourceOrigin: secondTake.sourceOrigin,
+        },
+      ],
+      program: programWithProofMetadata({
+        obligations: [streamClosureObligation(proofId<ObligationId>(3))],
+      }),
+      locals: [],
+      expression: expressionLowererForTakeTest,
+    });
+
+    expect(lowered.kind).toBe("ok");
+    if (lowered.kind !== "ok") return;
+    expect(lowered.exits).toHaveLength(2);
+    const exitKeys = lowered.exits.map((exit) => String(exit.exitKey));
+    expect(new Set(exitKeys).size).toBe(2);
+    expect(exitKeys.every((exitKey) => exitKey.includes("take.exit"))).toBe(true);
   });
 
   test("close and discharge statements come only from mono proof metadata sites", () => {

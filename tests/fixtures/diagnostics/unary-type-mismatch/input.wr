@@ -1,0 +1,6 @@
+fn negate(x: u32) -> u32:
+    return -x
+
+uefi image Boot:
+    fn boot() -> Never:
+        return

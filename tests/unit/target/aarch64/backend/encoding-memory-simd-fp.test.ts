@@ -200,6 +200,49 @@ describe("AArch64 memory/SIMD/FP encoder", () => {
     expect([...result.value.bytes]).toEqual([0xfe, 0x07, 0x00, 0xf9]);
   });
 
+  test("encodes FP/SIMD unsigned load and store forms for callee-saved frame slots", () => {
+    const store = encodeAArch64PhysicalInstructionWithFamilies(
+      {
+        catalog: RPI5_BACKEND_CATALOGS.encodingCatalog,
+        registerModel: RPI5_BACKEND_CATALOGS.registerModel,
+        instruction: {
+          opcode: "str-unsigned-immediate",
+          operands: [
+            { kind: "register", register: "d8" },
+            { kind: "memory-base", register: "sp" },
+            { kind: "immediate", value: 8n },
+          ],
+          accessWidthBytes: 8,
+        },
+      },
+      aarch64MemorySimdFpEncoderFamilies,
+    );
+    const load = encodeAArch64PhysicalInstructionWithFamilies(
+      {
+        catalog: RPI5_BACKEND_CATALOGS.encodingCatalog,
+        registerModel: RPI5_BACKEND_CATALOGS.registerModel,
+        instruction: {
+          opcode: "ldr-unsigned-immediate",
+          operands: [
+            { kind: "register", register: "d8" },
+            { kind: "memory-base", register: "sp" },
+            { kind: "immediate", value: 8n },
+          ],
+          accessWidthBytes: 8,
+        },
+      },
+      aarch64MemorySimdFpEncoderFamilies,
+    );
+
+    expect(store.kind).toBe("ok");
+    expect(load.kind).toBe("ok");
+    if (store.kind !== "ok" || load.kind !== "ok") {
+      throw new Error("expected FP/SIMD load/store encodings");
+    }
+    expect([...store.value.bytes]).toEqual([0xe8, 0x07, 0x00, 0xfd]);
+    expect([...load.value.bytes]).toEqual([0xe8, 0x07, 0x40, 0xfd]);
+  });
+
   test("add-pageoff rejects stack and zero-register aliases", () => {
     const cases = [
       { destination: "xzr", source: "x1" },

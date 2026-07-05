@@ -207,7 +207,7 @@ function attachCheckedFunctionSummaries(
                   originId: function_.originId,
                 }),
               }),
-          ...(checkedSummary === undefined && policy === undefined
+          ...(checkedSummary === undefined
             ? {}
             : {
                 summary: Object.freeze({

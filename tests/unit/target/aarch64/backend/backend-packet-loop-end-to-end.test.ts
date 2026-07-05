@@ -12,7 +12,7 @@ describe("AArch64 backend packet loop end-to-end compile", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected packet loop object");
-    expect(result.objectModule.sections[0]?.bytes).toEqual([
+    expect(Array.from(result.objectModule.sections[0]?.bytes ?? [])).toEqual([
       0x20, 0x08, 0x40, 0xf9, 0x01, 0x04, 0xc0, 0xda, 0xbf, 0x3b, 0x03, 0xd5, 0x9f, 0x3b, 0x03,
       0xd5, 0xc0, 0x03, 0x5f, 0xd6,
     ]);

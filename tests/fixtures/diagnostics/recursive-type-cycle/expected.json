@@ -1,0 +1,10 @@
+{
+  "phase": "semantic",
+  "diagnostics": [
+    {
+      "code": "SURFACE_RECURSIVE_TYPE_CYCLE",
+      "spanText": "A",
+      "count": 1
+    }
+  ]
+}

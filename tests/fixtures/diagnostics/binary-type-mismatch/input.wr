@@ -1,0 +1,11 @@
+fn from_string_left() -> Never:
+    let value = "s" + 5
+    return
+
+fn from_string_right() -> Never:
+    let value = 1 + "s"
+    return
+
+uefi image Boot:
+    fn boot() -> Never:
+        return

@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { CollectingDiagnosticSink } from "../../../../src/frontend/lexer/diagnostics";
+import { KeywordTable } from "../../../../src/frontend/lexer/keyword-table";
+import { Lexer } from "../../../../src/frontend/lexer/lexer";
 import { Token } from "../../../../src/frontend/lexer/token";
 import { TokenKind } from "../../../../src/frontend/lexer/token-kind";
 import { TokenStream } from "../../../../src/frontend/lexer/token-stream";
 import { SourceSpan } from "../../../../src/frontend/lexer/source-span";
+import { SourceText } from "../../../../src/frontend/lexer/source-text";
 import { SyntaxKind } from "../../../../src/frontend/syntax/syntax-kind";
 import { SyntaxFactory } from "../../../../src/frontend/syntax/syntax-factory";
 import { ParserContext } from "../../../../src/frontend/parser/parser-context";
@@ -24,9 +28,14 @@ function makeContext(tokens: Token[]): ParserContext {
   return new ParserContext({ tokens: TokenStream.from(tokens), factory: new SyntaxFactory() });
 }
 
-function makeContextWithDepth(tokens: Token[], maxDepth: number): ParserContext {
+function makeLexedContextWithDepth(sourceText: string, maxDepth: number): ParserContext {
+  const lexer = new Lexer({
+    keywords: KeywordTable.default(),
+    diagnostics: new CollectingDiagnosticSink(),
+  });
+  const lexResult = lexer.lex(SourceText.from("depth.wr", sourceText));
   return new ParserContext({
-    tokens: TokenStream.from(tokens),
+    tokens: lexResult.tokens,
     factory: new SyntaxFactory(),
     maxDepth,
   });
@@ -76,7 +85,7 @@ describe("top-level recovery", () => {
     expect(errorNode.children[0]!.reconstruct()).toBe("@");
 
     const recoveredDiag = node.diagnostics.find(
-      (diagnostic) => diagnostic.code === "PARSE_RECOVERY_SKIPPED_TOKENS",
+      (diagnostic) => diagnostic.code === "PARSE_EXPECTED_TOP_LEVEL_DECLARATION",
     );
     expect(recoveredDiag).toBeDefined();
   });
@@ -246,53 +255,17 @@ function collectAllDiagnostics(node: GreenNode): readonly any[] {
 
 describe("nesting depth", () => {
   test("PARSE_NESTING_LIMIT_EXCEEDED is emitted instead of stack overflow with maxDepth 2", () => {
-    const ifToken = makeToken(TokenKind.If, "if", 0, 2);
-    const condToken = makeToken(TokenKind.Identifier, "true", 3, 7);
-    const colonToken = makeToken(TokenKind.Colon, ":", 7, 8);
-    const newlineToken = makeToken(TokenKind.Newline, "\n", 8, 9);
-    const indentToken1 = makeToken(TokenKind.Indent, "  ", 9, 11);
-    const ifToken2 = makeToken(TokenKind.If, "if", 11, 13);
-    const condToken2 = makeToken(TokenKind.Identifier, "true", 14, 18);
-    const colonToken2 = makeToken(TokenKind.Colon, ":", 18, 19);
-    const newlineToken2 = makeToken(TokenKind.Newline, "\n", 19, 20);
-    const indentToken2 = makeToken(TokenKind.Indent, "  ", 20, 22);
-    const ifToken3 = makeToken(TokenKind.If, "if", 22, 24);
-    const condToken3 = makeToken(TokenKind.Identifier, "true", 25, 29);
-    const colonToken3 = makeToken(TokenKind.Colon, ":", 29, 30);
-    const newlineToken3 = makeToken(TokenKind.Newline, "\n", 30, 31);
-    const indentToken3 = makeToken(TokenKind.Indent, "  ", 31, 33);
-    const continueToken = makeToken(TokenKind.Continue, "continue", 33, 41);
-    const newlineToken4 = makeToken(TokenKind.Newline, "\n", 41, 42);
-    const dedentToken3 = makeToken(TokenKind.Dedent, "", 42, 42);
-    const dedentToken2 = makeToken(TokenKind.Dedent, "", 42, 42);
-    const dedentToken1 = makeToken(TokenKind.Dedent, "", 42, 42);
-    const eofToken = makeToken(TokenKind.Eof, "", 42, 42);
-
-    const tokens = [
-      ifToken,
-      condToken,
-      colonToken,
-      newlineToken,
-      indentToken1,
-      ifToken2,
-      condToken2,
-      colonToken2,
-      newlineToken2,
-      indentToken2,
-      ifToken3,
-      condToken3,
-      colonToken3,
-      newlineToken3,
-      indentToken3,
-      continueToken,
-      newlineToken4,
-      dedentToken3,
-      dedentToken2,
-      dedentToken1,
-      eofToken,
-    ];
-
-    const context = makeContextWithDepth(tokens, 2);
+    const context = makeLexedContextWithDepth(
+      [
+        "fn main() -> Never:",
+        "    if true:",
+        "        if true:",
+        "            if true:",
+        "                continue",
+        "",
+      ].join("\n"),
+      2,
+    );
     const node = parseSourceFile(context);
 
     const allDiagnostics = collectAllDiagnostics(node);

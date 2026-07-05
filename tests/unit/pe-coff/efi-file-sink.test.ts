@@ -21,10 +21,10 @@ const FILE_SINK_TEST_VERIFICATION: PeCoffWriterVerificationSummary = Object.free
 
 describe("PE/COFF EFI file sink", () => {
   test("uses the injected write function", () => {
-    const writes: { readonly artifactName: string; readonly bytes: readonly number[] }[] = [];
+    const writes: { readonly artifactName: string; readonly bytes: Uint8Array }[] = [];
     const sink = createPeCoffEfiFileSink({
       writeBytes: (artifactName, bytes) => {
-        writes.push({ artifactName, bytes });
+        writes.push({ artifactName, bytes: Uint8Array.from(bytes) });
         return peCoffOk({
           value: undefined,
           verification: FILE_SINK_TEST_VERIFICATION,
@@ -35,8 +35,10 @@ describe("PE/COFF EFI file sink", () => {
     const result = sink.writeArtifact(efiArtifactForSinkTest({ artifactName: "boot.efi" }));
 
     expect(result.kind).toBe("ok");
-    expect(writes).toEqual([{ artifactName: "boot.efi", bytes: [0x4d, 0x5a] }]);
-    expect(Object.isFrozen(writes[0]?.bytes)).toBe(true);
+    expect(
+      writes.map((write) => ({ artifactName: write.artifactName, bytes: Array.from(write.bytes) })),
+    ).toEqual([{ artifactName: "boot.efi", bytes: [0x4d, 0x5a] }]);
+    expect(writes[0]?.bytes).toBeInstanceOf(Uint8Array);
   });
 
   test("rejects path separators and non-efi extensions before writing", () => {
@@ -122,7 +124,7 @@ function efiArtifactForSinkTest(
     artifactName: "wrela.efi",
     mediaType: "application/vnd.microsoft.portable-executable",
     fileExtension: ".efi",
-    bytes: Object.freeze([0x4d, 0x5a]),
+    bytes: Uint8Array.of(0x4d, 0x5a),
     deterministicMetadata: Object.freeze({
       schema: "wrela.pe-coff-efi-image",
       schemaVersion: 1,

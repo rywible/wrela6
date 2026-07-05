@@ -1,0 +1,14 @@
+{
+  "schema": "wrela.cost-scorecard-baseline",
+  "schemaVersion": 1,
+  "caseKey": "two-branch-control-flow/ejected-stdlib",
+  "metrics": {
+    "optIrOperationsPre": 7,
+    "optIrOperationsPost": 2,
+    "objectSectionBytes": 80,
+    "executableTextBytes": 988,
+    "finalImageBytes": 3584,
+    "staticInstructionEstimate": 247,
+    "staticCycleEstimate": 275
+  }
+}

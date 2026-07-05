@@ -1,4 +1,3 @@
-import { Parser } from "./parser/parser";
 import { combineDiagnostics } from "./parser/parser-diagnostics";
 import type { ModuleGraphLexResult } from "./lexer/module-graph-lexer";
 import type { ModulePath } from "./lexer/module-path";
@@ -9,6 +8,7 @@ import type { SyntaxTree } from "./syntax/syntax-tree";
 import type { LexDiagnostic } from "./lexer/diagnostics";
 import type { Diagnostic } from "../shared/diagnostics";
 import type { ParseDiagnostic } from "./parser/parser-diagnostics";
+import { Parser } from "./parser/parser";
 
 export interface ParsedModule {
   path: ModulePath;
@@ -50,14 +50,26 @@ export function parseModuleGraph(input: ModuleGraphParseInput): ParsedModuleGrap
     });
   }
 
-  const allDiagnostics = combineDiagnostics(
-    input.lexerDiagnostics ?? [],
-    parsedModules.flatMap((module) => module.parserDiagnostics),
+  const parserDiagnostics = parsedModules.flatMap((module) => module.parserDiagnostics);
+  const lexerDiagnostics = (input.lexerDiagnostics ?? []).filter(
+    (diagnostic) =>
+      !parserDiagnostics.some((parserDiagnostic) => diagnosticsMatch(diagnostic, parserDiagnostic)),
   );
+  const allDiagnostics = combineDiagnostics(lexerDiagnostics, parserDiagnostics);
 
   return {
     entry: input.graph.entry,
     modules: parsedModules,
     diagnostics: allDiagnostics,
   };
+}
+
+function diagnosticsMatch(left: Diagnostic, right: Diagnostic): boolean {
+  return (
+    left.code === right.code &&
+    left.message === right.message &&
+    left.source.name === right.source.name &&
+    left.span.start === right.span.start &&
+    left.span.end === right.span.end
+  );
 }

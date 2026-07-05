@@ -13,6 +13,7 @@ import {
   lowerValidatedBufferMemberRead,
   unlowerableValidatedBufferReadDiagnostic,
 } from "./validated-buffer-read-field-lowering";
+import { lowerDerivedFieldComparison } from "./validated-buffer-derived-comparison-lowering";
 import { type RecordedProofMirStatement } from "./validated-buffer-read-statement-recorder";
 
 export type { ProofMirLoweringResult };
@@ -51,6 +52,12 @@ export function createProofMirValidatedBufferReadLowerer(): ProofMirValidatedBuf
   return {
     lowerValidatedBufferRead(loweringInput) {
       return lowerValidatedBufferReadImpl({
+        loweringInput,
+        recorded,
+      });
+    },
+    lowerDerivedFieldComparison(loweringInput) {
+      return lowerDerivedFieldComparison({
         loweringInput,
         recorded,
       });

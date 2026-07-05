@@ -10,6 +10,7 @@ import type { OptIrOperation } from "../operations";
 import type { OptIrProgram } from "../program";
 import { verifyOptIrTerminatorEdges } from "../terminators";
 import { verifyOptIrCfgEdits, type OptIrCfgSnapshotReferenceSet } from "./cfg-edit-verifier";
+import { verifyOptIrConstantPool } from "./constant-pool-verifier";
 import { verifyOptIrOperationMetadata } from "./operation-metadata-verifier";
 import { verifyOptIrOperationSchema } from "./operation-schema-verifier";
 import { verifyOptIrRegions } from "./region-verifier";
@@ -106,6 +107,12 @@ export function verifyOptIrProgram(input: VerifyOptIrProgramInput): VerifyOptIrP
     originId: input.program.provenance.originIds[0],
   };
   diagnostics.push(
+    ...verifyOptIrConstantPool({
+      program: input.program,
+      context: programContext,
+    }),
+  );
+  diagnostics.push(
     ...verifyOptIrRegions({
       program: input.program,
       operations: referencedOperations(input.operations, operationIdsReferencedByBlocks),
@@ -121,11 +128,41 @@ export function verifyOptIrProgram(input: VerifyOptIrProgramInput): VerifyOptIrP
       context: programContext,
     }),
   );
+  diagnostics.push(
+    ...verifyNoUnloweredAggregates({
+      operations: referencedOperations(input.operations, operationIdsReferencedByBlocks),
+    }),
+  );
 
   const sorted = sortOptIrDiagnostics(diagnostics);
   return sorted.length === 0
     ? { kind: "ok", diagnostics: [] }
     : { kind: "error", diagnostics: sorted };
+}
+
+function verifyNoUnloweredAggregates(input: {
+  readonly operations: ReadonlyMap<OptIrOperationId, OptIrOperation>;
+}): readonly OptIrDiagnostic[] {
+  return [...input.operations.values()].flatMap((operation) => {
+    if (
+      operation.kind !== "aggregateConstruct" &&
+      operation.kind !== "aggregateExtract" &&
+      operation.kind !== "aggregateInsert"
+    ) {
+      return [];
+    }
+    return [
+      makeOptIrVerifierDiagnostic({
+        code: "OPT_IR_UNLOWERED_AGGREGATE",
+        messageTemplate:
+          "Aggregate operation remains after final OptIR verification and must be lowered before backend materialization.",
+        ownerKey: `operation:${operation.operationId}`,
+        rootCauseKey: `aggregate:${operation.kind}`,
+        stableDetail: `unlowered-aggregate:${operation.kind}:${operation.operationId}`,
+        originId: operation.originId,
+      }),
+    ];
+  });
 }
 
 export function makeOptIrVerifierDiagnostic(input: {

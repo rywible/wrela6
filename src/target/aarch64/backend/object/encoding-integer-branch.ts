@@ -28,6 +28,7 @@ export const aarch64IntegerBranchEncoderFamilies = Object.freeze([
       "udiv",
       "sdiv",
       "lsl",
+      "lsl-immediate",
       "lsr",
       "cmp-shifted-register",
       "cset",
@@ -62,6 +63,7 @@ function encodeIntegerBranchInstruction(input: AArch64EncodeInput) {
       input,
       REGISTER_THREE_OPERAND_BASES.get(input.instruction.opcode)!,
     );
+  if (input.instruction.opcode === "lsl-immediate") return encodeLslImmediate(input);
   if (input.instruction.opcode === "cmp-shifted-register")
     return encodeCompareShiftedRegister(input);
   if (input.instruction.opcode === "cset") return encodeCset(input);
@@ -242,6 +244,38 @@ function encodeThreeRegisterInstruction(input: AArch64EncodeInput, baseWord: num
   }
   return encodingOk({
     bytes: writeU32Le(baseWord | (rightNumber << 16) | (leftNumber << 5) | destinationNumber),
+  });
+}
+
+function encodeLslImmediate(input: AArch64EncodeInput) {
+  const [destination, source, shift] = input.instruction.operands;
+  if (
+    destination?.kind !== "register" ||
+    source?.kind !== "register" ||
+    shift?.kind !== "immediate"
+  ) {
+    return encodingError("encoding:unresolved-operands:lsl-immediate");
+  }
+  if (shift.value < 0n || shift.value > 63n) {
+    return encodingError(`encoding:immediate-out-of-range:lsl-immediate:${shift.value.toString()}`);
+  }
+  const destinationNumber = registerNumber(input, destination.register);
+  const sourceNumber = registerNumber(input, source.register);
+  if (
+    !isPlainGeneralRegisterNumber(destinationNumber) ||
+    !isPlainGeneralRegisterNumber(sourceNumber)
+  ) {
+    return encodingError(
+      `encoding:illegal-register:lsl-immediate:${destination.register}:${source.register}`,
+    );
+  }
+  const shiftValue = Number(shift.value);
+  const immr = (64 - shiftValue) & 63;
+  const imms = 63 - shiftValue;
+  return encodingOk({
+    bytes: writeU32Le(
+      0xd3400000 | (immr << 16) | (imms << 10) | (sourceNumber << 5) | destinationNumber,
+    ),
   });
 }
 

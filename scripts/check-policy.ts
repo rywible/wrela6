@@ -104,13 +104,13 @@ function checkIdentifiers(filePath: string, sourceText: string): PolicyViolation
   return violations;
 }
 
-const layoutImportForbiddenPatterns = [
-  /from\s+["'][^"']*\/frontend\//,
-  /from\s+["'][^"']*\/parser\//,
-  /from\s+["'][^"']*\/proof\//,
-  /from\s+["'][^"']*\/codegen\//,
-  /from\s+["'][^"']*\/linker\//,
-  /from\s+["'][^"']*pe-coff/i,
+const layoutForbiddenModulePathPatterns = [
+  /[^"']*\/frontend\//,
+  /[^"']*\/parser\//,
+  /[^"']*\/proof\//,
+  /[^"']*\/codegen\//,
+  /[^"']*\/linker\//,
+  /[^"']*pe-coff/i,
 ] as const;
 
 const proofMirForbiddenModulePathPatterns = [
@@ -123,7 +123,7 @@ const proofMirForbiddenModulePathPatterns = [
   /[^"']*\/codegen\//,
   /[^"']*\/linker\//,
   /[^"']*(?:aarch64|pe-coff)/i,
-  /(?:bun:|node:fs|node:path|node:os|node:process|fs|path|os|process)/,
+  /^(?:bun:|node:fs|node:path|node:os|node:process|fs|path|os|process)/,
 ] as const;
 
 const proofCheckForbiddenModulePathPatterns = [
@@ -137,7 +137,7 @@ const proofCheckForbiddenModulePathPatterns = [
   /[^"']*\/proof-mir\/(?:lower|draft|canonicalization)\//,
   /[^"']*\/(?:opt|optimization|codegen|linker)\//,
   /[^"']*(?:aarch64|pe-coff)/i,
-  /(?:bun:|node:fs|node:path|node:os|node:process|fs|path|os|process)/,
+  /^(?:bun:|node:fs|node:path|node:os|node:process|fs|path|os|process)/,
 ] as const;
 
 const optIrForbiddenModulePathPatterns = [
@@ -150,35 +150,8 @@ const optIrForbiddenModulePathPatterns = [
   /[^"']*\/proof-mir\/(?:lower|draft|canonicalization)\//,
   /[^"']*\/(?:codegen|linker)\//,
   /[^"']*(?:aarch64|pe-coff)/i,
-  /(?:bun:|node:fs|node:path|node:os|node:process|bun|fs|path|os|process)/,
+  /^(?:bun:|node:fs|node:path|node:os|node:process|bun|fs|path|os|process)/,
 ] as const;
-
-function expandImportBoundaryPatterns(pathPatterns: readonly RegExp[]): RegExp[] {
-  const patterns: RegExp[] = [];
-  for (const pathPattern of pathPatterns) {
-    const pathSource = pathPattern.source;
-    patterns.push(new RegExp(`from\\s+["']${pathSource}`));
-    patterns.push(new RegExp(`import\\s+["']${pathSource}`));
-    patterns.push(new RegExp(`import\\s+\\w+\\s*=\\s*require\\(\\s*["']${pathSource}`));
-    if (pathSource.endsWith("\\/")) {
-      const barrelSource = `${pathSource.slice(0, -2)}["']`;
-      patterns.push(new RegExp(`from\\s+["']${barrelSource}`));
-      patterns.push(new RegExp(`import\\s+["']${barrelSource}`));
-      patterns.push(new RegExp(`import\\s+\\w+\\s*=\\s*require\\(\\s*["']${barrelSource}`));
-    }
-  }
-  return patterns;
-}
-
-const proofMirImportForbiddenPatterns = expandImportBoundaryPatterns(
-  proofMirForbiddenModulePathPatterns,
-);
-
-const proofCheckImportForbiddenPatterns = expandImportBoundaryPatterns(
-  proofCheckForbiddenModulePathPatterns,
-);
-
-const optIrImportForbiddenPatterns = expandImportBoundaryPatterns(optIrForbiddenModulePathPatterns);
 
 const peCoffImportForbiddenSourceRoots = [
   "src/frontend/",
@@ -254,26 +227,98 @@ function checkAArch64ImportBoundary(input: {
   return diagnostics;
 }
 
-function importedSpecifiers(sourceText: string): readonly string[] {
-  const specifiers: string[] = [];
-  const importPatterns = [
-    /from\s+["']([^"']+)["']/g,
-    /import\s+["']([^"']+)["']/g,
-    /import\s+\w+\s*=\s*require\(\s*["']([^"']+)["']\s*\)/g,
-  ] as const;
+interface ImportedModuleSpecifier {
+  moduleSpecifier: string;
+  line: number;
+  column: number;
+}
 
-  for (const pattern of importPatterns) {
-    let match = pattern.exec(sourceText);
-    while (match !== null) {
-      const imported = match[1];
-      if (imported !== undefined) {
-        specifiers.push(imported);
-      }
-      match = pattern.exec(sourceText);
-    }
+function importedSpecifiers(
+  filePath: string,
+  sourceText: string,
+): readonly ImportedModuleSpecifier[] {
+  const sourceFile = typescript.createSourceFile(
+    filePath,
+    sourceText,
+    typescript.ScriptTarget.Latest,
+    true,
+    typescript.ScriptKind.TS,
+  );
+  const specifiers: ImportedModuleSpecifier[] = [];
+
+  function addSpecifier(moduleSpecifier: typescript.StringLiteral): void {
+    specifiers.push({
+      moduleSpecifier: moduleSpecifier.text,
+      ...locationOf(sourceFile, moduleSpecifier.getStart(sourceFile)),
+    });
   }
 
+  function visit(syntaxNode: typescript.Node): void {
+    if (
+      typescript.isImportDeclaration(syntaxNode) &&
+      typescript.isStringLiteral(syntaxNode.moduleSpecifier)
+    ) {
+      addSpecifier(syntaxNode.moduleSpecifier);
+    } else if (
+      typescript.isExportDeclaration(syntaxNode) &&
+      syntaxNode.moduleSpecifier !== undefined &&
+      typescript.isStringLiteral(syntaxNode.moduleSpecifier)
+    ) {
+      addSpecifier(syntaxNode.moduleSpecifier);
+    } else if (
+      typescript.isImportEqualsDeclaration(syntaxNode) &&
+      typescript.isExternalModuleReference(syntaxNode.moduleReference) &&
+      typescript.isStringLiteral(syntaxNode.moduleReference.expression)
+    ) {
+      addSpecifier(syntaxNode.moduleReference.expression);
+    }
+
+    typescript.forEachChild(syntaxNode, visit);
+  }
+
+  visit(sourceFile);
   return specifiers;
+}
+
+function moduleSpecifierMatchesPattern(input: {
+  moduleSpecifier: string;
+  pattern: RegExp;
+  includeBarrelMatch: boolean;
+}): boolean {
+  const { moduleSpecifier, pattern, includeBarrelMatch } = input;
+  if (pattern.test(moduleSpecifier) || pattern.test(normalizedModuleSpecifier(moduleSpecifier))) {
+    return true;
+  }
+
+  if (includeBarrelMatch && pattern.source.endsWith("\\/")) {
+    const barrelPattern = new RegExp(`${pattern.source.slice(0, -2)}$`, pattern.flags);
+    return (
+      barrelPattern.test(moduleSpecifier) ||
+      barrelPattern.test(normalizedModuleSpecifier(moduleSpecifier))
+    );
+  }
+
+  const exactSegmentPattern = new RegExp(pattern.source.replaceAll(`(?:\\/|["'])`, "$"));
+  return (
+    exactSegmentPattern.test(moduleSpecifier) ||
+    exactSegmentPattern.test(normalizedModuleSpecifier(moduleSpecifier))
+  );
+}
+
+function findFirstForbiddenImport(
+  imports: readonly ImportedModuleSpecifier[],
+  patterns: readonly RegExp[],
+  options: { includeBarrelMatch: boolean },
+): ImportedModuleSpecifier | undefined {
+  return imports.find((imported) =>
+    patterns.some((pattern) =>
+      moduleSpecifierMatchesPattern({
+        moduleSpecifier: imported.moduleSpecifier,
+        pattern,
+        includeBarrelMatch: options.includeBarrelMatch,
+      }),
+    ),
+  );
 }
 
 function checkAArch64ImportBoundaryForFile(
@@ -281,12 +326,15 @@ function checkAArch64ImportBoundaryForFile(
   sourceText: string,
 ): PolicyViolation[] {
   const violations: PolicyViolation[] = [];
-  for (const imported of importedSpecifiers(sourceText)) {
-    for (const code of checkAArch64ImportBoundary({ importer: filePath, imported })) {
+  for (const imported of importedSpecifiers(filePath, sourceText)) {
+    for (const code of checkAArch64ImportBoundary({
+      importer: filePath,
+      imported: imported.moduleSpecifier,
+    })) {
       violations.push({
         filePath,
-        line: 1,
-        column: 1,
+        line: imported.line,
+        column: imported.column,
         message: aarch64TargetImportPolicyMessages[code],
       });
     }
@@ -324,27 +372,29 @@ function checkUefiAArch64ImportBoundaryForFile(
   sourceText: string,
 ): PolicyViolation[] {
   const violations: PolicyViolation[] = [];
-  for (const imported of importedSpecifiers(sourceText)) {
+  for (const imported of importedSpecifiers(filePath, sourceText)) {
     if (
       isPureUefiAArch64TargetSource(filePath) &&
-      uefiAArch64HostStateModulePattern.test(imported)
+      uefiAArch64HostStateModulePattern.test(imported.moduleSpecifier)
     ) {
       violations.push({
         filePath,
-        line: 1,
-        column: 1,
+        line: imported.line,
+        column: imported.column,
         message:
           "Pure UEFI AArch64 target-driver modules must not import filesystem, process, OS, subprocess, Bun, or host runtime modules.",
       });
     }
     if (
       isEarlierCompilerPhaseForUefiBoundary(filePath) &&
-      /(?:\/target\/uefi-aarch64|\/uefi-aarch64)(?:\/|$)/.test(normalizedModuleSpecifier(imported))
+      /(?:\/target\/uefi-aarch64|\/uefi-aarch64)(?:\/|$)/.test(
+        normalizedModuleSpecifier(imported.moduleSpecifier),
+      )
     ) {
       violations.push({
         filePath,
-        line: 1,
-        column: 1,
+        line: imported.line,
+        column: imported.column,
         message:
           "Earlier compiler phases and lower target layers must not import the UEFI AArch64 target driver.",
       });
@@ -360,17 +410,19 @@ function checkLayoutImportBoundary(filePath: string, sourceText: string): Policy
   }
 
   const violations: PolicyViolation[] = [];
-  for (const pattern of layoutImportForbiddenPatterns) {
-    if (pattern.test(sourceText)) {
-      violations.push({
-        filePath,
-        line: 1,
-        column: 1,
-        message:
-          "src/layout must not import parser, AST, Proof-MIR, codegen, linker, or PE-COFF modules.",
-      });
-      break;
-    }
+  const imported = findFirstForbiddenImport(
+    importedSpecifiers(filePath, sourceText),
+    layoutForbiddenModulePathPatterns,
+    { includeBarrelMatch: false },
+  );
+  if (imported !== undefined) {
+    violations.push({
+      filePath,
+      line: imported.line,
+      column: imported.column,
+      message:
+        "src/layout must not import parser, AST, Proof-MIR, codegen, linker, or PE-COFF modules.",
+    });
   }
   return violations;
 }
@@ -382,17 +434,19 @@ function checkProofMirImportBoundary(filePath: string, sourceText: string): Poli
   }
 
   const violations: PolicyViolation[] = [];
-  for (const pattern of proofMirImportForbiddenPatterns) {
-    if (pattern.test(sourceText)) {
-      violations.push({
-        filePath,
-        line: 1,
-        column: 1,
-        message:
-          "src/proof-mir must not import frontend, lexer, parser, name resolution, item index, proof checker, codegen, linker, target backend, or host/runtime modules.",
-      });
-      break;
-    }
+  const imported = findFirstForbiddenImport(
+    importedSpecifiers(filePath, sourceText),
+    proofMirForbiddenModulePathPatterns,
+    { includeBarrelMatch: true },
+  );
+  if (imported !== undefined) {
+    violations.push({
+      filePath,
+      line: imported.line,
+      column: imported.column,
+      message:
+        "src/proof-mir must not import frontend, lexer, parser, name resolution, item index, proof checker, codegen, linker, target backend, or host/runtime modules.",
+    });
   }
   return violations;
 }
@@ -404,17 +458,19 @@ function checkOptIrImportBoundary(filePath: string, sourceText: string): PolicyV
   }
 
   const violations: PolicyViolation[] = [];
-  for (const pattern of optIrImportForbiddenPatterns) {
-    if (pattern.test(sourceText)) {
-      violations.push({
-        filePath,
-        line: 1,
-        column: 1,
-        message:
-          "src/opt-ir must not import frontend, parser, HIR lowering internals, Proof MIR construction internals, target backends, scorecard baselines, benchmark data, linker, PE-COFF, Bun, or filesystem modules.",
-      });
-      break;
-    }
+  const imported = findFirstForbiddenImport(
+    importedSpecifiers(filePath, sourceText),
+    optIrForbiddenModulePathPatterns,
+    { includeBarrelMatch: true },
+  );
+  if (imported !== undefined) {
+    violations.push({
+      filePath,
+      line: imported.line,
+      column: imported.column,
+      message:
+        "src/opt-ir must not import frontend, parser, HIR lowering internals, Proof MIR construction internals, target backends, scorecard baselines, benchmark data, linker, PE-COFF, Bun, or filesystem modules.",
+    });
   }
   return violations;
 }
@@ -437,17 +493,19 @@ function checkProofCheckImportBoundary(filePath: string, sourceText: string): Po
       message: "node:crypto is only allowed in proof-check authority canonical serialization.",
     });
   }
-  for (const pattern of proofCheckImportForbiddenPatterns) {
-    if (pattern.test(sourceText)) {
-      violations.push({
-        filePath,
-        line: 1,
-        column: 1,
-        message:
-          "src/proof-check must not import frontend, lexer, parser, semantic internals, HIR lowering internals, Proof MIR lowering internals, optimization, target backend, linker, PE-COFF, Bun, or filesystem modules.",
-      });
-      break;
-    }
+  const imported = findFirstForbiddenImport(
+    importedSpecifiers(filePath, sourceText),
+    proofCheckForbiddenModulePathPatterns,
+    { includeBarrelMatch: true },
+  );
+  if (imported !== undefined) {
+    violations.push({
+      filePath,
+      line: imported.line,
+      column: imported.column,
+      message:
+        "src/proof-check must not import frontend, lexer, parser, semantic internals, HIR lowering internals, Proof MIR lowering internals, optimization, target backend, linker, PE-COFF, Bun, or filesystem modules.",
+    });
   }
   return violations;
 }
@@ -461,13 +519,13 @@ function checkPeCoffImportBoundary(filePath: string, sourceText: string): Policy
     return [];
   }
 
-  for (const imported of importedSpecifiers(sourceText)) {
-    if (/\/pe-coff(?:\/|$)/i.test(normalizedModuleSpecifier(imported))) {
+  for (const imported of importedSpecifiers(filePath, sourceText)) {
+    if (/\/pe-coff(?:\/|$)/i.test(normalizedModuleSpecifier(imported.moduleSpecifier))) {
       return [
         {
           filePath,
-          line: 1,
-          column: 1,
+          line: imported.line,
+          column: imported.column,
           message:
             "Earlier compiler phases and target internals must not import PE/COFF writer modules.",
         },

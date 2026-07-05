@@ -186,6 +186,7 @@ function lowerCompilerIntrinsicCallImpl(input: {
     target: {
       kind: "compilerIntrinsic",
       intrinsicKey: compilerIntrinsic.intrinsicKey,
+      literalValue: compilerIntrinsic.literalValue,
       sourceValueKey: compilerIntrinsic.sourceValueKey,
       returnTypeKey: compilerIntrinsic.returnTypeKey,
     },

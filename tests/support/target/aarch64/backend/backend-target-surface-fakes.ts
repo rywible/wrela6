@@ -56,6 +56,7 @@ export function fakeRegisterModel(
     publicResultGprs: Object.freeze(["x0", "x1"]),
     publicCallerSavedGprs: Object.freeze(["x18", "x19", "x20"]),
     publicCalleeSavedGprs: Object.freeze(["x21", "x22", "x23"]),
+    publicCalleeSavedSimd: Object.freeze([]),
     privateConventionCandidateGprs: Object.freeze(["x19", "x20"]),
     veneerScratchGprs: Object.freeze(["x9", "x10"]),
     encodingNumberOf: (register) => {

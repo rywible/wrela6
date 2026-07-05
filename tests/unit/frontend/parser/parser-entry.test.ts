@@ -47,7 +47,7 @@ describe("Parser", () => {
     expect(result.diagnostics).toHaveLength(0);
   });
 
-  test("identifier becomes ExpressionStatement", () => {
+  test("identifier becomes top-level declaration error", () => {
     const source = SourceText.from("test.wr", "hello");
     const tokens = TokenStream.from([
       makeToken(TokenKind.Identifier, "hello", 0, 5),
@@ -60,10 +60,16 @@ describe("Parser", () => {
     expect(result.tree.reconstruct()).toBe("hello");
 
     const children = result.tree.root().children();
-    expect(children[0]!.kind).toBe(SyntaxKind.ExpressionStatement);
+    expect(children[0]!.kind).toBe(SyntaxKind.ErrorNode);
     expect(children[1]!.kind).toBe(SyntaxKind.EndOfFileToken);
 
-    expect(result.parserDiagnostics).toHaveLength(0);
+    expect(result.parserDiagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      "PARSE_EXPECTED_TOP_LEVEL_DECLARATION",
+    ]);
+    expect(result.parserDiagnostics[0]?.ownerKey).toBe("parser:top-level-declaration");
+    expect(result.parserDiagnostics[0]?.stableDetail).toBe(
+      "PARSE_EXPECTED_TOP_LEVEL_DECLARATION:test.wr:0:5",
+    );
   });
 
   test("parseLexResult delegates to parse", () => {
@@ -91,7 +97,7 @@ describe("Parser", () => {
     expect(eofChildren.length).toBe(1);
   });
 
-  test("expression statements separated by newlines at top level", () => {
+  test("top-level non-declarations separated by newlines recover independently", () => {
     const source = SourceText.from("test.wr", "hello\nworld\n");
     const tokens = TokenStream.from([
       makeToken(TokenKind.Identifier, "hello", 0, 5),
@@ -107,9 +113,15 @@ describe("Parser", () => {
 
     const root = result.tree.root();
     const children = root.children();
-    expect(children[0]!.kind).toBe(SyntaxKind.ExpressionStatement);
-    expect(children[1]!.kind).toBe(SyntaxKind.ExpressionStatement);
-    expect(children[2]!.kind).toBe(SyntaxKind.EndOfFileToken);
+    expect(children[0]!.kind).toBe(SyntaxKind.ErrorNode);
+    expect(children[1]!.kind).toBe(SyntaxKind.NewlineToken);
+    expect(children[2]!.kind).toBe(SyntaxKind.ErrorNode);
+    expect(children[3]!.kind).toBe(SyntaxKind.NewlineToken);
+    expect(children[4]!.kind).toBe(SyntaxKind.EndOfFileToken);
+    expect(result.parserDiagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      "PARSE_EXPECTED_TOP_LEVEL_DECLARATION",
+      "PARSE_EXPECTED_TOP_LEVEL_DECLARATION",
+    ]);
   });
 
   test("parser options - maxDepth", () => {
@@ -121,7 +133,7 @@ describe("Parser", () => {
     expect(result.tree.root().kind).toBe(SyntaxKind.SourceFile);
   });
 
-  test("maxDepth zero is clamped so expression parsing still makes progress", () => {
+  test("maxDepth zero still recovers top-level non-declarations", () => {
     const source = SourceText.from("test.wr", "hello");
     const tokens = TokenStream.from([
       makeToken(TokenKind.Identifier, "hello", 0, 5),
@@ -131,6 +143,6 @@ describe("Parser", () => {
     const result = parser.parse({ source, tokens });
 
     expect(result.tree.reconstruct()).toBe("hello");
-    expect(result.tree.root().children()[0]!.kind).toBe(SyntaxKind.ExpressionStatement);
+    expect(result.tree.root().children()[0]!.kind).toBe(SyntaxKind.ErrorNode);
   });
 });

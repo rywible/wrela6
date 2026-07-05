@@ -4,6 +4,7 @@ import type { MonoInstanceId } from "../mono/ids";
 import type { TargetId } from "../semantic/ids";
 import type { OptIrConstant } from "./constants";
 import type { OptIrBlock, OptIrCfgEdgeTable } from "./cfg";
+import type { OptIrCallGraphEdge } from "./analyses/call-graph";
 import type {
   OptIrBlockId,
   OptIrConstantId,
@@ -19,7 +20,7 @@ export interface OptIrRegionRecord {
 }
 
 export interface OptIrCallGraph {
-  readonly calls: readonly unknown[];
+  readonly calls: readonly OptIrCallGraphEdge[];
 }
 
 export interface OptIrProgramProvenance {
@@ -49,7 +50,7 @@ export interface OptIrFunction {
   readonly edges: OptIrCfgEdgeTable;
   readonly entryBlock: OptIrBlockId;
   readonly externalRoot?: OptIrExternalRoot;
-  readonly summary?: CheckedFunctionSummary | unknown;
+  readonly summary?: CheckedFunctionSummary;
   readonly originId: OptIrOriginId;
 }
 

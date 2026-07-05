@@ -1,5 +1,11 @@
 import type { AArch64AbiBinding, AArch64AbiLocation } from "../machine-ir/abi-location";
 import type { AArch64LoweringDiagnostic } from "../machine-ir/diagnostics";
+import type { AArch64AllocationResult } from "../backend/allocation/allocation-result";
+import type { AArch64PhysicalRegisterModel } from "../backend/api/backend-catalog-interfaces";
+import {
+  aarch64PhysicalAliasMap,
+  aarch64RegistersAlias,
+} from "../backend/api/physical-register-helpers";
 import type { AArch64MachineFunction } from "../machine-ir/machine-function";
 import type { AArch64MachineInstruction } from "../machine-ir/machine-instruction";
 import type {
@@ -49,6 +55,46 @@ export function verifyAArch64Abi(input: {
     }
   }
   return diagnostics;
+}
+
+export function verifyAArch64CalleeSavedAllocationPreservation(input: {
+  readonly allocation: AArch64AllocationResult;
+  readonly savedRegisters: readonly string[];
+  readonly registerModel: AArch64PhysicalRegisterModel;
+  readonly context: Pick<AArch64MachineVerifierContext, "makeDiagnostic">;
+}): readonly AArch64LoweringDiagnostic[] {
+  const publicCalleeSavedRegisters = [
+    ...input.registerModel.publicCalleeSavedGprs,
+    ...input.registerModel.publicCalleeSavedSimd,
+  ];
+  if (publicCalleeSavedRegisters.length === 0) return [];
+
+  const aliasPairs = input.registerModel.aliasSets.flatMap((aliasSet) =>
+    aliasSet.aliases.flatMap((left, index) =>
+      aliasSet.aliases.slice(index + 1).map((right) => ({ left, right })),
+    ),
+  );
+  const aliasMap = aarch64PhysicalAliasMap(aliasPairs);
+  const diagnostics: AArch64LoweringDiagnostic[] = [];
+  for (const segment of input.allocation.segments) {
+    const calleeSavedRegister = publicCalleeSavedRegisters.find((register) =>
+      aarch64RegistersAlias(segment.physical, register, aliasMap),
+    );
+    if (calleeSavedRegister === undefined) continue;
+    const isSaved = input.savedRegisters.some((savedRegister) =>
+      aarch64RegistersAlias(savedRegister, calleeSavedRegister, aliasMap),
+    );
+    if (isSaved) continue;
+    diagnostics.push(
+      input.context.makeDiagnostic({
+        code: "AARCH64_ABI_CALLEE_SAVED_UNPRESERVED",
+        ownerKey: segment.liveRangeKey,
+        rootCauseKey: "aapcs64",
+        stableDetail: `callee-saved-unpreserved:${segment.physical}:${calleeSavedRegister}:${segment.startOrder}-${segment.endOrder}`,
+      }),
+    );
+  }
+  return Object.freeze(diagnostics);
 }
 
 function expectedClobbersFor(

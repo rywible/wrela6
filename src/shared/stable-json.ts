@@ -13,7 +13,7 @@ export function stableDigestHex(value: unknown): string {
 export function stableHash(value: string): string {
   let hash = 0xcbf29ce484222325n;
   for (const character of value) {
-    hash ^= BigInt(character.charCodeAt(0));
+    hash ^= BigInt(character.codePointAt(0) ?? 0);
     hash *= 0x100000001b3n;
     hash &= 0xffffffffffffffffn;
   }
@@ -28,6 +28,9 @@ function toStableValue(value: unknown): unknown {
     return [...value.entries()]
       .map(([key, entry]) => [toStableValue(key), toStableValue(entry)] as const)
       .sort((left, right) => compareCodeUnitStrings(stableJson(left[0]), stableJson(right[0])));
+  }
+  if (value instanceof Uint8Array) {
+    return Array.from(value);
   }
   if (Array.isArray(value)) {
     return value.map(toStableValue);

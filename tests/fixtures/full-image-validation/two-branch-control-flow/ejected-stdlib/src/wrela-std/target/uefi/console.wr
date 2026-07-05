@@ -1,0 +1,7 @@
+// Ordinary stdlib source wrapper; target authority comes from certified platform contracts.
+use UefiStatus from wrela_std.target.uefi.status
+
+platform fn output_string(message: Utf16Static) -> UefiStatus
+
+fn write_console_string(message: Utf16Static) -> UefiStatus:
+    output_string(message)

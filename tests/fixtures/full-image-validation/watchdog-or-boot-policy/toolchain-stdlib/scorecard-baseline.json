@@ -1,0 +1,14 @@
+{
+  "schema": "wrela.cost-scorecard-baseline",
+  "schemaVersion": 1,
+  "caseKey": "watchdog-or-boot-policy/toolchain-stdlib",
+  "metrics": {
+    "optIrOperationsPre": 3,
+    "optIrOperationsPost": 2,
+    "objectSectionBytes": 76,
+    "executableTextBytes": 984,
+    "finalImageBytes": 2560,
+    "staticInstructionEstimate": 246,
+    "staticCycleEstimate": 263
+  }
+}

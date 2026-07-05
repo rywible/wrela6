@@ -36,6 +36,7 @@ describe("UEFI platform primitive lowering payloads", () => {
       ["uefi_reserve_restricted_memory", "uefi.source.reserveRestrictedMemory"],
       ["uefi_split_network_device", "uefi.source.splitNetworkDevice"],
       ["validation_fixture_packet_source", "uefi.validation.fixturePacketSource"],
+      ["validation_fixture_packet_stream", "uefi.validation.fixturePacketStream"],
     ]);
     expect(String(catalog.byName("output_string")?.primitiveId)).toBe("uefi.console.outputString");
   });
@@ -79,29 +80,40 @@ describe("UEFI platform primitive lowering payloads", () => {
         "uefi.source.reserveRestrictedMemory",
         "uefi.source.splitNetworkDevice",
         "uefi.validation.fixturePacketSource",
+        "uefi.validation.fixturePacketStream",
       ]);
     }
   });
 
-  test("canonical semantic target gates the validation fixture primitive behind its feature", () => {
+  test("canonical semantic target gates the validation fixture primitives behind their feature", () => {
     const semanticTarget = canonicalUefiAArch64SemanticTargetSurface();
-    const primitive = semanticTarget.platformPrimitives.get(
+    const sourcePrimitive = semanticTarget.platformPrimitives.get(
       "uefi.validation.fixturePacketSource" as never,
     );
-
-    expect(primitive).toBeDefined();
-    expect(primitive?.availability.features).toEqual([FULL_IMAGE_VALIDATION_FEATURE]);
-  });
-
-  test("catalogs the validation fixture packet source as a compiler-owned inline primitive", () => {
-    const lowering = canonicalUefiAArch64PlatformLowerings().find(
-      (candidate) => String(candidate.primitiveId) === "uefi.validation.fixturePacketSource",
+    const streamPrimitive = semanticTarget.platformPrimitives.get(
+      "uefi.validation.fixturePacketStream" as never,
     );
 
-    expect(lowering?.lowering).toEqual({
-      kind: "inline",
-      operationKey: "validation-fixture-packet-source",
-    });
+    expect(sourcePrimitive).toBeDefined();
+    expect(sourcePrimitive?.availability.features).toEqual([FULL_IMAGE_VALIDATION_FEATURE]);
+    expect(streamPrimitive).toBeDefined();
+    expect(streamPrimitive?.availability.features).toEqual([FULL_IMAGE_VALIDATION_FEATURE]);
+  });
+
+  test("catalogs validation fixture packet sources as compiler-owned inline primitives", () => {
+    for (const primitiveId of [
+      "uefi.validation.fixturePacketSource",
+      "uefi.validation.fixturePacketStream",
+    ]) {
+      const lowering = canonicalUefiAArch64PlatformLowerings().find(
+        (candidate) => String(candidate.primitiveId) === primitiveId,
+      );
+
+      expect(lowering?.lowering).toEqual({
+        kind: "inline",
+        operationKey: "validation-fixture-packet-source",
+      });
+    }
   });
 
   test("catalogs source-level UEFI bringup primitives as private target status edges", () => {

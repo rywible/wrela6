@@ -1,6 +1,7 @@
 import type { LayoutFactProgram } from "../../layout/layout-program";
 import type { MonoInstanceId } from "../../mono/ids";
 import { compareCodeUnitStrings } from "../../shared/deterministic-sort";
+import { stableJson } from "../../shared/stable-json";
 import type { ProofAuthorityFingerprint } from "../authority/authority-types";
 import { validateProofAuthorityFingerprint } from "../authority/authority-fingerprint-validation";
 import { proofAuthorityFingerprintFromValue } from "../authority/canonical-serialization";
@@ -55,12 +56,6 @@ function inputContractDiagnostic(input: {
   });
 }
 
-function stableJsonStringify(value: unknown): string {
-  return JSON.stringify(value, (_key, current) =>
-    typeof current === "bigint" ? current.toString() : current,
-  );
-}
-
 function layoutTableContentSegment<Key, Value>(
   label: string,
   table: {
@@ -73,14 +68,14 @@ function layoutTableContentSegment<Key, Value>(
     compareCodeUnitStrings(table.keyString(keyOf(left)), table.keyString(keyOf(right))),
   );
   return entries
-    .map((entry) => `${label}:${table.keyString(keyOf(entry))}:${stableJsonStringify(entry)}`)
+    .map((entry) => `${label}:${table.keyString(keyOf(entry))}:${stableJson(entry)}`)
     .join("\n");
 }
 
 export function layoutFactProgramStableContentKey(layout: LayoutFactProgram): string {
   const segments = [
-    stableJsonStringify(layout.target),
-    stableJsonStringify(layout.imageEntry),
+    stableJson(layout.target),
+    stableJson(layout.imageEntry),
     layoutTableContentSegment("type", layout.types, (entry) => entry.key),
     layoutTableContentSegment("field", layout.fields, (entry) => ({
       owner: entry.owner,

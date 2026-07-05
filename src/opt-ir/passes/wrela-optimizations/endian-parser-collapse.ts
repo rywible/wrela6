@@ -43,6 +43,7 @@ export interface WrelaEndianParserResult {
     readonly coldRejectionOrigins?: readonly OptIrOriginId[];
     readonly diagnosticOrigins?: readonly OptIrOriginId[];
     readonly factChain: readonly string[];
+    readonly consumedFactFamilies: readonly string[];
   }[];
 }
 
@@ -70,6 +71,7 @@ export function runWrelaEndianParserCollapse(
       kind: "endianFolded",
       operationId: candidate.operationId,
       factChain: candidate.factChain,
+      consumedFactFamilies: ["layoutAbi"],
     });
   }
 
@@ -84,6 +86,7 @@ export function runWrelaEndianParserCollapse(
       coldRejectionOrigins: candidate.coldRejectionOrigins,
       diagnosticOrigins: candidate.diagnosticOrigins,
       factChain: candidate.factChain,
+      consumedFactFamilies: ["privateState", "validatedBuffer", "terminalClosure"],
     });
   }
 

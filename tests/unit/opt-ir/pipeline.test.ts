@@ -7,6 +7,7 @@ import { optIrIntegerConstant } from "../../../src/opt-ir/constants";
 import {
   optIrAliasClassId,
   optIrBlockId,
+  optIrCallId,
   optIrConstantId,
   optIrFunctionId,
   optIrOperationId,
@@ -15,9 +16,12 @@ import {
   optIrRegionId,
   optIrValueId,
 } from "../../../src/opt-ir/ids";
+import { emptyOptIrFactSet } from "../../../src/opt-ir/facts/fact-index";
 import {
   optIrConstantOperation,
+  optIrIntegerBinaryOperation,
   optIrMemoryStoreOperation,
+  optIrSourceCallOperation,
   type OptIrOperation,
 } from "../../../src/opt-ir/operations";
 import { constructOptIr } from "../../../src/opt-ir/public-api";
@@ -35,11 +39,18 @@ import {
 } from "../../../src/opt-ir/program";
 import type { OptIrRegion, OptIrRegionKind } from "../../../src/opt-ir/regions";
 import type { OptIrTargetSurface } from "../../../src/opt-ir/target-surface";
-import { optIrUnsignedIntegerType } from "../../../src/opt-ir/types";
+import { optIrSignedIntegerType, optIrUnsignedIntegerType } from "../../../src/opt-ir/types";
+import { optIrBlockParameter } from "../../../src/opt-ir/values";
+import { coreTypeId, functionId, itemId, targetId } from "../../../src/semantic/ids";
+import { coreCheckedType } from "../../../src/semantic/surface/type-model";
+import { SourceSpan } from "../../../src/shared/source-span";
 import { validConstructOptIrInputForTest } from "../../support/opt-ir/construction-fixtures";
+import type { MonoCheckedType } from "../../../src/mono/mono-hir";
 
 const originId = optIrOriginId(10_000);
 const byteType = optIrUnsignedIntegerType(8);
+const integer32 = optIrSignedIntegerType(32);
+const monoInteger32 = coreCheckedType(coreTypeId("I32")) as MonoCheckedType;
 
 describe("OptIR optimizer pipeline", () => {
   test("runs the fixed production pipeline with required verifier checkpoints", () => {
@@ -155,6 +166,53 @@ describe("OptIR optimizer pipeline", () => {
     const blockOperationIds = result.program.functions.entries()[0]?.blocks[0]?.operations ?? [];
     expect(blockOperationIds).not.toContain(firstStore.operationId);
   });
+
+  test("revisits scope expansion so newly exposed source calls are inlined", () => {
+    const constant = integerConstantOperation(1, 1, 7n);
+    const wrapperCall = sourceCallOperation(2, "wrapper", [1], [2]);
+    const leafCall = sourceCallOperation(3, "leaf", [100], [101]);
+    const leafAdd = addOperation(4, 201, 200, 200);
+    const program = optIrPipelineProgramForTest([
+      functionForScopeExpansionTest({
+        functionId: 1,
+        instance: "main",
+        operations: [constant.operationId, wrapperCall.operationId],
+        terminatorValues: [optIrValueId(2)],
+      }),
+      functionForScopeExpansionTest({
+        functionId: 2,
+        instance: "wrapper",
+        parameters: [optIrValueId(100)],
+        operations: [leafCall.operationId],
+        terminatorValues: [optIrValueId(101)],
+      }),
+      functionForScopeExpansionTest({
+        functionId: 3,
+        instance: "leaf",
+        parameters: [optIrValueId(200)],
+        operations: [leafAdd.operationId],
+        terminatorValues: [optIrValueId(201)],
+      }),
+    ]);
+
+    const result = optimizeOptIr({
+      program: { ...program, operations: [constant, wrapperCall, leafCall, leafAdd] },
+      facts: emptyOptIrFactSet(),
+      target: { targetId: targetId("pipeline-scope-expansion-test") } as OptIrTargetSurface,
+      policy: {
+        ...productionOptimizationPolicyForTest(),
+        enableFactGatedRewrites: false,
+        enableVectorization: false,
+      },
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") {
+      throw new Error("Expected optimization to succeed.");
+    }
+
+    expect(result.operations.some((operation) => operation.kind === "sourceCall")).toBe(false);
+  });
 });
 
 function pipelineProgramWithOperations(
@@ -194,6 +252,75 @@ function pipelineProgramWithOperations(
   });
 }
 
+function optIrPipelineProgramForTest(
+  functions: readonly ReturnType<typeof functionForScopeExpansionTest>[],
+) {
+  return optIrProgram({
+    programId: optIrProgramId(2),
+    targetId: targetId("pipeline-scope-expansion-test"),
+    functions: optIrFunctionTable(functions),
+    regions: optIrRegionTable([{ regionId: optIrRegionId(1), originId }]),
+    constants: optIrConstantTable([]),
+    callGraph: { calls: [] },
+    provenance: { originIds: [originId] },
+  });
+}
+
+function functionForScopeExpansionTest(input: {
+  readonly functionId: number;
+  readonly instance: string;
+  readonly parameters?: readonly ReturnType<typeof optIrValueId>[];
+  readonly operations: readonly ReturnType<typeof optIrOperationId>[];
+  readonly terminatorValues: readonly ReturnType<typeof optIrValueId>[];
+}) {
+  const block = {
+    blockId: optIrBlockId(input.functionId + 100),
+    parameters: (input.parameters ?? []).map((valueId) =>
+      optIrBlockParameter({
+        valueId,
+        type: integer32,
+        incomingRole: "entry",
+        originId,
+      }),
+    ),
+    operations: input.operations,
+    terminator: {
+      kind: "return" as const,
+      operationId: optIrOperationId(input.functionId + 1000),
+      values: input.terminatorValues,
+      originId,
+    },
+    originId,
+  };
+  return {
+    functionId: optIrFunctionId(input.functionId),
+    monoInstanceId: monoInstanceId(input.instance),
+    signature: signatureForScopeExpansionTest(input.functionId),
+    blocks: [block],
+    edges: optIrCfgEdgeTable([]),
+    entryBlock: block.blockId,
+    originId,
+  };
+}
+
+function signatureForScopeExpansionTest(identifier: number): MonoFunctionSignature {
+  return {
+    functionId: functionId(identifier),
+    itemId: itemId(identifier),
+    parameters: [],
+    returnType: monoInteger32,
+    returnKind: "Copy",
+    modifiers: {
+      isPlatform: false,
+      isTerminal: false,
+      isPredicate: false,
+      isConstructor: false,
+      isPrivate: false,
+    },
+    sourceSpan: SourceSpan.from(0, 0),
+  };
+}
+
 function regionForTest(kind: OptIrRegionKind, id: number): OptIrRegion {
   return {
     regionId: optIrRegionId(id),
@@ -221,6 +348,57 @@ function constantOperation(
       type: byteType,
       normalizedValue,
     }),
+    originId,
+  });
+}
+
+function integerConstantOperation(
+  operationId: number,
+  resultId: number,
+  normalizedValue: bigint,
+): OptIrOperation {
+  return optIrConstantOperation({
+    operationId: optIrOperationId(operationId),
+    resultId: optIrValueId(resultId),
+    constant: optIrIntegerConstant({
+      constantId: optIrConstantId(operationId),
+      type: integer32,
+      normalizedValue,
+    }),
+    originId,
+  });
+}
+
+function sourceCallOperation(
+  operationId: number,
+  callee: string,
+  argumentIds: readonly number[],
+  resultIds: readonly number[],
+): OptIrOperation {
+  return optIrSourceCallOperation({
+    operationId: optIrOperationId(operationId),
+    callId: optIrCallId(operationId),
+    target: { kind: "source", functionInstanceId: monoInstanceId(callee) },
+    argumentIds: argumentIds.map(optIrValueId),
+    resultIds: resultIds.map(optIrValueId),
+    resultTypes: resultIds.map(() => integer32),
+    originId,
+  });
+}
+
+function addOperation(
+  operationId: number,
+  resultId: number,
+  left: number,
+  right: number,
+): OptIrOperation {
+  return optIrIntegerBinaryOperation({
+    operationId: optIrOperationId(operationId),
+    resultId: optIrValueId(resultId),
+    left: optIrValueId(left),
+    right: optIrValueId(right),
+    operator: "add",
+    resultType: integer32,
     originId,
   });
 }

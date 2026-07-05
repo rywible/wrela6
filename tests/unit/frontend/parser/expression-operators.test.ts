@@ -217,6 +217,108 @@ describe("binary arithmetic", () => {
   });
 });
 
+describe("boolean and bitwise expressions", () => {
+  test("true literal parses as a literal expression", () => {
+    const tokens = [makeToken(TokenKind.True, "true", 0, 4), eof(4)];
+    const context = makeContext(tokens);
+    const node = parseExpression(context);
+
+    expect(node.kind).toBe(SyntaxKind.LiteralExpression);
+    expect(node.children[0]!.kind).toBe(SyntaxKind.TrueKeyword);
+    expect(context.draftDiagnostics()).toHaveLength(0);
+  });
+
+  test("and parses below equality for short-circuit logical expressions", () => {
+    const tokens = [
+      makeToken(TokenKind.Identifier, "a", 0, 1),
+      makeToken(TokenKind.EqualsEquals, "==", 2, 4),
+      makeToken(TokenKind.Identifier, "b", 5, 6),
+      makeToken(TokenKind.And, "and", 7, 10),
+      makeToken(TokenKind.Identifier, "c", 11, 12),
+      eof(12),
+    ];
+    const context = makeContext(tokens);
+    const node = parseExpression(context);
+
+    expect(node.kind).toBe(SyntaxKind.BinaryExpression);
+    expect(node.children[1]!.kind).toBe(SyntaxKind.AndKeyword);
+    expect((node.children[0] as GreenNode).kind).toBe(SyntaxKind.EqualityExpression);
+    expect(context.draftDiagnostics()).toHaveLength(0);
+  });
+
+  test("or parses below and for short-circuit logical expressions", () => {
+    const tokens = [
+      makeToken(TokenKind.Identifier, "a", 0, 1),
+      makeToken(TokenKind.Or, "or", 2, 4),
+      makeToken(TokenKind.Identifier, "b", 5, 6),
+      makeToken(TokenKind.And, "and", 7, 10),
+      makeToken(TokenKind.Identifier, "c", 11, 12),
+      eof(12),
+    ];
+    const context = makeContext(tokens);
+    const node = parseExpression(context);
+
+    expect(node.kind).toBe(SyntaxKind.BinaryExpression);
+    expect(node.children[1]!.kind).toBe(SyntaxKind.OrKeyword);
+    const right = node.children[2] as GreenNode;
+    expect(right.kind).toBe(SyntaxKind.BinaryExpression);
+    expect(right.children[1]!.kind).toBe(SyntaxKind.AndKeyword);
+    expect(context.draftDiagnostics()).toHaveLength(0);
+  });
+
+  test("bitwise and binds tighter than equality", () => {
+    const tokens = [
+      makeToken(TokenKind.Identifier, "a", 0, 1),
+      makeToken(TokenKind.Ampersand, "&", 2, 3),
+      makeToken(TokenKind.Identifier, "b", 4, 5),
+      makeToken(TokenKind.EqualsEquals, "==", 6, 8),
+      makeToken(TokenKind.Identifier, "c", 9, 10),
+      eof(10),
+    ];
+    const context = makeContext(tokens);
+    const node = parseExpression(context);
+
+    expect(node.kind).toBe(SyntaxKind.EqualityExpression);
+    expect((node.children[0] as GreenNode).kind).toBe(SyntaxKind.BinaryExpression);
+    expect((node.children[0] as GreenNode).children[1]!.kind).toBe(SyntaxKind.AmpersandToken);
+    expect(context.draftDiagnostics()).toHaveLength(0);
+  });
+
+  test("bitwise shifts bind tighter than addition", () => {
+    const tokens = [
+      makeToken(TokenKind.Identifier, "a", 0, 1),
+      makeToken(TokenKind.Plus, "+", 2, 3),
+      makeToken(TokenKind.Identifier, "b", 4, 5),
+      makeToken(TokenKind.LeftShift, "<<", 6, 8),
+      makeToken(TokenKind.Identifier, "c", 9, 10),
+      eof(10),
+    ];
+    const context = makeContext(tokens);
+    const node = parseExpression(context);
+
+    expect(node.kind).toBe(SyntaxKind.BinaryExpression);
+    expect(node.children[1]!.kind).toBe(SyntaxKind.PlusToken);
+    const right = node.children[2] as GreenNode;
+    expect(right.kind).toBe(SyntaxKind.BinaryExpression);
+    expect(right.children[1]!.kind).toBe(SyntaxKind.LeftShiftToken);
+    expect(context.draftDiagnostics()).toHaveLength(0);
+  });
+
+  test("bitwise not parses as unary expression", () => {
+    const tokens = [
+      makeToken(TokenKind.Tilde, "~", 0, 1),
+      makeToken(TokenKind.Identifier, "mask", 1, 5),
+      eof(5),
+    ];
+    const context = makeContext(tokens);
+    const node = parseExpression(context);
+
+    expect(node.kind).toBe(SyntaxKind.UnaryExpression);
+    expect(node.children[0]!.kind).toBe(SyntaxKind.TildeToken);
+    expect(context.draftDiagnostics()).toHaveLength(0);
+  });
+});
+
 describe("comparison expressions", () => {
   test("less than", () => {
     const tokens = [

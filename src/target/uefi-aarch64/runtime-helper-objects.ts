@@ -1,5 +1,6 @@
 import type { AArch64BackendTargetSurface } from "../aarch64/backend/api/backend-target-surface";
 import type { AArch64LinkInputModule } from "../../linker";
+import { platformPrimitiveId, type PlatformPrimitiveId } from "../../semantic/ids";
 import {
   aarch64ObjectFragment,
   aarch64ObjectModule,
@@ -31,6 +32,7 @@ import {
   encodeEntryInitializeContextInstructions,
   encodeExitBootServicesWithFreshMapInstructions,
   encodeStatusFromBootResultInstructions,
+  type EncodedHelperInstruction,
   runtimeHelperDiagnostic,
 } from "./runtime-helper-instructions";
 import {
@@ -38,6 +40,23 @@ import {
   UEFI_AARCH64_EXIT_BOOT_SERVICES_WITH_FRESH_MAP_LINKAGE_NAME,
   UEFI_AARCH64_STATUS_FROM_BOOT_RESULT_LINKAGE_NAME,
 } from "./runtime-catalog";
+
+export interface UefiAArch64RuntimeHelperCoverageRecord {
+  readonly moduleKey: string;
+  readonly primitiveIds: readonly PlatformPrimitiveId[];
+}
+
+export interface UefiAArch64RuntimeHelperObjects {
+  readonly modules: readonly AArch64LinkInputModule[];
+  readonly coverage: readonly UefiAArch64RuntimeHelperCoverageRecord[];
+  readonly coveredPrimitiveIds: readonly PlatformPrimitiveId[];
+}
+
+export const UEFI_AARCH64_RUNTIME_HELPER_COVERED_PRIMITIVE_IDS = Object.freeze([
+  platformPrimitiveId("uefi.boot.exitBootServices"),
+  platformPrimitiveId("uefi.boot.setWatchdogTimer"),
+  platformPrimitiveId("uefi.source.exitBootServices"),
+]);
 
 export function materializeUefiAArch64EntryInitializeContextHelper(input: {
   readonly backendTarget: AArch64BackendTargetSurface;
@@ -75,7 +94,7 @@ export function materializeUefiAArch64EntryInitializeContextHelper(input: {
   });
   if (encoded.kind === "error") return encoded;
 
-  const codeBytes = encoded.value.flatMap((instruction) => [...instruction.bytes]);
+  const codeBytes = concatInstructionBytes(encoded.value);
   const section = aarch64ObjectSection({
     stableKey: TEXT_SECTION_KEY,
     classKey: AARCH64_OBJECT_SECTION_CLASS_EXECUTABLE_TEXT,
@@ -196,7 +215,7 @@ export function materializeUefiAArch64ExitBootServicesWithFreshMapHelper(input: 
   });
   if (encoded.kind === "error") return encoded;
 
-  const codeBytes = encoded.value.flatMap((instruction) => [...instruction.bytes]);
+  const codeBytes = concatInstructionBytes(encoded.value);
   const section = aarch64ObjectSection({
     stableKey: TEXT_SECTION_KEY,
     classKey: AARCH64_OBJECT_SECTION_CLASS_EXECUTABLE_TEXT,
@@ -271,9 +290,7 @@ export function materializeUefiAArch64StatusFromBootResultHelper(input: {
     return encoded;
   }
 
-  const codeBytes = Object.freeze(
-    encoded.value.flatMap((encodedInstruction) => [...encodedInstruction.bytes]),
-  );
+  const codeBytes = concatInstructionBytes(encoded.value);
   const section = aarch64ObjectSection({
     stableKey: TEXT_SECTION_KEY,
     classKey: AARCH64_OBJECT_SECTION_CLASS_EXECUTABLE_TEXT,
@@ -343,7 +360,8 @@ export function materializeUefiAArch64RuntimeHelperObjects(input: {
   readonly statusPolicy: UefiAArch64StatusPolicy;
   readonly watchdogPolicy: UefiAArch64EntryWatchdogPolicy;
   readonly exitBootServicesPolicy: UefiAArch64ExitBootServicesPolicy;
-}): UefiAArch64TargetResult<{ readonly modules: readonly AArch64LinkInputModule[] }> {
+  readonly reachablePlatformPrimitiveIds?: readonly PlatformPrimitiveId[];
+}): UefiAArch64TargetResult<UefiAArch64RuntimeHelperObjects> {
   const entryInitializeContext = materializeUefiAArch64EntryInitializeContextHelper(input);
   if (entryInitializeContext.kind === "error") return entryInitializeContext;
 
@@ -352,24 +370,99 @@ export function materializeUefiAArch64RuntimeHelperObjects(input: {
 
   const statusFromBootResult = materializeUefiAArch64StatusFromBootResultHelper(input);
   if (statusFromBootResult.kind === "error") return statusFromBootResult;
+  const modules = Object.freeze([
+    runtimeHelperModule(
+      "uefi-runtime-helper:entry-initialize-context",
+      entryInitializeContext.value,
+    ),
+    runtimeHelperModule(
+      "uefi-runtime-helper:exit-boot-services-with-fresh-map",
+      exitBootServices.value,
+    ),
+    runtimeHelperModule("uefi-runtime-helper:status-from-boot-result", statusFromBootResult.value),
+  ]);
+  const coverage = runtimeHelperCoverageForReachablePrimitives(input.reachablePlatformPrimitiveIds);
 
   return uefiAArch64Ok({
     value: Object.freeze({
-      modules: Object.freeze([
-        Object.freeze({
-          moduleKey: "uefi-runtime-helper:entry-initialize-context",
-          objectModule: entryInitializeContext.value,
-        }),
-        Object.freeze({
-          moduleKey: "uefi-runtime-helper:exit-boot-services-with-fresh-map",
-          objectModule: exitBootServices.value,
-        }),
-        Object.freeze({
-          moduleKey: "uefi-runtime-helper:status-from-boot-result",
-          objectModule: statusFromBootResult.value,
-        }),
-      ]),
+      modules,
+      coverage,
+      coveredPrimitiveIds: coveredPrimitiveIdsFromCoverage(coverage),
     }),
     verification: passedVerification(HELPER_VERIFIER_KEY, "all-runtime-helper-objects"),
   });
+}
+
+function runtimeHelperCoverageForReachablePrimitives(
+  reachablePlatformPrimitiveIds: readonly PlatformPrimitiveId[] | undefined,
+): readonly UefiAArch64RuntimeHelperCoverageRecord[] {
+  const reachable =
+    reachablePlatformPrimitiveIds === undefined
+      ? undefined
+      : new Set(reachablePlatformPrimitiveIds.map(String));
+  return Object.freeze([
+    runtimeHelperCoverage(
+      "uefi-runtime-helper:entry-initialize-context",
+      [platformPrimitiveId("uefi.boot.setWatchdogTimer")],
+      reachable,
+    ),
+    runtimeHelperCoverage(
+      "uefi-runtime-helper:exit-boot-services-with-fresh-map",
+      [
+        platformPrimitiveId("uefi.boot.exitBootServices"),
+        platformPrimitiveId("uefi.source.exitBootServices"),
+      ],
+      reachable,
+    ),
+    runtimeHelperCoverage("uefi-runtime-helper:status-from-boot-result", [], reachable),
+  ]);
+}
+
+function runtimeHelperModule(
+  moduleKey: string,
+  objectModule: AArch64ObjectModule,
+): AArch64LinkInputModule {
+  return Object.freeze({ moduleKey, objectModule });
+}
+
+function runtimeHelperCoverage(
+  moduleKey: string,
+  primitiveIds: readonly PlatformPrimitiveId[],
+  reachable: ReadonlySet<string> | undefined,
+): UefiAArch64RuntimeHelperCoverageRecord {
+  return Object.freeze({
+    moduleKey,
+    primitiveIds: Object.freeze(
+      primitiveIds
+        .filter((primitiveId) => reachable === undefined || reachable.has(String(primitiveId)))
+        .sort(comparePrimitiveIds),
+    ),
+  });
+}
+
+function coveredPrimitiveIdsFromCoverage(
+  coverage: readonly UefiAArch64RuntimeHelperCoverageRecord[],
+): readonly PlatformPrimitiveId[] {
+  const primitiveIds = new Map<string, PlatformPrimitiveId>();
+  for (const record of coverage) {
+    for (const primitiveId of record.primitiveIds) {
+      primitiveIds.set(String(primitiveId), primitiveId);
+    }
+  }
+  return Object.freeze([...primitiveIds.values()].sort(comparePrimitiveIds));
+}
+
+function comparePrimitiveIds(left: PlatformPrimitiveId, right: PlatformPrimitiveId): number {
+  return String(left) < String(right) ? -1 : String(left) > String(right) ? 1 : 0;
+}
+
+function concatInstructionBytes(instructions: readonly EncodedHelperInstruction[]): Uint8Array {
+  const byteLength = instructions.reduce((sum, instruction) => sum + instruction.bytes.length, 0);
+  const output = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const instruction of instructions) {
+    output.set(instruction.bytes, offset);
+    offset += instruction.bytes.length;
+  }
+  return output;
 }

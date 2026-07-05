@@ -17,8 +17,16 @@ test("v1 matrix is explicit and deterministic", () => {
     "packet-counter/toolchain-stdlib",
     "packet-counter/ejected-stdlib",
     "packet-counter/direct-platform",
+    "packet-counter-real-stream/toolchain-stdlib",
+    "packet-counter-real-stream/ejected-stdlib",
+    "packet-counter-real-stream/direct-platform",
+    "two-branch-control-flow/toolchain-stdlib",
+    "two-branch-control-flow/ejected-stdlib",
+    "two-branch-control-flow/direct-platform",
     "status-error/toolchain-stdlib",
     "watchdog-or-boot-policy/toolchain-stdlib",
+    "stdlib-core-option-result/toolchain-stdlib",
+    "stdlib-bits/toolchain-stdlib",
   ]);
   expect(barrelCases().map(fullImageValidationCaseKey)).toEqual(
     fullImageValidationV1Cases().map(fullImageValidationCaseKey),
@@ -52,7 +60,15 @@ test("public constants expose the closed v1 stage and case contracts", () => {
     ["packet-counter", "toolchain-stdlib"],
     ["packet-counter", "ejected-stdlib"],
     ["packet-counter", "direct-platform"],
+    ["packet-counter-real-stream", "toolchain-stdlib"],
+    ["packet-counter-real-stream", "ejected-stdlib"],
+    ["packet-counter-real-stream", "direct-platform"],
+    ["two-branch-control-flow", "toolchain-stdlib"],
+    ["two-branch-control-flow", "ejected-stdlib"],
+    ["two-branch-control-flow", "direct-platform"],
     ["status-error", "toolchain-stdlib"],
     ["watchdog-or-boot-policy", "toolchain-stdlib"],
+    ["stdlib-core-option-result", "toolchain-stdlib"],
+    ["stdlib-bits", "toolchain-stdlib"],
   ]);
 });

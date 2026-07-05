@@ -17,7 +17,7 @@ export type AArch64UefiFirmwarePathClassification =
 
 export interface RunFullImageValidationQemuSmokeImageInput {
   readonly artifactName: string;
-  readonly artifactBytes: readonly number[];
+  readonly artifactBytes: Uint8Array | readonly number[];
   readonly targetDriverFingerprint?: string;
   readonly request: UefiAArch64QemuSmokeRequest;
   readonly config: UefiAArch64QemuSmokeConfig;
@@ -64,7 +64,9 @@ export function fullImageQemuSmokeRequestForCase(input: {
 }
 
 function fullImageCaseReturnsToShell(caseKey: string): boolean {
-  return !caseKey.startsWith("packet-counter/");
+  return !(
+    caseKey.startsWith("packet-counter/") || caseKey.startsWith("packet-counter-real-stream/")
+  );
 }
 
 export function classifyAArch64UefiFirmwarePath(

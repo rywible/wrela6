@@ -455,6 +455,18 @@ function canUseAsCallArgumentExpectedType(type: CheckedType): boolean {
   }
 }
 
+function explicitTypeArgumentsCanShapeCallArguments(input: {
+  readonly signature: CheckedFunctionSignature;
+  readonly explicitTypeArguments: readonly CheckedType[];
+}): boolean {
+  if (input.explicitTypeArguments.length === 0) return false;
+  const parameterCount = input.signature.genericSignature?.parameters.length ?? 0;
+  return (
+    input.explicitTypeArguments.length === parameterCount &&
+    !input.explicitTypeArguments.some((argument) => containsErrorType(argument))
+  );
+}
+
 function reportCallArgumentMismatch(input: {
   readonly context: HirLoweringContext;
   readonly origin: import("./ids").HirOriginId;
@@ -563,6 +575,20 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
     );
   }
 
+  const explicitArguments =
+    originalSignature !== undefined ? explicitTypeArguments(input.view, input.context, origin) : [];
+  const expectedSignatureForArguments =
+    originalSignature !== undefined &&
+    explicitTypeArgumentsCanShapeCallArguments({
+      signature: originalSignature,
+      explicitTypeArguments: explicitArguments,
+    })
+      ? substituteCheckedSignature({
+          signature: originalSignature,
+          typeArguments: explicitArguments,
+        })
+      : originalSignature;
+
   const sourceArguments = input.view.argumentList()?.arguments() ?? [];
   const loweredByName = new Map<string, HirCallArgument>();
   const positional: HirCallArgument[] = [];
@@ -573,7 +599,7 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
       expectedForCallArgument({
         argument: sourceArgument,
         positionalIndex: positional.length,
-        signature: originalSignature,
+        signature: expectedSignatureForArguments,
       }),
     );
     if (sourceArgument instanceof NamedArgumentView) {
@@ -613,7 +639,6 @@ export function lowerCallExpression(input: LowerCallExpressionInput): HirExpress
   let signature = originalSignature;
   let hasGenericMismatch = false;
   if (originalSignature !== undefined) {
-    const explicitArguments = explicitTypeArguments(input.view, input.context, origin);
     const inference = inferCallTypeArguments({
       signature: originalSignature,
       explicitTypeArguments: explicitArguments,

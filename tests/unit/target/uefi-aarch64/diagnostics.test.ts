@@ -17,6 +17,11 @@ describe("UEFI AArch64 diagnostics", () => {
         stableDetail: "stage:linker",
       }),
       uefiAArch64TargetDiagnostic({
+        code: "UEFI_AARCH64_PRIMITIVE_COVERAGE_MISMATCH",
+        ownerKey: "runtime-helper-objects",
+        stableDetail: "missing:[a];extra:[]",
+      }),
+      uefiAArch64TargetDiagnostic({
         code: "UEFI_AARCH64_TARGET_AUTH_FAILED",
         ownerKey: "z-target",
         stableDetail: "targetKey:wrong",
@@ -44,6 +49,11 @@ describe("UEFI AArch64 diagnostics", () => {
       ["UEFI_AARCH64_TARGET_AUTH_FAILED", "a-target", "targetKey:wrong"],
       ["UEFI_AARCH64_TARGET_AUTH_FAILED", "z-target", "targetKey:wrong"],
       ["UEFI_AARCH64_PIPELINE_FAILED", "pipeline", "stage:linker"],
+      [
+        "UEFI_AARCH64_PRIMITIVE_COVERAGE_MISMATCH",
+        "runtime-helper-objects",
+        "missing:[a];extra:[]",
+      ],
     ]);
   });
 

@@ -73,7 +73,7 @@ export function writeU32Le(word: number): Uint8Array {
   );
 }
 
-export function wordToU32Le(bytes: readonly number[]): number {
+export function wordToU32Le(bytes: ArrayLike<number>): number {
   return ((bytes[3]! << 24) | (bytes[2]! << 16) | (bytes[1]! << 8) | bytes[0]!) >>> 0;
 }
 

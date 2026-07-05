@@ -30,6 +30,7 @@ export interface CheckedObligationState {
 export interface CheckedSessionState {
   readonly sessionKey: string;
   readonly brandKey?: string;
+  readonly streamLoanKey?: string;
 }
 
 export type CheckedValidationStatus = "pending" | "live" | "consumed" | "closed";

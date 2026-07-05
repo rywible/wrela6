@@ -267,12 +267,12 @@ function dispatchBodyStatement(input: {
       terminal: input.functionInstance.signature.modifiers.isTerminal,
     } satisfies ProofMirReturnLoweringInput);
   }
-
   switch (input.statement.kind.kind) {
     case "for":
       return input.registry.iterator.lowerFor({
         context: input.context,
         statement: input.statement.kind.statement,
+        sourceStatement: input.statement,
         blockKey: input.blockKey,
       } satisfies ProofMirForLoweringInput);
     case "validationMatch":
@@ -344,7 +344,7 @@ function dispatchBodyStatement(input: {
     case "yield": {
       const originKey = input.context.originMap.fromMonoStatement({
         owner: { kind: "function", functionInstanceId: input.context.functionInstanceId },
-        sourceOrigin: input.statement.sourceOrigin as never,
+        sourceOrigin: input.statement.sourceOrigin,
         monoStatementId: input.statement.statementId,
       });
       if (input.registry.extension !== undefined) {
@@ -426,7 +426,7 @@ function wireEntryParameters(input: {
 
     const parameterOrigin = input.context.originMap.fromMonoLocal({
       owner: { kind: "function", functionInstanceId: input.functionInstance.instanceId },
-      sourceOrigin: parameterLocal.sourceOrigin as never,
+      sourceOrigin: parameterLocal.sourceOrigin,
       monoLocalId: parameterLocal.localId,
     });
     const localKey = draftLocalKey({
@@ -649,7 +649,7 @@ export function lowerProofMirFunction(
   const ssa = createProofMirGraphSsa({ functionInstanceId, ownerKey });
   const functionOriginKey = originMap.fromHirOrigin({
     owner: { kind: "function", functionInstanceId },
-    sourceOrigin: functionInstance.sourceOrigin as never,
+    sourceOrigin: functionInstance.sourceOrigin,
   });
 
   const loweringContext = createProofMirLoweringContext({

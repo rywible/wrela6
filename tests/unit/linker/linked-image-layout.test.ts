@@ -129,7 +129,10 @@ function linkedImageLayoutForModelTest(
   });
 }
 
-function linkedImageSection(stableKey: string, bytes: readonly number[]): LinkedImageSection {
+function linkedImageSection(
+  stableKey: string,
+  bytes: Uint8Array | readonly number[],
+): LinkedImageSection {
   return {
     stableKey,
     classKey: ".text",
@@ -137,7 +140,7 @@ function linkedImageSection(stableKey: string, bytes: readonly number[]): Linked
     alignmentBytes: 4096,
     rva: stableKey.endsWith(":a") ? 4096 : 8192,
     virtualSizeBytes: bytes.length,
-    bytes,
+    bytes: Uint8Array.from(bytes),
     contributions: [
       {
         stableKey: stableKey.endsWith(":a")
@@ -293,7 +296,7 @@ describe("createAArch64LinkedImageLayout", () => {
     expect(Object.isFrozen(layout)).toBe(true);
     expect(Object.isFrozen(layout.sections)).toBe(true);
     expect(Object.isFrozen(layout.sections[0])).toBe(true);
-    expect(Object.isFrozen(layout.sections[0]?.bytes)).toBe(true);
+    expect(layout.sections[0]?.bytes).toBeInstanceOf(Uint8Array);
     expect(Object.isFrozen(layout.sections[0]?.contributions)).toBe(true);
     expect(Object.isFrozen(layout.sections[0]?.contributions[0])).toBe(true);
     expect(Object.isFrozen(layout.verification.runs)).toBe(true);

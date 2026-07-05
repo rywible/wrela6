@@ -63,7 +63,7 @@ function serializeObligation(
 function serializeSession(
   state: ProofCheckState["sessions"] extends ReadonlyMap<string, infer Value> ? Value : never,
 ): string {
-  return `${state.sessionKey}:${state.brandKey ?? ""}`;
+  return `${state.sessionKey}:${state.brandKey ?? ""}:${state.streamLoanKey ?? ""}`;
 }
 
 function serializeValidation(

@@ -70,7 +70,9 @@ export function typeConstructorFingerprint(constructor: TypeConstructorId): stri
   }
 }
 
-export function checkedTypeFingerprint(type: CheckedType): string {
+const checkedTypeFingerprintCache = new WeakMap<CheckedType, string>();
+
+function computeCheckedTypeFingerprint(type: CheckedType): string {
   switch (type.kind) {
     case "core":
       return `core:${type.coreTypeId}`;
@@ -91,6 +93,14 @@ export function checkedTypeFingerprint(type: CheckedType): string {
     case "error":
       return "error";
   }
+}
+
+export function checkedTypeFingerprint(type: CheckedType): string {
+  const cached = checkedTypeFingerprintCache.get(type);
+  if (cached !== undefined) return cached;
+  const fingerprint = computeCheckedTypeFingerprint(type);
+  checkedTypeFingerprintCache.set(type, fingerprint);
+  return fingerprint;
 }
 
 export function checkedTypesEqual(left: CheckedType, right: CheckedType): boolean {

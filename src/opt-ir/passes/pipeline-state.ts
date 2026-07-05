@@ -294,7 +294,8 @@ export function isSourceCall(operation: OptIrOperation): operation is OptIrOpera
 export function stateChanged(left: PipelineState, right: PipelineState): boolean {
   return (
     stableJson(stableProgram(left.program)) !== stableJson(stableProgram(right.program)) ||
-    stableJson(left.operations) !== stableJson(right.operations)
+    stableJson(left.operations) !== stableJson(right.operations) ||
+    stableJson(left.optimizationRegions) !== stableJson(right.optimizationRegions)
   );
 }
 

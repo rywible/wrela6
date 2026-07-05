@@ -85,11 +85,6 @@ test("full lexer to parser pipeline through public API", () => {
   expect(result.parserDiagnostics.length).toBe(0);
 });
 
-test("compatibility imports from src/lexer still work", async () => {
-  const { Lexer: CompatLexer } = await import("../../../src/lexer");
-  expect(CompatLexer).toBeDefined();
-});
-
 test("frontend namespace exports AST views", () => {
   expect(frontend.SourceFileView).toBeDefined();
   expect(frontend.FunctionDeclarationView).toBeDefined();

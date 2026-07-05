@@ -189,6 +189,40 @@ describe("resolveTypeReferences", () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  test("emits NAME_AMBIGUOUS_NAME for ambiguous module-qualified type item", () => {
+    const graph = parseModuleGraphForTest([
+      ["app/main.wr", "fn useWriter(w: std.io.Writer)\n"],
+      ["std/io.wr", "class Writer:\ndataclass Writer:\n    value: u32\n"],
+    ]);
+    const { index } = buildItemIndex({ graph });
+    const moduleNamespace = buildModuleNamespace(index);
+    const memberNamespace = buildMemberNamespace(index);
+    const referenceKeys = new ReferenceKeyBuilder();
+    const importResult = resolveImports({ graph, index, moduleNamespace, referenceKeys });
+    const moduleContexts = buildModuleContexts(index, importResult.importedScopes);
+
+    const result = resolveTypeReferences({
+      graph,
+      index,
+      coreTypes: CoreTypeCatalog.default(),
+      moduleNamespace,
+      memberNamespace,
+      moduleContexts,
+      referenceKeys,
+    });
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "NAME_AMBIGUOUS_NAME",
+    );
+    expect(
+      result.references
+        .entries()
+        .some(
+          (entry) => entry.key.kind === "moduleQualifiedItem" && entry.reference.kind === "type",
+        ),
+    ).toBe(false);
+  });
+
   test("emits NAME_UNRESOLVED_MODULE for completely unknown module prefix", () => {
     const graph = parseModuleGraphForTest([["app/main.wr", "fn test(x: missing.io.Writer)\n"]]);
     const { index } = buildItemIndex({ graph });

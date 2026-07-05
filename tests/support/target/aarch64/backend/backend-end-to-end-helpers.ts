@@ -61,7 +61,7 @@ export function spillPressureFunctionForTest(
   });
 }
 
-export function containsMoveWideImmediate(bytes: readonly number[], value: number): boolean {
+export function containsMoveWideImmediate(bytes: ArrayLike<number>, value: number): boolean {
   const lowImmediateByte = (value << 5) & 0xff;
   const highImmediateByte = (value >> 3) & 0xff;
   for (let index = 0; index + 3 < bytes.length; index += 1) {
@@ -287,18 +287,18 @@ export function aarch64CallWithArgumentForTest(input: {
   });
 }
 
-export function hasByteSequence(bytes: readonly number[], sequence: readonly number[]): boolean {
+export function hasByteSequence(bytes: ArrayLike<number>, sequence: readonly number[]): boolean {
   for (let offset = 0; offset + sequence.length <= bytes.length; offset += 1) {
     if (sequence.every((byte, index) => bytes[offset + index] === byte)) return true;
   }
   return false;
 }
 
-export function retWordOffsets(bytes: readonly number[]): readonly number[] {
+export function retWordOffsets(bytes: ArrayLike<number>): readonly number[] {
   return wordOffsets(bytes, [0xc0, 0x03, 0x5f, 0xd6]);
 }
 
-export function movzZeroOffsets(bytes: readonly number[]): readonly number[] {
+export function movzZeroOffsets(bytes: ArrayLike<number>): readonly number[] {
   const offsets: number[] = [];
   for (let offset = 0; offset + 3 < bytes.length; offset += 4) {
     if (bytes[offset + 1] === 0x00 && bytes[offset + 2] === 0x80 && bytes[offset + 3] === 0xd2) {
@@ -308,7 +308,7 @@ export function movzZeroOffsets(bytes: readonly number[]): readonly number[] {
   return offsets;
 }
 
-export function storeWordOffsets(bytes: readonly number[]): readonly number[] {
+export function storeWordOffsets(bytes: ArrayLike<number>): readonly number[] {
   const offsets: number[] = [];
   for (let offset = 0; offset + 3 < bytes.length; offset += 4) {
     if (bytes[offset + 3] === 0xf9) offsets.push(offset);
@@ -317,7 +317,7 @@ export function storeWordOffsets(bytes: readonly number[]): readonly number[] {
 }
 
 export function wordOffsets(
-  bytes: readonly number[],
+  bytes: ArrayLike<number>,
   word: readonly [number, number, number, number],
 ) {
   const offsets: number[] = [];

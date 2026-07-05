@@ -31,6 +31,8 @@ import { coreTypeId, functionId, itemId } from "../../../src/semantic/ids";
 import { coreCheckedType } from "../../../src/semantic/surface/type-model";
 import { SourceSpan } from "../../../src/shared/source-span";
 import type { MonoCheckedType, MonoFunctionSignature } from "../../../src/mono/mono-hir";
+import { checkedFunctionSummaryCertificateId } from "../../../src/proof-check/model/certificates";
+import type { CheckedFunctionSummary } from "../../../src/proof-check/model/function-summary";
 
 const integer32 = optIrSignedIntegerType(32);
 
@@ -128,7 +130,10 @@ describe("mandatory semantic inlining", () => {
         parameters: [optIrValueId(100)],
         operations: [helperOperation.operationId],
         terminatorValues: [optIrValueId(40)],
-        summary: { semanticInlinePolicy: { kind: "eligible" } },
+        summary: {
+          ...checkedFunctionSummaryForOptIrTest(monoInstanceId("ordinary.wrapper")),
+          semanticInlinePolicy: { kind: "eligible" },
+        },
       }),
       operations: [call, helperOperation],
       facts: [],
@@ -401,8 +406,11 @@ describe("mandatory semantic inlining", () => {
   });
 });
 
-function mandatorySummary(reason: OptIrMandatoryInlineReason): MandatoryInliningFunctionSummary {
+function mandatorySummary(
+  reason: OptIrMandatoryInlineReason,
+): CheckedFunctionSummary & MandatoryInliningFunctionSummary {
   return {
+    ...checkedFunctionSummaryForOptIrTest(monoInstanceId("summary::mandatory")),
     semanticInlinePolicy: {
       kind: "mandatory",
       reason,
@@ -427,7 +435,7 @@ function functionWithOperations(input: {
   readonly parameters?: readonly ReturnType<typeof optIrValueId>[];
   readonly operations: readonly ReturnType<typeof optIrOperationId>[];
   readonly terminatorValues?: readonly ReturnType<typeof optIrValueId>[];
-  readonly summary?: unknown;
+  readonly summary?: CheckedFunctionSummary & MandatoryInliningFunctionSummary;
 }): OptIrFunction {
   const block: OptIrBlock = {
     blockId: optIrBlockId(input.functionId),
@@ -460,6 +468,26 @@ function functionWithOperations(input: {
     entryBlock: block.blockId,
     summary: input.summary,
     originId: optIrOriginId(input.functionId),
+  };
+}
+
+function checkedFunctionSummaryForOptIrTest(
+  functionInstanceId: ReturnType<typeof monoInstanceId>,
+): CheckedFunctionSummary {
+  return {
+    functionInstanceId,
+    requiredFacts: [],
+    observedInputs: [],
+    consumedInputs: [],
+    mutatedInputs: [],
+    producedPlaces: [],
+    returnedFacts: [],
+    invalidatedFacts: [],
+    privateStateEffects: [],
+    producedCapabilities: [],
+    terminalEffects: [],
+    divergence: [],
+    certificateId: checkedFunctionSummaryCertificateId(1),
   };
 }
 

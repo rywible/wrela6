@@ -28,6 +28,7 @@ export type ProofMirCallTarget =
   | {
       readonly kind: "compilerIntrinsic";
       readonly intrinsicKey: string;
+      readonly literalValue: string;
       readonly sourceValueKey: string;
       readonly returnTypeKey: string;
     }

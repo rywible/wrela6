@@ -13,6 +13,7 @@ import {
   type ProofMirControlFlowLowerer,
   type ProofMirExpressionLowerer,
   type ProofMirLoweringRegistry,
+  type ProofMirValidationLowerer,
 } from "./lowering-context";
 import { extendProofMirControlFlowLowererWithLoops, type ActiveLoopFrame } from "./loop-lowerer";
 import { withLoopIfStatementLowering } from "./loop-if-statement-lowering";
@@ -93,6 +94,7 @@ export function createWiredProofMirLoweringRegistry(input?: {
   const wiredExpressionLowerer = createProofMirExpressionLowerer({
     validatedBufferRead: validatedBufferReadLowerer,
     call: callLowerer,
+    currentBlockRef,
   });
   wiredExpressionLowererRef.current = wiredExpressionLowerer;
   const statementLowerer = createProofMirStatementLowerer({
@@ -126,28 +128,43 @@ export function createWiredProofMirLoweringRegistry(input?: {
     continuationBlockRef,
     currentBlockRef,
   });
+  const validationLowererRef: {
+    current?: ReturnType<typeof createProofMirValidationLowerer>;
+  } = {};
+  const validationDelegate: ProofMirValidationLowerer = {
+    lowerValidation(loweringInput) {
+      return validationLowererRef.current!.lowerValidation(loweringInput);
+    },
+  };
+  const takeLowerer = createProofMirTakeLowerer({
+    expression: wiredExpressionLowerer,
+    call: callLowerer,
+    statement: statementLowerer,
+    controlFlow,
+    terminal: terminalLowerer,
+    validation: validationDelegate,
+  });
+  const validationLowerer = createProofMirValidationLowerer({
+    statement: statementLowerer,
+    terminal: terminalLowerer,
+    controlFlow,
+  });
+  validationLowererRef.current = validationLowerer;
 
   const registryResult = createProofMirLoweringRegistry({
     expression: wiredExpressionLowerer,
     statement: statementLowerer,
     controlFlow,
     call: callLowerer,
-    validation: createProofMirValidationLowerer({
-      statement: statementLowerer,
-      terminal: terminalLowerer,
-      controlFlow,
-    }),
+    validation: validationLowerer,
     attempt: createProofMirAttemptLowerer({ expression: wiredExpressionLowerer }),
-    take: createProofMirTakeLowerer({
-      expression: wiredExpressionLowerer,
-      call: callLowerer,
-      statement: statementLowerer,
-    }),
+    take: takeLowerer,
     terminal: terminalLowerer,
     validatedBufferRead: validatedBufferReadLowerer,
     iterator: createProofMirIteratorLowerer({
       expression: wiredExpressionLowerer,
       call: callLowerer,
+      take: takeLowerer,
       statement: statementLowerer,
       terminal: terminalLowerer,
       callRecorder,

@@ -20,7 +20,7 @@ describe("AArch64 layout and encode fixed point", () => {
     if (result.kind !== "ok") throw new Error("expected layout");
     expect(result.value.iterations).toBe(1);
     expect(result.value.sections[0]!.classKey).toBe(AARCH64_OBJECT_SECTION_CLASS_EXECUTABLE_TEXT);
-    expect(result.value.sections[0]!.bytes).toEqual([0xe0, 0x00, 0x80, 0xd2]);
+    expect(Array.from(result.value.sections[0]!.bytes)).toEqual([0xe0, 0x00, 0x80, 0xd2]);
     expect(result.value.byteProvenance.map((record) => record.stableKey)).toEqual([
       "byte:.text:movz:main",
     ]);
@@ -72,7 +72,7 @@ describe("AArch64 layout and encode fixed point", () => {
       bitRange: [0, 25],
       targetSymbol: "far_target",
     });
-    expect(result.value.sections[0]?.bytes.slice(0, 8)).toEqual([
+    expect(Array.from(result.value.sections[0]?.bytes.slice(0, 8) ?? [])).toEqual([
       0x41, 0x00, 0x00, 0x54, 0x00, 0x00, 0x00, 0x14,
     ]);
   });
@@ -213,7 +213,7 @@ describe("AArch64 layout and encode fixed point", () => {
       { siteKey: "cbnz:far", state: "expanded-invert-and-b" },
       { siteKey: "cbz:far", state: "expanded-invert-and-b" },
     ]);
-    expect(result.value.sections[0]?.bytes).toEqual([
+    expect(Array.from(result.value.sections[0]?.bytes ?? [])).toEqual([
       0x43, 0x00, 0x00, 0xb5, 0x00, 0x00, 0x00, 0x14, 0x44, 0x00, 0x00, 0x34, 0x00, 0x00, 0x00,
       0x14,
     ]);
@@ -277,7 +277,7 @@ describe("AArch64 layout and encode fixed point", () => {
       { siteKey: "tbnz:far", state: "expanded-test-branch-and-b" },
       { siteKey: "tbz:far", state: "expanded-test-branch-and-b" },
     ]);
-    expect(result.value.sections[0]?.bytes).toEqual([
+    expect(Array.from(result.value.sections[0]?.bytes ?? [])).toEqual([
       0x45, 0x00, 0x40, 0xb7, 0x00, 0x00, 0x00, 0x14, 0x46, 0x00, 0x38, 0x36, 0x00, 0x00, 0x00,
       0x14,
     ]);
@@ -361,7 +361,7 @@ describe("AArch64 layout and encode fixed point", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected aligned layout");
-    expect(result.value.sections[0]?.bytes).toEqual([
+    expect(Array.from(result.value.sections[0]?.bytes ?? [])).toEqual([
       0x20, 0x00, 0x80, 0xd2, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x80, 0xd2,
     ]);
     expect(result.value.byteProvenance.map((record) => record.stableKey)).toEqual([
@@ -397,14 +397,16 @@ describe("AArch64 layout and encode fixed point", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected reachable literal pool");
-    expect(result.value.literalPools[0]).toMatchObject({
+    const literalPool = result.value.literalPools[0];
+    expect(literalPool).toMatchObject({
       stableKey: "literal:.text:constant:one",
       sectionKey: ".text",
       offsetBytes: 16,
-      data: [1, 0, 0, 0, 0, 0, 0, 0],
       users: [{ stableKey: "literal:user", useOffsetBytes: 0, maxReachBytes: 64 }],
     });
-    expect(result.value.sections[0]?.bytes.slice(12, 24)).toEqual([
+    expect(literalPool?.data).toBeInstanceOf(Uint8Array);
+    expect(Array.from(literalPool?.data ?? [])).toEqual([1, 0, 0, 0, 0, 0, 0, 0]);
+    expect(Array.from(result.value.sections[0]?.bytes.slice(12, 24) ?? [])).toEqual([
       0x00, 0x00, 0x00, 0x00, 1, 0, 0, 0, 0, 0, 0, 0,
     ]);
   });

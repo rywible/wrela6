@@ -1,0 +1,9 @@
+dataclass A:
+    b: B
+
+dataclass B:
+    a: A
+
+uefi image Boot:
+    fn boot() -> Never:
+        return

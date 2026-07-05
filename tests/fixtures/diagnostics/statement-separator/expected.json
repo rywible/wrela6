@@ -1,0 +1,9 @@
+{
+  "phase": "parse",
+  "diagnostics": [
+    {
+      "code": "PARSE_EXPECTED_STATEMENT_SEPARATOR",
+      "spanText": "x1F"
+    }
+  ]
+}

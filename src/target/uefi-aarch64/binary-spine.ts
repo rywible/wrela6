@@ -1,4 +1,5 @@
 import {
+  createDefaultAArch64LinkerVeneerProvider,
   createAArch64UefiEntrySyntheticObjectProvider,
   createAArch64UnwindSyntheticObjectProvider,
   linkAArch64Image,
@@ -15,6 +16,7 @@ import {
 } from "../aarch64";
 import type { OptIrFunction } from "../../opt-ir/program";
 import { optIrTypeStableKey } from "../../opt-ir/types";
+import type { PlatformPrimitiveId } from "../../semantic/ids";
 import { checkedTypeFingerprint } from "../../semantic/surface/type-model";
 import { createUefiAArch64EntryThunkObjectFactory, planUefiAArch64EntryThunk } from "./entry-thunk";
 import { canonicalUefiAArch64ExitBootServicesPolicy } from "./exit-boot-services";
@@ -24,6 +26,10 @@ import {
   type UefiAArch64PackageOptIrPipelineOutput,
   type UefiAArch64StageRecord,
 } from "./package-pipeline";
+import {
+  readonlyPointersFromOptIrConstantPool,
+  staticChar16MetadataFromOptIrConstantPool,
+} from "./package-pipeline-static-char16";
 import { uefiAArch64TargetDiagnostic, type UefiAArch64TargetDiagnostic } from "./diagnostics";
 import {
   failedVerification,
@@ -33,7 +39,10 @@ import {
   verificationSummaryFromRuns,
   type UefiAArch64TargetResult,
 } from "./result";
-import { materializeUefiAArch64RuntimeHelperObjects } from "./runtime-helper-objects";
+import {
+  materializeUefiAArch64RuntimeHelperObjects,
+  UEFI_AARCH64_RUNTIME_HELPER_COVERED_PRIMITIVE_IDS,
+} from "./runtime-helper-objects";
 import {
   authenticateUefiAArch64PeCoffWriterTargetForLinkedPolicy,
   productionUefiAArch64ResolvedTargetSurfaces,
@@ -97,6 +106,12 @@ export function runUefiAArch64BinarySpine(
     );
   }
 
+  const staticChar16Metadata = staticChar16MetadataFromOptIrConstantPool({
+    program: input.optIr.optIr.program,
+    operations: input.optIr.optIr.operations,
+  });
+  const staticReadonlyPointers = readonlyPointersFromOptIrConstantPool(input.optIr.optIr.program);
+
   const lowered = lowerOptIrToAArch64({
     program: input.optIr.optIr.program,
     operations: input.optIr.optIr.operations,
@@ -110,9 +125,13 @@ export function runUefiAArch64BinarySpine(
           validationFixturePacketSources: input.optIr.optIr.validationFixturePacketSources,
         }),
         staticChar16Pointers: new Map(
-          input.optIr.optIr.staticChar16Pointers.map((record) => [record.valueKey, record.pointer]),
+          staticChar16Metadata.staticChar16Pointers.map((record) => [
+            record.valueKey,
+            record.pointer,
+          ]),
         ),
       },
+      staticReadonlyPointers,
     },
   });
   if (lowered.kind === "error") {
@@ -145,8 +164,8 @@ export function runUefiAArch64BinarySpine(
 
   const staticChar16Objects = materializeUefiAArch64StaticChar16ObjectModule({
     backendTarget: surfaces.value.backendTarget,
-    staticChar16Strings: input.optIr.optIr.staticChar16Strings,
-    staticChar16Pointers: input.optIr.optIr.staticChar16Pointers,
+    staticChar16Strings: staticChar16Metadata.staticChar16Strings,
+    staticChar16Pointers: staticChar16Metadata.staticChar16Pointers,
   });
   if (staticChar16Objects.kind === "error") {
     return binarySpineError(
@@ -176,12 +195,24 @@ export function runUefiAArch64BinarySpine(
     statusPolicy: input.target.statusPolicy,
     watchdogPolicy: input.target.watchdogPolicy,
     exitBootServicesPolicy: canonicalUefiAArch64ExitBootServicesPolicy(),
+    reachablePlatformPrimitiveIds: input.optIr.reachablePlatformPrimitiveIds,
   });
   if (helperObjects.kind === "error") {
     return binarySpineError(
       "runtime-helper-objects",
       stages.failed("runtime-helper-objects"),
       helperObjects.diagnostics,
+    );
+  }
+  const helperCoverage = diffUefiAArch64RuntimeHelperPrimitiveCoverage({
+    reachablePlatformPrimitiveIds: input.optIr.reachablePlatformPrimitiveIds,
+    coveredPlatformPrimitiveIds: helperObjects.value.coveredPrimitiveIds,
+  });
+  if (helperCoverage.kind === "error") {
+    return binarySpineError(
+      "runtime-helper-objects",
+      stages.failed("runtime-helper-objects"),
+      helperCoverage.diagnostics,
     );
   }
   stages.passed("runtime-helper-objects");
@@ -209,6 +240,7 @@ export function runUefiAArch64BinarySpine(
     factory: syntheticFactory,
     backendTarget: surfaces.value.backendTarget,
   });
+  const veneerProvider = createDefaultAArch64LinkerVeneerProvider();
   stages.passed("synthetic-entry-object");
 
   const backendObjects = Object.freeze([
@@ -224,6 +256,7 @@ export function runUefiAArch64BinarySpine(
     ]),
     entry: { wrelaBootLinkageName: input.target.entryProfile.bootFunctionSymbol },
     syntheticObjects: [entryProvider, unwindProvider],
+    veneerProvider,
   });
   if (linked.kind === "error") {
     return binarySpineError("linker", stages.failed("linker"), linked.diagnostics);
@@ -512,6 +545,64 @@ function mapDiagnostics(
       }),
     ),
   );
+}
+
+export function diffUefiAArch64RuntimeHelperPrimitiveCoverage(input: {
+  readonly reachablePlatformPrimitiveIds: readonly PlatformPrimitiveId[];
+  readonly coveredPlatformPrimitiveIds: readonly PlatformPrimitiveId[];
+}):
+  | { readonly kind: "ok" }
+  | { readonly kind: "error"; readonly diagnostics: readonly UefiAArch64TargetDiagnostic[] } {
+  const expected = helperRequiredPrimitiveIds(input.reachablePlatformPrimitiveIds);
+  const actual = sortedUniquePrimitiveIds(input.coveredPlatformPrimitiveIds);
+  const actualSet = new Set(actual.map(String));
+  const expectedSet = new Set(expected.map(String));
+  const missing = expected.filter((primitiveId) => !actualSet.has(String(primitiveId)));
+  const extra = actual.filter((primitiveId) => !expectedSet.has(String(primitiveId)));
+  if (missing.length === 0 && extra.length === 0) return { kind: "ok" };
+
+  return {
+    kind: "error",
+    diagnostics: [
+      uefiAArch64TargetDiagnostic({
+        code: "UEFI_AARCH64_PRIMITIVE_COVERAGE_MISMATCH",
+        ownerKey: "runtime-helper-objects",
+        stableDetail: `missing:${stablePrimitiveList(missing)};extra:${stablePrimitiveList(extra)}`,
+      }),
+    ],
+  };
+}
+
+function helperRequiredPrimitiveIds(
+  reachablePlatformPrimitiveIds: readonly PlatformPrimitiveId[],
+): readonly PlatformPrimitiveId[] {
+  const helperPrimitiveIds = new Set(UEFI_AARCH64_RUNTIME_HELPER_COVERED_PRIMITIVE_IDS.map(String));
+  return sortedUniquePrimitiveIds(
+    reachablePlatformPrimitiveIds.filter((primitiveId) =>
+      helperPrimitiveIds.has(String(primitiveId)),
+    ),
+  );
+}
+
+function sortedUniquePrimitiveIds(
+  primitiveIds: readonly PlatformPrimitiveId[],
+): readonly PlatformPrimitiveId[] {
+  const byStableKey = new Map<string, PlatformPrimitiveId>();
+  for (const primitiveId of primitiveIds) {
+    byStableKey.set(String(primitiveId), primitiveId);
+  }
+  return Object.freeze([...byStableKey.values()].sort(comparePlatformPrimitiveIds));
+}
+
+function stablePrimitiveList(primitiveIds: readonly PlatformPrimitiveId[]): string {
+  return primitiveIds.length === 0 ? "[]" : `[${primitiveIds.map(String).join(",")}]`;
+}
+
+function comparePlatformPrimitiveIds(
+  left: PlatformPrimitiveId,
+  right: PlatformPrimitiveId,
+): number {
+  return String(left) < String(right) ? -1 : String(left) > String(right) ? 1 : 0;
 }
 
 function fingerprintMismatchDiagnostic(

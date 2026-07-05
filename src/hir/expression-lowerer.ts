@@ -18,7 +18,6 @@ import type { ResolvedReference } from "../semantic/names/reference";
 import { concreteKind, errorKind } from "../semantic/surface/resource-kind";
 import type { CheckedResourceKind } from "../semantic/surface/resource-kind";
 import {
-  checkedTypeFingerprint,
   checkedTypesEqual,
   coreCheckedType,
   errorCheckedType,
@@ -35,6 +34,22 @@ import { lowerAttemptExpression } from "./attempt-lowerer";
 import { checkConstructibility } from "./constructibility";
 import { resourceKindForCheckedType } from "./type-resource-kind";
 import { hirEnumCaseOrdinal } from "./enum-case-model";
+import { parseWrIntegerLiteral } from "../shared/integer-literal";
+import {
+  isArithmeticOperator,
+  isBitwiseOperator,
+  isIntegerCheckedType,
+  isLogicalOperator,
+  maximumIntegerValue,
+  reportArithmeticOperandDiagnostics,
+  reportBitwiseOperandDiagnostics,
+  reportArithmeticRequiresInteger,
+  reportBinaryOperandTypeMismatch,
+  reportIntegerLiteralOutOfRange,
+  reportLogicalOperandDiagnostics,
+  reportTypeMismatch,
+  unaryNegationStableDetail,
+} from "./expression-type-diagnostics";
 
 export interface LowerExpressionInput {
   readonly view: ExpressionView;
@@ -99,74 +114,32 @@ function findReferenceBySpan(
   });
 }
 
-function reportTypeMismatch(input: {
-  readonly context: HirLoweringContext;
-  readonly sourceOrigin: HirOriginId;
-  readonly expectedType: CheckedType | undefined;
-  readonly actualType: CheckedType;
-}): void {
-  if (input.expectedType === undefined) return;
-  if (input.actualType.kind === "error") return;
-  if (checkedTypesEqual(input.expectedType, input.actualType)) return;
-  input.context.diagnostics.report(
-    hirDiagnostic({
-      code: "HIR_EXPRESSION_TYPE_MISMATCH",
-      message: "Expression type does not match expected type.",
-      originId: input.sourceOrigin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
-      originKey: `origin:${input.sourceOrigin}`,
-      stableDetail: "expression-type",
-    }),
-  );
-}
-
-function isIntegerCheckedType(type: CheckedType | undefined): boolean {
-  if (type?.kind !== "core") return false;
-  return (
-    type.coreTypeId === coreTypeId("u8") ||
-    type.coreTypeId === coreTypeId("u16") ||
-    type.coreTypeId === coreTypeId("u32") ||
-    type.coreTypeId === coreTypeId("u64") ||
-    type.coreTypeId === coreTypeId("usize")
-  );
-}
-
-function maximumIntegerValue(type: CheckedType): bigint | undefined {
-  if (type.kind !== "core") return undefined;
-  if (type.coreTypeId === coreTypeId("u8")) return 255n;
-  if (type.coreTypeId === coreTypeId("u16")) return 65_535n;
-  if (type.coreTypeId === coreTypeId("u32")) return 4_294_967_295n;
-  if (type.coreTypeId === coreTypeId("u64") || type.coreTypeId === coreTypeId("usize")) {
-    return 18_446_744_073_709_551_615n;
-  }
-  return undefined;
-}
-
-function reportIntegerLiteralOutOfRange(input: {
-  readonly context: HirLoweringContext;
-  readonly sourceOrigin: HirOriginId;
-  readonly valueText: string;
-  readonly type: CheckedType;
-}): void {
-  input.context.diagnostics.report(
-    hirDiagnostic({
-      code: "HIR_INTEGER_LITERAL_OUT_OF_RANGE",
-      message: "Integer literal is outside the expected type range.",
-      originId: input.sourceOrigin,
-      ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
-      originKey: `origin:${input.sourceOrigin}`,
-      stableDetail: `${input.valueText}:${checkedTypeFingerprint(input.type)}`,
-    }),
-  );
-}
-
 function lowerLiteral(input: LowerExpressionInput, view: LiteralExpressionView): HirExpression {
   const origin = originForExpression(view, input.context);
   const token = view.literalToken();
   const text = view.literalText() ?? "";
-  if (token?.kind === SyntaxKind.StringLiteralToken) {
+  if (token?.kind === SyntaxKind.TrueKeyword || token?.kind === SyntaxKind.FalseKeyword) {
     const expression = addExpression(input.context, {
-      kind: { kind: "literal", literal: { kind: "string", value: text } },
+      kind: {
+        kind: "literal",
+        literal: { kind: "bool", value: token.kind === SyntaxKind.TrueKeyword },
+      },
+      type: coreCheckedType(coreTypeId("bool")),
+      resourceKind: concreteKind("Copy"),
+      sourceOrigin: origin,
+    });
+    reportTypeMismatch({
+      context: input.context,
+      sourceOrigin: origin,
+      expectedType: input.expectedType,
+      actualType: expression.type,
+    });
+    return expression;
+  }
+  if (token?.kind === SyntaxKind.StringLiteralToken) {
+    const value = view.cookedStringValue() ?? "";
+    const expression = addExpression(input.context, {
+      kind: { kind: "literal", literal: { kind: "string", value } },
       type: coreCheckedType(coreTypeId("string")),
       resourceKind: concreteKind("Copy"),
       sourceOrigin: origin,
@@ -180,10 +153,10 @@ function lowerLiteral(input: LowerExpressionInput, view: LiteralExpressionView):
     return expression;
   }
 
-  const value = BigInt(text.length > 0 ? text : "0");
+  const value = parseWrIntegerLiteral(text) ?? 0n;
   const integerType = isIntegerCheckedType(input.expectedType)
     ? input.expectedType!
-    : coreCheckedType(coreTypeId("u32"));
+    : coreCheckedType(coreTypeId("u64"));
   const maxValue = maximumIntegerValue(integerType);
   if (maxValue !== undefined && value > maxValue) {
     reportIntegerLiteralOutOfRange({
@@ -255,22 +228,6 @@ function lowerName(input: LowerExpressionInput, view: NameExpressionView): HirEx
   const origin = originForExpression(view, input.context);
   const name = view.nameText() ?? "";
   const nameSpan = presentTokenSpan(view.nameToken()) ?? view.node.span;
-  if (name === "true" || name === "false") {
-    const expression = addExpression(input.context, {
-      kind: { kind: "literal", literal: { kind: "bool", value: name === "true" } },
-      type: coreCheckedType(coreTypeId("bool")),
-      resourceKind: concreteKind("Copy"),
-      sourceOrigin: origin,
-    });
-    reportTypeMismatch({
-      context: input.context,
-      sourceOrigin: origin,
-      expectedType: input.expectedType,
-      actualType: expression.type,
-    });
-    return expression;
-  }
-
   const local = input.context.locals.lookup(name);
   if (local !== undefined) {
     const place = input.context.places.placeForProjection({
@@ -306,6 +263,16 @@ function lowerName(input: LowerExpressionInput, view: NameExpressionView): HirEx
 
   const imageReference = findReferenceBySpan(input.context, nameSpan, "imageName");
   if (imageReference?.kind === "image") {
+    input.context.diagnostics.report(
+      hirDiagnostic({
+        code: "HIR_IMAGE_NAME_NOT_A_VALUE",
+        message: "Image names are declarations and cannot be used as values.",
+        originId: origin,
+        ownerKey: `function:${input.context.ownerFunctionId ?? 0}`,
+        originKey: `origin:${origin}`,
+        stableDetail: name,
+      }),
+    );
     return addExpression(input.context, {
       kind: { kind: "name", name },
       type: errorCheckedType(),
@@ -443,9 +410,7 @@ function completedFieldForReceiver(input: {
 }): FieldId | undefined {
   const ownerItemId = ownerItemIdForMemberFallback(input.context, input.receiver.type);
   if (ownerItemId === undefined) return undefined;
-  return input.context.program.fields
-    .entries()
-    .find((field) => field.itemId === ownerItemId && field.name === input.memberName)?.fieldId;
+  return input.context.fieldLookupByOwnerAndName().get(ownerItemId)?.get(input.memberName)?.fieldId;
 }
 
 function lowerMember(input: LowerExpressionInput, view: MemberAccessExpressionView): HirExpression {
@@ -662,8 +627,16 @@ function lowerUnary(input: LowerExpressionInput, view: UnaryExpressionView): Hir
     operandView !== undefined
       ? lowerExpression({ view: operandView, context: input.context })
       : errorExpression(input.context, origin, "missing-unary-operand");
+  if (view.operatorToken()?.kind === SyntaxKind.MinusToken && operand.type.kind !== "error") {
+    reportArithmeticRequiresInteger({
+      context: input.context,
+      sourceOrigin: origin,
+      stableDetail: unaryNegationStableDetail(operand.type),
+      message: "Integer negation is not supported in HIR.",
+    });
+  }
   const expression = addExpression(input.context, {
-    kind: { kind: "unary", operator: view.operatorToken()?.text ?? "", operand },
+    kind: { kind: "unary", operator: view.operatorToken()?.green.lexeme ?? "", operand },
     type: operand.type,
     resourceKind: operand.resourceKind,
     sourceOrigin: origin,
@@ -677,6 +650,80 @@ function lowerUnary(input: LowerExpressionInput, view: UnaryExpressionView): Hir
   return expression;
 }
 
+function expectedIntegerType(type: CheckedType | undefined): CheckedType | undefined {
+  return isIntegerCheckedType(type) ? type : undefined;
+}
+
+function lowerBinaryOperand(input: {
+  readonly view: ExpressionView | undefined;
+  readonly context: HirLoweringContext;
+  readonly origin: HirOriginId;
+  readonly missingReason: string;
+  readonly expectedType?: CheckedType;
+}): HirExpression {
+  return input.view !== undefined
+    ? lowerExpression({
+        view: input.view,
+        context: input.context,
+        ...(input.expectedType !== undefined ? { expectedType: input.expectedType } : {}),
+      })
+    : errorExpression(input.context, input.origin, input.missingReason);
+}
+
+function lowerBinaryOperands(input: {
+  readonly context: HirLoweringContext;
+  readonly origin: HirOriginId;
+  readonly leftView: ExpressionView | undefined;
+  readonly rightView: ExpressionView | undefined;
+  readonly expectedType?: CheckedType;
+}): { readonly left: HirExpression; readonly right: HirExpression } {
+  const leftIsLiteral = input.leftView instanceof LiteralExpressionView;
+  const rightIsLiteral = input.rightView instanceof LiteralExpressionView;
+
+  if (leftIsLiteral && !rightIsLiteral) {
+    const right = lowerBinaryOperand({
+      view: input.rightView,
+      context: input.context,
+      origin: input.origin,
+      missingReason: "missing-right-operand",
+    });
+    return {
+      left: lowerBinaryOperand({
+        view: input.leftView,
+        context: input.context,
+        origin: input.origin,
+        missingReason: "missing-left-operand",
+        ...(expectedIntegerType(right.type) !== undefined
+          ? { expectedType: expectedIntegerType(right.type) }
+          : {}),
+      }),
+      right,
+    };
+  }
+
+  const left = lowerBinaryOperand({
+    view: input.leftView,
+    context: input.context,
+    origin: input.origin,
+    missingReason: "missing-left-operand",
+    ...(leftIsLiteral && expectedIntegerType(input.expectedType) !== undefined
+      ? { expectedType: expectedIntegerType(input.expectedType) }
+      : {}),
+  });
+  const rightExpectedType =
+    expectedIntegerType(left.type) ?? expectedIntegerType(input.expectedType);
+  const right = lowerBinaryOperand({
+    view: input.rightView,
+    context: input.context,
+    origin: input.origin,
+    missingReason: "missing-right-operand",
+    ...(rightIsLiteral && rightExpectedType !== undefined
+      ? { expectedType: rightExpectedType }
+      : {}),
+  });
+  return { left, right };
+}
+
 function lowerBinaryLike(
   input: LowerExpressionInput,
   view: BinaryExpressionView | ComparisonExpressionView | EqualityExpressionView,
@@ -684,24 +731,60 @@ function lowerBinaryLike(
   const origin = originForExpression(view, input.context);
   const leftView = view.left();
   const rightView = view.right();
-  const left =
-    leftView !== undefined
-      ? lowerExpression({ view: leftView, context: input.context })
-      : errorExpression(input.context, origin, "missing-left-operand");
-  const right =
-    rightView !== undefined
-      ? lowerExpression({ view: rightView, context: input.context })
-      : errorExpression(input.context, origin, "missing-right-operand");
+  const { left, right } = lowerBinaryOperands({
+    context: input.context,
+    origin,
+    leftView,
+    rightView,
+    ...(input.expectedType !== undefined ? { expectedType: input.expectedType } : {}),
+  });
+  const operatorKind = view.operatorToken()?.kind;
+  const operator = view.operatorToken()?.green.lexeme ?? "";
+  reportBinaryOperandTypeMismatch({
+    context: input.context,
+    sourceOrigin: origin,
+    operator,
+    leftType: left.type,
+    rightType: right.type,
+  });
+  if (view instanceof BinaryExpressionView && isArithmeticOperator(operatorKind)) {
+    reportArithmeticOperandDiagnostics({
+      context: input.context,
+      sourceOrigin: origin,
+      operator,
+      leftType: left.type,
+      rightType: right.type,
+    });
+  }
+  if (view instanceof BinaryExpressionView && isBitwiseOperator(operatorKind)) {
+    reportBitwiseOperandDiagnostics({
+      context: input.context,
+      sourceOrigin: origin,
+      operator,
+      leftType: left.type,
+      rightType: right.type,
+    });
+  }
+  if (view instanceof BinaryExpressionView && isLogicalOperator(operatorKind)) {
+    reportLogicalOperandDiagnostics({
+      context: input.context,
+      sourceOrigin: origin,
+      operator,
+      leftType: left.type,
+      rightType: right.type,
+    });
+  }
   const isPredicate =
     view instanceof ComparisonExpressionView || view instanceof EqualityExpressionView;
+  const isLogical = view instanceof BinaryExpressionView && isLogicalOperator(operatorKind);
   const expression = addExpression(input.context, {
     kind: {
       kind: isPredicate ? "comparison" : "binary",
-      operator: view.operatorToken()?.text ?? "",
+      operator,
       left,
       right,
     },
-    type: isPredicate ? coreCheckedType(coreTypeId("bool")) : left.type,
+    type: isPredicate || isLogical ? coreCheckedType(coreTypeId("bool")) : left.type,
     resourceKind: concreteKind("Copy"),
     sourceOrigin: origin,
   });

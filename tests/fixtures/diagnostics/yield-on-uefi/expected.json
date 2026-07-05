@@ -1,0 +1,10 @@
+{
+  "phase": "semantic",
+  "diagnostics": [
+    {
+      "code": "HIR_FEATURE_NOT_AVAILABLE_ON_TARGET",
+      "spanText": "yield",
+      "count": 1
+    }
+  ]
+}

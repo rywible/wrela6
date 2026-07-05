@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { OptIrOperation } from "../../../../src/opt-ir/operations";
 import {
   compileUefiAArch64ImageWithTrace,
   efiErrorStatus,
@@ -16,6 +17,9 @@ const packetCounterCases = [
   ["packet-counter", "toolchain-stdlib"],
   ["packet-counter", "ejected-stdlib"],
   ["packet-counter", "direct-platform"],
+  ["packet-counter-real-stream", "toolchain-stdlib"],
+  ["packet-counter-real-stream", "ejected-stdlib"],
+  ["packet-counter-real-stream", "direct-platform"],
 ] as const;
 
 describe("PacketCounter full-image fixture corpus", () => {
@@ -27,6 +31,15 @@ describe("PacketCounter full-image fixture corpus", () => {
       0x01, 0x02, 0x03, 0x41, 0x42,
     ]);
     expect(packetCounterFixtureBytes("packet-counter/direct-platform")).toEqual([
+      0x01, 0x02, 0x03, 0x41, 0x42,
+    ]);
+    expect(packetCounterFixtureBytes("packet-counter-real-stream/toolchain-stdlib")).toEqual([
+      0x01, 0x02, 0x03, 0x41, 0x42,
+    ]);
+    expect(packetCounterFixtureBytes("packet-counter-real-stream/ejected-stdlib")).toEqual([
+      0x01, 0x02, 0x03, 0x41, 0x42,
+    ]);
+    expect(packetCounterFixtureBytes("packet-counter-real-stream/direct-platform")).toEqual([
       0x01, 0x02, 0x03, 0x41, 0x42,
     ]);
     expect(packetCounterFixtureBytes("packet-counter-bad-payload/toolchain-stdlib")).toEqual([
@@ -82,7 +95,7 @@ describe("PacketCounter full-image fixture corpus", () => {
         )
         .flatMap((operation) => operation.resultIds),
     );
-    expect(memoryLoads.length).toBeGreaterThanOrEqual(2);
+    expect(memoryLoads.length).toBeGreaterThanOrEqual(3);
     expect(
       memoryLoads.every(
         (operation) =>
@@ -99,7 +112,7 @@ describe("PacketCounter full-image fixture corpus", () => {
           (operation) => operation.memoryAccess.validatedBuffer?.readRequires ?? [],
         ),
       ),
-    ).toEqual(new Set(["0", "1"]));
+    ).toEqual(new Set(["0", "1", "2"]));
     expect(fixturePacketSourceResults.size).toBeGreaterThanOrEqual(1);
     expect(
       memoryLoads.every(
@@ -113,6 +126,44 @@ describe("PacketCounter full-image fixture corpus", () => {
         (operation) => operation.kind === "integerBinary",
       )?.resultTypes[0],
     ).toEqual({ kind: "integer", signedness: "unsigned", width: 8 });
+  });
+
+  test("compiles real-stream PacketCounter through the stream fixture primitive", () => {
+    const spec = fixtureSpecForFullImageCase({
+      scenario: "packet-counter-real-stream",
+      stdlibMode: "toolchain-stdlib",
+    });
+    const input = packageInputForFullImageFixture(spec, nodeFixtureProjectFilesystem);
+
+    expect(input.kind).toBe("ok");
+    if (input.kind !== "ok") return;
+
+    const compiled = compileUefiAArch64ImageWithTrace({
+      packageInput: input.value,
+      artifactName: "packet-counter-real-stream-toolchain-stdlib.efi",
+      smoke: { kind: "disabled" },
+    });
+
+    expect(compiled.kind).toBe("ok");
+    if (compiled.kind !== "ok") return;
+
+    const platformCalls =
+      compiled.trace.packagePipeline.optIr.operations.filter(isPlatformCallOperation);
+    const platformKeys = platformCalls.map((operation) => operation.target.platformKey);
+    const memoryLoads = compiled.trace.packagePipeline.optIr.operations.filter(
+      (operation) => operation.kind === "memoryLoad",
+    );
+
+    expect(platformKeys).toContain("uefi.validation.fixturePacketStream");
+    expect(platformKeys).not.toContain("uefi.validation.fixturePacketSource");
+    expect(memoryLoads.length).toBeGreaterThanOrEqual(3);
+    expect(
+      memoryLoads.every(
+        (operation) =>
+          operation.memoryAccess.validatedBuffer !== undefined &&
+          operation.memoryAccess.boundsAuthority.kind === "certifiedFact",
+      ),
+    ).toBe(true);
   });
 
   test("loads and parses every PacketCounter fixture module through production import discovery", () => {
@@ -191,9 +242,16 @@ describe("PacketCounter full-image fixture corpus", () => {
     const packetSection = fixtureObject?.objectModule.sections.find(
       (section) => section.stableKey === ".rdata.uefi-validation-fixture-packet-source",
     );
-    expect(packetSection?.bytes).toEqual(bytes);
+    expect(Array.from(packetSection?.bytes ?? [])).toEqual(Array.from(bytes));
   });
 });
+
+function isPlatformCallOperation(operation: OptIrOperation): operation is OptIrOperation & {
+  readonly kind: "platformCall";
+  readonly target: { readonly kind: "platform"; readonly platformKey: string };
+} {
+  return operation.kind === "platformCall" && operation.target.kind === "platform";
+}
 
 const expectedFixtureModuleNames = [
   "image",

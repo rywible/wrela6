@@ -615,6 +615,10 @@ export function resourceOperationProofMirFixture(): ProofMirBuildInput {
     operandLocal: handleLocal,
     body: [],
   });
+  const takeKind = takeStatement.takeKind;
+  if (takeKind.kind !== "stream") {
+    throw new Error("resource operation fixture expected a stream take statement.");
+  }
 
   const body: MonoBlock = {
     statements: [
@@ -677,6 +681,34 @@ export function resourceOperationProofMirFixture(): ProofMirBuildInput {
         obligations: buildMonoTable(
           [obligation],
           (entry) => proofMetadataIdKey(entry.obligationId),
+          (id) => proofMetadataIdKey(id),
+        ),
+        sessions: buildMonoTable(
+          [
+            {
+              sessionId: takeKind.sessionId,
+              kind: "take" as const,
+              sourceOrigin: "source:take-session:5",
+              place: monoLocalPlaceFake({ functionInstanceId, local: handleLocal }),
+            },
+          ],
+          (entry) => proofMetadataIdKey(entry.sessionId),
+          (id) => proofMetadataIdKey(id),
+        ),
+        brands: buildMonoTable(
+          [
+            {
+              brandId: takeKind.itemBrandId,
+              canonicalKey: "function:1:take:5" as const,
+              origin: {
+                kind: "functionTake" as const,
+                functionId: functionId(1),
+                statementOrdinal: 5,
+              },
+              sourceOrigin: "source:take-brand:5",
+            },
+          ],
+          (entry) => proofMetadataIdKey(entry.brandId),
           (id) => proofMetadataIdKey(id),
         ),
       },

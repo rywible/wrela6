@@ -166,6 +166,7 @@ function terminalLowererForRegistryTest(): ProofMirTerminalLowerer {
 function validatedBufferReadLowererForRegistryTest(): ProofMirValidatedBufferReadLowerer {
   return {
     lowerValidatedBufferRead: () => ({ kind: "ok", value: { kind: "value", value: 0 as never } }),
+    lowerDerivedFieldComparison: () => undefined,
   };
 }
 

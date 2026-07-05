@@ -32,13 +32,13 @@ export interface AArch64RelocationValueResult {
 }
 
 export interface AArch64InstructionRelocationPatchInput extends AArch64RelocationValueInput {
-  readonly originalBytes: readonly number[];
+  readonly originalBytes: ArrayLike<number>;
   readonly bitRange: readonly [number, number];
   readonly fieldSlices?: readonly AArch64RelocationFieldSlice[];
 }
 
 export interface AArch64InstructionRelocationPatchResult extends AArch64RelocationValueResult {
-  readonly patchedBytes: readonly number[];
+  readonly patchedBytes: Uint8Array;
 }
 
 const OK_VERIFICATION = Object.freeze({ runs: Object.freeze([]) });
@@ -106,7 +106,7 @@ export function patchAArch64InstructionRelocation(
     value: Object.freeze({
       encodedValue: value.value.encodedValue,
       unscaledValue: value.value.unscaledValue,
-      patchedBytes: Object.freeze([...writeU32Le(patchedWord)]),
+      patchedBytes: writeU32Le(patchedWord),
     }),
     diagnostics: value.diagnostics,
     verification: OK_VERIFICATION,

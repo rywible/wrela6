@@ -1,4 +1,10 @@
-import { coreTypeId, deviceSurfaceId, imageProfileId, uniqueEdgeRootKey } from "../../semantic/ids";
+import {
+  coreTypeId,
+  deviceSurfaceId,
+  imageProfileId,
+  targetTypeId,
+  uniqueEdgeRootKey,
+} from "../../semantic/ids";
 import type { ItemIndex } from "../../semantic/item-index";
 import {
   platformPrimitiveCatalog,
@@ -8,11 +14,16 @@ import {
   type TargetFunctionSignature,
   type TargetParameterSpec,
 } from "../../semantic/surface/platform-surface";
-import { concreteKind } from "../../semantic/surface/resource-kind";
+import { concreteKind, derivedKind } from "../../semantic/surface/resource-kind";
 import type { CheckedResourceKind } from "../../semantic/surface/resource-kind";
-import { coreCheckedType } from "../../semantic/surface/type-model";
+import {
+  coreCheckedType,
+  sourceCheckedType,
+  targetCheckedType,
+} from "../../semantic/surface/type-model";
 import type { CheckedType } from "../../semantic/surface/type-model";
 import { canonicalUefiAArch64SemanticTargetSurface } from "./platform-catalog";
+import { UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_STREAM_PRIMITIVE_ID } from "./validation-fixture-packet-rule";
 import {
   uefiAArch64DefaultEntryStatusBridgeType,
   uefiAArch64SourceStatusBridgeType,
@@ -29,6 +40,7 @@ export function packageSemanticTargetSurface(
   const canonical = canonicalUefiAArch64SemanticTargetSurface();
   const sourceStatusBridge = uefiAArch64SourceStatusBridgeType(index);
   const sourceApiBridge = uefiAArch64SourceApiBridge(index);
+  const validationFixturePacketStreamType = validationFixturePacketStreamSourceType(index);
   const entryStatusBridge = sourceStatusBridge ?? uefiAArch64DefaultEntryStatusBridgeType();
   const entrySignature =
     sourceApiBridge === undefined || !uefiBootDeclaresSourceVisibleParameters(index)
@@ -43,9 +55,16 @@ export function packageSemanticTargetSurface(
       sourceStatusBridge === undefined
         ? primitive
         : primitiveWithSourceStatusSignature(primitive, sourceStatusBridge);
-    return sourceApiBridge === undefined
-      ? statusPrimitive
-      : primitiveWithSourceApiSignature(statusPrimitive, sourceApiBridge);
+    const sourceApiPrimitive =
+      sourceApiBridge === undefined
+        ? statusPrimitive
+        : primitiveWithSourceApiSignature(statusPrimitive, sourceApiBridge);
+    return validationFixturePacketStreamType === undefined
+      ? sourceApiPrimitive
+      : primitiveWithValidationFixturePacketStreamSignature(
+          sourceApiPrimitive,
+          validationFixturePacketStreamType,
+        );
   });
   const networkDeviceSurface = sourceApiBridgeNetworkDeviceSurface(
     canonical.targetId,
@@ -117,7 +136,7 @@ function sourceFirmwareEntrySignature(input: {
       }),
     ]),
     returnType: input.resultType,
-    returnKind: concreteKind("Copy"),
+    returnKind: derivedKind("fieldAggregation", []),
     requiredModifiers: Object.freeze([]),
     forbiddenModifiers: Object.freeze([]),
   });
@@ -163,6 +182,35 @@ function primitiveWithSourceApiSignature(
   return signature === undefined ? primitive : Object.freeze({ ...primitive, signature });
 }
 
+function primitiveWithValidationFixturePacketStreamSignature(
+  primitive: PlatformPrimitiveSpec,
+  streamType: CheckedType,
+): PlatformPrimitiveSpec {
+  if (
+    String(primitive.primitiveId) !== UEFI_AARCH64_VALIDATION_FIXTURE_PACKET_STREAM_PRIMITIVE_ID
+  ) {
+    return primitive;
+  }
+  return Object.freeze({
+    ...primitive,
+    signature: Object.freeze({
+      ...primitive.signature,
+      returnType: streamType,
+      returnKind: concreteKind("Stream"),
+    }),
+    proofContract: Object.freeze({
+      ...primitive.proofContract,
+      takeModeContracts: Object.freeze([
+        Object.freeze({
+          kind: "stream" as const,
+          itemType: targetCheckedType(targetTypeId("uefi.Ptr")),
+          itemResourceKind: concreteKind("Affine"),
+        }),
+      ]),
+    }),
+  });
+}
+
 function sourceApiSignatureForPrimitive(
   primitiveId: string,
   bridge: UefiAArch64SourceApiBridge,
@@ -204,8 +252,19 @@ function sourceApiResultSignature(
     bridge,
     parameterTypeNames,
     returnType: bridge.resultOf(okType.type),
-    returnKind: concreteKind("Linear"),
+    returnKind: derivedKind("fieldAggregation", []),
   });
+}
+
+function validationFixturePacketStreamSourceType(index: ItemIndex): CheckedType | undefined {
+  const typeRecord = index.types().find((type) => {
+    if (type.name !== "ValidationFixturePacketStream") return false;
+    const item = index.item(type.itemId);
+    return item?.kind === "stream";
+  });
+  return typeRecord === undefined
+    ? undefined
+    : sourceCheckedType({ itemId: typeRecord.itemId, typeId: typeRecord.id });
 }
 
 function sourceApiPlainSignature(

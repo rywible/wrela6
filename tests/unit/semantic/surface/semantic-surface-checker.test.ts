@@ -122,6 +122,26 @@ test("semantic surface requires endian marker for multi-byte layout field", () =
   );
 });
 
+test("semantic surface rejects proof-relevant fields in ordinary dataclasses", () => {
+  const result = semanticSurfaceForHirTest([
+    [
+      "main.wr",
+      [
+        "stream PacketStream contains u32 bound 1:",
+        "dataclass Holder:",
+        "    token: PacketStream",
+        "uefi image Boot:",
+        "    fn main() -> Never",
+      ].join("\n"),
+    ],
+  ]);
+  const diagnostic = result.diagnostics.find(
+    (entry) => entry.code === "SEMANTIC_DATACLASS_AFFINE_FIELD",
+  );
+
+  expect(diagnostic?.source?.slice(diagnostic.span!)).toBe("token");
+});
+
 test("semantic surface stores checked big-endian layout field encoding", () => {
   const result = semanticSurfaceForHirTest([
     ["main.wr", "validated buffer Packet:\n    layout:\n        size: be u16 @ 0\n"],

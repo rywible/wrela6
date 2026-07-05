@@ -54,6 +54,29 @@ test("integer literal outside expected type range emits HIR_INTEGER_LITERAL_OUT_
   );
 });
 
+test("binary expression shapes integer literal operands from the opposite integer operand", () => {
+  const context = createHirUnitContext("fn process(value: u8) -> bool:\n    return value == 1\n");
+  context.locals.addSourceLocal({
+    name: "value",
+    type: coreCheckedType(coreTypeId("u8")),
+    resourceKind: concreteKind("Copy"),
+    sourceOrigin: hirOriginId(0),
+    introducedBy: "sourceLet",
+  });
+
+  const expression = lowerExpression({
+    view: firstExpressionView(context.graph),
+    context,
+  });
+
+  expect(context.diagnostics.entries().map((diagnostic) => String(diagnostic.code))).not.toContain(
+    "HIR_BINARY_OPERAND_TYPE_MISMATCH",
+  );
+  expect(expression.kind.kind).toBe("comparison");
+  if (expression.kind.kind !== "comparison") throw new Error("expected comparison");
+  expect(expression.kind.right.type).toEqual(coreCheckedType(coreTypeId("u8")));
+});
+
 test("name expression uses local scope before semantic references", () => {
   const context = createHirUnitContext("fn process(value: u32) -> u32:\n    return value\n");
   context.locals.addSourceLocal({
@@ -84,6 +107,70 @@ test("bool literal reports expected type mismatch", () => {
   expect(context.diagnostics.entries().map((diagnostic) => String(diagnostic.code))).toContain(
     "HIR_EXPRESSION_TYPE_MISMATCH",
   );
+});
+
+test("bool literal lowers from literal syntax", () => {
+  const context = createHirUnitContext("fn process() -> bool:\n    return true\n");
+
+  const expression = lowerExpression({
+    view: firstExpressionView(context.graph),
+    expectedType: coreCheckedType(coreTypeId("bool")),
+    context,
+  });
+
+  expect(expression.kind).toEqual({
+    kind: "literal",
+    literal: { kind: "bool", value: true },
+  });
+  expect(context.diagnostics.entries()).toEqual([]);
+});
+
+test("logical and lowers as a bool binary expression", () => {
+  const context = createHirUnitContext("fn process() -> bool:\n    return true and false\n");
+
+  const expression = lowerExpression({
+    view: firstExpressionView(context.graph),
+    expectedType: coreCheckedType(coreTypeId("bool")),
+    context,
+  });
+
+  expect(expression.kind.kind).toBe("binary");
+  if (expression.kind.kind !== "binary") throw new Error("expected binary");
+  expect(expression.kind.operator).toBe("and");
+  expect(expression.type).toEqual(coreCheckedType(coreTypeId("bool")));
+  expect(context.diagnostics.entries()).toEqual([]);
+});
+
+test("bitwise and lowers for same-width unsigned operands", () => {
+  const context = createHirUnitContext(
+    "fn process(left: u32, right: u32) -> u32:\n    return left & right\n",
+  );
+  context.locals.addSourceLocal({
+    name: "left",
+    type: coreCheckedType(coreTypeId("u32")),
+    resourceKind: concreteKind("Copy"),
+    sourceOrigin: hirOriginId(0),
+    introducedBy: "sourceLet",
+  });
+  context.locals.addSourceLocal({
+    name: "right",
+    type: coreCheckedType(coreTypeId("u32")),
+    resourceKind: concreteKind("Copy"),
+    sourceOrigin: hirOriginId(1),
+    introducedBy: "sourceLet",
+  });
+
+  const expression = lowerExpression({
+    view: firstExpressionView(context.graph),
+    expectedType: coreCheckedType(coreTypeId("u32")),
+    context,
+  });
+
+  expect(expression.kind.kind).toBe("binary");
+  if (expression.kind.kind !== "binary") throw new Error("expected binary");
+  expect(expression.kind.operator).toBe("&");
+  expect(expression.type).toEqual(coreCheckedType(coreTypeId("u32")));
+  expect(context.diagnostics.entries()).toEqual([]);
 });
 
 test("local name reports expected type mismatch", () => {

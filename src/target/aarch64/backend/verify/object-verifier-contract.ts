@@ -8,7 +8,10 @@ import {
   AARCH64_OBJECT_SECTION_CLASS_WRITABLE_DATA,
   type AArch64ObjectModule,
 } from "../object/object-module";
-import { isAArch64InstructionRelocationFamily } from "../object/relocation-records";
+import {
+  isAArch64InstructionRelocationFamily,
+  relocationTargetsAreEquivalent,
+} from "../object/relocation-records";
 
 const KNOWN_OBJECT_SECTION_CLASSES = new Set(
   [
@@ -134,13 +137,30 @@ function verifyRelocationPairContract(
   const hasPagebaseAndLow12 =
     (relocation.family === "pagebase-rel21" && isLow12RelocationFamily(partner.family)) ||
     (isLow12RelocationFamily(relocation.family) && partner.family === "pagebase-rel21");
-  return hasPagebaseAndLow12
-    ? []
-    : [
-        diagnostic(
-          `object-verifier:relocation-pair-family-mismatch:${relocation.stableKey}:${relocation.family}:${partner.family}`,
-        ),
-      ];
+  if (!hasPagebaseAndLow12) {
+    return [
+      diagnostic(
+        `object-verifier:relocation-pair-family-mismatch:${relocation.stableKey}:${relocation.family}:${partner.family}`,
+      ),
+    ];
+  }
+
+  const diagnostics: AArch64BackendDiagnostic[] = [];
+  if (String(partner.pairedRelocationKey) !== String(relocation.stableKey)) {
+    diagnostics.push(
+      diagnostic(
+        `object-verifier:relocation-pair-reciprocal-mismatch:${relocation.stableKey}:${partner.stableKey}:${partner.pairedRelocationKey}`,
+      ),
+    );
+  }
+  if (!relocationTargetsAreEquivalent(relocation.target, partner.target)) {
+    diagnostics.push(
+      diagnostic(
+        `object-verifier:relocation-pair-target-mismatch:${relocation.stableKey}:${partner.stableKey}`,
+      ),
+    );
+  }
+  return diagnostics;
 }
 
 function isLow12RelocationFamily(family: string): boolean {
