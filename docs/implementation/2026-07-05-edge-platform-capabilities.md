@@ -24,8 +24,12 @@
 - Target information already flows through `SemanticTargetSurface` in `src/semantic/surface/platform-surface.ts`. This is the correct home for sealed region and sealed callable catalogs.
 - Current target type references support only named types with type arguments. Do not introduce function-type syntax for this implementation. Use named callable target types such as `UefiOutputStringFn[Console]`; the callable signature lives in the target catalog.
 - `targetTypeKinds` currently carry only `{ targetTypeId, kind }`, and `type-reference-checker.ts` treats target types as zero-arity. Sealed capability types need explicit arity and construction metadata.
+- `checkTypeReference` currently has no `targetSurface` input. Target type arity cannot be implemented inside `type-reference-checker.ts` until `SemanticTargetSurface` is threaded through `dataclass-resource-checker.ts`, `signature-checker.ts`, `generic-checker.ts`, recursive type-argument checks, and test fakes.
 - HIR member lowering currently only knows source fields and special image device members. Sealed region pseudo-fields need catalog-backed member lowering from target type metadata.
+- Name resolution is the wrong layer for sealed region field completion. `member-chain-resolver.ts` returns early for local bases such as `self`, and target types do not have source `ItemId` owners. Sealed member completion belongs in typed HIR lowering, where receiver types and certified edge fields are known.
+- Target-sealed values need explicit provisioning. If source cannot construct sealed capability values, the target/package pipeline must seed entry edge objects, firmware service handles, MMIO regions, validation streams, and source API bridge handles from target-owned capability records.
 - Full-image semantic platform reference checking currently scans source text with a `platform fn` regex. It must be replaced with compiler-produced sealed operation inventory.
+- Production stdlib and many tests still contain `platform fn`. The hard cutoff must migrate `stdlib/wrela-std`, UEFI fixture copies, semantic tests, HIR tests, mono/layout/proof-check tests, target integration tests, and full-image reference checker tests before the final audit can pass.
 - `platform`, `machine`, and `asm` source constructs are not part of the new design. `platform fn` must become a legacy diagnostic, and no source assembly or machine IR syntax should be added.
 
 ---
@@ -42,18 +46,17 @@ src/semantic/surface/semantic-surface-checker.ts
 src/semantic/surface/type-reference-checker.ts
 src/semantic/surface/resource-kind-checker.ts
 src/semantic/surface/sealed-capability-certifier.ts
+src/semantic/surface/sealed-capability-provisioning.ts
 src/semantic/surface/diagnostics.ts
 src/semantic/surface/index.ts
 src/semantic/names/platform-binding.ts
 src/semantic/names/platform-primitives.ts
-src/semantic/names/reference.ts
-src/semantic/names/expression-resolver/member-chain-resolver.ts
-src/semantic/names/name-resolver.ts
 src/hir/hir.ts
 src/hir/expression-lowerer.ts
 src/hir/statement-lowerer.ts
 src/hir/call-callee-resolver.ts
 src/hir/call-lowerer.ts
+src/hir/sealed-member-lookup.ts
 src/hir/proof-metadata.ts
 src/hir/diagnostics.ts
 src/mono/mono-hir.ts
@@ -83,12 +86,19 @@ src/validation/full-image/reference-checkers/uefi-tcb-golden-fixtures.ts
 src/validation/full-image/reference-checkers/proof-fact-reference.ts
 src/validation/full-image/reference-checkers/opt-ir-reference.ts
 src/validation/full-image/determinism.ts
+stdlib/wrela-std/target/uefi/console.wr
+stdlib/wrela-std/target/uefi/watchdog.wr
+stdlib/wrela-std/target/uefi/memory.wr
+stdlib/wrela-std/target/uefi/firmware.wr
 tests/support/semantic/semantic-surface-fakes.ts
 tests/support/hir/typed-hir-fakes.ts
+tests/support/mono/monomorphization-fixtures.ts
+tests/support/layout/layout-fixtures.ts
 tests/unit/semantic/surface/sealed-capability-catalog.test.ts
 tests/unit/semantic/surface/sealed-capability-certifier.test.ts
+tests/unit/semantic/surface/sealed-capability-provisioning.test.ts
 tests/unit/semantic/surface/type-reference-checker.test.ts
-tests/unit/semantic/names/sealed-member-resolution.test.ts
+tests/unit/hir/sealed-member-lookup.test.ts
 tests/unit/hir/sealed-region-read-lowering.test.ts
 tests/unit/hir/sealed-region-write-lowering.test.ts
 tests/unit/hir/sealed-callable-lowering.test.ts
@@ -96,9 +106,15 @@ tests/unit/mono/sealed-platform-edges.test.ts
 tests/unit/proof-mir/sealed-platform-operations.test.ts
 tests/unit/proof-check/sealed-platform-effects.test.ts
 tests/unit/opt-ir/sealed-platform-effects.test.ts
+tests/unit/target/aarch64/sealed-platform-materialization.test.ts
 tests/unit/target/uefi-aarch64/sealed-platform-catalog.test.ts
 tests/unit/target/uefi-aarch64/sealed-platform-lowering.test.ts
+tests/unit/semantic/names/platform-binding.test.ts
 tests/integration/semantic/name-resolution.test.ts
+tests/integration/validation/full-image/reference-checkers-source-platform.test.ts
+tests/integration/target/uefi-aarch64/status-abi-bridge.test.ts
+tests/integration/target/uefi-aarch64/static-char16-constant-pool.test.ts
+tests/integration/target/uefi-aarch64/package-pipeline-optir-static-char16.test.ts
 tests/fixtures/diagnostics/platform-capabilities/
 tests/fixtures/full-image-validation/
 ```
@@ -107,30 +123,93 @@ tests/fixtures/full-image-validation/
 
 ## Parallelization Map
 
-Wave 1 establishes the new semantic surface and legacy cutoff. These tasks can be split across subagents, but merge Task 1 first because other tasks import its types.
+Wave 1 establishes the new semantic surface, target type checking, field certification, capability provisioning, and legacy cutoff. These tasks can be split across subagents, but merge Task 0 first because other tasks import its IDs and catalog invariants.
 
 ```text
 Wave 1:
-  Task 1 -> Task 2 -> Task 3
-  Task 4 can run alongside Task 1, then rebase after Task 3
+  Task 0 -> Task 1 -> Task 2 -> Task 3 -> Task 3A
+  Task 4 can run alongside Tasks 1 and 2, then rebase after Task 3
 
 Wave 2:
-  Task 5 -> Task 6
-  Task 7 and Task 8 depend on Task 6 and can run in parallel
-  Task 9 depends on Task 6 and can run in parallel with Tasks 7 and 8
+  Task 5 and Task 6 depend on Tasks 3 and 3A and can run in parallel
+  Task 7 and Task 8 depend on Tasks 5 and 6 and can run in parallel
+  Task 9 depends on Tasks 3A, 5, and 6 and can run in parallel with Tasks 7 and 8
 
 Wave 3:
   Task 10 depends on Tasks 7, 8, and 9
-  Task 11 depends on Task 10
-  Task 12 depends on Task 11
-  Task 13 depends on Task 11
-  Task 14 depends on Task 13
+  Task 11 depends on Tasks 3A and 10
+  Task 12 depends on Tasks 10 and 11
+  Task 13 depends on Task 12
+  Task 14 depends on Task 12
 
 Wave 4:
-  Task 15 depends on Tasks 1, 3, 7, 8, and 9
-  Task 16 depends on Tasks 4 and 15
-  Task 17 depends on Tasks 10 through 16
-  Task 18 depends on all prior tasks
+  Task 15 depends on Tasks 11 and 14
+  Task 16 depends on Tasks 0, 1, 2, 3A, 11, and 15
+  Task 17 depends on Tasks 4 and 16
+  Task 18 depends on Tasks 16 and 17
+  Task 19 depends on Tasks 10, 12, 14, 16, and 18
+  Task 20 depends on Tasks 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, and 19
+  Task 21 depends on all prior tasks
+```
+
+---
+
+## Task 0: Define Stable IDs And Catalog Validation
+
+- [ ] **Description**
+
+Define every new branded ID and the shared catalog validation rules before any subsystem imports sealed capability concepts. This task creates the stable identity vocabulary used by target catalog entries, semantic certification, HIR platform edges, Proof MIR operations, Opt IR effects, layout ABI facts, and validation evidence.
+
+Modify:
+
+- `src/semantic/ids.ts`
+- `src/semantic/surface/platform-surface.ts`
+- `tests/unit/semantic/surface/sealed-capability-catalog.test.ts`
+
+- [ ] **Acceptance Criteria**
+
+- `SealedRegionId`, `SealedCallableId`, `PlatformServiceId`, `PlatformPredicateId`, `PlatformEffectId`, and `CompilerOwnedTargetOperationId` are branded ID types or stable string ID types following existing ID conventions in `src/semantic/ids.ts`.
+- Catalog validation sorts entries deterministically by stable ID before duplicate checks.
+- Duplicate sealed region IDs, sealed callable IDs, target type IDs, service IDs, and region field keys produce deterministic `RangeError` messages in test helpers or target catalog construction.
+- `SemanticTargetSurface` retains the existing `readonly targetId: TargetId` field.
+
+- [ ] **Code Examples**
+
+ID shape:
+
+```ts
+export type SealedRegionId = Brand<string, "SealedRegionId">;
+export type SealedCallableId = Brand<string, "SealedCallableId">;
+export type PlatformServiceId = Brand<string, "PlatformServiceId">;
+export type PlatformPredicateId = Brand<string, "PlatformPredicateId">;
+export type PlatformEffectId = Brand<string, "PlatformEffectId">;
+export type CompilerOwnedTargetOperationId = Brand<string, "CompilerOwnedTargetOperationId">;
+```
+
+Catalog invariant test:
+
+```ts
+test("sealed capability catalog rejects duplicate region field keys deterministically", () => {
+  expect(() =>
+    semanticTargetSurfaceFake({
+      sealedRegions: [
+        sealedRegionSpecFake({
+          regionId: sealedRegionId("uefi.mmio.uart"),
+          fields: [
+            sealedRegionFieldSpecFake({ fieldKey: "data", name: "data" }),
+            sealedRegionFieldSpecFake({ fieldKey: "data", name: "data_alias" }),
+          ],
+        }),
+      ],
+    }),
+  ).toThrow("Duplicate sealed region field key uefi.mmio.uart:data");
+});
+```
+
+- [ ] **Commands**
+
+```bash
+bun test tests/unit/semantic/surface/sealed-capability-catalog.test.ts
 ```
 
 ---
@@ -151,9 +230,10 @@ Modify:
 
 - [ ] **Acceptance Criteria**
 
-- `SemanticTargetSurface` has `sealedRegions` and `sealedCallables`.
+- `SemanticTargetSurface` keeps `readonly targetId: TargetId` and adds `sealedRegions` and `sealedCallables`.
 - Region and callable specs are immutable readonly data with deterministic IDs.
 - Catalog constructors or fake helpers reject duplicate target type IDs, duplicate field names within a region, and duplicate callable target type IDs.
+- `PlatformEffectSpec`, `PlatformPredicateRequirementSpec`, and sealed capability value-type references are defined in this task and used consistently by downstream tasks.
 - Existing target surfaces can be constructed with empty sealed capability lists.
 - No source language behavior changes in this task.
 
@@ -170,10 +250,51 @@ export type RegionAccessOrdering = "plain" | "deviceOrdered" | "acquireCommit" |
 
 export type OwnerReceiverMode = "observe" | "consume" | "terminal";
 
+export type PlatformEffectSpec =
+  | {
+      readonly kind: "firmwareCall";
+      readonly service: PlatformServiceId;
+    }
+  | {
+      readonly kind: "readsMemory";
+      readonly regionId: SealedRegionId;
+      readonly fieldKey: string;
+    }
+  | {
+      readonly kind: "writesMemory";
+      readonly regionId: SealedRegionId;
+      readonly fieldKey: string;
+    }
+  | {
+      readonly kind: "advancesPrivateState";
+      readonly regionId: SealedRegionId;
+    };
+
+export type PlatformPredicateRequirementSpec =
+  | {
+      readonly kind: "predicate";
+      readonly predicateId: PlatformPredicateId;
+      readonly predicateName: string;
+    }
+  | {
+      readonly kind: "state";
+      readonly stateKind: "available" | "advanced" | "closed";
+    };
+
+export type SealedCapabilityValueType =
+  | {
+      readonly kind: "source";
+      readonly typeId: TypeId;
+    }
+  | {
+      readonly kind: "target";
+      readonly targetTypeId: TargetTypeId;
+    };
+
 export interface SealedRegionFieldSpec {
   readonly fieldKey: string;
   readonly name: string;
-  readonly valueType: TargetFunctionSignatureType;
+  readonly valueType: SealedCapabilityValueType;
   readonly access: RegionFieldAccess;
   readonly ordering: RegionAccessOrdering;
   readonly offsetKey: string;
@@ -200,6 +321,7 @@ export interface SealedCallableSpec {
 }
 
 export interface SemanticTargetSurface {
+  readonly targetId: TargetId;
   readonly platformPrimitives: PlatformPrimitiveCatalog;
   readonly imageProfiles: readonly ImageProfileSpec[];
   readonly deviceSurfaces: readonly DeviceSurfaceSpec[];
@@ -237,13 +359,19 @@ Modify:
 
 - `src/semantic/surface/platform-surface.ts`
 - `src/semantic/surface/type-reference-checker.ts`
+- `src/semantic/surface/dataclass-resource-checker.ts`
+- `src/semantic/surface/signature-checker.ts`
+- `src/semantic/surface/generic-checker.ts`
 - `src/semantic/surface/resource-kind-checker.ts`
 - `src/semantic/names/name-resolver.ts`
+- `tests/support/semantic/semantic-surface-fakes.ts`
 - `tests/unit/semantic/surface/type-reference-checker.test.ts`
 
 - [ ] **Acceptance Criteria**
 
 - Target type metadata includes generic arity, resource kind, and source constructibility.
+- `CheckTypeReferenceInput` includes `targetSurface: SemanticTargetSurface`.
+- Every call to `checkTypeReference` in `dataclass-resource-checker.ts`, `signature-checker.ts`, `generic-checker.ts`, and recursive type-argument checking passes `targetSurface`.
 - `MmioRegion[UartMmio]` type-checks when the catalog declares arity `1`.
 - `MmioRegion`, `MmioRegion[A, B]`, and `UnknownRegion[Owner]` produce deterministic diagnostics.
 - Source code cannot construct sealed region or sealed callable values with literals, constructors, or default values.
@@ -254,6 +382,16 @@ Modify:
 Target type metadata shape:
 
 ```ts
+export interface CheckTypeReferenceInput {
+  readonly moduleId: ModuleId;
+  readonly view: TypeReferenceView | undefined;
+  readonly index: ItemIndex;
+  readonly referenceLookup: SurfaceReferenceLookup;
+  readonly coreTypes: CoreTypeCatalog;
+  readonly targetSurface: SemanticTargetSurface;
+  readonly allowInterfaces?: boolean;
+}
+
 export type TargetTypeConstructibility = "sourceConstructible" | "targetSealed";
 
 export interface TargetTypeKindSpec {
@@ -262,6 +400,29 @@ export interface TargetTypeKindSpec {
   readonly genericArity: number;
   readonly constructibility: TargetTypeConstructibility;
 }
+```
+
+Call-site pattern:
+
+```ts
+const typeResult = checkTypeReference({
+  moduleId: input.moduleId,
+  view: parameter.type,
+  index: input.index,
+  referenceLookup: input.referenceLookup,
+  coreTypes: input.coreTypes,
+  targetSurface: input.targetSurface,
+});
+```
+
+Recursive type argument pattern:
+
+```ts
+const argResult = checkTypeReference({
+  ...input,
+  view: argView,
+  targetSurface: input.targetSurface,
+});
 ```
 
 Wrela examples to cover:
@@ -316,9 +477,11 @@ Modify:
 - [ ] **Acceptance Criteria**
 
 - `CheckedProgram` contains certified sealed region field records and certified sealed callable field records.
+- Certification inspects each checked field type: source types are ignored, target type constructors are looked up in `targetSurface.sealedRegions` and `targetSurface.sealedCallables`, and applied target constructors use their constructor target type ID.
 - A sealed capability field outside an `edge class` is rejected.
 - A sealed capability field with a mismatched owner argument is rejected.
 - An owner-bound callable field must use the containing edge class as its owner argument.
+- A sealed region or callable type with no owner type argument emits `SURFACE_SEALED_CAPABILITY_OWNER_ARGUMENT_MISSING`.
 - Certification output is deterministic and keyed by source field ID.
 
 - [ ] **Code Examples**
@@ -367,10 +530,118 @@ Expected diagnostics:
 ["SURFACE_SEALED_CAPABILITY_FIELD_REQUIRES_EDGE_CLASS", "SURFACE_SEALED_CAPABILITY_OWNER_MISMATCH"];
 ```
 
+Certification matching rules:
+
+```ts
+function classifySealedCapabilityField(input: {
+  readonly field: CheckedFieldRecord;
+  readonly containingType: CheckedType;
+  readonly targetSurface: SemanticTargetSurface;
+}): CertifiedSealedRegionField | CertifiedSealedCallableField | undefined {
+  const targetTypeId = targetConstructorId(input.field.type);
+  if (targetTypeId === undefined) return undefined;
+
+  const region = input.targetSurface.sealedRegions.find(
+    (candidate) => candidate.targetTypeId === targetTypeId,
+  );
+  if (region !== undefined) {
+    return certifyRegionField(input.field, input.containingType, region);
+  }
+
+  const callable = input.targetSurface.sealedCallables.find(
+    (candidate) => candidate.targetTypeId === targetTypeId,
+  );
+  if (callable !== undefined) {
+    return certifyCallableField(input.field, input.containingType, callable);
+  }
+
+  return undefined;
+}
+```
+
 - [ ] **Commands**
 
 ```bash
 bun test tests/unit/semantic/surface/sealed-capability-certifier.test.ts
+```
+
+---
+
+## Task 3A: Define Target-Sealed Capability Provisioning
+
+- [ ] **Description**
+
+Define how valid sealed capability values enter edge objects when source code is not allowed to construct them. The target/package pipeline must provide target-owned seed records for entry objects, firmware services, MMIO regions, validation streams, source API bridge handles, and other platform capabilities.
+
+Modify:
+
+- Create `src/semantic/surface/sealed-capability-provisioning.ts`
+- `src/semantic/surface/checked-program.ts`
+- `src/semantic/surface/semantic-surface-checker.ts`
+- `src/target/uefi-aarch64/package-pipeline-semantic-target.ts`
+- `tests/unit/semantic/surface/sealed-capability-provisioning.test.ts`
+- `tests/support/semantic/semantic-surface-fakes.ts`
+
+- [ ] **Acceptance Criteria**
+
+- `CheckedProgram` exposes a deterministic table of target-sealed capability provisions keyed by source field ID.
+- Every certified sealed region or sealed callable field required by an image entry edge has either a target provision record or a diagnostic.
+- Source constructors, aggregate literals, default field values, and ordinary assignments cannot manufacture `targetSealed` values.
+- Provision records distinguish zero-sized proof-only handles, runtime pointers, firmware service table pointers, base addresses, and validation fixture handles.
+- UEFI package semantic target construction can provide `Console.output_string`, watchdog, exit boot services, memory map, validation packet source, validation packet stream, and source API bridge capabilities.
+
+- [ ] **Code Examples**
+
+Provisioning model:
+
+```ts
+export type SealedCapabilityProvisionRepresentation =
+  | { readonly kind: "proofOnly" }
+  | {
+      readonly kind: "firmwareServicePointer";
+      readonly table: "system" | "bootServices";
+      readonly offsetKey: string;
+    }
+  | { readonly kind: "mmioBaseAddress"; readonly addressSymbol: string }
+  | { readonly kind: "validationFixtureHandle"; readonly fixtureKey: string }
+  | { readonly kind: "sourceApiBridgeHandle"; readonly bridgeKey: string };
+
+export interface SealedCapabilityProvision {
+  readonly fieldId: FieldId;
+  readonly ownerTypeId: TypeId;
+  readonly capability:
+    | { readonly kind: "region"; readonly regionId: SealedRegionId }
+    | { readonly kind: "callable"; readonly callableId: SealedCallableId };
+  readonly representation: SealedCapabilityProvisionRepresentation;
+}
+```
+
+Provisioning test shape:
+
+```ts
+test("entry edge sealed callable fields require target provisions", () => {
+  const result = checkSemanticSurface(fixtureWithConsoleOutputStringField());
+
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+    "SURFACE_SEALED_CAPABILITY_PROVISION_MISSING",
+  );
+  expect(result.program.sealedCapabilityProvisions.entries()).toContainEqual(
+    expect.objectContaining({
+      capability: { kind: "callable", callableId: uefiOutputStringCallableId },
+      representation: {
+        kind: "firmwareServicePointer",
+        table: "system",
+        offsetKey: "conOut.outputString",
+      },
+    }),
+  );
+});
+```
+
+- [ ] **Commands**
+
+```bash
+bun test tests/unit/semantic/surface/sealed-capability-provisioning.test.ts
 ```
 
 ---
@@ -388,8 +659,11 @@ Modify:
 - `src/semantic/names/diagnostics.ts`
 - `src/semantic/surface/platform-certifier.ts`
 - `src/semantic/surface/diagnostics.ts`
+- `tests/unit/semantic/names/platform-binding.test.ts`
 - `tests/integration/semantic/name-resolution.test.ts`
 - `tests/unit/semantic/surface/platform-certifier.test.ts`
+- `tests/unit/frontend/ast/function-views.test.ts`
+- `tests/unit/frontend/parser/function-signature-parser.test.ts`
 - Add fixtures under `tests/fixtures/diagnostics/platform-capabilities/`
 
 - [ ] **Acceptance Criteria**
@@ -398,6 +672,8 @@ Modify:
 - Method-shaped `platform fn` declarations produce `NAME_LEGACY_PLATFORM_FN`, not the old method-only diagnostic.
 - No `CertifiedPlatformBinding` entries are created from source declarations.
 - The old primitive name catalog is not used for source name binding.
+- Parser and AST tests may continue to prove `platform` is tokenized and parsed enough for diagnostics, but no semantic test may assert successful platform binding.
+- `tests/unit/semantic/names/platform-binding.test.ts` is rewritten from "binds target primitive" expectations to "reports legacy platform function" expectations.
 - Existing invalid fixture generation produces stable diagnostics for legacy platform functions.
 
 - [ ] **Code Examples**
@@ -436,42 +712,90 @@ bun test tests/unit/semantic/surface/platform-certifier.test.ts
 
 ---
 
-## Task 5: Resolve Sealed Region Members In Name Resolution
+## Task 5: Add Typed Sealed Member Lookup In HIR
 
 - [ ] **Description**
 
-Allow member chains such as `self.region.data` to survive name resolution when `region` is a sealed region field and `data` is a catalog field. Name resolution should still report ordinary unknown source members. This task records enough information for HIR to perform the typed catalog lookup.
+Keep name resolution syntax-only for local member chains and implement sealed member completion in typed HIR lowering. When HIR lowers `receiver.memberName`, it already knows the receiver expression type and place. Use that typed receiver to detect certified sealed region fields and resolve catalog pseudo-fields such as `data`.
 
 Modify:
 
-- `src/semantic/names/reference.ts`
-- `src/semantic/names/expression-resolver/member-chain-resolver.ts`
-- `src/semantic/names/name-resolver.ts`
-- `tests/unit/semantic/names/sealed-member-resolution.test.ts`
+- Create `src/hir/sealed-member-lookup.ts`
+- `src/hir/expression-lowerer.ts`
+- `src/hir/statement-lowerer.ts`
+- `src/hir/diagnostics.ts`
+- Create `tests/unit/hir/sealed-member-lookup.test.ts`
 
 - [ ] **Acceptance Criteria**
 
-- `self.region.data` has no name-resolution diagnostic when `region` is a certified sealed region field and `data` exists in the region spec.
-- `self.region.unknown_data` produces a deterministic diagnostic.
-- `self.unknown_field` still produces the existing unresolved-member diagnostic.
-- The resolver does not invent source fields for sealed region pseudo-fields.
+- `member-chain-resolver.ts` continues to return early for local bases such as `self`; this task does not add target catalog logic to name resolution.
+- `self.region.data` is recognized during HIR lowering when `region` is a certified sealed region field and `data` exists in the region spec.
+- `self.region.unknown_data` emits `HIR_SEALED_REGION_FIELD_UNKNOWN`.
+- `self.unknown_field` still emits the existing `HIR_MEMBER_REFERENCE_MISSING` diagnostic.
+- The HIR helper returns the receiver expression, authorizing place, region spec, field spec, and access mode needed by read and write lowering.
 
 - [ ] **Code Examples**
 
-Reference shape:
+Lookup result shape:
 
 ```ts
-export type ResolvedMemberReference =
-  | SourceFieldReference
-  | ImageDeviceFieldReference
-  | TargetSealedRegionFieldReference;
+export type HirSealedMemberAccessMode = "read" | "write";
 
-export interface TargetSealedRegionFieldReference {
-  readonly kind: "targetSealedRegionField";
-  readonly receiverFieldId: FieldId;
+export interface HirSealedRegionMemberLookupResult {
+  readonly kind: "sealedRegionMember";
+  readonly receiver: HirExpression;
+  readonly authorizingPlace: HirResourcePlace;
   readonly regionId: SealedRegionId;
   readonly fieldKey: string;
   readonly memberName: string;
+  readonly valueType: CheckedType;
+  readonly access: RegionFieldAccess;
+  readonly ordering: RegionAccessOrdering;
+}
+
+export function lookupSealedRegionMember(input: {
+  readonly context: HirLoweringContext;
+  readonly receiver: HirExpression;
+  readonly memberName: string;
+  readonly accessMode: HirSealedMemberAccessMode;
+  readonly origin: HirSourceOriginId;
+}): HirSealedRegionMemberLookupResult | undefined;
+```
+
+Name-resolution boundary test:
+
+```ts
+test("name resolution leaves local member chains for HIR typed lookup", () => {
+  const result = resolveNamesForTest(`
+edge class UartMmio:
+    region: MmioRegion[UartMmio]
+
+    fn read(self) -> u8:
+        self.region.data
+`);
+
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+    "NAME_UNRESOLVED_MEMBER",
+  );
+});
+```
+
+HIR lookup test:
+
+```ts
+test("HIR sealed member lookup resolves catalog field from receiver type", () => {
+  const result = lowerTypedHirForTest(fixtureWithMmioRegionRead());
+
+  expect(result.diagnostics).toEqual([]);
+  expect(result.program.expressions.entries()).toContainEqual(
+    expect.objectContaining({
+      kind: expect.objectContaining({
+        kind: "sealedRegionRead",
+        regionId: mmioRegionId,
+        fieldKey: "data",
+      }),
+    }),
+  );
 }
 ```
 
@@ -496,7 +820,7 @@ edge class UartMmio:
 - [ ] **Commands**
 
 ```bash
-bun test tests/unit/semantic/names/sealed-member-resolution.test.ts
+bun test tests/unit/hir/sealed-member-lookup.test.ts
 ```
 
 ---
@@ -842,7 +1166,7 @@ Modify:
 - [ ] **Acceptance Criteria**
 
 - Each sealed region field has a layout ABI fact with offset key, value size/alignment, and ordering.
-- Each sealed callable has a layout ABI fact with callable pointer representation and call ABI.
+- Each sealed callable has a layout ABI fact with callable pointer representation, table source, table offset, service offset, call ABI, and service identity.
 - Missing layout facts produce deterministic target diagnostics.
 - Existing platform ABI facts for runtime helpers continue to load.
 
@@ -865,6 +1189,9 @@ export type LayoutSealedPlatformAbiFact =
       readonly kind: "sealedCallable";
       readonly callableId: SealedCallableId;
       readonly pointerRepresentation: "firmwareServicePointer";
+      readonly table: "system" | "bootServices";
+      readonly tableOffsetKey: string;
+      readonly serviceOffsetKey: string;
       readonly abi: TargetCallAbiId;
       readonly serviceIdentity: PlatformServiceId;
     };
@@ -877,6 +1204,9 @@ UEFI catalog example:
   kind: "sealedCallable",
   callableId: uefiOutputStringCallableId,
   pointerRepresentation: "firmwareServicePointer",
+  table: "system",
+  tableOffsetKey: "conOut",
+  serviceOffsetKey: "outputString",
   abi: uefiAArch64FirmwareServiceAbiId,
   serviceIdentity: uefiOutputStringServiceId,
 }
@@ -972,13 +1302,14 @@ Modify:
 
 - `src/proof-check/domains/platform-contract-transfer.ts`
 - `src/proof-check/domains/platform-contract-effects.ts`
+- `tests/unit/proof-check/platform-effects.test.ts`
 - Add `tests/unit/proof-check/sealed-platform-effects.test.ts`
 
 - [ ] **Acceptance Criteria**
 
 - A sealed region read requires the catalog predicates for that field.
 - A sealed region write requires write permission and advances private region state.
-- Facts depending on old region state are unavailable after a write.
+- Facts depending on old region state are removed by a deterministic invalidation helper that scans active fact terms for the mutated region ID and field key.
 - A sealed callable with `consume` mode consumes the owner capability.
 - A sealed callable with `terminal` mode prevents use of the owner after the call.
 - Proof diagnostics identify the failing sealed operation by region/callable ID and source span.
@@ -988,6 +1319,20 @@ Modify:
 Effect transfer sketch:
 
 ```ts
+export function invalidateRegionFieldFacts(input: {
+  readonly state: ProofCheckState;
+  readonly regionId: SealedRegionId;
+  readonly fieldKey: string;
+  readonly origin: ProofMirOriginId;
+}): ProofCheckStatePatchEntry {
+  return {
+    kind: "dropFacts",
+    reason: "sealedRegionWrite",
+    facts: activeFactsReferencingRegionField(input.state, input.regionId, input.fieldKey),
+    origin: input.origin,
+  };
+}
+
 switch (operation.kind.kind) {
   case "sealedRegionRead":
     requirePredicates(operation.kind.regionId, operation.kind.fieldKey);
@@ -996,6 +1341,14 @@ switch (operation.kind.kind) {
   case "sealedRegionWrite":
     requirePredicates(operation.kind.regionId, operation.kind.fieldKey);
     mutateRegion(operation.kind.authorizingPlace);
+    applyPatch(
+      invalidateRegionFieldFacts({
+        state,
+        regionId: operation.kind.regionId,
+        fieldKey: operation.kind.fieldKey,
+        origin: operation.origin,
+      }),
+    );
     advancePrivateState(operation.kind.authorizingPlace);
     break;
 }
@@ -1098,58 +1451,44 @@ bun test tests/unit/opt-ir/sealed-platform-effects.test.ts
 
 ---
 
-## Task 15: Lower Sealed Operations In The UEFI AArch64 Target
+## Task 15: Materialize Sealed Platform Operations In AArch64 Lowering
 
 - [ ] **Description**
 
-Teach the UEFI AArch64 target to lower sealed region reads, sealed region writes, and sealed callable calls from Opt IR using target-owned lowering templates. This preserves the design constraint: source Wrela does not contain assembly or machine IR.
+Teach the shared AArch64 Opt IR materializer to consume sealed platform Opt IR operations. This task handles machine operation materialization and fact queries only; UEFI-specific service pointer cataloging stays in Task 16.
 
 Modify:
 
-- `src/target/uefi-aarch64/platform-catalog.ts`
-- `src/target/uefi-aarch64/package-pipeline-semantic-target.ts`
-- `src/target/uefi-aarch64/target-surfaces.ts`
-- `src/target/uefi-aarch64/firmware-lowering.ts`
-- `src/target/uefi-aarch64/binary-spine.ts`
-- `src/target/aarch64/lower/operation-materialization.ts`
 - `src/target/aarch64/lower/operation-support.ts`
+- `src/target/aarch64/lower/operation-materialization.ts`
 - `src/target/aarch64/facts/aarch64-fact-adapter.ts`
-- Add `tests/unit/target/uefi-aarch64/sealed-platform-lowering.test.ts`
+- Create `tests/unit/target/aarch64/sealed-platform-materialization.test.ts`
 
 - [ ] **Acceptance Criteria**
 
-- Sealed region reads lower to target-owned load operations using catalog ABI facts.
-- Sealed region writes lower to target-owned store operations using catalog ABI facts.
-- Sealed callable calls lower to the existing firmware service call ABI through authenticated sealed callable representation.
+- Sealed region reads materialize as target load operations using layout ABI facts from Task 11.
+- Sealed region writes materialize as target store operations using layout ABI facts from Task 11.
+- Sealed callable calls materialize as indirect call skeletons whose concrete pointer source comes from target-specific ABI facts.
 - No source `asm`, `machine`, or source-authored target instruction syntax is introduced.
-- Unit tests assert lowering evidence at the machine IR or target operation level, not textual assembly.
+- Unit tests assert machine IR operation kinds and fact usage, not textual assembly.
 
 - [ ] **Code Examples**
 
-Lowering rule shape:
+Materialization branch:
 
 ```ts
-export type UefiAArch64SealedPlatformLoweringRule =
-  | {
-      readonly kind: "sealedRegionRead";
-      readonly regionId: SealedRegionId;
-      readonly fieldKey: string;
-      readonly loadWidth: TargetLoadStoreWidth;
-      readonly ordering: RegionAccessOrdering;
-    }
-  | {
-      readonly kind: "sealedRegionWrite";
-      readonly regionId: SealedRegionId;
-      readonly fieldKey: string;
-      readonly storeWidth: TargetLoadStoreWidth;
-      readonly ordering: RegionAccessOrdering;
-    }
-  | {
-      readonly kind: "sealedCallableCall";
-      readonly callableId: SealedCallableId;
-      readonly abi: TargetCallAbiId;
-      readonly serviceIdentity: PlatformServiceId;
-    };
+case "sealedRegionRead":
+  return materializeSealedRegionLoad({
+    operation,
+    abiFact: query.sealedRegionField(operation.regionId, operation.fieldKey),
+    state,
+  });
+case "sealedRegionWrite":
+  return materializeSealedRegionStore({
+    operation,
+    abiFact: query.sealedRegionField(operation.regionId, operation.fieldKey),
+    state,
+  });
 ```
 
 Expected test assertion:
@@ -1167,23 +1506,27 @@ expect(lowered.operations).toContainEqual(
 - [ ] **Commands**
 
 ```bash
-bun test tests/unit/target/uefi-aarch64/sealed-platform-lowering.test.ts
+bun test tests/unit/target/aarch64/sealed-platform-materialization.test.ts
 ```
 
 ---
 
-## Task 16: Migrate UEFI Target Catalog To Sealed Capabilities
+## Task 16: Migrate UEFI Target Catalog And Firmware ABI To Sealed Capabilities
 
 - [ ] **Description**
 
-Replace the UEFI target's source primitive surface with sealed region and sealed callable catalog entries. Current firmware services and validation/source API bridge operations should be represented as target-sealed values owned by edge classes.
+Replace the UEFI target's source primitive surface with sealed region and sealed callable catalog entries. Current firmware services, validation/source API bridge operations, and firmware service pointer loads should be represented as target-sealed values owned by edge classes.
 
 Modify:
 
 - `src/target/uefi-aarch64/platform-catalog.ts`
 - `src/target/uefi-aarch64/package-pipeline-semantic-target.ts`
+- `src/target/uefi-aarch64/target-surfaces.ts`
+- `src/target/uefi-aarch64/firmware-lowering.ts`
+- `src/target/uefi-aarch64/binary-spine.ts`
 - `tests/support/semantic/semantic-surface-fakes.ts`
 - Create `tests/unit/target/uefi-aarch64/sealed-platform-catalog.test.ts`
+- Create `tests/unit/target/uefi-aarch64/sealed-platform-lowering.test.ts`
 - Update `tests/unit/target/uefi-aarch64/platform-catalog.test.ts`
 
 - [ ] **Acceptance Criteria**
@@ -1191,6 +1534,8 @@ Modify:
 - UEFI output string, watchdog timer, exit boot services, memory map, validation stream, and source API bridge capabilities are cataloged as sealed callables or sealed regions.
 - `uefiAArch64PlatformPrimitiveNameCatalog()` returns no source-bindable primitive names.
 - Package-specific bridge wiring mutates sealed callable signatures where it previously mutated platform primitive signatures.
+- Firmware service pointer ABI facts specify table source, table offset, service offset, call ABI, clobbers, and result conversion.
+- `firmware-lowering.ts` lowers sealed callable service pointers by loading from the system table or boot services table offset and emitting an indirect `blr` machine operation.
 - Existing target IDs and service identities remain stable where fixtures depend on them.
 
 - [ ] **Code Examples**
@@ -1213,6 +1558,34 @@ const uefiOutputStringCallable: SealedCallableSpec = {
 };
 ```
 
+Firmware pointer ABI fact:
+
+```ts
+const uefiOutputStringAbiFact: LayoutSealedPlatformAbiFact = {
+  kind: "sealedCallable",
+  callableId: uefiOutputStringCallableId,
+  pointerRepresentation: "firmwareServicePointer",
+  table: "system",
+  tableOffsetKey: "conOut",
+  serviceOffsetKey: "outputString",
+  abi: uefiAArch64FirmwareServiceAbiId,
+  serviceIdentity: uefiOutputStringServiceId,
+};
+```
+
+Lowering assertion:
+
+```ts
+expect(lowered.machineProgram.instructions).toContainEqual(
+  expect.objectContaining({
+    opcode: "blr",
+    provenance: expect.objectContaining({
+      serviceIdentity: uefiOutputStringServiceId,
+    }),
+  }),
+);
+```
+
 Source shape after migration:
 
 ```wr
@@ -1227,19 +1600,82 @@ edge class Console:
 - [ ] **Commands**
 
 ```bash
-bun test tests/unit/target/uefi-aarch64
+bun test tests/unit/target/uefi-aarch64/sealed-platform-catalog.test.ts
+bun test tests/unit/target/uefi-aarch64/sealed-platform-lowering.test.ts
 ```
 
 ---
 
-## Task 17: Migrate Fixtures And Full-Image Validation Evidence
+## Task 17: Migrate Production Stdlib And UEFI Fixture Copies
 
 - [ ] **Description**
 
-Update source fixtures and validation reference checkers so full-image validation proves sealed platform operation provenance instead of scanning `platform fn` declarations. This includes the packet-counter toolchain stdlib fixture that motivated the design work.
+Migrate production stdlib and UEFI smoke fixture copies away from `platform fn`. This task changes source packages only; validation reference checkers are handled in Task 19.
 
 Modify:
 
+- `stdlib/wrela-std/target/uefi/console.wr`
+- `stdlib/wrela-std/target/uefi/watchdog.wr`
+- `stdlib/wrela-std/target/uefi/memory.wr`
+- `stdlib/wrela-std/target/uefi/firmware.wr`
+- `tests/fixtures/uefi-aarch64/smoke-ejected-stdlib/src/wrela-std/target/uefi/console.wr`
+- `tests/fixtures/uefi-aarch64/smoke-ejected-stdlib/src/wrela-std/target/uefi/watchdog.wr`
+- `tests/fixtures/uefi-aarch64/smoke-ejected-stdlib/src/wrela-std/target/uefi/memory.wr`
+- `tests/fixtures/uefi-aarch64/smoke-ejected-stdlib/src/wrela-std/target/uefi/firmware.wr`
+- `tests/fixtures/uefi-aarch64/smoke-direct-platform/src/image.wr`
+- `tests/integration/target/uefi-aarch64/stdlib-source-root.test.ts`
+
+- [ ] **Acceptance Criteria**
+
+- `rg -n "platform\s+fn|platform fn" stdlib tests/fixtures/uefi-aarch64` returns no passing source declarations.
+- Console, watchdog, memory, and firmware stdlib APIs expose sealed edge fields and ordinary methods.
+- Existing public stdlib module paths remain unchanged.
+- `stdlib-source-root.test.ts` expects sealed capability source instead of `platform fn output_string`.
+
+- [ ] **Code Examples**
+
+Production stdlib shape:
+
+```wr
+edge class Console:
+    output_string: UefiOutputStringFn[Console]
+
+    fn write(self, message: Utf16Static) -> Console:
+        self.output_string(message)
+        self
+```
+
+Firmware source API shape:
+
+```wr
+edge class UefiFirmware:
+    exit_boot_services: UefiExitBootServicesFn[UefiFirmware]
+
+    fn exit(self) -> Never:
+        self.exit_boot_services()
+```
+
+- [ ] **Commands**
+
+```bash
+bun test tests/integration/target/uefi-aarch64/stdlib-source-root.test.ts
+rg -n "platform\s+fn|platform fn" stdlib tests/fixtures/uefi-aarch64
+```
+
+---
+
+## Task 18: Migrate Full-Image Fixture Source Families
+
+- [ ] **Description**
+
+Migrate full-image fixtures away from `platform fn`, split by fixture family so subagents can work independently after Task 17 lands.
+
+Modify:
+
+- `tests/fixtures/full-image-validation/smoke-console/direct-platform/`
+- `tests/fixtures/full-image-validation/smoke-console/ejected-stdlib/`
+- `tests/fixtures/full-image-validation/two-branch-control-flow/direct-platform/`
+- `tests/fixtures/full-image-validation/two-branch-control-flow/ejected-stdlib/`
 - `tests/fixtures/full-image-validation/packet-counter/toolchain-stdlib/`
 - `tests/fixtures/full-image-validation/packet-counter/direct-platform/`
 - `tests/fixtures/full-image-validation/packet-counter/ejected-stdlib/`
@@ -1247,25 +1683,70 @@ Modify:
 - `tests/fixtures/full-image-validation/packet-counter-real-stream/direct-platform/`
 - `tests/fixtures/full-image-validation/packet-counter-real-stream/ejected-stdlib/`
 - `tests/fixtures/full-image-validation/packet-counter-bad-payload/toolchain-stdlib/`
-- `tests/fixtures/full-image-validation/smoke-console/direct-platform/`
-- `tests/fixtures/full-image-validation/smoke-console/ejected-stdlib/`
-- `tests/fixtures/full-image-validation/two-branch-control-flow/direct-platform/`
-- `tests/fixtures/full-image-validation/two-branch-control-flow/ejected-stdlib/`
+- Scorecard baselines under each migrated fixture directory
+
+- [ ] **Acceptance Criteria**
+
+- No passing full-image fixture declares `platform fn`.
+- Packet-counter toolchain stdlib fixture uses sealed validation source or sealed validation stream capabilities.
+- Direct-platform fixtures declare edge classes with sealed callable fields instead of freestanding platform functions.
+- Ejected-stdlib fixtures match the migrated production stdlib shape from Task 17.
+- Full-image validation passes for each migrated family.
+
+- [ ] **Code Examples**
+
+Validation fixture source shape:
+
+```wr
+edge class ValidationFixtureSource:
+    packet_source: ValidationPacketSourceFn[ValidationFixtureSource]
+
+    fn source(self) -> Ptr:
+        self.packet_source()
+```
+
+Validation stream shape:
+
+```wr
+edge class ValidationFixtureStream:
+    packet_stream: ValidationPacketStreamFn[ValidationFixtureStream]
+
+    fn open(self) -> ValidationFixturePacketStream:
+        self.packet_stream()
+```
+
+- [ ] **Commands**
+
+```bash
+bun test tests/integration/full-image-validation.test.ts
+rg -n "platform\s+fn|platform fn" tests/fixtures/full-image-validation
+```
+
+---
+
+## Task 19: Migrate Full-Image Platform Evidence And Reference Checkers
+
+- [ ] **Description**
+
+Replace reference checkers that scan for source platform functions or report reachable platform primitives with sealed operation evidence produced by the compiler trace.
+
+Modify:
+
 - `src/validation/full-image/reference-checkers/semantic-platform-reference.ts`
 - `src/validation/full-image/reference-checkers/uefi-tcb-golden-reference.ts`
 - `src/validation/full-image/reference-checkers/uefi-tcb-golden-fixtures.ts`
 - `src/validation/full-image/reference-checkers/proof-fact-reference.ts`
 - `src/validation/full-image/reference-checkers/opt-ir-reference.ts`
 - `src/validation/full-image/determinism.ts`
-- Scorecard baselines under each migrated fixture directory
+- `tests/integration/validation/full-image/reference-checkers-source-platform.test.ts`
 
 - [ ] **Acceptance Criteria**
 
-- No passing full-image fixture declares `platform fn`.
+- `semantic-platform-reference.ts` no longer contains `PLATFORM_FUNCTION_PATTERN`.
 - The semantic platform reference checker reads compiler-produced sealed operation inventory.
 - The checker reports sealed callable calls by service identity and sealed region accesses by region ID and field key.
-- Packet-counter toolchain stdlib fixture uses sealed edge fields and ordinary calls/accesses.
-- Full-image validation tests pass for packet-counter and existing UEFI fixtures.
+- Determinism equivalence compares sealed operation inventory instead of platform primitive declarations.
+- Reference checker tests cover sealed callable, sealed region read, sealed region write, and legacy source `platform fn` rejection.
 
 - [ ] **Code Examples**
 
@@ -1296,21 +1777,88 @@ expect(reference.semanticPlatform.sealedCallableCalls).toContainEqual({
 });
 ```
 
-Migration search command for this task:
-
-```bash
-rg -n "platform\s+fn|platform fn" tests/fixtures/full-image-validation src docs/language
-```
-
 - [ ] **Commands**
 
 ```bash
+bun test tests/integration/validation/full-image/reference-checkers-source-platform.test.ts
 bun test tests/integration/full-image-validation.test.ts
 ```
 
 ---
 
-## Task 18: Remove Legacy Reachability And Finish Compatibility Audit
+## Task 20: Migrate Non-Full-Image Tests Off Source Platform Functions
+
+- [ ] **Description**
+
+Migrate the unit and integration tests that currently rely on successful source `platform fn` binding. Tests that are only proving parser recovery may keep source `platform fn` as invalid syntax examples; semantic/HIR/mono/layout/proof/target tests must use sealed capabilities or compiler-owned target operation fakes.
+
+Modify:
+
+- `tests/unit/semantic/names/platform-binding.test.ts`
+- `tests/unit/semantic/surface/platform-certifier.test.ts`
+- `tests/integration/semantic/name-resolution.test.ts`
+- `tests/integration/semantic/semantic-surface.test.ts`
+- `tests/integration/semantic/semantic-surface.take.test.ts`
+- `tests/integration/semantic/semantic-surface.private-platform.test.ts`
+- `tests/integration/semantic/semantic-surface.proof-preservation.test.ts`
+- `tests/integration/semantic/semantic-surface.validation-attempt.test.ts`
+- `tests/integration/semantic/semantic-surface-determinism.test.ts`
+- `tests/integration/hir/proof-surface-completeness.test.ts`
+- `tests/integration/hir/typed-hir-proof-integration.test.ts`
+- `tests/integration/hir/lower-typed-hir-orchestration.test.ts`
+- `tests/unit/mono/platform-primitives.test.ts`
+- `tests/support/mono/monomorphization-fixtures.ts`
+- `tests/support/layout/layout-fixtures.ts`
+- `tests/integration/proof-check/platform-contracts.test.ts`
+- `tests/integration/proof-check/terminal-closure.test.ts`
+- `tests/integration/target/uefi-aarch64/status-abi-bridge.test.ts`
+- `tests/integration/target/uefi-aarch64/static-char16-constant-pool.test.ts`
+- `tests/integration/target/uefi-aarch64/package-pipeline-optir-static-char16.test.ts`
+
+- [ ] **Acceptance Criteria**
+
+- Semantic tests assert source `platform fn` rejection or sealed capability success, never successful source platform binding.
+- HIR tests use sealed callable calls, sealed region accesses, or compiler-owned target operation fakes.
+- Mono/layout/proof-check fixtures no longer declare `platform fn exit() -> Never`; they use a sealed terminal callable or compiler-owned target operation fixture.
+- Target integration tests use sealed `Console.output_string` instead of freestanding `output_string`.
+- Parser tests that include `platform fn` document that the syntax is parsed only to produce legacy diagnostics.
+
+- [ ] **Code Examples**
+
+HIR fixture replacement:
+
+```wr
+edge class ExitAuthority:
+    exit: TestExitFn[ExitAuthority]
+
+fn caller(auth: ExitAuthority) -> Never:
+    auth.exit()
+```
+
+Semantic rejection assertion:
+
+```ts
+expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+  "NAME_LEGACY_PLATFORM_FN",
+);
+expect(result.platformBindings.entries()).toEqual([]);
+```
+
+- [ ] **Commands**
+
+```bash
+bun test tests/unit/semantic/names/platform-binding.test.ts
+bun test tests/unit/semantic/surface/platform-certifier.test.ts
+bun test tests/integration/semantic
+bun test tests/integration/hir
+bun test tests/unit/mono/platform-primitives.test.ts
+bun test tests/integration/proof-check/platform-contracts.test.ts
+bun test tests/integration/target/uefi-aarch64
+```
+
+---
+
+## Task 21: Remove Legacy Reachability And Finish Compatibility Audit
 
 - [ ] **Description**
 
@@ -1322,6 +1870,8 @@ Modify:
 - `src/semantic/names/platform-binding.ts`
 - `src/validation/full-image/reference-checkers/semantic-platform-reference.ts`
 - `src/validation/full-image/reference-checkers/uefi-tcb-golden-reference.ts`
+- `src/target/uefi-aarch64/runtime-helper-objects.ts`
+- `src/target/uefi-aarch64/package-pipeline-adapters.ts`
 - Existing tests that assert certified source platform binding success:
   - `tests/unit/semantic/surface/platform-certifier.test.ts`
   - `tests/integration/semantic/name-resolution.test.ts`
@@ -1331,6 +1881,7 @@ Modify:
 - No production code path creates `CertifiedPlatformBinding` from a source `platform fn`.
 - Legacy platform-binding types remain only if they are required for invalid diagnostics or target-internal compatibility; their comments state that source platform functions are rejected.
 - Repository search shows no passing fixture using `platform fn`.
+- Repository search shows no production stdlib source using `platform fn`.
 - Repository search shows no parser or semantic acceptance path for source `asm` or `machine`.
 - `bun run agent:check` passes.
 
@@ -1340,6 +1891,7 @@ Audit commands and expected interpretation:
 
 ```bash
 rg -n "CertifiedPlatformBinding|platformBindings|platform fn|platform\s+fn" src tests docs
+rg -n "platform\s+fn|platform fn" stdlib tests/fixtures
 rg -n "\basm\b|\bmachine\b" src tests docs
 ```
 
@@ -1347,6 +1899,7 @@ Acceptable remaining hits:
 
 ```text
 docs/design/edge-platform-assembly-design.md
+docs/language/invalid.md
 tests/fixtures/diagnostics/platform-capabilities/legacy-platform-fn.wr
 src/semantic/names/diagnostics.ts
 src/semantic/surface/diagnostics.ts
@@ -1356,6 +1909,7 @@ Unacceptable remaining hits:
 
 ```text
 tests/fixtures/full-image-validation/**/stdlib.wr: platform fn output_string
+stdlib/wrela-std/target/uefi/console.wr: platform fn output_string
 src/semantic/surface/platform-certifier.ts: returns CertifiedPlatformBinding for a source function
 src/frontend/parser/**: accepts asm blocks
 ```
@@ -1373,7 +1927,8 @@ bun run agent:check
 
 - [ ] `bun run format`
 - [ ] `bun run agent:check`
-- [ ] `rg -n "platform\s+fn|platform fn" tests/fixtures/full-image-validation src`
+- [ ] `rg -n "platform\s+fn|platform fn" stdlib tests/fixtures/full-image-validation tests/fixtures/uefi-aarch64 src`
+- [ ] `rg -n "platform\s+fn|platform fn" tests/unit tests/integration tests/support`
 - [ ] `rg -n "\basm\b|\bmachine\b" src/frontend src/semantic src/hir`
-- [ ] Confirm remaining `platform fn` hits are invalid fixtures, diagnostics, or historical design text.
+- [ ] Confirm remaining `platform fn` hits are invalid fixtures, parser recovery tests, diagnostics, or historical design text.
 - [ ] Confirm no implementation accepts source-authored assembly, source-authored machine IR, or source-authored platform functions.
